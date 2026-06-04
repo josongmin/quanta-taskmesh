@@ -15,10 +15,11 @@ pub struct SystemClock;
 
 impl Clock for SystemClock {
     fn now_ms(&self) -> u64 {
-        SystemTime::now()
+        let millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_millis() as u64
+            .as_millis();
+        u64::try_from(millis).unwrap_or(u64::MAX)
     }
 }
 
@@ -63,6 +64,7 @@ pub trait CpuExecutor: Send + Sync {
 }
 
 /// Notifies a parked admission waiter that its queued request was promoted.
+///
 /// The host backs this with a runtime primitive (e.g. `tokio::sync::Notify`);
 /// the engine stays runtime-agnostic and only calls `wake()` on promotion.
 pub trait PermitWaker: Send + Sync {

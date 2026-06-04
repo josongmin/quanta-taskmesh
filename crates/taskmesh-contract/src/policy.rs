@@ -138,7 +138,7 @@ pub enum OverflowPolicy {
 
 impl OverflowPolicy {
     pub fn is_queueable(self) -> bool {
-        matches!(self, OverflowPolicy::QueueWithinDepth)
+        matches!(self, Self::QueueWithinDepth)
     }
 }
 

@@ -11,7 +11,10 @@ use crate::verdict::RunError;
 ///
 /// `async fn` in trait is used deliberately; the host impl is the only intended
 /// implementor of the full surface, and callers consume it through the facade.
-#[allow(async_fn_in_trait)]
+#[allow(
+    async_fn_in_trait,
+    reason = "Runtime is the public driving port; native async-in-trait Send bounds not yet expressible"
+)]
 pub trait Runtime {
     /// Run an async, `Send` future on the async substrate.
     async fn run_io<T, E, Fut>(&self, spec: TaskSpec, fut: Fut) -> Result<T, RunError<E>>

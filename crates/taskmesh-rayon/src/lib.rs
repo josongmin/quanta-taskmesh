@@ -36,7 +36,7 @@ impl RayonCpuExecutor {
     /// `available_parallelism() - reserve_cores`, clamped to
     /// `[min_workers, max_workers]` (T09).
     pub fn from_topology(topology: &TopologyConfig) -> Self {
-        let available = available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let available = available_parallelism().map_or(1, std::num::NonZeroUsize::get);
         Self::new(topology.resolved_cpu_workers(available))
     }
 

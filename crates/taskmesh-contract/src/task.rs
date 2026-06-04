@@ -215,7 +215,6 @@ impl TaskSpec {
     pub fn primary_substrate_hint(&self) -> SubstrateHint {
         self.stages
             .first()
-            .map(|s| s.substrate_hint)
-            .unwrap_or(SubstrateHint::AsyncIo)
+            .map_or(SubstrateHint::AsyncIo, |s| s.substrate_hint)
     }
 }

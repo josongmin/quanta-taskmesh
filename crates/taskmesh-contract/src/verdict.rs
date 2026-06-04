@@ -88,6 +88,10 @@ pub enum GovernorError {
     Rejected(AdmissionVerdict),
     LocalRuntimeUnavailable,
     PolicyViolation(Cow<'static, str>),
+    /// The in-flight work was cooperatively cancelled (the class's
+    /// [`crate::CancellationPolicy`] permits mid-run cancellation and the
+    /// submission's cancel token fired). Distinct from a task error.
+    Cancelled,
 }
 
 impl fmt::Display for GovernorError {
@@ -96,6 +100,7 @@ impl fmt::Display for GovernorError {
             Self::Rejected(verdict) => write!(f, "admission rejected: {verdict}"),
             Self::LocalRuntimeUnavailable => f.write_str("local runtime substrate unavailable"),
             Self::PolicyViolation(message) => write!(f, "policy violation: {message}"),
+            Self::Cancelled => f.write_str("work cooperatively cancelled"),
         }
     }
 }
@@ -111,11 +116,11 @@ pub enum RunError<E> {
 
 impl<E> RunError<E> {
     pub fn is_governor(&self) -> bool {
-        matches!(self, RunError::Governor(_))
+        matches!(self, Self::Governor(_))
     }
 
     pub fn is_task(&self) -> bool {
-        matches!(self, RunError::Task(_))
+        matches!(self, Self::Task(_))
     }
 }
 

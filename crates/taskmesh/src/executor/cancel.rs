@@ -37,6 +37,8 @@ impl SubmitOptions {
     }
 
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancel.as_ref().is_some_and(|t| t.is_cancelled())
+        self.cancel
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
     }
 }

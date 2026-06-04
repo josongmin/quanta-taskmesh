@@ -10,11 +10,11 @@ use std::future::Future;
 use std::sync::Arc;
 
 use taskmesh_contract::{
-    AdmissionVerdict, CpuExecutor, GovernorError, RunError, Runtime, Snapshot, SubstrateHint,
-    TaskSpec,
+    AdmissionVerdict, CancellationPolicy, CpuExecutor, GovernorError, RunError, Runtime, Snapshot,
+    SubstrateHint, TaskClass, TaskSpec, TopologyConfig,
 };
 use taskmesh_engine::{AdmissionDecision, Governor, PermitId, RequestKey};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{timeout_at, Instant};
 
 use crate::adapters::TokioPermitWaker;
@@ -27,6 +27,7 @@ pub struct TokioRuntime {
     config: RuntimeConfig,
     governor: Arc<Governor>,
     cpu: Arc<dyn CpuExecutor>,
+    substrates: Arc<SubstrateGates>,
 }
 
 impl TokioRuntime {
@@ -35,10 +36,12 @@ impl TokioRuntime {
         governor: Arc<Governor>,
         cpu: Arc<dyn CpuExecutor>,
     ) -> Self {
+        let substrates = Arc::new(SubstrateGates::from_topology(&config.topology));
         Self {
             config,
             governor,
             cpu,
+            substrates,
         }
     }
 
@@ -70,8 +73,15 @@ impl TokioRuntime {
         }
 
         let waker = TokioPermitWaker::new();
+        // `Arc::clone` cannot unsize a concrete `Arc<T>` to `Arc<dyn _>`; the
+        // method form performs the clone-and-unsize coercion in one step.
+        #[allow(
+            clippy::clone_on_ref_ptr,
+            reason = "Arc::clone cannot unsize concrete Arc<T> to Arc<dyn _>"
+        )]
+        let waker_port: Arc<dyn taskmesh_contract::PermitWaker> = waker.clone();
         let key = RequestKey::new(spec.root_operation_id.clone());
-        match self.governor.admit_waitable(spec, key, waker.clone()) {
+        match self.governor.admit_waitable(spec, key, waker_port) {
             AdmissionDecision::Admitted { permit_id } => Ok(permit_id),
             AdmissionDecision::Rejected(verdict) => Err(GovernorError::Rejected(verdict)),
             AdmissionDecision::Queued { ticket } => {
@@ -81,7 +91,7 @@ impl TokioRuntime {
                 // if it was already promoted — so a cancelled-while-queued request
                 // can never linger or strand a promoted-but-unclaimed permit.
                 let mut guard = TicketGuard {
-                    governor: self.governor.clone(),
+                    governor: Arc::clone(&self.governor),
                     ticket: Some(ticket),
                 };
                 let result = self.await_promotion(ticket, &waker, opts).await;
@@ -145,12 +155,31 @@ impl TokioRuntime {
             .await
             .map_err(RunError::Governor)?;
         let _guard = PermitGuard {
-            governor: self.governor.clone(),
+            governor: Arc::clone(&self.governor),
             permit,
         };
+        // Acquire a slot in the substrate's capability pool (topology-sized). Held
+        // for the duration of the work, then dropped. Unlimited pools (slots == 0)
+        // return immediately. On a bounded-wait timeout the `_guard` above still
+        // releases the governor permit.
+        let _gate = self
+            .substrates
+            .acquire(spec.primary_substrate_hint(), &opts)
+            .await
+            .map_err(RunError::Governor)?;
         run().await
-        // `_guard` drops here (success) or on cancellation (future dropped),
-        // releasing the permit exactly once.
+        // `_guard`/`_gate` drop here (success) or on cancellation (future dropped),
+        // releasing the governor permit and substrate slot exactly once.
+    }
+
+    /// Reject a spec whose declared substrate is incompatible with this run path
+    /// (substrate classification is authoritative, not advisory metadata).
+    fn require_hint(spec: &TaskSpec, allowed: &[SubstrateHint]) -> Result<(), GovernorError> {
+        if allowed.contains(&spec.primary_substrate_hint()) {
+            Ok(())
+        } else {
+            Err(GovernorError::Rejected(AdmissionVerdict::MalformedTask))
+        }
     }
 
     // ---- substrate entry points (with options) ----------------------------
@@ -164,12 +193,40 @@ impl TokioRuntime {
     where
         Fut: Future<Output = Result<T, E>> + Send,
     {
-        self.with_permit(
-            spec,
-            opts,
-            || async move { fut.await.map_err(RunError::Task) },
-        )
+        if let Err(e) = Self::require_hint(&spec, &[SubstrateHint::AsyncIo]) {
+            return Err(RunError::Governor(e));
+        }
+        // Cooperative cancellation: honored mid-run only when the class policy
+        // permits it AND a cancel token was supplied. PreSubmitOnly classes
+        // ignore the token once admitted (sync blocking/cpu work cannot be
+        // cooperatively cancelled at all, so this is the only cancellable path).
+        let coop_token = if self.cooperative_cancel(&spec.class) {
+            opts.cancel.clone()
+        } else {
+            None
+        };
+        self.with_permit(spec, opts, move || async move {
+            match coop_token {
+                Some(token) => tokio::select! {
+                    biased;
+                    () = token.cancelled() => Err(RunError::Governor(GovernorError::Cancelled)),
+                    out = fut => out.map_err(RunError::Task),
+                },
+                None => fut.await.map_err(RunError::Task),
+            }
+        })
         .await
+    }
+
+    /// Whether `class` opted into mid-run cooperative cancellation.
+    fn cooperative_cancel(&self, class: &TaskClass) -> bool {
+        matches!(
+            self.config
+                .classes
+                .get(class)
+                .map(|p| p.cancellation_policy),
+            Some(CancellationPolicy::Cooperative | CancellationPolicy::CooperativeWithDeadline)
+        )
     }
 
     pub async fn run_blocking_with<T, E, F>(
@@ -183,6 +240,16 @@ impl TokioRuntime {
         E: Send + 'static,
         T: Send + 'static,
     {
+        if let Err(e) = Self::require_hint(
+            &spec,
+            &[
+                SubstrateHint::BlockingPool,
+                SubstrateHint::LargeStackCapability,
+                SubstrateHint::BackgroundOnly,
+            ],
+        ) {
+            return Err(RunError::Governor(e));
+        }
         self.with_permit(spec, opts, || async move {
             match tokio::task::spawn_blocking(job).await {
                 Ok(Ok(value)) => Ok(value),
@@ -206,11 +273,16 @@ impl TokioRuntime {
         E: Send + 'static,
         T: Send + 'static,
     {
-        let cpu = self.cpu.clone();
+        if let Err(e) = Self::require_hint(&spec, &[SubstrateHint::SharedCpuExecutor]) {
+            return Err(RunError::Governor(e));
+        }
+        let cpu = Arc::clone(&self.cpu);
         self.with_permit(spec, opts, || async move {
             let (tx, rx) = oneshot::channel();
             cpu.spawn(Box::new(move || {
-                let _ = tx.send(job());
+                // The receiver is gone only if the caller already cancelled; the
+                // result is then intentionally not delivered.
+                let _delivered = tx.send(job());
             }));
             match rx.await {
                 Ok(Ok(value)) => Ok(value),
@@ -322,6 +394,70 @@ impl Drop for TicketGuard {
     fn drop(&mut self) {
         if let Some(ticket) = self.ticket {
             self.governor.abandon(ticket);
+        }
+    }
+}
+
+/// Per-substrate capability pools sized from [`TopologyConfig`]. Each pool caps
+/// concurrent work on a substrate; a slot count of `0` means *unlimited* (no
+/// gate), consistent with the `0 == no limit` convention used by resource
+/// budgets. `AsyncIo` is intentionally ungated (async is unbounded by design)
+/// and `SharedCpuExecutor` is bounded by the CPU executor's own worker count.
+struct SubstrateGates {
+    blocking: Option<Arc<Semaphore>>,
+    large_stack: Option<Arc<Semaphore>>,
+    local_runtime: Option<Arc<Semaphore>>,
+    maintenance: Option<Arc<Semaphore>>,
+}
+
+impl SubstrateGates {
+    fn from_topology(topology: &TopologyConfig) -> Self {
+        let gate = |n: usize| (n > 0).then(|| Arc::new(Semaphore::new(n)));
+        Self {
+            blocking: gate(topology.blocking_threads),
+            large_stack: gate(topology.large_stack_slots),
+            local_runtime: gate(topology.local_runtime_slots),
+            maintenance: gate(topology.maintenance_workers),
+        }
+    }
+
+    fn gate_for(&self, hint: SubstrateHint) -> Option<&Arc<Semaphore>> {
+        match hint {
+            SubstrateHint::BlockingPool => self.blocking.as_ref(),
+            SubstrateHint::LargeStackCapability => self.large_stack.as_ref(),
+            SubstrateHint::LocalRuntime => self.local_runtime.as_ref(),
+            SubstrateHint::BackgroundOnly => self.maintenance.as_ref(),
+            // AsyncIo / SharedCpuExecutor are ungated (async unbounded; CPU bounded
+            // by the executor). `#[non_exhaustive]`: future substrates also ungated.
+            _ => None,
+        }
+    }
+
+    /// Acquire a slot for `hint`, held for the work's duration. `None` when the
+    /// substrate is unlimited. Honors the bounded acquire wait in `opts`.
+    async fn acquire(
+        &self,
+        hint: SubstrateHint,
+        opts: &SubmitOptions,
+    ) -> Result<Option<OwnedSemaphorePermit>, GovernorError> {
+        let Some(sem) = self.gate_for(hint) else {
+            return Ok(None);
+        };
+        let sem = Arc::clone(sem);
+        match opts.acquire_timeout {
+            None => Ok(Some(
+                sem.acquire_owned().await.expect("substrate semaphore open"),
+            )),
+            Some(deadline) => {
+                match timeout_at(Instant::now() + deadline, sem.acquire_owned()).await {
+                    Ok(permit) => Ok(Some(permit.expect("substrate semaphore open"))),
+                    Err(_) => Err(GovernorError::Rejected(
+                        AdmissionVerdict::PermitAcquireTimedOut {
+                            retry_after_ms: None,
+                        },
+                    )),
+                }
+            }
         }
     }
 }

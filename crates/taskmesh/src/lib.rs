@@ -2,10 +2,10 @@
 //!
 //! This crate is the host on the driving side of the hexagon. It wires the pure
 //! governance engine (`taskmesh-engine`) to Tokio: it implements the [`Runtime`]
-//! driving port as [`TokioRuntime`], supplies the default [`CpuExecutor`]
-//! (the blocking pool) and the [`PermitWaker`] (Tokio `Notify`), and adds the
-//! cancel/deadline adapter. The Rayon CPU executor plugs in via the same port
-//! without this crate depending on it.
+//! driving port as [`TokioRuntime`], supplies the default [`ext::CpuExecutor`]
+//! (the blocking pool) and the [`ext::PermitWaker`] (Tokio `Notify`), and adds
+//! the cancel/deadline adapter. The Rayon CPU executor plugs in via the same
+//! port without this crate depending on it.
 //!
 //! ```no_run
 //! use taskmesh::{Builder, ClassPolicy, ResourceBudget, Runtime, TaskClass, TaskSpec, TopologyConfig};
@@ -92,9 +92,11 @@ pub use taskmesh_contract::{
 
 // ---- ext: advanced integrator surface -------------------------------------
 
-/// Extension points for advanced integrators. Everyday SDK usage never needs
-/// this module; it exposes the driven ports (to write custom adapters), the
-/// default host CPU executor, and direct access to the governance engine.
+/// Extension points for advanced integrators.
+///
+/// Everyday SDK usage never needs this module; it exposes the driven ports (to
+/// write custom adapters), the default host CPU executor, and direct access to
+/// the governance engine.
 pub mod ext {
     /// Driven ports: implement these to plug in a custom substrate or clock.
     pub use taskmesh_contract::{Clock, CpuExecutor, ManualClock, PermitWaker, SystemClock};

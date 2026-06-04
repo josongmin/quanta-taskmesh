@@ -29,7 +29,8 @@ impl MemoryUnitScale {
             return 0;
         }
         let units = bytes.div_ceil(self.bytes_per_unit);
-        units.min(u32::MAX as u64) as u32
+        // Saturate at u32::MAX; the min guarantees the conversion never truncates.
+        u32::try_from(units.min(u64::from(u32::MAX))).unwrap_or(u32::MAX)
     }
 }
 

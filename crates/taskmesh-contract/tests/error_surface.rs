@@ -8,7 +8,9 @@ fn governor_error_is_display_and_error() {
         class: TaskClass::new("x"),
     });
     assert!(e.to_string().contains("unknown class"));
-    let _dyn: &dyn Error = &e;
+    // Coerces to a trait object — proves the `Error` impl exists.
+    let dyn_err: &dyn Error = &e;
+    assert!(!dyn_err.to_string().is_empty());
 }
 
 #[test]

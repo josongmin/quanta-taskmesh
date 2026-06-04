@@ -51,8 +51,9 @@ async fn cancellation_token_fired_before_submit_rejects() {
     let opts = SubmitOptions::unbounded().with_cancel(token.clone());
     token.cancel();
 
+    let io_spec = TaskSpec::io(TaskClass::new("c")).operation("op");
     let err = rt
-        .run_io_with(spec(), opts, async { Ok::<i32, ()>(1) })
+        .run_io_with(io_spec, opts, async { Ok::<i32, ()>(1) })
         .await
         .expect_err("token fired");
     assert!(matches!(

@@ -187,10 +187,13 @@ match runtime.run_blocking(spec, job).await {
         AdmissionVerdict::UnknownClass { class } => { /* 미등록 클래스 — default-admit 안 함 */ }
         AdmissionVerdict::QueueFull { retry_after_ms }
         | AdmissionVerdict::CpuSaturated { retry_after_ms }
-        | AdmissionVerdict::MemorySaturated { retry_after_ms } => {
+        | AdmissionVerdict::MemorySaturated { retry_after_ms }
+        | AdmissionVerdict::SubstratePoolTimedOut { retry_after_ms } => {
             // retry_after_ms 만큼 backoff 후 재시도
             let _ = retry_after_ms;
         }
+        AdmissionVerdict::SubstrateMismatch => { /* run path ↔ hint 불일치 */ }
+        AdmissionVerdict::MalformedTask => { /* 0-stage / stage class 불일치 / reduce 누락 */ }
         other => { /* ClassDisabled, RuntimeUnavailable 등 */ let _ = other; }
     },
 
@@ -236,16 +239,26 @@ for s in &snap.substrates {
 
 1. **substrate 분류는 권위적이다.** 각 `run_*`는 spec의 substrate hint와 일치해야 한다.
    `run_io`=`AsyncIo`, `run_blocking`=`BlockingPool`/`LargeStackCapability`/`BackgroundOnly`,
-   `run_cpu`=`SharedCpuExecutor`, `run_local`=`LocalRuntime`. 불일치는 `MalformedTask`로 reject.
+   `run_cpu`=`SharedCpuExecutor`, `run_local`=`LocalRuntime`. 불일치는 `SubstrateMismatch`로 reject.
 2. **topology slot은 실제 capability-pool 상한이다.** `blocking_threads`/`large_stack_slots`/
-   `local_runtime_slots`/`maintenance_workers`는 해당 substrate 동시성을 제한한다. `0 = 무제한`.
+   `local_runtime_slots`/`maintenance_workers` 및 topology-sized CPU 풀은 해당 substrate 동시성을
+   제한한다. `0 = 무제한`. 풀이 가득 차면 `SubstratePoolTimedOut`로 backpressure(거버너 입장 큐 대기
+   `PermitAcquireTimedOut`와 구분). `Blocking`/`LargeStack`/`Background`는 blocking executor를 공유하되
+   capability pool은 별도다.
 3. **fan-out reduce는 admission에서 강제된다.** reduce policy 없는 fan-out stage는 `MalformedTask`.
+   0-stage spec과 stage별 class 불일치도 `MalformedTask`로 reject.
 4. **fairness는 tier 단위 discipline이다.** 한 tier(best-effort 여부) 안의 클래스는 같은 discipline을
    써야 하며, 혼합 시 `build()`가 거부한다. (weight/quantum/slack 등 파라미터는 클래스별로 달라도 됨.)
-5. **cancellation은 정책을 따른다.** `Cooperative`/`CooperativeWithDeadline` 클래스의 `run_io`는
-   토큰으로 mid-run 취소(→`GovernorError::Cancelled`)된다. blocking/cpu(동기)는 pre-submit only.
-6. **`LeakDetecting` 클래스만 leak sweep으로 회수**된다.
-7. **child→root 귀속:** `child_of(root).operation(name)`는 root를 유지한다 (operation은 root를
+   `DeficitRoundRobin`은 deficit 커서로 quantum에 비례해 라운드로빈한다.
+5. **cancellation은 정책을 따른다.** `Cooperative`/`CooperativeWithDeadline` 클래스는
+   `run_io`/`run_local`/`run_cpu` 모두에서 토큰으로 mid-run 취소(→`GovernorError::Cancelled`)된다
+   (`run_cpu`는 stalled `CpuExecutor`에서도 탈출). `CooperativeWithDeadline`는 추가로
+   `SubmitOptions::deadline`을 발효(→`GovernorError::DeadlineExceeded`); plain `Cooperative`는 무시.
+6. **`LeakDetecting` 클래스만 leak sweep으로 회수**되며, downward `reconcile_memory`는 예산을 풀고
+   대기 작업을 promote한다.
+7. **정책 검증은 fail-closed다.** 불가능한 budget·mixed-tier fairness·잘못된 memory scaling 등은
+   `Builder::build`/`Governor::new`에서 거부되며 런타임 admit로 미루지 않는다.
+8. **child→root 귀속:** `child_of(root).operation(name)`는 root를 유지한다 (operation은 root를
    재설정하지 않음).
 8. `checkpoint_policy`는 host가 hook point에서 inspect하는 **메타데이터**다(엔진 강제 아님).
 

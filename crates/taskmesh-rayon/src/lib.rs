@@ -21,23 +21,38 @@ pub struct RayonCpuExecutor {
 
 impl RayonCpuExecutor {
     /// Build a pool with an explicit worker count (clamped to at least 1).
-    pub fn new(workers: usize) -> Self {
+    /// Returns an error instead of panicking if the OS cannot create the pool,
+    /// so a host `Builder` can stay fail-closed.
+    pub fn try_new(workers: usize) -> Result<Self, rayon::ThreadPoolBuildError> {
         let pool = ThreadPoolBuilder::new()
             .num_threads(workers.max(1))
             .thread_name(|i| format!("taskmesh-cpu-{i}"))
-            .build()
-            .expect("rayon pool must build");
-        Self {
+            .build()?;
+        Ok(Self {
             pool: Arc::new(pool),
-        }
+        })
+    }
+
+    /// Build a pool with an explicit worker count, panicking on failure. Prefer
+    /// [`RayonCpuExecutor::try_new`] on a fail-closed construction path.
+    pub fn new(workers: usize) -> Self {
+        Self::try_new(workers).expect("rayon pool must build")
+    }
+
+    /// Fallible topology-derived constructor (see [`RayonCpuExecutor::try_new`]).
+    pub fn try_from_topology(
+        topology: &TopologyConfig,
+    ) -> Result<Self, rayon::ThreadPoolBuildError> {
+        let available = available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+        Self::try_new(topology.resolved_cpu_workers(available))
     }
 
     /// Build a pool whose worker count is derived from the runtime topology:
     /// `available_parallelism() - reserve_cores`, clamped to
-    /// `[min_workers, max_workers]` (T09).
+    /// `[min_workers, max_workers]` (T09). Panics on pool-build failure; prefer
+    /// [`RayonCpuExecutor::try_from_topology`] on a fail-closed path.
     pub fn from_topology(topology: &TopologyConfig) -> Self {
-        let available = available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-        Self::new(topology.resolved_cpu_workers(available))
+        Self::try_from_topology(topology).expect("rayon pool must build")
     }
 
     /// Wrap an already-built shared pool.

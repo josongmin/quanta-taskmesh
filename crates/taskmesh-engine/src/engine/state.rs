@@ -122,6 +122,10 @@ pub struct GovernedState {
     pub memory_units_held: u32,
     /// WFQ global virtual time, advanced on each dispatch.
     pub virtual_time: u128,
+    /// DRR active-class ring cursor: the class currently being served. Persists
+    /// across promotions so a quantum-N class is served ~N times before the ring
+    /// advances (proportional service, not priority-by-quantum).
+    pub drr_cursor: Option<TaskClass>,
 }
 
 impl GovernedState {

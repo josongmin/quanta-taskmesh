@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -75,8 +76,14 @@ def _run_semgrep(config: Path, target_dir: Path) -> set[str]:
     return ids
 
 
+# Skip only for local convenience when semgrep is absent. Under CI the suite must
+# NOT silently skip — a broken runner that drops semgrep would otherwise go green
+# without verifying any rule. So in CI a missing binary is a hard failure.
+if shutil.which("semgrep") is None and os.environ.get("CI"):
+    raise RuntimeError("semgrep is required in CI but was not found on PATH")
+
 pytestmark = pytest.mark.skipif(
-    shutil.which("semgrep") is None, reason="semgrep not installed"
+    shutil.which("semgrep") is None, reason="semgrep not installed (local only)"
 )
 
 

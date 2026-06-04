@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use taskmesh::ext::*;
 use taskmesh::*;
 
 fn cls(name: &str) -> TaskClass {

@@ -35,18 +35,77 @@ mod builder;
 mod executor;
 mod runtime;
 
+// ---- public SDK surface ---------------------------------------------------
+//
+// The everyday surface: the builder, the runtime handle, the `Runtime` driving
+// port, the frozen task/policy/topology vocabulary, verdicts, and observation
+// types. One crate to depend on; engine internals live under `ext`.
+
 pub use builder::Builder;
-pub use executor::{BlockingPoolCpuExecutor, SubmitOptions};
+pub use executor::SubmitOptions;
 pub use runtime::TokioRuntime;
+pub use tokio_util::sync::CancellationToken;
 
-// Re-export the frozen contract surface so callers depend on one crate.
-pub use taskmesh_contract::*;
-
-// Re-export the governance engine surface callers need (advanced governance).
-pub use taskmesh_engine::{
-    builtin_records, AdmissionDecision, Governor, LeakSweepReport, PermitId, PolicySet, RequestKey,
-    RootAttribution, Ticket, BUILTIN_SUBSTRATES, DEFAULT_LEAK_STALE_MS,
+pub use taskmesh_contract::{
+    // driving port, outcomes, observation, resolved config
+    AdmissionVerdict,
+    // semantic policy
+    CancellationPolicy,
+    CheckpointPolicy,
+    ClassPolicy,
+    ClassSnapshot,
+    // task description (product-neutral)
+    ClassificationRationale,
+    // worker governance (topology / resources)
+    CpuMode,
+    CpuPoolConfig,
+    DeterministicReducePolicy,
+    DuplicateMergePolicy,
+    ErrorAggregationPolicy,
+    FairnessPolicy,
+    GovernorError,
+    MemoryOvercommitPolicy,
+    MemoryPermitMode,
+    MemoryReleasePolicy,
+    MemoryUnitScale,
+    OverflowPolicy,
+    PartialResultOrdering,
+    PermitCost,
+    PlanSource,
+    ResourceBudget,
+    RetryAfterPolicy,
+    RunError,
+    Runtime,
+    RuntimeConfig,
+    Snapshot,
+    StageDescriptor,
+    SubstrateHint,
+    SubstrateKind,
+    SubstrateRecord,
+    TaskClass,
+    TaskScope,
+    TaskSpec,
+    TaskStage,
+    TieBreakPolicy,
+    TopologyConfig,
 };
 
-// The cancellation primitive used by `SubmitOptions`.
-pub use tokio_util::sync::CancellationToken;
+// ---- ext: advanced integrator surface -------------------------------------
+
+/// Extension points for advanced integrators. Everyday SDK usage never needs
+/// this module; it exposes the driven ports (to write custom adapters), the
+/// default host CPU executor, and direct access to the governance engine.
+pub mod ext {
+    /// Driven ports: implement these to plug in a custom substrate or clock.
+    pub use taskmesh_contract::{Clock, CpuExecutor, ManualClock, PermitWaker, SystemClock};
+
+    /// The default host CPU executor adapter (Tokio blocking pool).
+    pub use crate::executor::BlockingPoolCpuExecutor;
+
+    /// The governance engine and its admission primitives, for embedding in a
+    /// non-Tokio host or driving admission directly.
+    pub use taskmesh_engine::{
+        builtin_records, AdmissionDecision, Governor, LeakSweepReport, PermitId, PolicySet,
+        RequestKey, RootAttribution, Ticket, BUILTIN_SUBSTRATES, DEFAULT_LEAK_STALE_MS,
+    };
+}

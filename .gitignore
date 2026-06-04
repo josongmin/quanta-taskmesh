@@ -1,5 +1,34 @@
-/target
-Cargo.lock
-.DS_Store
+# Rust build artifacts
+/target/
+
+# Lockfile is committed for reproducible CI/bench (workspace root).
+# Do not add: Cargo.lock
+
+# Python (uv, pytest, ruff, tools/pm)
+.venv/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local benchmark / measurement output (regenerate via just bench-*)
+bench-results/
+
+# Profiling / coverage (local only)
+*.profraw
+coverage/
+llvm-cov/
+
+# Optional local semgrep cache
+.semgrep/

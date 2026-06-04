@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use taskmesh::ext::*;
 use taskmesh::*;
 
 fn single_slot_runtime() -> TokioRuntime {

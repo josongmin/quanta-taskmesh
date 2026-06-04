@@ -73,6 +73,65 @@ fn concurrent_admit_release_preserves_safety() {
     });
 }
 
+/// Models the promote-vs-abandon race the host `TicketGuard` protects: one
+/// thread releases a permit (which *promotes* the single queued ticket → grants
+/// it, unclaimed), while the waiting thread *abandons* the ticket (cancel /
+/// acquire-timeout). However they interleave, the promoted permit must be
+/// released exactly once — never leaked (stuck inflight) and never double-freed.
+fn promote_on_release(state: &Mutex<QState>) {
+    let mut s = state.lock().unwrap();
+    if s.queued {
+        s.queued = false;
+        s.granted = true; // promoted, awaiting claim
+        s.inflight += 1;
+    }
+}
+
+fn abandon(state: &Mutex<QState>) {
+    let mut s = state.lock().unwrap();
+    if s.granted {
+        // Promoted-but-unclaimed: abandoning releases it.
+        s.granted = false;
+        s.inflight -= 1;
+    } else if s.queued {
+        // Still queued: just drop it from the queue.
+        s.queued = false;
+    }
+}
+
+#[derive(Default)]
+struct QState {
+    inflight: i64,
+    queued: bool,
+    granted: bool,
+}
+
+#[test]
+fn promote_and_abandon_never_leak_or_double_free() {
+    loom::model(|| {
+        let state = Arc::new(Mutex::new(QState {
+            inflight: 0,
+            queued: true,
+            granted: false,
+        }));
+
+        let s1 = state.clone();
+        let promoter = thread::spawn(move || promote_on_release(&s1));
+        let s2 = state.clone();
+        let abandoner = thread::spawn(move || abandon(&s2));
+        promoter.join().unwrap();
+        abandoner.join().unwrap();
+
+        let s = state.lock().unwrap();
+        assert_eq!(
+            s.inflight, 0,
+            "promoted permit must not leak or double-free"
+        );
+        assert!(!s.queued, "ticket must not remain queued");
+        assert!(!s.granted, "no unclaimed promoted permit may remain");
+    });
+}
+
 #[test]
 fn admit_then_concurrent_release_is_consistent() {
     // One thread holds a permit while another admits+releases — checks the

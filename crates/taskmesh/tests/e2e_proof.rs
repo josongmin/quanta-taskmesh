@@ -6,6 +6,7 @@
 use std::rc::Rc;
 use std::time::Duration;
 
+use taskmesh::ext::*;
 use taskmesh::*;
 
 fn retrieval_runtime() -> TokioRuntime {
@@ -29,6 +30,18 @@ fn spec(op: &str) -> TaskSpec {
     TaskSpec::blocking(TaskClass::new("retrieval")).operation(op.to_string())
 }
 
+/// Poll the snapshot until `pred` holds for `class`, up to a generous budget.
+/// Replaces fixed sleeps so sequencing assertions are robust on slow runners.
+async fn wait_until(rt: &TokioRuntime, class: &str, pred: impl Fn(&ClassSnapshot) -> bool) {
+    for _ in 0..500 {
+        if pred(&rt.snapshot().classes[&TaskClass::new(class.to_string())]) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("condition for class {class} never reached (5s)");
+}
+
 /// THE hell-gate: a second request must queue while the first holds the only
 /// slot, then be promoted and completed once the first releases — all through
 /// the public async facade, across real worker threads.
@@ -49,23 +62,13 @@ async fn queued_request_is_promoted_and_completed_end_to_end() {
     });
 
     // Let A get admitted (inflight == 1) before B arrives.
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(
-        rt.snapshot().classes[&TaskClass::new("retrieval")].inflight,
-        1,
-        "A must hold the only slot"
-    );
+    wait_until(&rt, "retrieval", |c| c.inflight == 1).await;
 
     // Task B must queue (slot full), park on its waker, and wait.
     let rt_b = rt.clone();
     let b = tokio::spawn(async move { rt_b.run_blocking(spec("op-b"), || Ok::<_, ()>("b")).await });
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(
-        rt.snapshot().classes[&TaskClass::new("retrieval")].queued,
-        1,
-        "B must be queued behind A"
-    );
+    wait_until(&rt, "retrieval", |c| c.queued == 1).await;
 
     // Release A -> release() promotes B -> waker fires -> B claims, runs, finishes.
     release_first.send(()).unwrap();

@@ -1,0 +1,3 @@
+{
+  "builtins": ["cpu", "blocking", "large_stack", "maintenance", "local_runtime"]
+}

@@ -1,0 +1,24 @@
+[package]
+name = "taskmesh-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Governance core for taskmesh: admission, fairness, memory, composite, inventory."
+
+[dependencies]
+taskmesh-contract = { workspace = true }
+parking_lot = { workspace = true }
+
+[lints.rust]
+# `loom` is a deliberate model-check cfg, set via RUSTFLAGS for the loom test.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+proptest = { workspace = true }
+
+# Concurrency model-checking (ADR 9000 / P6). Only compiled under `--cfg loom`;
+# normal builds/tests never pull it in.
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"

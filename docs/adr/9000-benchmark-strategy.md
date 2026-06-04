@@ -203,12 +203,15 @@ crates/
 - P2 instruction-count — `benches/iai_governance.rs`(iai-callgrind, `iai` feature·Linux/
   valgrind). admit_release/reject/snapshot의 **결정적 명령어 카운트**. alloc track은
   `tools/bench-gate.sh`가 baseline(5 allocs/op) 회귀를 cross-platform으로 게이트.
-- P4 — Poisson(`Exp`) + Zipf 도착, seed 고정. **trace record/replay** 구현
+- P4 — Poisson(`Exp`) + Zipf 도착, seed 고정. **trace record/replay**
   (`workload::{trace_to_csv,trace_from_csv}`): 무손실 round-trip + replay가 시뮬레이션을
-  byte-identical 재현. (MMPP burst는 여전히 미구현.)
-- P6 — **loom 전수 인터리빙**(`taskmesh-engine/tests/loom_governance.rs`)으로 admit/release
-  동시성 설계(Relaxed id-gen + single mutex) 안전성 검증 + **실제 Governor 스트레스**
-  (`concurrency_stress.rs`: 8스레드 permit 유일성, max_inflight 캡 불변).
+  byte-identical 재현. **MMPP burst**(`generate_bursty`, 2-state Markov-modulated
+  Poisson — on/off 위상 + 지수 dwell) + 과분산 통계(`interarrival_cv`)로 클러스터 도착
+  재현(burst CV>1.3 > Poisson CV≈1).
+- P6 — **loom 전수 인터리빙**(`loom_governance.rs`) + **shuttle 랜덤 스케줄**
+  (`shuttle_governance.rs`, 더 큰 thread/op 상태)로 admit/release 동시성 설계(Relaxed
+  id-gen + single mutex) 안전성 검증 + **실제 Governor 스트레스**(`concurrency_stress.rs`:
+  8스레드 permit 유일성, max_inflight 캡 불변).
 - P5 — goodput / Jain index / reject ratio / tail amplification. fairness는 *promotion
   순서의 윈도우*로 채점(최종 합계가 아니라) → WFQ 4:1을 [40,10]으로 검증. equal-weight
   Jain≥0.95를 벤치에서 게이트.
@@ -220,15 +223,15 @@ crates/
 overload 4×에서 큐가 depth에 고정되고 reject가 74%를 흡수(fail-closed).
 
 - P8 — `.github/workflows/bench.yml`: alloc-gate(blocking) + instruction-count(iai,
-  baseline 캐시 비교) + loom 잡. Justfile `bench`/`bench-gate`/`bench-iai`/`loom` 타겟,
-  `gate`에 alloc 게이트 편입.
+  baseline 캐시 비교) + loom + shuttle 잡 + **시계열 대시보드**(github-action-benchmark
+  → gh-pages, alert-threshold 150%·fail-on-alert) + **flamegraph-on-regress**(회귀 시
+  flamegraph + `perf stat` 하드웨어 카운터를 아티팩트로 첨부). Justfile
+  `bench`/`bench-gate`/`bench-iai`/`loom` 타겟, `gate`에 alloc 게이트 편입.
 
 **미구현 / deferred** (이 ADR이 기술하나 아직 코드에 없음 — 혼동 방지)
 
-- P4 MMPP/burst 도착, P5 work-conservation 지표 — **Phase 2**.
-- P7 환경 위생(core pinning/isolcpus) + 전용 Linux 러너 — 러너 설정. **Phase 3**.
-- P8 시계열 대시보드(github-action-benchmark/bencher.dev), flamegraph-on-regress — **Phase 3**.
-- reduce 결정성 proptest — 진행 중(엔진 crate, proptest dep 추가됨).
+- P7 환경 위생(core pinning/isolcpus/governor pin/ASLR-off) + 전용 Linux 러너 — 순수
+  러너 프로비저닝(GitHub-hosted 러너로는 불가). 권위 있는 *절대* 수치 전용. **인프라/운영**.
 
 SLO 카탈로그 중 현재 *게이트로 강제*되는 것: 큐 bound(fail-closed), 보존성, latency
 드롭 0, equal-weight Jain≥0.95, USL 복원, alloc/op ≤ baseline, 동시성 안전성(loom +

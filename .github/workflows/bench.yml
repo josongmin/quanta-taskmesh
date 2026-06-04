@@ -68,3 +68,59 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Randomized schedules over larger thread/op state (ADR 9000 / P6).
       - run: RUSTFLAGS="--cfg shuttle" cargo test -p taskmesh-engine --test shuttle_governance --release
+
+  trend:
+    name: wall-clock trend dashboard + flamegraph-on-regress (ADR 9000 / P8)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # auto-push the timeseries to gh-pages (main only)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Emit the libtest "bench" format github-action-benchmark understands.
+      - name: Run criterion hot-path benches
+        run: |
+          cargo bench -p taskmesh-bench --bench admit_release -- --output-format bencher \
+            | tee bench-output.txt
+          cargo bench -p taskmesh-bench --bench governance_tax -- --output-format bencher \
+            | tee -a bench-output.txt
+
+      # Timeseries dashboard (gh-pages) + regression alert. On main it pushes the
+      # data point; on PRs it only compares and comments. fail-on-alert trips the
+      # flamegraph step below.
+      - name: Store + alert on regression
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: taskmesh wall-clock
+          tool: cargo
+          output-file-path: bench-output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench
+          auto-push: ${{ github.ref == 'refs/heads/main' }}
+          alert-threshold: '150%'
+          comment-on-alert: true
+          fail-on-alert: true
+
+      # On a detected regression, capture a flamegraph + hardware counters so the
+      # PR has the evidence attached, not just a red X (ADR 9000 / P8).
+      - name: Flamegraph + perf counters on regression
+        if: failure()
+        run: |
+          sudo apt-get update && sudo apt-get install -y linux-tools-common linux-tools-generic
+          sudo sysctl -w kernel.perf_event_paranoid=1 || true
+          cargo install flamegraph --locked || true
+          cargo flamegraph --bench admit_release -p taskmesh-bench -o flamegraph.svg -- --bench || true
+          perf stat -e instructions,cache-misses,branch-misses \
+            cargo bench -p taskmesh-bench --bench admit_release -- --bench 2> perf-stat.txt || true
+      - name: Upload regression profile
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-profile
+          path: |
+            flamegraph.svg
+            perf-stat.txt
+          if-no-files-found: ignore

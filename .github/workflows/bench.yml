@@ -58,3 +58,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Exhaustively explore admit/release interleavings (ADR 9000 / P6).
       - run: RUSTFLAGS="--cfg loom" cargo test -p taskmesh-engine --test loom_governance --release
+
+  shuttle:
+    name: concurrency model-check (shuttle)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Randomized schedules over larger thread/op state (ADR 9000 / P6).
+      - run: RUSTFLAGS="--cfg shuttle" cargo test -p taskmesh-engine --test shuttle_governance --release

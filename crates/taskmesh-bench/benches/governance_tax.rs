@@ -1,13 +1,16 @@
 //! End-to-end governance tax (ADR 9000 / P1 + P9): the cost a governed
-//! `run_blocking` adds over raw `spawn_blocking`, with a semaphore-only governor
-//! as a credible middle baseline. Task body is a no-op so the delta is pure
-//! control-plane overhead.
+//! `run_blocking` adds over raw `spawn_blocking`, against credible baselines —
+//! a bare semaphore and tower's `ConcurrencyLimit` middleware. Task body is a
+//! no-op so the delta is pure control-plane overhead.
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use taskmesh::{Builder, ClassPolicy, ResourceBudget, Runtime, TaskClass, TaskSpec, TokioRuntime};
 use tokio::sync::Semaphore;
+use tower::limit::ConcurrencyLimit;
+use tower::{service_fn, Service, ServiceExt};
 
 fn build_runtime() -> TokioRuntime {
     Builder::new()
@@ -63,6 +66,28 @@ fn governance_tax(c: &mut Criterion) {
                 let permit = sem.acquire_owned().await.expect("permit");
                 tokio::task::spawn_blocking(|| ()).await.expect("join");
                 drop(permit);
+            }
+        });
+    });
+
+    // Industry-standard middleware: tower's ConcurrencyLimit over a no-op service.
+    let limited = ConcurrencyLimit::new(
+        service_fn(|_: ()| async {
+            tokio::task::spawn_blocking(|| ()).await.expect("join");
+            Ok::<(), Infallible>(())
+        }),
+        1_000_000,
+    );
+    group.bench_function("tower_concurrency_limit", |b| {
+        b.to_async(&rt).iter(|| {
+            let mut svc = limited.clone();
+            async move {
+                svc.ready()
+                    .await
+                    .expect("ready")
+                    .call(())
+                    .await
+                    .expect("call");
             }
         });
     });

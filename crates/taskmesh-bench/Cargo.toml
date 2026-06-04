@@ -26,6 +26,8 @@ iai = ["dep:iai-callgrind"]
 [dev-dependencies]
 criterion = { workspace = true, features = ["async_tokio"] }
 tokio = { workspace = true }
+# Industry-standard middleware baseline (ADR 9000 / P9).
+tower = { version = "0.5", features = ["limit", "util"] }
 
 # Instruction-count gate (Linux/valgrind only; built with `--features iai`).
 [[bench]]

@@ -11,14 +11,18 @@ taskmesh-contract = { workspace = true }
 parking_lot = { workspace = true }
 
 [lints.rust]
-# `loom` is a deliberate model-check cfg, set via RUSTFLAGS for the loom test.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+# `loom`/`shuttle` are deliberate model-check cfgs, set via RUSTFLAGS.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)', 'cfg(shuttle)'] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
 proptest = { workspace = true }
 
-# Concurrency model-checking (ADR 9000 / P6). Only compiled under `--cfg loom`;
-# normal builds/tests never pull it in.
+# Concurrency model-checking (ADR 9000 / P6). Only compiled under the matching
+# `--cfg`; normal builds/tests never pull these in. loom = exhaustive (small
+# state); shuttle = randomized (larger state / more threads).
 [target.'cfg(loom)'.dev-dependencies]
 loom = "0.7"
+
+[target.'cfg(shuttle)'.dev-dependencies]
+shuttle = "0.7"

@@ -390,10 +390,7 @@ fn accounting_conservation_under_randomized_ops() {
         let do_admit = held.is_empty() || lcg.below(100) < 60;
         if do_admit {
             let op = format!("op-{step}");
-            match g.admit(
-                &TaskSpec::blocking(c.clone()).operation(op.clone()),
-                RequestKey::new(op),
-            ) {
+            match g.admit(&TaskSpec::blocking(c.clone()).operation(op.clone())) {
                 AdmissionDecision::Admitted { permit_id } => held.push(permit_id),
                 other => panic!("unbounded admit must succeed at step {step}: {other:?}"),
             }
@@ -452,7 +449,7 @@ fn composite_pipeline_attribution_recursion_and_reduce() {
     ] {
         let child = TaskSpec::base(cls("worker"), hint)
             .child_of("root-1", TaskStage::new(label.to_string()));
-        match g.admit(&child, RequestKey::new("root-1")) {
+        match g.admit(&child) {
             AdmissionDecision::Admitted { permit_id } => permits.push(permit_id),
             other => panic!("child must admit: {other:?}"),
         }
@@ -465,7 +462,7 @@ fn composite_pipeline_attribution_recursion_and_reduce() {
     // A fourth child re-entering an already-active stage ("io") is a recursive loop.
     let dup = TaskSpec::io(cls("worker")).child_of("root-1", TaskStage::new("io"));
     assert!(matches!(
-        g.admit(&dup, RequestKey::new("root-1")),
+        g.admit(&dup),
         AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission)
     ));
 
@@ -514,10 +511,7 @@ fn memory_reconcile_lifecycle_is_consistent() {
     let h = cls("h");
     let mem = |rt: &TokioRuntime| rt.snapshot().classes[&cls("h")].memory_units_held;
 
-    let p = match g.admit(
-        &TaskSpec::blocking(h.clone()).operation("op"),
-        RequestKey::new("op"),
-    ) {
+    let p = match g.admit(&TaskSpec::blocking(h.clone()).operation("op")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };

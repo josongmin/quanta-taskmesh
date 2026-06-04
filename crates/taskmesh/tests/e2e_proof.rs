@@ -131,19 +131,19 @@ fn saturation_and_retry_after_via_governor() {
     let g = rt.governor();
 
     // Fill the one inflight slot.
-    let held = match g.admit(&spec("a"), RequestKey::new("a")) {
+    let held = match g.admit(&spec("a")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("{other:?}"),
     };
     // Fill the queue (depth 8).
     for i in 0..8 {
         assert!(matches!(
-            g.admit(&spec(&format!("q{i}")), RequestKey::new(format!("q{i}"))),
+            g.admit(&spec(&format!("q{i}"))),
             AdmissionDecision::Queued { .. }
         ));
     }
     // Queue full -> QueueFull with an adaptive retry-after hint.
-    match g.admit(&spec("overflow"), RequestKey::new("overflow")) {
+    match g.admit(&spec("overflow")) {
         AdmissionDecision::Rejected(verdict @ AdmissionVerdict::QueueFull { .. }) => {
             assert!(verdict.retry_after_ms().is_some(), "adaptive hint present");
         }
@@ -167,13 +167,10 @@ fn governance_invariants_via_governor() {
         .unwrap();
     let g = rt.governor();
     let big = TaskSpec::blocking(TaskClass::new("heavy")).operation("h1");
-    assert!(matches!(
-        g.admit(&big, RequestKey::new("h1")),
-        AdmissionDecision::Admitted { .. }
-    ));
+    assert!(matches!(g.admit(&big), AdmissionDecision::Admitted { .. }));
     let big2 = TaskSpec::blocking(TaskClass::new("heavy")).operation("h2");
     assert!(matches!(
-        g.admit(&big2, RequestKey::new("h2")),
+        g.admit(&big2),
         AdmissionDecision::Rejected(AdmissionVerdict::MemorySaturated { .. })
     ));
 
@@ -189,7 +186,7 @@ fn governance_invariants_via_governor() {
     let g = rt.governor();
     let child = TaskSpec::blocking(TaskClass::new("worker")).child_of("root", TaskStage::new("p"));
     assert!(matches!(
-        g.admit(&child, RequestKey::new("root")),
+        g.admit(&child),
         AdmissionDecision::Admitted { .. }
     ));
     let root = g.root_attribution("root").expect("root tracked");
@@ -197,7 +194,7 @@ fn governance_invariants_via_governor() {
     assert_eq!(root.cpu_units, 2);
     // Same (root, stage) re-entry is a recursive loop -> reject.
     assert!(matches!(
-        g.admit(&child, RequestKey::new("root")),
+        g.admit(&child),
         AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission)
     ));
 

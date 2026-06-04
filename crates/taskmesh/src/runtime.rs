@@ -17,7 +17,7 @@ use taskmesh_contract::{
     AdmissionVerdict, CancellationPolicy, CpuExecutor, GovernorError, RunError, Runtime, Snapshot,
     SubstrateHint, SubstrateRecord, TaskClass, TaskSpec, TopologyConfig,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PermitId, RequestKey};
+use taskmesh_engine::{AdmissionDecision, Governor, PermitId};
 use tokio::sync::{oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{timeout_at, Instant};
 
@@ -87,8 +87,7 @@ impl TokioRuntime {
             reason = "Arc::clone cannot unsize concrete Arc<T> to Arc<dyn _>"
         )]
         let waker_port: Arc<dyn taskmesh_contract::PermitWaker> = waker.clone();
-        let key = RequestKey::new(spec.root_operation_id.clone());
-        match self.governor.admit_waitable(spec, key, waker_port) {
+        match self.governor.admit_waitable(spec, waker_port) {
             AdmissionDecision::Admitted { permit_id } => Ok(permit_id),
             AdmissionDecision::Rejected(verdict) => Err(GovernorError::Rejected(verdict)),
             AdmissionDecision::Queued { ticket } => {

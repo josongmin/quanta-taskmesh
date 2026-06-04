@@ -29,7 +29,7 @@ fn gov() -> (Governor, Arc<ManualClock>, TaskClass) {
 
 fn admit(g: &Governor) -> PermitId {
     let spec = TaskSpec::blocking(TaskClass::new("c")).operation("op");
-    match g.admit(&spec, RequestKey::new("op")) {
+    match g.admit(&spec) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     }
@@ -95,7 +95,7 @@ fn non_leak_detecting_class_is_not_reaped() {
         clock.clone(),
     );
     let spec = TaskSpec::blocking(TaskClass::new("c")).operation("op");
-    let _p = match g.admit(&spec, RequestKey::new("op")) {
+    let _p = match g.admit(&spec) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };

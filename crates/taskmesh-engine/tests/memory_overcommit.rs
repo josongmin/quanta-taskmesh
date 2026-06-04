@@ -19,7 +19,7 @@ fn gov(resources: ResourceBudget, list: Vec<(&'static str, ClassPolicy)>) -> Gov
 
 fn admit(g: &Governor, class: &str, op: &str) -> AdmissionDecision {
     let spec = TaskSpec::blocking(TaskClass::new(class.to_string())).operation(op.to_string());
-    g.admit(&spec, RequestKey::new(op.to_string()))
+    g.admit(&spec)
 }
 
 #[test]

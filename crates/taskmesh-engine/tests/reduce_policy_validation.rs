@@ -41,7 +41,7 @@ fn sequential_stages_need_no_reduce_policy() {
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use taskmesh_engine::{AdmissionDecision, ManualClock, PolicySet, RequestKey};
+use taskmesh_engine::{AdmissionDecision, ManualClock, PolicySet};
 
 fn gov() -> Governor {
     let mut classes = BTreeMap::new();
@@ -62,7 +62,7 @@ fn admit_rejects_fan_out_without_reduce_policy() {
         .fan_out_stage(TaskStage::new("merge"), SubstrateHint::SharedCpuExecutor)
         .operation("bad-reduce");
     assert!(matches!(
-        g.admit(&bad, RequestKey::new("bad-reduce")),
+        g.admit(&bad),
         AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask)
     ));
 }
@@ -77,8 +77,5 @@ fn admit_accepts_fan_out_with_complete_reduce_policy() {
             DeterministicReducePolicy::keyed("doc_id"),
         )
         .operation("good-reduce");
-    assert!(matches!(
-        g.admit(&good, RequestKey::new("good-reduce")),
-        AdmissionDecision::Admitted { .. }
-    ));
+    assert!(matches!(g.admit(&good), AdmissionDecision::Admitted { .. }));
 }

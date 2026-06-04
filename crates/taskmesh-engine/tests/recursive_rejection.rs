@@ -28,12 +28,12 @@ fn child(root: &str) -> TaskSpec {
 fn recursive_same_root_same_stage_rejects() {
     let g = gov();
     assert!(matches!(
-        g.admit(&child("root-r"), RequestKey::new("root-r")),
+        g.admit(&child("root-r")),
         AdmissionDecision::Admitted { .. }
     ));
     // Re-entry of the same (root, stage) while active is rejected.
     assert!(matches!(
-        g.admit(&child("root-r"), RequestKey::new("root-r")),
+        g.admit(&child("root-r")),
         AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission)
     ));
 }
@@ -42,14 +42,11 @@ fn recursive_same_root_same_stage_rejects() {
 fn root_tasks_never_trip_recursion_guard() {
     let g = gov();
     let root = TaskSpec::blocking(TaskClass::new("worker")).operation("plain");
-    assert!(matches!(
-        g.admit(&root, RequestKey::new("plain")),
-        AdmissionDecision::Admitted { .. }
-    ));
+    assert!(matches!(g.admit(&root), AdmissionDecision::Admitted { .. }));
     // A second independent root op is fine.
     let root2 = TaskSpec::blocking(TaskClass::new("worker")).operation("plain-2");
     assert!(matches!(
-        g.admit(&root2, RequestKey::new("plain-2")),
+        g.admit(&root2),
         AdmissionDecision::Admitted { .. }
     ));
 }
@@ -59,14 +56,8 @@ fn distinct_stages_under_same_root_are_allowed() {
     let g = gov();
     let a = TaskSpec::blocking(TaskClass::new("worker")).child_of("root-x", TaskStage::new("p1"));
     let b = TaskSpec::cpu(TaskClass::new("worker")).child_of("root-x", TaskStage::new("p2"));
-    assert!(matches!(
-        g.admit(&a, RequestKey::new("root-x")),
-        AdmissionDecision::Admitted { .. }
-    ));
-    assert!(matches!(
-        g.admit(&b, RequestKey::new("root-x")),
-        AdmissionDecision::Admitted { .. }
-    ));
+    assert!(matches!(g.admit(&a), AdmissionDecision::Admitted { .. }));
+    assert!(matches!(g.admit(&b), AdmissionDecision::Admitted { .. }));
 }
 
 // --- F3 regression: the queue path must not bypass the recursion guard. ---
@@ -92,18 +83,18 @@ fn queued_recursive_child_is_rejected_not_bypassed() {
     let g = gov_one_slot();
     // Occupy the single slot with a non-recursive root so children must queue.
     let occ = TaskSpec::blocking(TaskClass::new("worker")).operation("occ");
-    let _p = match g.admit(&occ, RequestKey::new("occ")) {
+    let _p = match g.admit(&occ) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };
     // First recursive child queues (and now occupies the recursion guard).
     assert!(matches!(
-        g.admit(&child("root"), RequestKey::new("root")),
+        g.admit(&child("root")),
         AdmissionDecision::Queued { .. }
     ));
     // Second identical child must be rejected as recursive, NOT queued.
     assert!(matches!(
-        g.admit(&child("root"), RequestKey::new("root")),
+        g.admit(&child("root")),
         AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission)
     ));
 }
@@ -112,11 +103,11 @@ fn queued_recursive_child_is_rejected_not_bypassed() {
 fn queued_child_promotes_then_guard_clears_on_release() {
     let g = gov_one_slot();
     let occ = TaskSpec::blocking(TaskClass::new("worker")).operation("occ");
-    let occ_permit = match g.admit(&occ, RequestKey::new("occ")) {
+    let occ_permit = match g.admit(&occ) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };
-    let ticket = match g.admit(&child("root"), RequestKey::new("root")) {
+    let ticket = match g.admit(&child("root")) {
         AdmissionDecision::Queued { ticket } => ticket,
         o => panic!("{o:?}"),
     };
@@ -126,7 +117,7 @@ fn queued_child_promotes_then_guard_clears_on_release() {
     // Releasing the child clears the recursion guard, so a fresh child admits.
     g.release(child_permit);
     assert!(matches!(
-        g.admit(&child("root"), RequestKey::new("root")),
+        g.admit(&child("root")),
         AdmissionDecision::Admitted { .. }
     ));
 }
@@ -135,18 +126,18 @@ fn queued_child_promotes_then_guard_clears_on_release() {
 fn abandoning_queued_child_clears_the_guard() {
     let g = gov_one_slot();
     let occ = TaskSpec::blocking(TaskClass::new("worker")).operation("occ");
-    let _p = match g.admit(&occ, RequestKey::new("occ")) {
+    let _p = match g.admit(&occ) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };
-    let ticket = match g.admit(&child("root"), RequestKey::new("root")) {
+    let ticket = match g.admit(&child("root")) {
         AdmissionDecision::Queued { ticket } => ticket,
         o => panic!("{o:?}"),
     };
     g.abandon(ticket);
     // After abandoning the queued child, a new child may queue again.
     assert!(matches!(
-        g.admit(&child("root"), RequestKey::new("root")),
+        g.admit(&child("root")),
         AdmissionDecision::Queued { .. }
     ));
 }

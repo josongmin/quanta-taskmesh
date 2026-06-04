@@ -45,7 +45,6 @@ pub fn admit(
     policies: &PolicySet,
     now_ms: u64,
     spec: &TaskSpec,
-    key: RequestKey,
     waker: Option<Arc<dyn PermitWaker>>,
     ids: Ids,
 ) -> AdmissionDecision {
@@ -56,6 +55,9 @@ pub fn admit(
     if composite::validate_shape(spec).is_err() || composite::reduce::validate_spec(spec).is_err() {
         return AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask);
     }
+    // The admission key is authoritatively the root operation id — not a caller
+    // input.
+    let key = RequestKey::from_root(&spec.root_operation_id);
     admit_class(
         state,
         policies,

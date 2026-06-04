@@ -21,10 +21,10 @@ fn spec() -> TaskSpec {
 
 fn saturate_then_reject(g: &Governor) -> AdmissionVerdict {
     assert!(matches!(
-        g.admit(&spec(), RequestKey::new("a")),
+        g.admit(&spec()),
         AdmissionDecision::Admitted { .. }
     ));
-    match g.admit(&spec(), RequestKey::new("b")) {
+    match g.admit(&spec()) {
         AdmissionDecision::Rejected(v) => v,
         other => panic!("expected rejection, got {other:?}"),
     }

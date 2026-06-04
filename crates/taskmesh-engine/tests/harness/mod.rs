@@ -64,7 +64,7 @@ pub fn admit_filler(g: &Governor) -> PermitId {
 }
 
 pub fn admit_filler_on(g: &Governor, class: &str) -> PermitId {
-    match g.admit(&spec_for(class, "filler"), RequestKey::new("filler")) {
+    match g.admit(&spec_for(class, "filler")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("filler must admit, got {other:?}"),
     }
@@ -72,7 +72,7 @@ pub fn admit_filler_on(g: &Governor, class: &str) -> PermitId {
 
 /// Enqueue one request on `class`, asserting it queues; returns `(ticket, class)`.
 pub fn queue(g: &Governor, class: &'static str, op: &str) -> (u64, String) {
-    match g.admit(&spec_for(class, op), RequestKey::new(op.to_string())) {
+    match g.admit(&spec_for(class, op)) {
         AdmissionDecision::Queued { ticket } => (ticket, class.to_string()),
         other => panic!("expected queue for {class}, got {other:?}"),
     }

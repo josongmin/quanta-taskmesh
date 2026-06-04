@@ -108,6 +108,6 @@ pub mod ext {
     /// non-Tokio host or driving admission directly.
     pub use taskmesh_engine::{
         builtin_records, AdmissionDecision, Governor, LeakSweepReport, PermitId, PolicySet,
-        Provenance, RequestKey, RootAttribution, Ticket, BUILTIN_SUBSTRATES, DEFAULT_LEAK_STALE_MS,
+        Provenance, RootAttribution, Ticket, BUILTIN_SUBSTRATES, DEFAULT_LEAK_STALE_MS,
     };
 }

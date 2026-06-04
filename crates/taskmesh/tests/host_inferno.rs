@@ -221,14 +221,14 @@ async fn pre_submit_only_class_ignores_mid_run_cancel() {
 async fn queue_full_is_a_typed_rejection() {
     let rt = single_slot(1, 2);
     let g = rt.governor();
-    let occupy = match g.admit(&blk("c", "o"), RequestKey::new("o")) {
+    let occupy = match g.admit(&blk("c", "o")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("occupy must admit, got {o:?}"),
     };
     // Fill the queue to its depth of 2.
     for op in ["q1", "q2"] {
         assert!(matches!(
-            g.admit(&blk("c", op), RequestKey::new(op)),
+            g.admit(&blk("c", op)),
             AdmissionDecision::Queued { .. }
         ));
     }
@@ -247,7 +247,7 @@ async fn queue_full_is_a_typed_rejection() {
 async fn dropping_a_queued_submission_abandons_it_without_leak() {
     let rt = single_slot(1, 8);
     let g = rt.governor();
-    let occupy = match g.admit(&blk("c", "o"), RequestKey::new("o")) {
+    let occupy = match g.admit(&blk("c", "o")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };

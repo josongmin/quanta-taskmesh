@@ -12,7 +12,7 @@ use taskmesh_contract::{
     ClassPolicy, FairnessPolicy, ManualClock, OverflowPolicy, ResourceBudget, RetryAfterPolicy,
     TaskClass, TaskSpec,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, RequestKey};
+use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
 
 /// Build an exact `(inflight = n, queued = d)` state on one adaptive class, then
 /// admit one more request and return the retry-after hint of its rejection.
@@ -35,19 +35,13 @@ fn hint(fairness: FairnessPolicy, n: u32, d: u32) -> u64 {
     );
     let spec = TaskSpec::blocking(TaskClass::new("c")).operation("op");
 
-    for i in 0..n {
-        assert!(matches!(
-            g.admit(&spec, RequestKey::new(format!("a{i}"))),
-            AdmissionDecision::Admitted { .. }
-        ));
+    for _ in 0..n {
+        assert!(matches!(g.admit(&spec), AdmissionDecision::Admitted { .. }));
     }
-    for i in 0..d {
-        assert!(matches!(
-            g.admit(&spec, RequestKey::new(format!("q{i}"))),
-            AdmissionDecision::Queued { .. }
-        ));
+    for _ in 0..d {
+        assert!(matches!(g.admit(&spec), AdmissionDecision::Queued { .. }));
     }
-    match g.admit(&spec, RequestKey::new("over")) {
+    match g.admit(&spec) {
         AdmissionDecision::Rejected(v) => v.retry_after_ms().expect("adaptive yields a hint"),
         o => panic!("expected a full-queue rejection at n={n} d={d}, got {o:?}"),
     }

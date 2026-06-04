@@ -69,7 +69,7 @@ fn zero_stage_spec_is_rejected() {
     let mut spec = TaskSpec::blocking(TaskClass::new("c")).operation("op");
     spec.stages.clear(); // malformed wire payload: no stages
     assert!(matches!(
-        g.admit(&spec, RequestKey::new("op")),
+        g.admit(&spec),
         AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask)
     ));
 }
@@ -81,7 +81,7 @@ fn inconsistent_per_stage_class_is_rejected() {
     // Tamper a stage's class to differ from the task class (fake authority).
     spec.stages[0].class = TaskClass::new("other");
     assert!(matches!(
-        g.admit(&spec, RequestKey::new("op")),
+        g.admit(&spec),
         AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask)
     ));
 }
@@ -129,11 +129,11 @@ fn downward_reconcile_memory_promotes_queued_work() {
     .expect("valid");
 
     let spec = |op: &str| TaskSpec::blocking(TaskClass::new("m")).operation(op.to_string());
-    let p1 = match g.admit(&spec("a"), RequestKey::new("a")) {
+    let p1 = match g.admit(&spec("a")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };
-    let ticket = match g.admit(&spec("b"), RequestKey::new("b")) {
+    let ticket = match g.admit(&spec("b")) {
         AdmissionDecision::Queued { ticket } => ticket,
         o => panic!("expected queue (8+8>10), got {o:?}"),
     };
@@ -185,13 +185,10 @@ fn same_parent_stage_different_substrate_is_recursive() {
     let c1 =
         TaskSpec::blocking(TaskClass::new("worker")).child_of("root", TaskStage::new("fanout"));
     let c2 = TaskSpec::cpu(TaskClass::new("worker")).child_of("root", TaskStage::new("fanout"));
-    assert!(matches!(
-        g.admit(&c1, RequestKey::new("root")),
-        AdmissionDecision::Admitted { .. }
-    ));
+    assert!(matches!(g.admit(&c1), AdmissionDecision::Admitted { .. }));
     assert!(
         matches!(
-            g.admit(&c2, RequestKey::new("root")),
+            g.admit(&c2),
             AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission)
         ),
         "same (root, parent_stage) is recursive regardless of substrate"
@@ -211,15 +208,9 @@ fn different_parent_stage_same_substrate_admits_both() {
         TaskSpec::blocking(TaskClass::new("worker")).child_of("root", TaskStage::new("stage-a"));
     let b =
         TaskSpec::blocking(TaskClass::new("worker")).child_of("root", TaskStage::new("stage-b"));
-    assert!(matches!(
-        g.admit(&a, RequestKey::new("root")),
-        AdmissionDecision::Admitted { .. }
-    ));
+    assert!(matches!(g.admit(&a), AdmissionDecision::Admitted { .. }));
     assert!(
-        matches!(
-            g.admit(&b, RequestKey::new("root")),
-            AdmissionDecision::Admitted { .. }
-        ),
+        matches!(g.admit(&b), AdmissionDecision::Admitted { .. }),
         "distinct parent_stages under one root are distinct lineage points"
     );
 }

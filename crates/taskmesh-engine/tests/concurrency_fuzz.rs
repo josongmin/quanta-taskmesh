@@ -20,7 +20,7 @@ use std::thread;
 use taskmesh_contract::{
     ClassPolicy, ManualClock, MemoryPermitMode, ResourceBudget, TaskClass, TaskSpec,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, RequestKey};
+use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
 
 struct Lcg(u64);
 impl Lcg {
@@ -93,7 +93,7 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
                                 let op = format!("{tid}-{step}");
                                 let spec = TaskSpec::blocking(TaskClass::new(SPECS[ci].0))
                                     .operation(op.clone());
-                                match g.admit(&spec, RequestKey::new(op)) {
+                                match g.admit(&spec) {
                                     AdmissionDecision::Admitted { permit_id } => {
                                         held.push((permit_id, ci));
                                         granted_ids.push(permit_id);

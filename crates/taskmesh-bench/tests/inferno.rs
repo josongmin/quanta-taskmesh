@@ -18,7 +18,7 @@ use taskmesh_contract::{
     MemoryReleasePolicy, OverflowPolicy, RetryAfterPolicy, Snapshot, SubstrateHint, TaskClass,
     TaskSpec, TaskStage,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PermitId, RequestKey, Ticket};
+use taskmesh_engine::{AdmissionDecision, Governor, PermitId, Ticket};
 
 // ---- shared invariant helpers ---------------------------------------------
 
@@ -102,7 +102,7 @@ fn fuzz_conservation_and_caps_under_adversarial_churn() {
                     op_id += 1;
                     let class = classes[rng.gen_range(0..classes.len())];
                     let op = format!("op-{op_id}");
-                    match g.admit(&root_spec(class, &op), RequestKey::new(op)) {
+                    match g.admit(&root_spec(class, &op)) {
                         AdmissionDecision::Admitted { permit_id } => held.push(permit_id),
                         AdmissionDecision::Queued { ticket } => pending.push(ticket),
                         AdmissionDecision::Rejected(_) => {}
@@ -211,17 +211,14 @@ fn inflight_cap_is_exact_and_fails_closed() {
 
     let mut permits = Vec::new();
     for i in 0..n {
-        match g.admit(
-            &root_spec("c", &format!("a{i}")),
-            RequestKey::new(format!("a{i}")),
-        ) {
+        match g.admit(&root_spec("c", &format!("a{i}"))) {
             AdmissionDecision::Admitted { permit_id } => permits.push(permit_id),
             o => panic!("admit {i} within cap must succeed, got {o:?}"),
         }
         assert_eq!(inflight(&g.snapshot(), "c"), i + 1);
     }
     // Boundary: one over the cap rejects (fail-closed), never admits.
-    match g.admit(&root_spec("c", "over"), RequestKey::new("over")) {
+    match g.admit(&root_spec("c", "over")) {
         AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated { retry_after_ms }) => {
             assert_eq!(retry_after_ms, Some(7), "fixed retry-after must surface");
         }
@@ -236,7 +233,7 @@ fn inflight_cap_is_exact_and_fails_closed() {
     // Free exactly one slot → exactly one more admits.
     g.release(permits.pop().unwrap());
     assert_eq!(inflight(&g.snapshot(), "c"), n - 1);
-    match g.admit(&root_spec("c", "refill"), RequestKey::new("refill")) {
+    match g.admit(&root_spec("c", "refill")) {
         AdmissionDecision::Admitted { .. } => {}
         o => panic!("after release one slot must reopen, got {o:?}"),
     }
@@ -262,7 +259,7 @@ fn global_cpu_budget_is_a_hard_ceiling_across_classes() {
     for i in 0..(k + 10) {
         let class = if i % 2 == 0 { "a" } else { "b" };
         let op = format!("g{i}");
-        match g.admit(&root_spec(class, &op), RequestKey::new(op)) {
+        match g.admit(&root_spec(class, &op)) {
             AdmissionDecision::Admitted { permit_id } => {
                 held.push(permit_id);
                 admitted += 1;
@@ -300,7 +297,7 @@ fn recursion_guard_rejects_reentry_to_an_active_root_stage() {
 
     // Root occupies (R, "blocking").
     let root = TaskSpec::blocking(worker.clone()).operation("R");
-    let rp = match g.admit(&root, RequestKey::new("R")) {
+    let rp = match g.admit(&root) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("root must admit, got {o:?}"),
     };
@@ -312,20 +309,20 @@ fn recursion_guard_rejects_reentry_to_an_active_root_stage() {
             .child_of("R", TaskStage::new("blocking"))
             .operation(op)
     };
-    let c1 = match g.admit(&child("c1"), RequestKey::new("c1")) {
+    let c1 = match g.admit(&child("c1")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("first child must admit, got {o:?}"),
     };
 
     // Second child re-entering the *same* (R, "blocking") is a recursive loop.
-    match g.admit(&child("c2"), RequestKey::new("c2")) {
+    match g.admit(&child("c2")) {
         AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission) => {}
         o => panic!("re-entry to active (root,stage) must be RecursiveAdmission, got {o:?}"),
     }
 
     // Releasing the first child frees (R, "blocking") → a fresh child admits again.
     g.release(c1);
-    match g.admit(&child("c3"), RequestKey::new("c3")) {
+    match g.admit(&child("c3")) {
         AdmissionDecision::Admitted { permit_id } => g.release(permit_id),
         o => panic!("after release the stage must reopen, got {o:?}"),
     }
@@ -351,11 +348,11 @@ fn memory_overcommit_reject_is_fail_closed() {
         10, // exactly one heavy permit fits
     );
     let g = &*fx.governor;
-    match g.admit(&root_spec("heavy", "h1"), RequestKey::new("h1")) {
+    match g.admit(&root_spec("heavy", "h1")) {
         AdmissionDecision::Admitted { .. } => {}
         o => panic!("first heavy must fit, got {o:?}"),
     }
-    match g.admit(&root_spec("heavy", "h2"), RequestKey::new("h2")) {
+    match g.admit(&root_spec("heavy", "h2")) {
         AdmissionDecision::Rejected(AdmissionVerdict::MemorySaturated { .. }) => {}
         o => panic!("overcommit must reject (fail-closed), got {o:?}"),
     }
@@ -383,20 +380,17 @@ fn memory_overcommit_queue_pins_at_depth() {
     );
     let g = &*fx.governor;
     // One fits; the next `depth` queue; the one after that is shed.
-    match g.admit(&root_spec("heavy", "h0"), RequestKey::new("h0")) {
+    match g.admit(&root_spec("heavy", "h0")) {
         AdmissionDecision::Admitted { .. } => {}
         o => panic!("first must admit, got {o:?}"),
     }
     for i in 0..depth {
-        match g.admit(
-            &root_spec("heavy", &format!("q{i}")),
-            RequestKey::new(format!("q{i}")),
-        ) {
+        match g.admit(&root_spec("heavy", &format!("q{i}"))) {
             AdmissionDecision::Queued { .. } => {}
             o => panic!("overcommit within depth must queue, got {o:?}"),
         }
     }
-    match g.admit(&root_spec("heavy", "shed"), RequestKey::new("shed")) {
+    match g.admit(&root_spec("heavy", "shed")) {
         AdmissionDecision::Rejected(AdmissionVerdict::MemorySaturated { .. }) => {}
         o => panic!("past depth must shed, got {o:?}"),
     }
@@ -429,12 +423,12 @@ fn memory_overcommit_degrades_to_fallback_class() {
         11, // 10 (heavy) + 1 (light) exactly
     );
     let g = &*fx.governor;
-    match g.admit(&root_spec("heavy", "h1"), RequestKey::new("h1")) {
+    match g.admit(&root_spec("heavy", "h1")) {
         AdmissionDecision::Admitted { .. } => {}
         o => panic!("first heavy must fit, got {o:?}"),
     }
     // Second heavy cannot fit → degrades and is admitted *as light*.
-    match g.admit(&root_spec("heavy", "h2"), RequestKey::new("h2")) {
+    match g.admit(&root_spec("heavy", "h2")) {
         AdmissionDecision::Admitted { .. } => {}
         o => panic!("overcommit must degrade-admit, got {o:?}"),
     }
@@ -477,17 +471,14 @@ fn leak_sweep_is_precise_and_idempotent() {
     fx.clock.set(0);
     let mut ids = Vec::new();
     for i in 0..3 {
-        match g.admit(
-            &root_spec("retrieval", &format!("a{i}")),
-            RequestKey::new(format!("a{i}")),
-        ) {
+        match g.admit(&root_spec("retrieval", &format!("a{i}"))) {
             AdmissionDecision::Admitted { permit_id } => ids.push(permit_id),
             o => panic!("admit must succeed, got {o:?}"),
         }
     }
     // A managed permit, left untouched (so it is just as stale as a0/a1) — the
     // sweep must leave it alone because its class did not opt in.
-    let managed = match g.admit(&root_spec("managed", "m0"), RequestKey::new("m0")) {
+    let managed = match g.admit(&root_spec("managed", "m0")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("managed admit must succeed, got {o:?}"),
     };
@@ -547,7 +538,7 @@ fn malformed_fanout_rejects_well_formed_admits() {
         .operation("bad")
         .fan_out_stage(TaskStage::new("map"), SubstrateHint::SharedCpuExecutor);
     assert!(Governor::validate_reduce(&bad).is_err());
-    match g.admit(&bad, RequestKey::new("bad")) {
+    match g.admit(&bad) {
         AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask) => {}
         o => panic!("malformed fan-out must reject as MalformedTask, got {o:?}"),
     }
@@ -561,7 +552,7 @@ fn malformed_fanout_rejects_well_formed_admits() {
             DeterministicReducePolicy::keyed("score"),
         );
     assert!(Governor::validate_reduce(&good).is_ok());
-    match g.admit(&good, RequestKey::new("good")) {
+    match g.admit(&good) {
         AdmissionDecision::Admitted { permit_id } => g.release(permit_id),
         o => panic!("well-formed fan-out must admit, got {o:?}"),
     }
@@ -577,7 +568,7 @@ fn lifecycle_ops_are_idempotent_and_safe() {
     let g = &*fx.governor;
     let c = TaskClass::new("c".to_string());
 
-    let p = match g.admit(&root_spec("c", "x"), RequestKey::new("x")) {
+    let p = match g.admit(&root_spec("c", "x")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("admit must succeed, got {o:?}"),
     };

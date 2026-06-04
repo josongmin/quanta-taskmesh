@@ -54,7 +54,7 @@ proptest! {
                 let op = format!("{ci}-{step}"); // unique => no admission-key aliasing
                 let spec = TaskSpec::blocking(TaskClass::new(CLASSES[ci].to_string()))
                     .operation(op.clone());
-                match g.admit(&spec, RequestKey::new(op)) {
+                match g.admit(&spec) {
                     AdmissionDecision::Admitted { permit_id } => live.push((permit_id, ci)),
                     AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated { .. }) => {}
                     other => prop_assert!(false, "unexpected non-queueable outcome: {other:?}"),
@@ -126,18 +126,14 @@ fn weighted_drain(classes_seq: &[usize], weights: [u32; 3]) -> Vec<usize> {
     let blocking = |class: &str, op: &str| {
         TaskSpec::blocking(TaskClass::new(class.to_string())).operation(op.to_string())
     };
-    let AdmissionDecision::Admitted { permit_id: fill } =
-        g.admit(&blocking("fill", "f"), RequestKey::new("f"))
-    else {
+    let AdmissionDecision::Admitted { permit_id: fill } = g.admit(&blocking("fill", "f")) else {
         unreachable!()
     };
 
     let mut tickets: Vec<(u64, usize)> = Vec::new();
     for (i, &ci) in classes_seq.iter().enumerate() {
         let op = format!("{ci}-{i}");
-        if let AdmissionDecision::Queued { ticket } =
-            g.admit(&blocking(CLASSES[ci], &op), RequestKey::new(op))
-        {
+        if let AdmissionDecision::Queued { ticket } = g.admit(&blocking(CLASSES[ci], &op)) {
             tickets.push((ticket, ci));
         }
     }

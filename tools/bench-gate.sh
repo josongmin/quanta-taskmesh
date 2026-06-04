@@ -14,7 +14,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-MAX_ALLOCS_PER_OP="${MAX_ALLOCS_PER_OP:-5}"
+MAX_ALLOCS_PER_OP="${MAX_ALLOCS_PER_OP:-4}"
 
 echo "== allocation gate: admit+release allocs/op must be <= ${MAX_ALLOCS_PER_OP} =="
 probe_out="$(cargo run -q -p taskmesh-bench --example alloc_probe --release)"

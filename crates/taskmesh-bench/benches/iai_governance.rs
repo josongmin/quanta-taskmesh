@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use iai_callgrind::{black_box, library_benchmark, library_benchmark_group, main};
 use taskmesh_contract::{ClassPolicy, ManualClock, ResourceBudget, TaskClass, TaskSpec};
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, RequestKey};
+use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
 
 fn one_class_governor() -> Governor {
     let mut classes = BTreeMap::new();
@@ -32,19 +32,17 @@ fn one_class_governor() -> Governor {
     )
 }
 
-fn setup_roundtrip() -> (Governor, TaskSpec, RequestKey) {
+fn setup_roundtrip() -> (Governor, TaskSpec) {
     (
         one_class_governor(),
         TaskSpec::blocking(TaskClass::new("retrieval")).operation("op"),
-        RequestKey::new("op"),
     )
 }
 
-fn setup_reject() -> (Governor, TaskSpec, RequestKey) {
+fn setup_reject() -> (Governor, TaskSpec) {
     (
         one_class_governor(),
         TaskSpec::blocking(TaskClass::new("ghost")).operation("x"),
-        RequestKey::new("x"),
     )
 }
 
@@ -65,7 +63,7 @@ fn setup_snapshot() -> Governor {
     );
     for i in 0..8 {
         let spec = TaskSpec::blocking(TaskClass::new(format!("c{i}"))).operation(format!("op{i}"));
-        let _ = governor.admit(&spec, RequestKey::new(format!("op{i}")));
+        let _ = governor.admit(&spec);
     }
     governor
 }
@@ -73,9 +71,9 @@ fn setup_snapshot() -> Governor {
 // One admit→release cycle — the per-task governance cost.
 #[library_benchmark]
 #[bench::roundtrip(setup = setup_roundtrip)]
-fn admit_release(input: (Governor, TaskSpec, RequestKey)) {
-    let (governor, spec, key) = input;
-    if let AdmissionDecision::Admitted { permit_id } = governor.admit(black_box(&spec), key) {
+fn admit_release(input: (Governor, TaskSpec)) {
+    let (governor, spec) = input;
+    if let AdmissionDecision::Admitted { permit_id } = governor.admit(black_box(&spec)) {
         governor.release(black_box(permit_id));
     }
 }
@@ -83,9 +81,9 @@ fn admit_release(input: (Governor, TaskSpec, RequestKey)) {
 // The fail-closed reject path for an unknown class.
 #[library_benchmark]
 #[bench::reject(setup = setup_reject)]
-fn admit_unknown_reject(input: (Governor, TaskSpec, RequestKey)) {
-    let (governor, spec, key) = input;
-    black_box(governor.admit(black_box(&spec), key));
+fn admit_unknown_reject(input: (Governor, TaskSpec)) {
+    let (governor, spec) = input;
+    black_box(governor.admit(black_box(&spec)));
 }
 
 // Snapshot over an 8-class governor with outstanding permits.

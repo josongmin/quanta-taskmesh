@@ -29,7 +29,7 @@ fn gov(mode: MemoryPermitMode, memory_units: u32) -> (Governor, TaskClass) {
 
 fn admit(g: &Governor) -> PermitId {
     let spec = TaskSpec::blocking(TaskClass::new("c")).operation("op");
-    match g.admit(&spec, RequestKey::new("op")) {
+    match g.admit(&spec) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     }

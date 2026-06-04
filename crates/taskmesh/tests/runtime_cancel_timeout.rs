@@ -70,7 +70,7 @@ async fn timed_acquire_yields_typed_governor_error() {
 
     // Occupy the single slot directly via the shared governor so the next
     // submission must queue.
-    let occupied = match rt.governor().admit(&spec(), RequestKey::new("occupy")) {
+    let occupied = match rt.governor().admit(&spec()) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("expected admit, got {other:?}"),
     };

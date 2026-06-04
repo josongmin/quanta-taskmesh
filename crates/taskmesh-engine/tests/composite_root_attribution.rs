@@ -40,14 +40,8 @@ fn child_permit_rolls_into_root_accounting() {
         TaskSpec::blocking(TaskClass::new("worker")).child_of("root-1", TaskStage::new("stage-a"));
     let c2 = TaskSpec::cpu(TaskClass::new("worker")).child_of("root-1", TaskStage::new("stage-b"));
 
-    assert!(matches!(
-        g.admit(&c1, RequestKey::new("root-1")),
-        AdmissionDecision::Admitted { .. }
-    ));
-    assert!(matches!(
-        g.admit(&c2, RequestKey::new("root-1")),
-        AdmissionDecision::Admitted { .. }
-    ));
+    assert!(matches!(g.admit(&c1), AdmissionDecision::Admitted { .. }));
+    assert!(matches!(g.admit(&c2), AdmissionDecision::Admitted { .. }));
 
     let root = g.root_attribution("root-1").expect("root tracked");
     assert_eq!(root.child_inflight, 2);
@@ -68,12 +62,9 @@ fn child_saturation_bubbles_to_root_verdict() {
     // Second child declares a distinct stage ("stage-b"), so it is not recursive —
     // it instead saturates the class cap, and that verdict bubbles up.
     let c2 = TaskSpec::cpu(TaskClass::new("worker")).child_of("root-2", TaskStage::new("stage-b"));
+    assert!(matches!(g.admit(&c1), AdmissionDecision::Admitted { .. }));
     assert!(matches!(
-        g.admit(&c1, RequestKey::new("root-2")),
-        AdmissionDecision::Admitted { .. }
-    ));
-    assert!(matches!(
-        g.admit(&c2, RequestKey::new("root-2")),
+        g.admit(&c2),
         AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated { .. })
     ));
 }
@@ -84,7 +75,7 @@ fn root_attribution_clears_on_release() {
         "worker",
         ClassPolicy::new().max_inflight(4).cpu_units(1),
     )]);
-    let permit = match g.admit(&child("worker", "root-3", "s"), RequestKey::new("root-3")) {
+    let permit = match g.admit(&child("worker", "root-3", "s")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };

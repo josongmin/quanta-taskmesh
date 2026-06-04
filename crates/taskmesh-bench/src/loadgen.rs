@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use hdrhistogram::Histogram;
 use taskmesh_contract::ClassPolicy;
-use taskmesh_engine::{AdmissionDecision, PermitId, RequestKey};
+use taskmesh_engine::{AdmissionDecision, PermitId};
 
 use crate::workload::{fixture, root_spec, Arrival, Fixture};
 
@@ -159,7 +159,7 @@ pub fn simulate(
         fx.clock.set(t / 1_000_000);
         let op = format!("op-{idx}");
         let spec = root_spec(&arrival.class, &op);
-        match g.admit(&spec, RequestKey::new(op)) {
+        match g.admit(&spec) {
             AdmissionDecision::Admitted { permit_id } => {
                 res.admitted_immediately += 1;
                 latency.record(0);
@@ -264,10 +264,9 @@ pub fn contention_throughput(threads: usize, ops_per_thread: usize) -> f64 {
             scope.spawn(move || {
                 let op = worker_key(tid);
                 let spec = root_spec("bench", op);
-                let key = RequestKey::new(op);
                 let mut admitted = 0u64;
                 for _ in 0..ops_per_thread {
-                    match g.admit(&spec, key.clone()) {
+                    match g.admit(&spec) {
                         AdmissionDecision::Admitted { permit_id } => {
                             admitted += 1;
                             g.release(permit_id);

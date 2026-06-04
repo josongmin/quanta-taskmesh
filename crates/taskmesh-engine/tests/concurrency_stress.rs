@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::thread;
 
 use taskmesh_contract::{ClassPolicy, ManualClock, ResourceBudget, TaskClass, TaskSpec};
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, RequestKey};
+use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
 
 fn governor(class: &str, policy: ClassPolicy, cpu_budget: u32) -> Arc<Governor> {
     let mut classes = BTreeMap::new();
@@ -47,10 +47,9 @@ fn concurrent_admit_release_grants_globally_unique_permits() {
                 scope.spawn(move || {
                     let op: &'static str = Box::leak(format!("w{tid}").into_boxed_str());
                     let spec = TaskSpec::blocking(TaskClass::new("work")).operation(op);
-                    let key = RequestKey::new(op);
                     let mut ids = Vec::with_capacity(OPS);
                     for _ in 0..OPS {
-                        match g.admit(&spec, key.clone()) {
+                        match g.admit(&spec) {
                             AdmissionDecision::Admitted { permit_id } => {
                                 ids.push(permit_id);
                                 g.release(permit_id);
@@ -106,9 +105,8 @@ fn inflight_cap_is_never_exceeded_under_contention() {
             scope.spawn(move || {
                 let op: &'static str = Box::leak(format!("c{tid}").into_boxed_str());
                 let spec = TaskSpec::blocking(TaskClass::new("capped")).operation(op);
-                let key = RequestKey::new(op);
                 for _ in 0..1_000 {
-                    match g.admit(&spec, key.clone()) {
+                    match g.admit(&spec) {
                         AdmissionDecision::Admitted { permit_id } => {
                             // Incremented only while the permit is held; bounded by
                             // the governor's own inflight, which is capped.

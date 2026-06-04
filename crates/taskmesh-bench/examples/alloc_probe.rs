@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use taskmesh_bench::workload::{fixture, root_spec};
 use taskmesh_contract::ClassPolicy;
-use taskmesh_engine::{AdmissionDecision, RequestKey};
+use taskmesh_engine::AdmissionDecision;
 
 static ALLOCS: AtomicU64 = AtomicU64::new(0);
 
@@ -44,10 +44,9 @@ fn main() {
     );
     let g = &fx.governor;
     let spec = root_spec("retrieval", "search:repo:1");
-    let key = RequestKey::new("search:repo:1"); // 'static → clone is alloc-free
 
     let cycle = |g: &taskmesh_engine::Governor| {
-        if let AdmissionDecision::Admitted { permit_id } = g.admit(&spec, key.clone()) {
+        if let AdmissionDecision::Admitted { permit_id } = g.admit(&spec) {
             g.release(permit_id);
         }
     };

@@ -15,8 +15,7 @@ use taskmesh_contract::{
 use crate::engine::state::GovernedState;
 use crate::features::{admission, composite, fairness, inventory, memory};
 use crate::shared::{
-    AdmissionDecision, LeakSweepReport, PermitId, PolicySet, Provenance, RequestKey,
-    RootAttribution, Ticket,
+    AdmissionDecision, LeakSweepReport, PermitId, PolicySet, Provenance, RootAttribution, Ticket,
 };
 
 /// The governed execution control point. Cheap to wrap in `Arc` and share.
@@ -85,9 +84,11 @@ impl Governor {
 
     // ---- admission --------------------------------------------------------
 
-    /// Admit a request without a promotion waker (caller does not wait on a queue).
-    pub fn admit(&self, spec: &TaskSpec, key: RequestKey) -> AdmissionDecision {
-        self.admit_inner(spec, key, None)
+    /// Admit a request without a promotion waker (caller does not wait on a
+    /// queue). The admission key is derived authoritatively from
+    /// `spec.root_operation_id`; there is no caller-supplied key.
+    pub fn admit(&self, spec: &TaskSpec) -> AdmissionDecision {
+        self.admit_inner(spec, None)
     }
 
     /// Admit a request, registering a waker that fires if the request is queued
@@ -95,22 +96,20 @@ impl Governor {
     pub fn admit_waitable(
         &self,
         spec: &TaskSpec,
-        key: RequestKey,
         waker: Arc<dyn PermitWaker>,
     ) -> AdmissionDecision {
-        self.admit_inner(spec, key, Some(waker))
+        self.admit_inner(spec, Some(waker))
     }
 
     fn admit_inner(
         &self,
         spec: &TaskSpec,
-        key: RequestKey,
         waker: Option<Arc<dyn PermitWaker>>,
     ) -> AdmissionDecision {
         let now = self.now_ms();
         let ids = self.fresh_ids();
         let mut state = self.state.lock();
-        admission::admit(&mut state, &self.policy, now, spec, key, waker, ids)
+        admission::admit(&mut state, &self.policy, now, spec, waker, ids)
     }
 
     /// Claim a permit for a previously-queued ticket once it has been promoted.

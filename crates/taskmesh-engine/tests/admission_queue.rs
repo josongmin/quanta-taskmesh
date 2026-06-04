@@ -21,14 +21,10 @@ fn spec(class: &str) -> TaskSpec {
     TaskSpec::blocking(TaskClass::new(class.to_string())).operation(format!("op:{class}"))
 }
 
-fn key(s: &str) -> RequestKey {
-    RequestKey::new(s.to_string())
-}
-
 #[test]
 fn unknown_class_rejects() {
     let g = gov(ResourceBudget::new(), vec![("known", ClassPolicy::new())]);
-    match g.admit(&spec("ghost"), key("k")) {
+    match g.admit(&spec("ghost")) {
         AdmissionDecision::Rejected(AdmissionVerdict::UnknownClass { class }) => {
             assert_eq!(class.as_str(), "ghost");
         }
@@ -43,7 +39,7 @@ fn disabled_class_rejects() {
         vec![("c", ClassPolicy::new().max_inflight(0))],
     );
     assert!(matches!(
-        g.admit(&spec("c"), key("k")),
+        g.admit(&spec("c")),
         AdmissionDecision::Rejected(AdmissionVerdict::ClassDisabled)
     ));
 }
@@ -55,7 +51,7 @@ fn inflight_below_cap_admits() {
         vec![("c", ClassPolicy::new().max_inflight(2))],
     );
     assert!(matches!(
-        g.admit(&spec("c"), key("k")),
+        g.admit(&spec("c")),
         AdmissionDecision::Admitted { .. }
     ));
 }
@@ -73,11 +69,11 @@ fn inflight_at_cap_queueable_queues() {
         )],
     );
     assert!(matches!(
-        g.admit(&spec("c"), key("a")),
+        g.admit(&spec("c")),
         AdmissionDecision::Admitted { .. }
     ));
     assert!(matches!(
-        g.admit(&spec("c"), key("b")),
+        g.admit(&spec("c")),
         AdmissionDecision::Queued { .. }
     ));
     assert_eq!(g.snapshot().classes[&TaskClass::new("c")].queued, 1);
@@ -90,11 +86,11 @@ fn inflight_at_cap_non_queueable_rejects() {
         vec![("c", ClassPolicy::new().max_inflight(1))],
     );
     assert!(matches!(
-        g.admit(&spec("c"), key("a")),
+        g.admit(&spec("c")),
         AdmissionDecision::Admitted { .. }
     ));
     assert!(matches!(
-        g.admit(&spec("c"), key("b")),
+        g.admit(&spec("c")),
         AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated { .. })
     ));
 }
@@ -112,15 +108,15 @@ fn queue_depth_exceeded_returns_queue_full() {
         )],
     );
     assert!(matches!(
-        g.admit(&spec("c"), key("a")),
+        g.admit(&spec("c")),
         AdmissionDecision::Admitted { .. }
     ));
     assert!(matches!(
-        g.admit(&spec("c"), key("b")),
+        g.admit(&spec("c")),
         AdmissionDecision::Queued { .. }
     ));
     assert!(matches!(
-        g.admit(&spec("c"), key("d")),
+        g.admit(&spec("c")),
         AdmissionDecision::Rejected(AdmissionVerdict::QueueFull { .. })
     ));
 }
@@ -137,11 +133,11 @@ fn release_promotes_queued_work() {
                 .overflow_policy(OverflowPolicy::QueueWithinDepth),
         )],
     );
-    let permit = match g.admit(&spec("c"), key("a")) {
+    let permit = match g.admit(&spec("c")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("expected admit, got {other:?}"),
     };
-    let ticket = match g.admit(&spec("c"), key("b")) {
+    let ticket = match g.admit(&spec("c")) {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected queue, got {other:?}"),
     };
@@ -171,12 +167,12 @@ fn queued_tickets_are_stably_ordered() {
                 .overflow_policy(OverflowPolicy::QueueWithinDepth),
         )],
     );
-    let _ = g.admit(&spec("c"), key("a"));
-    let t1 = match g.admit(&spec("c"), key("b")) {
+    let _ = g.admit(&spec("c"));
+    let t1 = match g.admit(&spec("c")) {
         AdmissionDecision::Queued { ticket } => ticket,
         o => panic!("{o:?}"),
     };
-    let t2 = match g.admit(&spec("c"), key("c")) {
+    let t2 = match g.admit(&spec("c")) {
         AdmissionDecision::Queued { ticket } => ticket,
         o => panic!("{o:?}"),
     };

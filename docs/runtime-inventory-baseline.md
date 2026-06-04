@@ -24,6 +24,26 @@ Sources kept in lockstep (drift fails CI):
 Adding a substrate is an explicit, reviewed change to all three. Registration
 rejects duplicates and any non-`AuthorityOnly` record without a capability pool.
 
+## Inventory backs the runtime (not just snapshot metadata)
+
+The registered inventory is authoritative for *which* worker gates exist, not
+merely descriptive:
+
+- the host derives one capability-pool semaphore per **registered** substrate
+  whose pool is topology-sized `> 0` (`SubstrateGates::from_inventory`); a pool
+  absent from the inventory has no gate;
+- the hint→pool mapping is the contract's `SubstrateHint::capability_pool()`, not
+  a host hardcode — `run_*` looks a submission's hint up to its pool, then the
+  pool up to its gate;
+- topology (`blocking_threads`, `large_stack_slots`, `local_runtime_slots`,
+  `maintenance_workers`, resolved CPU workers) supplies the **slot count**; the
+  inventory supplies **existence + kind + capability pool**. The two compose:
+  inventory ∩ topology = the live gate set.
+
+So `SubstrateRecord.kind` / `capability_pool` are governance authority (snapshot,
+validation, *and* gate derivation), and a `0` slot count means "unlimited" for an
+existing pool — distinct from a pool that does not exist at all.
+
 ## Structural no-go ratchet
 
 CI (`cargo clippy -D warnings` + the test matrix) holds these invariants:

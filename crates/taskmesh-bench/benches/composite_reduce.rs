@@ -10,7 +10,7 @@ use taskmesh_contract::{
     ClassPolicy, DeterministicReducePolicy, ManualClock, ResourceBudget, SubstrateHint, TaskClass,
     TaskSpec, TaskStage,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, RequestKey};
+use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
 
 fn governor() -> Governor {
     let mut classes = BTreeMap::new();
@@ -37,9 +37,7 @@ fn bench(c: &mut Criterion) {
             n += 1;
             let stage = TaskStage::new(format!("s{}", n % 4096));
             let child = TaskSpec::blocking(TaskClass::new("worker")).child_of("root", stage);
-            if let AdmissionDecision::Admitted { permit_id } =
-                g.admit(&child, RequestKey::new("root"))
-            {
+            if let AdmissionDecision::Admitted { permit_id } = g.admit(&child) {
                 g.release(permit_id);
             }
         });

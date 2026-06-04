@@ -15,18 +15,18 @@ pub type Ticket = u64;
 /// Monotonic admission sequence number (also used as the FIFO arrival key).
 pub type Seq = u64;
 
-/// Admission key, derived from the root operation id. Same-key dedupe is out of
-/// scope for the startup set.
+/// Admission key. It is **authoritatively derived from the root operation id** —
+/// there is no caller-supplied key. (An earlier surface accepted one, but it
+/// carried no behavior — admission never read it — so it was a misleading input;
+/// same-key dedupe remains out of scope for the startup set.)
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RequestKey(Cow<'static, str>);
 
 impl RequestKey {
-    pub fn new(value: impl Into<Cow<'static, str>>) -> Self {
-        Self(value.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        self.0.as_ref()
+    /// Derive the admission key from a spec's root operation id (the only source
+    /// of authority).
+    pub fn from_root(root_operation_id: &str) -> Self {
+        Self(Cow::Owned(root_operation_id.to_owned()))
     }
 }
 

@@ -13,7 +13,7 @@ use rand::{Rng, SeedableRng};
 
 use taskmesh_bench::workload::{fixture, root_spec, Fixture};
 use taskmesh_contract::{ClassPolicy, FairnessPolicy, OverflowPolicy};
-use taskmesh_engine::{AdmissionDecision, RequestKey};
+use taskmesh_engine::AdmissionDecision;
 
 fn rand_fairness(rng: &mut StdRng) -> FairnessPolicy {
     match rng.gen_range(0..5) {
@@ -48,14 +48,14 @@ fn rand_policy(rng: &mut StdRng) -> ClassPolicy {
 fn drain_indices(fx: &Fixture, names: &[String], queue: &[usize]) -> Vec<usize> {
     let g = &*fx.governor;
     fx.clock.set(0);
-    let filler = match g.admit(&root_spec(&names[0], "filler"), RequestKey::new("filler")) {
+    let filler = match g.admit(&root_spec(&names[0], "filler")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("filler must occupy the slot, got {o:?}"),
     };
     let mut tickets: Vec<(u64, usize)> = Vec::new();
     for (i, &cidx) in queue.iter().enumerate() {
         let op = format!("q{i}");
-        match g.admit(&root_spec(&names[cidx], &op), RequestKey::new(op)) {
+        match g.admit(&root_spec(&names[cidx], &op)) {
             AdmissionDecision::Queued { ticket } => tickets.push((ticket, i)),
             o => panic!("request {i} must queue, got {o:?}"),
         }

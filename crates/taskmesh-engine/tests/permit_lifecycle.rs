@@ -35,7 +35,7 @@ fn permit_and_inflight_move_together() {
     )]);
     let c = TaskClass::new("c");
 
-    let p1 = match g.admit(&spec("c"), RequestKey::new("a")) {
+    let p1 = match g.admit(&spec("c")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };
@@ -61,7 +61,7 @@ fn release_of_unknown_permit_is_noop() {
 #[test]
 fn double_release_does_not_underflow() {
     let g = gov(vec![("c", ClassPolicy::new().max_inflight(2).cpu_units(1))]);
-    let p = match g.admit(&spec("c"), RequestKey::new("a")) {
+    let p = match g.admit(&spec("c")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };

@@ -16,7 +16,7 @@ use taskmesh_bench::metrics::jain_fairness_index;
 use taskmesh_contract::{
     ClassPolicy, FairnessPolicy, ManualClock, OverflowPolicy, ResourceBudget, TaskClass, TaskSpec,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, RequestKey};
+use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
 
 /// Drive a contended governor (single inflight slot) and return the realized
 /// promotion order — one class name per dispatch, in dispatch sequence.
@@ -56,7 +56,7 @@ fn promotion_order(weights: &[(&'static str, u32)], rounds: usize) -> Vec<&'stat
     let spec = |class: &str, op: &str| {
         TaskSpec::blocking(TaskClass::new(class.to_string())).operation(op.to_string())
     };
-    let fill = match g.admit(&spec("fill", "f"), RequestKey::new("f")) {
+    let fill = match g.admit(&spec("fill", "f")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("filler must admit: {other:?}"),
     };
@@ -73,7 +73,7 @@ fn promotion_order(weights: &[(&'static str, u32)], rounds: usize) -> Vec<&'stat
             // The single budget unit is held by the filler, so every weighted
             // admit MUST queue; silently dropping a non-Queued verdict would skew
             // the realized order, so assert it.
-            match g.admit(&spec(name, &op), RequestKey::new(op)) {
+            match g.admit(&spec(name, &op)) {
                 AdmissionDecision::Queued { ticket } => tickets.push((ticket, name)),
                 other => panic!("contended admit must queue, got {other:?}"),
             }

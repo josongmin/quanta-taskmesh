@@ -44,11 +44,17 @@ governor queue and the substrate capability-pool slot).
 2. bounded per-class queues; cross-class fairness (FIFO/WFQ/DRR/EDF/scavenger)
 3. permit admission/release inseparable from inflight + resource accounting
 4. memory governance: estimated/measured/hybrid reconcile, overcommit, leak sweep
-5. composite root attribution + recursive-admission guard
+5. composite root attribution + recursive-admission guard (keyed on the child's
+   authoritative declared `parent_stage`, not its substrate)
 6. deterministic reduce enforcement for fan-out stages (rejected at admission)
-7. snapshot + substrate inventory SSOT
+7. snapshot + substrate inventory SSOT (built-ins seeded at `PolicySet::new`, so
+   every governor — direct or host-built — has an authoritative inventory)
 8. fairness homogeneity validated per tier at construction (no silent override)
 9. adaptive retry-after blends contention with the class fairness params
+10. classification provenance (source + reason) preserved intact through
+    queue→promote→claim, queryable per permit (`Governor::permit_provenance`)
+11. admission key is derived authoritatively from the root operation id — no
+    caller-supplied key (the old key carried no behavior, so it was removed)
 
 ## Enforcement (not advisory)
 

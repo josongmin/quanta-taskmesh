@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use taskmesh_contract::{ClassPolicy, ManualClock, ResourceBudget, TaskClass, TaskSpec};
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, RequestKey};
+use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
 
 fn build_governor() -> Governor {
     let mut classes = BTreeMap::new();
@@ -32,7 +32,7 @@ fn bench_admit_release(c: &mut Criterion) {
 
     c.bench_function("admit_release_success", |b| {
         b.iter(|| {
-            let permit = match governor.admit(&spec, RequestKey::new("search:repo:1")) {
+            let permit = match governor.admit(&spec) {
                 AdmissionDecision::Admitted { permit_id } => permit_id,
                 other => panic!("expected admit, got {other:?}"),
             };
@@ -47,15 +47,12 @@ fn bench_admit_release(c: &mut Criterion) {
         // can't silently turn this into an admit benchmark. The reject path
         // mutates no state, so this does not perturb the timed loop below.
         assert!(
-            matches!(
-                governor.admit(&ghost, RequestKey::new("x")),
-                AdmissionDecision::Rejected(_)
-            ),
+            matches!(governor.admit(&ghost), AdmissionDecision::Rejected(_)),
             "unknown class must reject"
         );
         b.iter(|| {
             // black_box the verdict so the dead return cannot be elided.
-            black_box(governor.admit(&ghost, RequestKey::new("x")));
+            black_box(governor.admit(&ghost));
         });
     });
 }

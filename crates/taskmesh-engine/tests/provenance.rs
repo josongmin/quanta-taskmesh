@@ -39,7 +39,7 @@ fn provenance_is_auditable_for_an_admitted_permit() {
         PlanSource::SearchAdapter,
         ClassificationRationale::DerivedFromRequestKind,
     );
-    let permit = match g.admit(&spec, RequestKey::new("op")) {
+    let permit = match g.admit(&spec) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };
@@ -62,10 +62,12 @@ fn provenance_survives_the_queue_promotion_path() {
             .cpu_units(1)
             .overflow_policy(OverflowPolicy::QueueWithinDepth),
     )]);
-    let occupy = match g.admit(
-        &spec_with("c", "occ", PlanSource::Internal, ClassificationRationale::ExplicitMapping),
-        RequestKey::new("occ"),
-    ) {
+    let occupy = match g.admit(&spec_with(
+        "c",
+        "occ",
+        PlanSource::Internal,
+        ClassificationRationale::ExplicitMapping,
+    )) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };
@@ -76,14 +78,16 @@ fn provenance_survives_the_queue_promotion_path() {
         PlanSource::Indexing,
         ClassificationRationale::DerivedFromStageMap,
     );
-    let ticket = match g.admit(&queued_spec, RequestKey::new("q")) {
+    let ticket = match g.admit(&queued_spec) {
         AdmissionDecision::Queued { ticket } => ticket,
         o => panic!("{o:?}"),
     };
 
     g.release(occupy); // promotes the queued request
     let permit = g.claim(ticket).expect("promoted");
-    let prov = g.permit_provenance(permit).expect("provenance preserved through promotion");
+    let prov = g
+        .permit_provenance(permit)
+        .expect("provenance preserved through promotion");
     assert_eq!(prov.source, PlanSource::Indexing);
     assert_eq!(prov.reason, ClassificationRationale::DerivedFromStageMap);
 }

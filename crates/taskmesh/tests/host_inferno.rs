@@ -109,7 +109,7 @@ async fn substrate_hint_mismatch_is_fail_closed() {
     assert!(matches!(
         io_on_blocking,
         Err(RunError::Governor(GovernorError::Rejected(
-            AdmissionVerdict::MalformedTask
+            AdmissionVerdict::SubstrateMismatch
         )))
     ));
 
@@ -119,7 +119,7 @@ async fn substrate_hint_mismatch_is_fail_closed() {
     assert!(matches!(
         cpu_on_io,
         Err(RunError::Governor(GovernorError::Rejected(
-            AdmissionVerdict::MalformedTask
+            AdmissionVerdict::SubstrateMismatch
         )))
     ));
 
@@ -129,7 +129,7 @@ async fn substrate_hint_mismatch_is_fail_closed() {
     assert!(matches!(
         blocking_on_cpu,
         Err(RunError::Governor(GovernorError::Rejected(
-            AdmissionVerdict::MalformedTask
+            AdmissionVerdict::SubstrateMismatch
         )))
     ));
 
@@ -139,7 +139,9 @@ async fn substrate_hint_mismatch_is_fail_closed() {
     assert!(
         matches!(
             local_on_blocking,
-            Err(RunError::Governor(GovernorError::LocalRuntimeUnavailable))
+            Err(RunError::Governor(GovernorError::Rejected(
+                AdmissionVerdict::SubstrateMismatch
+            )))
         ),
         "run_local is the local-runtime exception, not a general path"
     );
@@ -327,7 +329,7 @@ async fn substrate_gate_caps_blocking_concurrency_and_times_out() {
         matches!(
             r,
             Err(RunError::Governor(GovernorError::Rejected(
-                AdmissionVerdict::PermitAcquireTimedOut { .. }
+                AdmissionVerdict::SubstratePoolTimedOut { .. }
             )))
         ),
         "a full substrate gate must yield a bounded-acquire timeout"

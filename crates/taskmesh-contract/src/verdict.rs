@@ -37,9 +37,18 @@ pub enum AdmissionVerdict {
     CancelledBeforeSubmit,
     DeadlineExpiredBeforeSubmit,
     RecursiveAdmission,
-    /// The task spec is structurally invalid (e.g. a fan-out stage missing its
-    /// deterministic reduce policy, or a substrate-hint/run-path mismatch).
+    /// The task spec is structurally invalid: zero stages, an inconsistent
+    /// per-stage class, or a fan-out stage missing its deterministic reduce
+    /// policy.
     MalformedTask,
+    /// The spec's declared substrate is incompatible with the chosen run path
+    /// (e.g. an `AsyncIo` spec submitted via `run_blocking`).
+    SubstrateMismatch,
+    /// Timed out waiting for a host substrate capability-pool slot (distinct from
+    /// `PermitAcquireTimedOut`, which is the governor admission-queue wait).
+    SubstratePoolTimedOut {
+        retry_after_ms: Option<u64>,
+    },
 }
 
 impl AdmissionVerdict {
@@ -48,7 +57,8 @@ impl AdmissionVerdict {
             Self::QueueFull { retry_after_ms }
             | Self::CpuSaturated { retry_after_ms }
             | Self::MemorySaturated { retry_after_ms }
-            | Self::PermitAcquireTimedOut { retry_after_ms } => *retry_after_ms,
+            | Self::PermitAcquireTimedOut { retry_after_ms }
+            | Self::SubstratePoolTimedOut { retry_after_ms } => *retry_after_ms,
             _ => None,
         }
     }
@@ -74,6 +84,8 @@ impl fmt::Display for AdmissionVerdict {
             Self::DeadlineExpiredBeforeSubmit => f.write_str("deadline expired before submit"),
             Self::RecursiveAdmission => f.write_str("recursive admission rejected"),
             Self::MalformedTask => f.write_str("malformed task spec"),
+            Self::SubstrateMismatch => f.write_str("substrate hint / run-path mismatch"),
+            Self::SubstratePoolTimedOut { .. } => f.write_str("substrate pool acquire timed out"),
         }
     }
 }
@@ -92,6 +104,27 @@ pub enum GovernorError {
     /// [`crate::CancellationPolicy`] permits mid-run cancellation and the
     /// submission's cancel token fired). Distinct from a task error.
     Cancelled,
+    /// The in-flight work exceeded its run deadline (a `CooperativeWithDeadline`
+    /// class with `SubmitOptions::deadline` set). Distinct from a task error.
+    DeadlineExceeded,
+}
+
+impl GovernorError {
+    /// The backpressure retry-after hint, if this is a rejection that carries one.
+    pub fn retry_after_ms(&self) -> Option<u64> {
+        match self {
+            Self::Rejected(verdict) => verdict.retry_after_ms(),
+            _ => None,
+        }
+    }
+
+    /// The underlying admission verdict, if this error is a rejection.
+    pub fn as_verdict(&self) -> Option<&AdmissionVerdict> {
+        match self {
+            Self::Rejected(verdict) => Some(verdict),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for GovernorError {
@@ -101,6 +134,7 @@ impl fmt::Display for GovernorError {
             Self::LocalRuntimeUnavailable => f.write_str("local runtime substrate unavailable"),
             Self::PolicyViolation(message) => write!(f, "policy violation: {message}"),
             Self::Cancelled => f.write_str("work cooperatively cancelled"),
+            Self::DeadlineExceeded => f.write_str("work exceeded its run deadline"),
         }
     }
 }
@@ -121,6 +155,39 @@ impl<E> RunError<E> {
 
     pub fn is_task(&self) -> bool {
         matches!(self, Self::Task(_))
+    }
+
+    /// The governor-side error, if this is one.
+    pub fn governor(&self) -> Option<&GovernorError> {
+        match self {
+            Self::Governor(err) => Some(err),
+            Self::Task(_) => None,
+        }
+    }
+
+    /// The task error, if this is one.
+    pub fn task(&self) -> Option<&E> {
+        match self {
+            Self::Task(err) => Some(err),
+            Self::Governor(_) => None,
+        }
+    }
+
+    /// The admission verdict, if this is a governor rejection — the common
+    /// backpressure path, reachable without two-level destructuring.
+    pub fn as_verdict(&self) -> Option<&AdmissionVerdict> {
+        self.governor().and_then(GovernorError::as_verdict)
+    }
+
+    /// The backpressure retry-after hint, if any.
+    pub fn retry_after_ms(&self) -> Option<u64> {
+        self.governor().and_then(GovernorError::retry_after_ms)
+    }
+}
+
+impl<E> From<GovernorError> for RunError<E> {
+    fn from(err: GovernorError) -> Self {
+        Self::Governor(err)
     }
 }
 

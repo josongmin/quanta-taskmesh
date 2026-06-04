@@ -8,6 +8,9 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
+
+use tokio_util::sync::CancellationToken;
 
 use taskmesh_contract::{
     AdmissionVerdict, CancellationPolicy, CpuExecutor, GovernorError, RunError, Runtime, Snapshot,
@@ -178,8 +181,33 @@ impl TokioRuntime {
         if allowed.contains(&spec.primary_substrate_hint()) {
             Ok(())
         } else {
-            Err(GovernorError::Rejected(AdmissionVerdict::MalformedTask))
+            Err(GovernorError::Rejected(AdmissionVerdict::SubstrateMismatch))
         }
+    }
+
+    /// Mid-run cancellation controls for `class` given the submission `opts`:
+    /// a cancel token (for `Cooperative`/`CooperativeWithDeadline`) and a run
+    /// deadline (for `CooperativeWithDeadline` only). `PreSubmitOnly` returns
+    /// `(None, None)` — its token is honored pre-submit only.
+    fn cancel_controls(
+        &self,
+        class: &TaskClass,
+        opts: &SubmitOptions,
+    ) -> (Option<CancellationToken>, Option<Duration>) {
+        let policy = self
+            .config
+            .classes
+            .get(class)
+            .map(|p| p.cancellation_policy);
+        let mid_run = matches!(
+            policy,
+            Some(CancellationPolicy::Cooperative | CancellationPolicy::CooperativeWithDeadline)
+        );
+        let with_deadline = matches!(policy, Some(CancellationPolicy::CooperativeWithDeadline));
+        (
+            mid_run.then(|| opts.cancel.clone()).flatten(),
+            with_deadline.then_some(opts.deadline).flatten(),
+        )
     }
 
     // ---- substrate entry points (with options) ----------------------------
@@ -196,37 +224,11 @@ impl TokioRuntime {
         if let Err(e) = Self::require_hint(&spec, &[SubstrateHint::AsyncIo]) {
             return Err(RunError::Governor(e));
         }
-        // Cooperative cancellation: honored mid-run only when the class policy
-        // permits it AND a cancel token was supplied. PreSubmitOnly classes
-        // ignore the token once admitted (sync blocking/cpu work cannot be
-        // cooperatively cancelled at all, so this is the only cancellable path).
-        let coop_token = if self.cooperative_cancel(&spec.class) {
-            opts.cancel.clone()
-        } else {
-            None
-        };
+        let (token, deadline) = self.cancel_controls(&spec.class, &opts);
         self.with_permit(spec, opts, move || async move {
-            match coop_token {
-                Some(token) => tokio::select! {
-                    biased;
-                    () = token.cancelled() => Err(RunError::Governor(GovernorError::Cancelled)),
-                    out = fut => out.map_err(RunError::Task),
-                },
-                None => fut.await.map_err(RunError::Task),
-            }
+            run_cancellable(token, deadline, async { fut.await.map_err(RunError::Task) }).await
         })
         .await
-    }
-
-    /// Whether `class` opted into mid-run cooperative cancellation.
-    fn cooperative_cancel(&self, class: &TaskClass) -> bool {
-        matches!(
-            self.config
-                .classes
-                .get(class)
-                .map(|p| p.cancellation_policy),
-            Some(CancellationPolicy::Cooperative | CancellationPolicy::CooperativeWithDeadline)
-        )
     }
 
     pub async fn run_blocking_with<T, E, F>(
@@ -276,21 +278,28 @@ impl TokioRuntime {
         if let Err(e) = Self::require_hint(&spec, &[SubstrateHint::SharedCpuExecutor]) {
             return Err(RunError::Governor(e));
         }
+        let (token, deadline) = self.cancel_controls(&spec.class, &opts);
         let cpu = Arc::clone(&self.cpu);
-        self.with_permit(spec, opts, || async move {
+        self.with_permit(spec, opts, move || async move {
             let (tx, rx) = oneshot::channel();
             cpu.spawn(Box::new(move || {
                 // The receiver is gone only if the caller already cancelled; the
                 // result is then intentionally not delivered.
                 let _delivered = tx.send(job());
             }));
-            match rx.await {
-                Ok(Ok(value)) => Ok(value),
-                Ok(Err(err)) => Err(RunError::Task(err)),
-                Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
-                    "cpu worker dropped result".into(),
-                ))),
-            }
+            // Wrap the result-await in cooperative cancel/deadline so a cancellable
+            // class can escape even a stalled custom CpuExecutor (no liveness
+            // guarantee from the port) instead of hanging on `rx` forever.
+            let work = async move {
+                match rx.await {
+                    Ok(Ok(value)) => Ok(value),
+                    Ok(Err(err)) => Err(RunError::Task(err)),
+                    Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
+                        "cpu worker dropped result".into(),
+                    ))),
+                }
+            };
+            run_cancellable(token, deadline, work).await
         })
         .await
     }
@@ -306,14 +315,20 @@ impl TokioRuntime {
         T: 'static,
     {
         // `run_local` is the local-runtime exception, not a general async path.
-        if spec.primary_substrate_hint() != SubstrateHint::LocalRuntime {
-            return Err(RunError::Governor(GovernorError::LocalRuntimeUnavailable));
+        if let Err(e) = Self::require_hint(&spec, &[SubstrateHint::LocalRuntime]) {
+            return Err(RunError::Governor(e));
         }
-        self.with_permit(spec, opts, || async move {
-            tokio::task::LocalSet::new()
-                .run_until(fut)
-                .await
-                .map_err(RunError::Task)
+        // run_local is async, so (like run_io) it honors mid-run cooperative
+        // cancel/deadline for cancellable classes.
+        let (token, deadline) = self.cancel_controls(&spec.class, &opts);
+        self.with_permit(spec, opts, move || async move {
+            let work = async move {
+                tokio::task::LocalSet::new()
+                    .run_until(fut)
+                    .await
+                    .map_err(RunError::Task)
+            };
+            run_cancellable(token, deadline, work).await
         })
         .await
     }
@@ -359,6 +374,40 @@ impl Runtime for TokioRuntime {
 
     fn snapshot(&self) -> Snapshot {
         self.governor.snapshot()
+    }
+}
+
+/// Run `work`, racing it against an optional cooperative cancel token and an
+/// optional run deadline. Shared by every async run path (`run_io`, `run_local`,
+/// and the `run_cpu` result-await), so cancellation/deadline semantics are
+/// identical everywhere. Sync blocking work has no awaitable cancel point and is
+/// handled separately (pre-submit cancel only).
+async fn run_cancellable<T, E>(
+    token: Option<CancellationToken>,
+    deadline: Option<Duration>,
+    work: impl Future<Output = Result<T, RunError<E>>>,
+) -> Result<T, RunError<E>> {
+    if token.is_none() && deadline.is_none() {
+        return work.await;
+    }
+    let cancelled = async {
+        match &token {
+            Some(t) => t.cancelled().await,
+            None => std::future::pending::<()>().await,
+        }
+    };
+    let timed = async {
+        match deadline {
+            Some(d) => tokio::time::sleep(d).await,
+            None => std::future::pending::<()>().await,
+        }
+    };
+    tokio::pin!(work);
+    tokio::select! {
+        biased;
+        () = cancelled, if token.is_some() => Err(RunError::Governor(GovernorError::Cancelled)),
+        () = timed, if deadline.is_some() => Err(RunError::Governor(GovernorError::DeadlineExceeded)),
+        out = &mut work => out,
     }
 }
 
@@ -462,8 +511,10 @@ impl SubstrateGates {
             Some(deadline) => {
                 match timeout_at(Instant::now() + deadline, sem.acquire_owned()).await {
                     Ok(permit) => Ok(Some(permit.expect("substrate semaphore open"))),
+                    // Distinct from the governor queue-wait timeout so the two
+                    // backpressure causes stay separable.
                     Err(_) => Err(GovernorError::Rejected(
-                        AdmissionVerdict::PermitAcquireTimedOut {
+                        AdmissionVerdict::SubstratePoolTimedOut {
                             retry_after_ms: None,
                         },
                     )),

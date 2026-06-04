@@ -119,7 +119,7 @@ async fn unknown_class_and_run_local_paths() {
         .expect_err("non-local rejected");
     assert!(matches!(
         bad,
-        RunError::Governor(GovernorError::LocalRuntimeUnavailable)
+        RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstrateMismatch))
     ));
 }
 

@@ -35,11 +35,19 @@ let out = runtime
 2. `child_of(...)`는 composite permit attribution용 (root에 귀속)
 3. unknown class는 `AdmissionVerdict::UnknownClass`로 reject
 4. CPU executor 교체: `Builder::cpu_executor(Arc::new(taskmesh_rayon::RayonCpuExecutor::from_topology(&topo)))`
-5. cancel/timeout: `run_*_with(spec, SubmitOptions::unbounded().with_cancel(token).with_acquire_timeout(d), ...)`
-   - pre-submit cancel는 모든 클래스에서 honored. **mid-run 협조 취소**는 `cancellation_policy`가
-     `Cooperative`/`CooperativeWithDeadline`인 클래스의 `run_io`에서만 동작(→`GovernorError::Cancelled`).
-     동기 `run_blocking`/`run_cpu`는 pre-submit only.
-6. substrate hint는 run path와 일치해야 한다(불일치 → `MalformedTask`). topology slot은 실제 동시성 상한(`0`=무제한).
+5. cancel/timeout: `run_*_with(spec, SubmitOptions::unbounded().with_cancel(token).with_acquire_timeout(d).with_deadline(d), ...)`
+   - pre-submit cancel는 모든 클래스에서 honored.
+   - **mid-run 협조 취소**는 `cancellation_policy`가 `Cooperative`/`CooperativeWithDeadline`인 클래스에서
+     `run_io`/`run_local`/`run_cpu` 모두 동작(→`GovernorError::Cancelled`). `run_cpu`는 토큰이 stalled
+     `CpuExecutor`에서도 탈출시킨다(permit/gate는 정확히 한 번 release).
+   - **run deadline**(`with_deadline`)은 `CooperativeWithDeadline` 클래스에서만 발효(→`GovernorError::DeadlineExceeded`);
+     plain `Cooperative`는 `deadline`을 무시한다.
+   - `acquire_timeout`은 governor 입장 큐 대기(→`PermitAcquireTimedOut`)와 substrate capability-pool 슬롯 대기
+     (→`SubstratePoolTimedOut`) 둘 다를 bound한다.
+6. substrate hint는 run path와 일치해야 한다(불일치 → `SubstrateMismatch`). topology slot은 실제 동시성 상한(`0`=무제한);
+   슬롯이 가득 차면 `SubstratePoolTimedOut`로 backpressure.
+7. spec 형태가 구조적으로 깨지면(0-stage, stage별 class 불일치, reduce 누락 fan-out) 입장 자체가 `MalformedTask`로 reject.
+8. 불가능한 budget·mixed-tier fairness·잘못된 memory scaling 등은 `Builder::build`에서 fail-closed로 reject (런타임 admit로 미룸 없음).
 
 타입 규칙:
 

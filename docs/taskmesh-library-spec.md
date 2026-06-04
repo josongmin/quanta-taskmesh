@@ -22,7 +22,8 @@ but `serde`.
 2. `ClassPolicy`
    - fairness, memory mode/release/overcommit, overflow, retry-after, checkpoint
 3. `AdmissionVerdict`
-   - typed rejection surface (incl. `RecursiveAdmission`, `PermitAcquireTimedOut`)
+   - typed rejection surface (incl. `RecursiveAdmission`, `PermitAcquireTimedOut`,
+     `MalformedTask`, `SubstrateMismatch`, `SubstratePoolTimedOut`)
 4. `Snapshot`
    - per-class inflight/queued/held + substrate inventory
 
@@ -33,8 +34,9 @@ but `serde`.
 3. `run_cpu`    — pluggable `CpuExecutor` (blocking-pool default, or Rayon)
 4. `run_local`  — non-`Send`, local-runtime exception only (guarded)
 
-The `*_with` variants accept `SubmitOptions` for pre-submit cancel and a bounded
-acquire wait.
+The `*_with` variants accept `SubmitOptions` for pre-submit cancel, mid-run
+cooperative cancel/run-deadline, and a bounded acquire wait (covering both the
+governor queue and the substrate capability-pool slot).
 
 ## Engine Highlights
 
@@ -52,13 +54,25 @@ acquire wait.
 
 The host enforces the declared contract at runtime:
 
-- **substrate hint ↔ run path** must match (else `MalformedTask`); `run_local` is
-  the `LocalRuntime`-only exception.
+- **policy validity** is checked fail-closed at `Builder::build` /
+  `Governor::new` (impossible budgets, mixed-tier fairness, invalid memory
+  scaling, misused degrade/queue) — never deferred to a runtime admit path.
+- **spec shape** is validated at admission: zero stages, an inconsistent
+  per-stage class, or a fan-out stage missing its deterministic reduce policy
+  all reject as `MalformedTask`.
+- **substrate hint ↔ run path** must match (else `SubstrateMismatch`);
+  `run_local` is the `LocalRuntime`-only exception.
 - **topology slot counts** are real per-substrate capability-pool limits
   (`blocking_threads`, `large_stack_slots`, `local_runtime_slots`,
-  `maintenance_workers`); `0` = unlimited.
-- **cancellation_policy** gates mid-run cooperative cancel (async `run_io` only;
-  sync blocking/cpu is pre-submit only) → `GovernorError::Cancelled`.
-- **memory_release_policy::LeakDetecting** is the opt-in for leak-sweep reclaim.
+  `maintenance_workers`, and the topology-sized CPU pool); `0` = unlimited. A
+  full pool backpressures as `SubstratePoolTimedOut` (distinct from the
+  governor-queue `PermitAcquireTimedOut`). `Blocking`/`LargeStack`/`Background`
+  share the blocking executor but hold separate capability pools.
+- **cancellation_policy** gates mid-run cooperative cancel across
+  `run_io`/`run_local`/`run_cpu` → `GovernorError::Cancelled`; `run_cpu` escapes
+  even a stalled `CpuExecutor`. `CooperativeWithDeadline` additionally honors
+  `SubmitOptions::deadline` → `GovernorError::DeadlineExceeded`.
+- **memory_release_policy::LeakDetecting** is the opt-in for leak-sweep reclaim;
+  a downward `reconcile_memory` frees budget and promotes queued work.
 - `checkpoint_policy` is host-inspected metadata (engine preserves, does not
   enforce).

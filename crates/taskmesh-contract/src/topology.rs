@@ -16,6 +16,14 @@ pub enum SubstrateKind {
 
 /// Where a stage wants to run. Product-neutral; the adapter layer owns mapping
 /// these to concrete pools.
+///
+/// Governance note: in the current Tokio host, `BlockingPool`,
+/// `LargeStackCapability`, and `BackgroundOnly` all *execute* on Tokio's blocking
+/// pool — they are distinguished by **separate capability pools** (independent
+/// topology-sized concurrency gates), not by distinct executors. A dedicated
+/// large-stack/background thread pool is a future host concern; the contract
+/// already names the capability so callers and governance can treat them
+/// separately today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum SubstrateHint {

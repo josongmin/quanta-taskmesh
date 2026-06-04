@@ -32,7 +32,7 @@ async fn run_blocking_rejects_io_hinted_spec() {
         .expect_err("io spec on blocking path must reject");
     assert!(matches!(
         err,
-        RunError::Governor(GovernorError::Rejected(AdmissionVerdict::MalformedTask))
+        RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstrateMismatch))
     ));
 }
 
@@ -46,7 +46,7 @@ async fn run_io_rejects_blocking_hinted_spec() {
         .expect_err("blocking spec on io path must reject");
     assert!(matches!(
         err,
-        RunError::Governor(GovernorError::Rejected(AdmissionVerdict::MalformedTask))
+        RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstrateMismatch))
     ));
 }
 
@@ -60,7 +60,7 @@ async fn run_cpu_rejects_io_hinted_spec() {
         .expect_err("io spec on cpu path must reject");
     assert!(matches!(
         err,
-        RunError::Governor(GovernorError::Rejected(AdmissionVerdict::MalformedTask))
+        RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstrateMismatch))
     ));
 }
 
@@ -121,7 +121,7 @@ async fn blocking_threads_caps_substrate_concurrency() {
     assert!(matches!(
         err,
         RunError::Governor(GovernorError::Rejected(
-            AdmissionVerdict::PermitAcquireTimedOut { .. }
+            AdmissionVerdict::SubstratePoolTimedOut { .. }
         ))
     ));
 

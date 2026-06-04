@@ -15,7 +15,7 @@ async fn run_local_rejects_non_local_classified_work() {
         .expect_err("non-local work rejected");
     assert!(matches!(
         err,
-        RunError::Governor(GovernorError::LocalRuntimeUnavailable)
+        RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstrateMismatch))
     ));
 }
 

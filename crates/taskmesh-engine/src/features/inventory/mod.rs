@@ -17,18 +17,29 @@ pub const BUILTIN_SUBSTRATES: &[&str] = &[
 
 // ---- domain (pure) --------------------------------------------------------
 
-/// Validate a record in isolation: every kind except `AuthorityOnly` must name a
-/// capability pool, and the name must be non-empty.
+/// Validate a record in isolation: the name must be non-empty, and every kind
+/// except `AuthorityOnly` must name a **non-empty** capability pool. A `Some("")`
+/// pool is as fail-open as `None`, so both are rejected.
 pub fn validate_record(record: &SubstrateRecord) -> Result<(), GovernorError> {
-    if record.name.is_empty() {
+    if record.name.trim().is_empty() {
         return Err(GovernorError::PolicyViolation(
             "substrate name must be non-empty".into(),
         ));
     }
-    if record.kind != SubstrateKind::AuthorityOnly && record.capability_pool.is_none() {
-        return Err(GovernorError::PolicyViolation(
-            format!("substrate {} requires a capability pool", record.name).into(),
-        ));
+    if record.kind != SubstrateKind::AuthorityOnly {
+        let pool_ok = record
+            .capability_pool
+            .as_ref()
+            .is_some_and(|p| !p.trim().is_empty());
+        if !pool_ok {
+            return Err(GovernorError::PolicyViolation(
+                format!(
+                    "substrate {} requires a non-empty capability pool",
+                    record.name
+                )
+                .into(),
+            ));
+        }
     }
     Ok(())
 }

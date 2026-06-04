@@ -89,9 +89,10 @@ impl Builder {
         // `Governor::new` validates the policy fail-closed (impossible budgets,
         // mixed-tier fairness, invalid memory scaling, misused degrade/queue).
         let governor = Arc::new(Governor::new(policy, Arc::new(SystemClock))?);
-        let cpu: Arc<dyn CpuExecutor> = self
-            .cpu_executor
-            .unwrap_or_else(|| default_cpu_executor(&self.topology));
+        let cpu: Arc<dyn CpuExecutor> = match self.cpu_executor {
+            Some(cpu) => cpu,
+            None => default_cpu_executor(&self.topology)?,
+        };
 
         Ok(TokioRuntime::new(config, governor, cpu))
     }
@@ -100,13 +101,21 @@ impl Builder {
 /// The default CPU executor when the caller does not supply one. With the
 /// `rayon` feature this is the shared Rayon pool sized from the topology;
 /// otherwise it is the Tokio blocking pool. Either way `run_cpu` rides the
-/// `CpuExecutor` port — never a hardcoded `spawn_blocking`.
+/// `CpuExecutor` port — never a hardcoded `spawn_blocking`. Fallible so a pool
+/// build failure surfaces as a `build()` error, never a panic (fail-closed).
 #[cfg(feature = "rayon")]
-fn default_cpu_executor(topology: &TopologyConfig) -> Arc<dyn CpuExecutor> {
-    Arc::new(taskmesh_rayon::RayonCpuExecutor::from_topology(topology))
+fn default_cpu_executor(topology: &TopologyConfig) -> Result<Arc<dyn CpuExecutor>, GovernorError> {
+    let pool = taskmesh_rayon::RayonCpuExecutor::try_from_topology(topology).map_err(|e| {
+        GovernorError::PolicyViolation(format!("failed to build shared CPU pool: {e}").into())
+    })?;
+    Ok(Arc::new(pool))
 }
 
 #[cfg(not(feature = "rayon"))]
-fn default_cpu_executor(_topology: &TopologyConfig) -> Arc<dyn CpuExecutor> {
-    Arc::new(BlockingPoolCpuExecutor)
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "signature mirrors the fallible rayon variant so build() is uniform"
+)]
+fn default_cpu_executor(_topology: &TopologyConfig) -> Result<Arc<dyn CpuExecutor>, GovernorError> {
+    Ok(Arc::new(BlockingPoolCpuExecutor))
 }

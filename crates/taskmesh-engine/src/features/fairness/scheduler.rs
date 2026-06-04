@@ -137,25 +137,62 @@ fn pick_min<K: Ord>(pool: &[&Candidate], key: impl Fn(&Candidate) -> K) -> TaskC
         .expect("pool is non-empty")
 }
 
-/// Deficit round-robin: credit each runnable class one quantum, then serve the
-/// class with the largest deficit (arrival/class order tie-break), debiting the
-/// head cost. Accumulation guarantees deterministic rotation across classes.
+/// Deficit round-robin (T04): a deterministic *active-class ring*, not
+/// priority-by-quantum.
+///
+/// Each class carries a persistent deficit counter. When the ring cursor lands
+/// on a class it is credited one quantum; it is then served (head cost debited)
+/// while its deficit still covers its head cost. When the deficit is exhausted
+/// — or the class drains — the cursor advances to the next runnable class in
+/// class order, wrapping around. A quantum-`N` class is therefore served about
+/// `N` times per lap before yielding, giving service *proportional* to quanta
+/// with a bounded difference. Equal quanta degenerate to plain round-robin.
+///
+/// One promotion is returned per call; the cursor and deficits live in
+/// `GovernedState` and persist across promotions. `pool` is class-sorted (it is
+/// built by iterating the class `BTreeMap`), so "next class after the cursor,
+/// wrapping" is the next ring slot.
 fn drr_select(state: &mut GovernedState, pool: &[&Candidate]) -> Option<TaskClass> {
-    for c in pool {
-        if let FairnessPolicy::DeficitRoundRobin { quantum } = c.fairness {
-            let cs = state.class_mut(&c.class);
-            cs.deficit = cs.deficit.saturating_add(u64::from(quantum.max(1)));
+    if pool.is_empty() {
+        return None;
+    }
+
+    // Keep serving the current cursor class while its deficit covers its head
+    // cost — this is what lets a quantum-N class run ~N in a row.
+    if let Some(cur) = state.drr_cursor.clone() {
+        if let Some(c) = pool.iter().find(|c| c.class == cur) {
+            let cost = u64::from(c.head_cost_cpu.max(1));
+            if state.classes.get(&cur).map_or(0, |s| s.deficit) >= cost {
+                state.class_mut(&cur).deficit -= cost;
+                return Some(cur);
+            }
         }
     }
-    let chosen = pool
-        .iter()
-        .max_by(|a, b| {
-            let da = state.classes.get(&a.class).map_or(0, |s| s.deficit);
-            let db = state.classes.get(&b.class).map_or(0, |s| s.deficit);
-            da.cmp(&db).then(b.class.cmp(&a.class)) // larger deficit, then earlier class
-        })
-        .map(|c| (c.class.clone(), c.head_cost_cpu))?;
-    let cs = state.class_mut(&chosen.0);
-    cs.deficit = cs.deficit.saturating_sub(u64::from(chosen.1.max(1)));
-    Some(chosen.0)
+
+    // Otherwise advance the ring: starting just after the cursor (wrapping),
+    // credit each class on arrival and serve the first that can afford its head.
+    // Bounded: every visit adds >= 1 to a finite deficit and the pool is
+    // non-empty, so some runnable class is served.
+    let start = match &state.drr_cursor {
+        Some(cur) => pool.iter().position(|c| c.class > *cur).unwrap_or(0),
+        None => 0,
+    };
+    let n = pool.len();
+    let mut i = start;
+    loop {
+        let c = pool.get(i)?;
+        let quantum = match c.fairness {
+            FairnessPolicy::DeficitRoundRobin { quantum } => u64::from(quantum.max(1)),
+            _ => 1,
+        };
+        let cost = u64::from(c.head_cost_cpu.max(1));
+        let cs = state.class_mut(&c.class);
+        cs.deficit = cs.deficit.saturating_add(quantum);
+        if cs.deficit >= cost {
+            cs.deficit -= cost;
+            state.drr_cursor = Some(c.class.clone());
+            return Some(c.class.clone());
+        }
+        i = (i + 1) % n;
+    }
 }

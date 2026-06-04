@@ -27,6 +27,37 @@ fn drr_rotates_across_classes_deterministically() {
 }
 
 #[test]
+fn drr_serves_proportional_to_quantum_not_priority() {
+    // a: quantum 1, b: quantum 3, with a 1:3 backlog. Classic deficit round-robin
+    // interleaves *proportionally* — one `a` per three `b` — and both drain
+    // together. This is the documented T04 behavior (bounded service difference),
+    // NOT priority-by-quantum (which would serve all of `b` before any `a`) and
+    // NOT plain round-robin (which would be 1:1). Regression guard for the ring.
+    let g = contended(vec![("a", drr_class(1)), ("b", drr_class(3))]);
+    let filler = admit_filler(&g);
+
+    let mut tickets = Vec::new();
+    for i in 0..4 {
+        tickets.push(queue(&g, "a", &format!("a{i}")));
+    }
+    for i in 0..12 {
+        tickets.push(queue(&g, "b", &format!("b{i}")));
+    }
+
+    g.release(filler);
+    let order = drain(&g, &tickets);
+
+    let expected: Vec<String> = std::iter::repeat_n(["a", "b", "b", "b"], 4)
+        .flatten()
+        .map(String::from)
+        .collect();
+    assert_eq!(
+        order, expected,
+        "DRR must interleave proportionally to quanta (1:3), not as priority"
+    );
+}
+
+#[test]
 fn deadline_aware_prioritizes_tighter_slack() {
     let g = contended(vec![
         ("tight", deadline_class(10)),

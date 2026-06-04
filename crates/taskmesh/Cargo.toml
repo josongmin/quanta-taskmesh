@@ -1,0 +1,23 @@
+[package]
+name = "taskmesh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Governed execution control-plane: Tokio host facade for taskmesh."
+
+[dependencies]
+taskmesh-contract = { workspace = true }
+taskmesh-engine = { workspace = true }
+taskmesh-rayon = { workspace = true, optional = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+[features]
+default = []
+rayon = ["dep:taskmesh-rayon"]
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true }
+taskmesh-rayon = { workspace = true }

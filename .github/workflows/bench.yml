@@ -1,0 +1,60 @@
+name: bench-gates
+
+# Benchmark regression gates (ADR 9000 / P2 + P8). Separate from `ci.yml` so the
+# heavier valgrind run does not block the fast proof matrix.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  alloc-gate:
+    name: allocation gate (deterministic, cross-platform)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # admit→release allocs/op must not exceed the committed baseline.
+      - run: bash tools/bench-gate.sh
+
+  instruction-count:
+    name: instruction-count gate (iai-callgrind / valgrind)
+    runs-on: ubuntu-latest
+    env:
+      # Fail the bench if any event (instructions, cache, RAM hits) regresses by
+      # more than 5% vs the cached baseline. Best-effort: ignored until a baseline
+      # exists, so the first run on a fresh cache only records.
+      IAI_CALLGRIND_REGRESSION: "Ir=5.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Install iai-callgrind-runner (version must match the crate)
+        run: cargo install iai-callgrind-runner --version 0.14.2 --locked
+
+      # Restore/persist the callgrind baseline across runs so regressions are
+      # measured against the previous green run, not a cold start.
+      - name: Cache iai baseline
+        uses: actions/cache@v4
+        with:
+          path: target/iai
+          key: iai-baseline-${{ runner.os }}
+
+      - name: Instruction-count benchmark (deterministic, machine-independent)
+        run: cargo bench -p taskmesh-bench --features iai --bench iai_governance
+
+  loom:
+    name: concurrency model-check (loom)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Exhaustively explore admit/release interleavings (ADR 9000 / P6).
+      - run: RUSTFLAGS="--cfg loom" cargo test -p taskmesh-engine --test loom_governance --release

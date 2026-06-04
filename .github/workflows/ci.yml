@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  proof:
+    name: check / test / doctest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      # Drift detectors: formatting and lint gates.
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Proof matrix.
+      - run: cargo check --workspace
+      - run: cargo test --workspace
+      - run: cargo test --doc -p taskmesh
+
+      # Feature-matrix drift: the `rayon` feature auto-wires the default CPU
+      # executor on a cfg-gated path that default-feature CI never compiles.
+      - run: cargo test -p taskmesh --features rayon
+      - run: cargo test -p taskmesh-rayon
+
+      # rustdoc must stay link-clean (private-intra-doc-link drift detector).
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
+
+      # Benches must keep compiling and smoke-running.
+      - run: cargo bench -p taskmesh-bench -- --test
+
+  loom:
+    name: concurrency model-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Exhaustive interleaving check of the admit/release concurrency design.
+      - run: RUSTFLAGS="--cfg loom" cargo test -p taskmesh-engine --test loom_governance --release

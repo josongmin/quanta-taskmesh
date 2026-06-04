@@ -25,8 +25,8 @@ impl Lcg {
     fn next(&mut self) -> u64 {
         self.0 = self
             .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         self.0
     }
     fn below(&mut self, n: u64) -> u64 {
@@ -349,7 +349,7 @@ async fn overload_is_bounded_and_fail_closed() {
             match r {
                 Ok(_) => admitted.fetch_add(1, Ordering::SeqCst),
                 Err(RunError::Governor(_)) => shed.fetch_add(1, Ordering::SeqCst),
-                Err(RunError::Task(_)) => panic!("task error must not appear under overload"),
+                Err(RunError::Task(())) => panic!("task error must not appear under overload"),
             };
         }));
     }

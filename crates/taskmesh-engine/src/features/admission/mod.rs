@@ -49,10 +49,11 @@ pub fn admit(
     waker: Option<Arc<dyn PermitWaker>>,
     ids: Ids,
 ) -> AdmissionDecision {
-    // Fail-closed on a malformed plan before any capacity is considered: a
-    // fan-out stage without a complete deterministic reduce policy is never
-    // shippable (T06), so it must never be admitted.
-    if composite::reduce::validate_spec(spec).is_err() {
+    // Fail-closed on a malformed plan before any capacity is considered:
+    //  - zero-stage / inconsistent per-stage class (`validate_shape`), and
+    //  - a fan-out stage without a complete deterministic reduce policy (T06).
+    // Either makes the spec unshippable, so it must never be admitted.
+    if composite::validate_shape(spec).is_err() || composite::reduce::validate_spec(spec).is_err() {
         return AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask);
     }
     admit_class(

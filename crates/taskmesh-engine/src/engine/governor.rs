@@ -29,7 +29,20 @@ pub struct Governor {
 }
 
 impl Governor {
-    pub fn new(policy: PolicySet, clock: Arc<dyn Clock>) -> Self {
+    /// Construct a governor, **validating the policy fail-closed** first. Any
+    /// impossible budget, invalid memory scaling, mixed-tier fairness, or misused
+    /// degrade/queue policy is rejected here — a direct engine embedder (via
+    /// `taskmesh::ext`) gets the same construction-time rejection the host
+    /// `Builder` enforces, so contradictory policy can never boot.
+    pub fn new(policy: PolicySet, clock: Arc<dyn Clock>) -> Result<Self, GovernorError> {
+        Self::validate_policy(&policy)?;
+        Ok(Self::new_unchecked(policy, clock))
+    }
+
+    /// Construct a governor **without** validating the policy. The caller asserts
+    /// the policy was already validated (or is intentionally exercising raw
+    /// scheduler behavior in tests). Prefer [`Governor::new`] everywhere else.
+    pub fn new_unchecked(policy: PolicySet, clock: Arc<dyn Clock>) -> Self {
         Self {
             policy,
             clock,
@@ -121,15 +134,25 @@ impl Governor {
     /// Release a permit, returning its resources and promoting queued work.
     pub fn release(&self, permit_id: PermitId) {
         let now = self.now_ms();
-        let mut state = self.state.lock();
-        if state.unwind(permit_id).is_none() {
-            return;
-        }
-        self.promote(&mut state, now);
+        let wakers = {
+            let mut state = self.state.lock();
+            if state.unwind(permit_id).is_none() {
+                return;
+            }
+            self.promote(&mut state, now)
+        };
+        // Fire host callbacks AFTER releasing the governor lock: `PermitWaker` is a
+        // driven host port, and a blocking or re-entrant implementation must never
+        // run under the engine mutex (deadlock / global admission serialization).
+        wake_all(wakers);
     }
 
     /// Promote queued work into freed capacity, fairly, until nothing is runnable.
-    fn promote(&self, state: &mut GovernedState, now: u64) {
+    /// Returns the wakers of the promoted requests to be fired *after* the lock
+    /// is released.
+    #[must_use]
+    fn promote(&self, state: &mut GovernedState, now: u64) -> Vec<Arc<dyn PermitWaker>> {
+        let mut wakers = Vec::new();
         while let Some(class) = fairness::select(state, &self.policy) {
             let Some(head) = state.class_mut(&class).queue.pop_front() else {
                 break;
@@ -146,37 +169,64 @@ impl Governor {
                 now,
             );
             state.granted.insert(head.ticket, permit_id);
-            if let Some(waker) = &head.waker {
-                waker.wake();
+            if let Some(waker) = head.waker {
+                wakers.push(waker);
             }
         }
+        wakers
     }
 
     // ---- memory governance (T05) -----------------------------------------
 
     /// Reconcile a permit's held memory against a measured byte reading.
+    ///
+    /// A *downward* reconcile frees memory, so queued work is promoted (like
+    /// `release_stage_memory`/leak sweep). An *upward* reconcile records measured
+    /// reality even if it pushes held memory past `max_memory_units`; the cap is
+    /// then enforced fail-closed for *new* admissions (`capacity_for` blocks any
+    /// admit while `held > budget`), so an overcommitting in-flight task cannot
+    /// let new work in.
     pub fn reconcile_memory(&self, permit_id: PermitId, measured_bytes: u64) -> bool {
         let now = self.now_ms();
-        let mut state = self.state.lock();
-        let Some(record) = state.permits.get(&permit_id) else {
-            return false;
+        let (ok, wakers) = {
+            let mut state = self.state.lock();
+            let Some(record) = state.permits.get(&permit_id) else {
+                return false;
+            };
+            let Some(policy) = self.policy.class(&record.class) else {
+                return false;
+            };
+            let mode = policy.memory_permit_mode;
+            let scale = self.policy.resources.memory_unit_scale;
+            let ok = memory::reconcile(&mut state, permit_id, measured_bytes, mode, scale, now);
+            // Promote unconditionally on success: a downward reconcile freed
+            // budget (promotes queued work); an upward one leaves no capacity so
+            // promote is a no-op.
+            let wakers = if ok {
+                self.promote(&mut state, now)
+            } else {
+                Vec::new()
+            };
+            (ok, wakers)
         };
-        let Some(policy) = self.policy.class(&record.class) else {
-            return false;
-        };
-        let mode = policy.memory_permit_mode;
-        let scale = self.policy.resources.memory_unit_scale;
-        memory::reconcile(&mut state, permit_id, measured_bytes, mode, scale, now)
+        wake_all(wakers);
+        ok
     }
 
     /// Return `freed_units` of a still-held permit's memory at a stage boundary.
     pub fn release_stage_memory(&self, permit_id: PermitId, freed_units: u32) -> u32 {
-        let mut state = self.state.lock();
-        let freed = memory::release_stage_memory(&mut state, permit_id, freed_units);
-        if freed > 0 {
-            let now = self.now_ms();
-            self.promote(&mut state, now);
-        }
+        let now = self.now_ms();
+        let (freed, wakers) = {
+            let mut state = self.state.lock();
+            let freed = memory::release_stage_memory(&mut state, permit_id, freed_units);
+            let wakers = if freed > 0 {
+                self.promote(&mut state, now)
+            } else {
+                Vec::new()
+            };
+            (freed, wakers)
+        };
+        wake_all(wakers);
         freed
     }
 
@@ -188,11 +238,17 @@ impl Governor {
     /// Sweep for leaked permits older than `stale_after_ms`.
     pub fn reap_leaks_with(&self, stale_after_ms: u64) -> LeakSweepReport {
         let now = self.now_ms();
-        let mut state = self.state.lock();
-        let report = memory::reap_leaks(&mut state, &self.policy, now, stale_after_ms);
-        if report.reclaimed_permits > 0 {
-            self.promote(&mut state, now);
-        }
+        let (report, wakers) = {
+            let mut state = self.state.lock();
+            let report = memory::reap_leaks(&mut state, &self.policy, now, stale_after_ms);
+            let wakers = if report.reclaimed_permits > 0 {
+                self.promote(&mut state, now)
+            } else {
+                Vec::new()
+            };
+            (report, wakers)
+        };
+        wake_all(wakers);
         report
     }
 
@@ -385,4 +441,11 @@ impl Governor {
 
 fn violation(message: String) -> GovernorError {
     GovernorError::PolicyViolation(message.into())
+}
+
+/// Fire promotion wakers outside the governor lock.
+fn wake_all(wakers: Vec<Arc<dyn PermitWaker>>) {
+    for waker in wakers {
+        waker.wake();
+    }
 }

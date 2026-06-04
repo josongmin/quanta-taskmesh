@@ -11,7 +11,7 @@ fn gov(list: Vec<(&'static str, ClassPolicy)>) -> Governor {
         .into_iter()
         .map(|(n, p)| (TaskClass::new(n), p))
         .collect();
-    Governor::new(
+    Governor::new_unchecked(
         PolicySet::new(
             ResourceBudget::new().cpu_units(100).memory_units(100),
             classes,

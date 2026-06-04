@@ -6,9 +6,34 @@
 
 pub mod reduce;
 
-use taskmesh_contract::{CheckpointPolicy, TaskScope, TaskSpec, TaskStage};
+use taskmesh_contract::{CheckpointPolicy, GovernorError, TaskScope, TaskSpec, TaskStage};
 
 use crate::engine::state::GovernedState;
+
+/// Validate the structural shape of a spec before any governance is applied
+/// (fail-closed against malformed wire payloads): a spec must have at least one
+/// stage, and every stage's `class` must match the task's `class` (the per-stage
+/// `class` field is data, but admission governs by `TaskSpec::class`, so an
+/// inconsistent per-stage class is a malformed, non-authoritative payload).
+pub fn validate_shape(spec: &TaskSpec) -> Result<(), GovernorError> {
+    if spec.stages.is_empty() {
+        return Err(GovernorError::PolicyViolation(
+            "task spec must declare at least one stage".into(),
+        ));
+    }
+    for stage in &spec.stages {
+        if stage.class != spec.class {
+            return Err(GovernorError::PolicyViolation(
+                format!(
+                    "stage '{}' declares class '{}' but the task class is '{}'",
+                    stage.stage, stage.class, spec.class
+                )
+                .into(),
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// The stage a task occupies for recursion accounting: its first stage.
 pub fn target_stage(spec: &TaskSpec) -> TaskStage {

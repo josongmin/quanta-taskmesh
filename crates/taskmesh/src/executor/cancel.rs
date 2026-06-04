@@ -13,11 +13,21 @@ use tokio_util::sync::CancellationToken;
 #[derive(Debug, Default, Clone)]
 pub struct SubmitOptions {
     /// If set and already cancelled at submit time, admission is rejected with
-    /// `CancelledBeforeSubmit` before any permit is sought.
+    /// `CancelledBeforeSubmit` before any permit is sought. For a class whose
+    /// `cancellation_policy` is `Cooperative`/`CooperativeWithDeadline`, firing
+    /// this token mid-run also cancels in-flight async work
+    /// (→ `GovernorError::Cancelled`).
     pub cancel: Option<CancellationToken>,
-    /// Maximum time to wait for a queued request to be promoted. `None` waits
-    /// until promotion; `Some(Duration::ZERO)` means "do not wait".
+    /// Maximum time to wait to *acquire* a slot — covering BOTH the governor
+    /// admission-queue wait AND the host substrate capability-pool wait. `None`
+    /// waits indefinitely; `Some(Duration::ZERO)` means "do not wait". A queue
+    /// timeout yields `PermitAcquireTimedOut`; a substrate-pool timeout yields
+    /// `SubstratePoolTimedOut`, so the two causes stay distinguishable.
     pub acquire_timeout: Option<Duration>,
+    /// Wall-clock budget for the *running* work, honored only for a
+    /// `CooperativeWithDeadline` class. When exceeded mid-run, the work is
+    /// cancelled with `GovernorError::DeadlineExceeded`. `None` = no run deadline.
+    pub deadline: Option<Duration>,
 }
 
 impl SubmitOptions {
@@ -33,6 +43,12 @@ impl SubmitOptions {
 
     pub fn with_acquire_timeout(mut self, timeout: Duration) -> Self {
         self.acquire_timeout = Some(timeout);
+        self
+    }
+
+    /// Set the run deadline (honored for `CooperativeWithDeadline` classes).
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
         self
     }
 

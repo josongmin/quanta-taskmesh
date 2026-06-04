@@ -401,9 +401,16 @@ impl Drop for TicketGuard {
 /// Per-substrate capability pools sized from [`TopologyConfig`]. Each pool caps
 /// concurrent work on a substrate; a slot count of `0` means *unlimited* (no
 /// gate), consistent with the `0 == no limit` convention used by resource
-/// budgets. `AsyncIo` is intentionally ungated (async is unbounded by design)
-/// and `SharedCpuExecutor` is bounded by the CPU executor's own worker count.
+/// budgets. `AsyncIo` is intentionally ungated (async is unbounded by design).
+///
+/// `SharedCpuExecutor` is **always** gated to the resolved CPU worker count, so
+/// CPU topology is authoritative on *both* host paths (Tokio blocking-pool and
+/// Rayon): a `run_cpu` submission must hold a CPU slot before it reaches the
+/// executor, so work cannot pile up unbounded behind held permits in an
+/// executor's internal queue. This enforces the "no unbounded competing queue"
+/// rule for the CPU substrate.
 struct SubstrateGates {
+    cpu: Arc<Semaphore>,
     blocking: Option<Arc<Semaphore>>,
     large_stack: Option<Arc<Semaphore>>,
     local_runtime: Option<Arc<Semaphore>>,
@@ -413,7 +420,10 @@ struct SubstrateGates {
 impl SubstrateGates {
     fn from_topology(topology: &TopologyConfig) -> Self {
         let gate = |n: usize| (n > 0).then(|| Arc::new(Semaphore::new(n)));
+        let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+        let cpu_workers = topology.resolved_cpu_workers(available);
         Self {
+            cpu: Arc::new(Semaphore::new(cpu_workers)),
             blocking: gate(topology.blocking_threads),
             large_stack: gate(topology.large_stack_slots),
             local_runtime: gate(topology.local_runtime_slots),
@@ -423,12 +433,13 @@ impl SubstrateGates {
 
     fn gate_for(&self, hint: SubstrateHint) -> Option<&Arc<Semaphore>> {
         match hint {
+            SubstrateHint::SharedCpuExecutor => Some(&self.cpu),
             SubstrateHint::BlockingPool => self.blocking.as_ref(),
             SubstrateHint::LargeStackCapability => self.large_stack.as_ref(),
             SubstrateHint::LocalRuntime => self.local_runtime.as_ref(),
             SubstrateHint::BackgroundOnly => self.maintenance.as_ref(),
-            // AsyncIo / SharedCpuExecutor are ungated (async unbounded; CPU bounded
-            // by the executor). `#[non_exhaustive]`: future substrates also ungated.
+            // AsyncIo is ungated (async is unbounded by design).
+            // `#[non_exhaustive]`: future substrates are ungated until wired.
             _ => None,
         }
     }

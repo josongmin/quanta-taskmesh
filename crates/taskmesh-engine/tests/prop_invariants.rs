@@ -27,7 +27,7 @@ fn governor(specs: &[(&'static str, u32, u32)]) -> Governor {
         .iter()
         .map(|(n, mi, c)| (TaskClass::new(*n), class_policy(*mi, *c)))
         .collect();
-    Governor::new(
+    Governor::new_unchecked(
         // Generous global budget so only the per-class inflight cap binds.
         PolicySet::new(ResourceBudget::new(), classes),
         Arc::new(ManualClock::new(0)),
@@ -118,7 +118,7 @@ fn weighted_drain(classes_seq: &[usize], weights: [u32; 3]) -> Vec<usize> {
     );
     // Single global unit -> one inflight -> fully observable promotion order.
     let resources = ResourceBudget::new().cpu_units(1).memory_units(1_000_000);
-    let g = Governor::new(
+    let g = Governor::new_unchecked(
         PolicySet::new(resources, classes),
         Arc::new(ManualClock::new(0)),
     );

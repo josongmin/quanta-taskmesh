@@ -26,7 +26,7 @@ fn one_class_governor() -> Governor {
             .memory_units(1),
     );
     // All-zero budgets disable the cpu/memory ceilings → admit always succeeds.
-    Governor::new(
+    Governor::new_unchecked(
         PolicySet::new(ResourceBudget::new(), classes),
         Arc::new(ManualClock::new(0)),
     )
@@ -59,7 +59,7 @@ fn setup_snapshot() -> Governor {
                 .memory_units(1),
         );
     }
-    let governor = Governor::new(
+    let governor = Governor::new_unchecked(
         PolicySet::new(ResourceBudget::new(), classes),
         Arc::new(ManualClock::new(0)),
     );

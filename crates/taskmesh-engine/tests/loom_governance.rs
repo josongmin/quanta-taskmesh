@@ -158,3 +158,80 @@ fn admit_then_concurrent_release_is_consistent() {
         assert!(s.granted.is_empty());
     });
 }
+
+/// The full three-way race the host's `TicketGuard` must survive: a queued
+/// ticket is, concurrently, (1) promoted by a releasing thread, (2) claimed by
+/// the waiting thread, and (3) abandoned (cancel / acquire-timeout). Models the
+/// exact ownership handoff in `Governor::{release→promote, claim, abandon}` plus
+/// the host's "claimer owns it and releases" rule. Across every interleaving the
+/// promoted permit is accounted exactly once: never leaked (stuck inflight),
+/// never double-freed, and never stranded promoted-but-unclaimed.
+#[derive(Default)]
+struct ThreeWay {
+    queued: bool,
+    granted: bool,
+    claimed: bool,
+    inflight: i64,
+}
+
+#[test]
+fn promote_claim_abandon_three_way_is_exactly_once() {
+    loom::model(|| {
+        let st = Arc::new(Mutex::new(ThreeWay {
+            queued: true,
+            ..Default::default()
+        }));
+
+        // (1) releasing thread promotes the queued head into a granted permit.
+        let promoter = {
+            let st = st.clone();
+            thread::spawn(move || {
+                let mut s = st.lock().unwrap();
+                if s.queued {
+                    s.queued = false;
+                    s.granted = true;
+                    s.inflight += 1;
+                }
+            })
+        };
+        // (2) waiter claims the promoted permit (takes ownership).
+        let claimer = {
+            let st = st.clone();
+            thread::spawn(move || {
+                let mut s = st.lock().unwrap();
+                if s.granted && !s.claimed {
+                    s.claimed = true;
+                }
+            })
+        };
+        // (3) TicketGuard abandons: release if promoted-unclaimed, else dequeue.
+        let abandoner = {
+            let st = st.clone();
+            thread::spawn(move || {
+                let mut s = st.lock().unwrap();
+                if s.claimed {
+                    // already owned by the claimer — abandon must not touch it
+                } else if s.granted {
+                    s.granted = false;
+                    s.inflight -= 1;
+                } else if s.queued {
+                    s.queued = false;
+                }
+            })
+        };
+        promoter.join().unwrap();
+        claimer.join().unwrap();
+        abandoner.join().unwrap();
+
+        let mut s = st.lock().unwrap();
+        // A claimer that won ownership releases its permit when done.
+        if s.claimed {
+            s.inflight -= 1;
+        }
+        assert_eq!(s.inflight, 0, "permit must be released exactly once");
+        assert!(
+            !(s.granted && !s.claimed),
+            "no promoted-but-unclaimed permit may be stranded"
+        );
+    });
+}

@@ -12,7 +12,7 @@ fn gov() -> Governor {
         TaskClass::new("worker"),
         ClassPolicy::new().max_inflight(8).cpu_units(1),
     );
-    Governor::new(
+    Governor::new_unchecked(
         PolicySet::new(ResourceBudget::new().cpu_units(100), classes),
         Arc::new(ManualClock::new(1000)),
     )
@@ -81,7 +81,7 @@ fn gov_one_slot() -> Governor {
             .cpu_units(1)
             .overflow_policy(OverflowPolicy::QueueWithinDepth),
     );
-    Governor::new(
+    Governor::new_unchecked(
         PolicySet::new(ResourceBudget::new().cpu_units(100), classes),
         Arc::new(ManualClock::new(1000)),
     )

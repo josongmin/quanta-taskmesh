@@ -49,7 +49,7 @@ fn gov() -> Governor {
         TaskClass::new("c"),
         ClassPolicy::new().max_inflight(8).cpu_units(1),
     );
-    Governor::new(
+    Governor::new_unchecked(
         PolicySet::new(ResourceBudget::new(), classes),
         Arc::new(ManualClock::new(0)),
     )

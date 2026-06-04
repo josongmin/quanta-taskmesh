@@ -20,7 +20,7 @@ fn checkpoint_metadata_survives_core_intake() {
         TaskClass::new("c"),
         ClassPolicy::new().checkpoint_policy(checkpoint),
     );
-    let g = Governor::new(
+    let g = Governor::new_unchecked(
         PolicySet::new(ResourceBudget::new(), classes),
         Arc::new(ManualClock::new(0)),
     );

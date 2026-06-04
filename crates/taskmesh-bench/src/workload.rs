@@ -69,6 +69,105 @@ pub fn generate(cfg: &WorkloadConfig) -> Vec<Arrival> {
     out
 }
 
+/// A Markov-modulated Poisson process (MMPP) for *bursty* arrivals (ADR 9000 /
+/// P4). A 2-state CTMC alternates between an `off` phase (rate `low_lambda`) and
+/// an `on` phase (rate `high_lambda`); dwell times in each phase are
+/// exponentially distributed. Uniform Poisson gives false stability; real
+/// retrieval/indexing load arrives in bursts, and MMPP reproduces that while
+/// staying seeded and deterministic.
+#[derive(Debug, Clone)]
+pub struct BurstConfig {
+    pub classes: Vec<String>,
+    pub zipf_exponent: f64,
+    pub count: usize,
+    pub seed: u64,
+    /// Baseline (off-phase) arrival rate, requests/sec.
+    pub low_lambda: f64,
+    /// Burst (on-phase) arrival rate, requests/sec (`>= low_lambda`).
+    pub high_lambda: f64,
+    /// Mean dwell time in the off phase, seconds.
+    pub mean_off_secs: f64,
+    /// Mean dwell time in the on phase, seconds.
+    pub mean_on_secs: f64,
+}
+
+impl Default for BurstConfig {
+    fn default() -> Self {
+        Self {
+            classes: vec!["retrieval".into(), "rank".into(), "index".into()],
+            zipf_exponent: 1.1,
+            count: 10_000,
+            seed: 0xB0_0B5,
+            low_lambda: 2_000.0,
+            high_lambda: 50_000.0,
+            mean_off_secs: 0.010,
+            mean_on_secs: 0.002,
+        }
+    }
+}
+
+/// Generate a bursty open-loop schedule via [`BurstConfig`]'s MMPP. Arrivals
+/// cluster during on-phases and thin out during off-phases; class selection is
+/// Zipfian as in [`generate`]. Send times are monotonic and seed-deterministic.
+pub fn generate_bursty(cfg: &BurstConfig) -> Vec<Arrival> {
+    assert!(!cfg.classes.is_empty(), "workload needs at least one class");
+    assert!(
+        cfg.high_lambda >= cfg.low_lambda && cfg.low_lambda > 0.0,
+        "require high_lambda >= low_lambda > 0"
+    );
+    let mut rng = StdRng::seed_from_u64(cfg.seed);
+    let off = Exp::new(cfg.low_lambda).expect("low_lambda > 0");
+    let on = Exp::new(cfg.high_lambda).expect("high_lambda > 0");
+    let off_dwell = Exp::new(1.0 / cfg.mean_off_secs).expect("mean_off > 0");
+    let on_dwell = Exp::new(1.0 / cfg.mean_on_secs).expect("mean_on > 0");
+    let zipf = Zipf::new(cfg.classes.len() as u64, cfg.zipf_exponent).expect("valid zipf");
+
+    let mut t = 0.0_f64;
+    let mut in_burst = false;
+    let mut phase_end = t + off_dwell.sample(&mut rng);
+    let mut out = Vec::with_capacity(cfg.count);
+    while out.len() < cfg.count {
+        let inter = if in_burst {
+            on.sample(&mut rng)
+        } else {
+            off.sample(&mut rng)
+        };
+        t += inter;
+        // Cross zero or more phase boundaries the arrival jumped over.
+        while t >= phase_end {
+            in_burst = !in_burst;
+            let dwell = if in_burst { &on_dwell } else { &off_dwell };
+            phase_end += dwell.sample(&mut rng);
+        }
+        let rank = zipf.sample(&mut rng) as usize;
+        let idx = rank.saturating_sub(1).min(cfg.classes.len() - 1);
+        out.push(Arrival {
+            send_time_secs: t,
+            class: cfg.classes[idx].clone(),
+        });
+    }
+    out
+}
+
+/// Coefficient of variation of inter-arrival times: `1.0` for a pure Poisson
+/// process, `> 1.0` for bursty (over-dispersed) arrivals. A burstiness statistic.
+pub fn interarrival_cv(arrivals: &[Arrival]) -> f64 {
+    if arrivals.len() < 3 {
+        return 0.0;
+    }
+    let gaps: Vec<f64> = arrivals
+        .windows(2)
+        .map(|w| w[1].send_time_secs - w[0].send_time_secs)
+        .collect();
+    let n = gaps.len() as f64;
+    let mean = gaps.iter().sum::<f64>() / n;
+    if mean <= 0.0 {
+        return 0.0;
+    }
+    let var = gaps.iter().map(|g| (g - mean).powi(2)).sum::<f64>() / n;
+    var.sqrt() / mean
+}
+
 /// Mean inter-arrival interval in nanoseconds for a Poisson rate of `lambda`
 /// requests/sec — the expected interval the latency recorder corrects against.
 pub fn mean_interval_ns(lambda: f64) -> u64 {
@@ -109,7 +208,10 @@ pub fn fixture(classes: Vec<(&str, ClassPolicy)>, cpu_budget: u32, mem_budget: u
         .cpu_units(cpu_budget)
         .memory_units(mem_budget);
     let clock = Arc::new(ManualClock::new(0));
-    let governor = Arc::new(Governor::new(PolicySet::new(resources, map), clock.clone()));
+    let governor = Arc::new(Governor::new_unchecked(
+        PolicySet::new(resources, map),
+        clock.clone(),
+    ));
     Fixture { governor, clock }
 }
 
@@ -212,6 +314,41 @@ mod tests {
         assert!(trace_from_csv("not_a_number,retrieval").is_err());
         assert!(trace_from_csv("0.5").is_err()); // missing comma
         assert!(trace_from_csv("0.5,").is_err()); // empty class
+    }
+
+    #[test]
+    fn bursty_arrivals_are_deterministic_monotonic_and_overdispersed() {
+        let cfg = BurstConfig::default();
+        let a = generate_bursty(&cfg);
+        assert_eq!(a.len(), cfg.count);
+        assert_eq!(a, generate_bursty(&cfg), "MMPP must be seed-deterministic");
+        assert!(a
+            .windows(2)
+            .all(|w| w[1].send_time_secs >= w[0].send_time_secs));
+
+        // MMPP is over-dispersed: its inter-arrival CV exceeds a pure Poisson
+        // process of the same count (whose CV ~= 1.0).
+        let poisson = generate(&WorkloadConfig {
+            classes: cfg.classes.clone(),
+            lambda: 10_000.0,
+            count: cfg.count,
+            ..Default::default()
+        });
+        let burst_cv = interarrival_cv(&a);
+        let poisson_cv = interarrival_cv(&poisson);
+        assert!(
+            burst_cv > 1.3 && burst_cv > poisson_cv,
+            "MMPP should be burstier: burst_cv={burst_cv:.3} poisson_cv={poisson_cv:.3}"
+        );
+    }
+
+    #[test]
+    fn bursty_trace_round_trips_and_replays() {
+        let a = generate_bursty(&BurstConfig {
+            count: 1_000,
+            ..Default::default()
+        });
+        assert_eq!(trace_from_csv(&trace_to_csv(&a)).unwrap(), a);
     }
 
     #[test]

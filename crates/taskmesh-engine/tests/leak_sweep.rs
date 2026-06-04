@@ -21,7 +21,7 @@ fn gov() -> (Governor, Arc<ManualClock>, TaskClass) {
     let clock = Arc::new(ManualClock::new(1000));
     let resources = ResourceBudget::new().cpu_units(100).memory_units(1000);
     (
-        Governor::new(PolicySet::new(resources, classes), clock.clone()),
+        Governor::new_unchecked(PolicySet::new(resources, classes), clock.clone()),
         clock,
         TaskClass::new("c"),
     )
@@ -87,7 +87,7 @@ fn non_leak_detecting_class_is_not_reaped() {
             .memory_release_policy(MemoryReleasePolicy::OnTaskCompletion),
     );
     let clock = Arc::new(ManualClock::new(1000));
-    let g = Governor::new(
+    let g = Governor::new_unchecked(
         PolicySet::new(
             ResourceBudget::new().cpu_units(100).memory_units(1000),
             classes,

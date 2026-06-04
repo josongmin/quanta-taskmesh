@@ -61,7 +61,10 @@ fn governor() -> Arc<Governor> {
         .memory_unit_scale(8);
     let policy = PolicySet::new(resources, classes);
     Governor::validate_policy(&policy).expect("policy valid");
-    Arc::new(Governor::new(policy, Arc::new(ManualClock::new(0))))
+    Arc::new(Governor::new_unchecked(
+        policy,
+        Arc::new(ManualClock::new(0)),
+    ))
 }
 
 #[test]

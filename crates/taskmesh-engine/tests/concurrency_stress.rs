@@ -21,7 +21,7 @@ fn governor(class: &str, policy: ClassPolicy, cpu_budget: u32) -> Arc<Governor> 
     let resources = ResourceBudget::new()
         .cpu_units(cpu_budget)
         .memory_units(1_000_000);
-    Arc::new(Governor::new(
+    Arc::new(Governor::new_unchecked(
         PolicySet::new(resources, classes),
         Arc::new(ManualClock::new(0)),
     ))

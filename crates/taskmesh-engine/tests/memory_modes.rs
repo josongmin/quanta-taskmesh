@@ -19,7 +19,7 @@ fn gov(mode: MemoryPermitMode, memory_units: u32) -> (Governor, TaskClass) {
         .memory_units(1000)
         .memory_unit_scale(10);
     (
-        Governor::new(
+        Governor::new_unchecked(
             PolicySet::new(resources, classes),
             Arc::new(ManualClock::new(1000)),
         ),

@@ -11,7 +11,7 @@ fn gov(resources: ResourceBudget, list: Vec<(&'static str, ClassPolicy)>) -> Gov
         .into_iter()
         .map(|(n, p)| (TaskClass::new(n), p))
         .collect();
-    Governor::new(
+    Governor::new_unchecked(
         PolicySet::new(resources, classes),
         Arc::new(ManualClock::new(1000)),
     )

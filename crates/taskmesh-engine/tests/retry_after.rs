@@ -9,7 +9,7 @@ use taskmesh_engine::*;
 fn gov(policy: ClassPolicy) -> Governor {
     let mut classes = BTreeMap::new();
     classes.insert(TaskClass::new("c"), policy);
-    Governor::new(
+    Governor::new_unchecked(
         PolicySet::new(ResourceBudget::new(), classes),
         Arc::new(ManualClock::new(1000)),
     )

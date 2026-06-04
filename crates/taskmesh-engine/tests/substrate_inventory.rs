@@ -11,7 +11,10 @@ fn gov_with(substrates: Vec<SubstrateRecord>) -> Result<Governor, GovernorError>
     let mut classes = BTreeMap::new();
     classes.insert(TaskClass::new("c"), ClassPolicy::new());
     let policy = PolicySet::new(ResourceBudget::new(), classes).with_substrates(substrates)?;
-    Ok(Governor::new(policy, Arc::new(ManualClock::new(0))))
+    Ok(Governor::new_unchecked(
+        policy,
+        Arc::new(ManualClock::new(0)),
+    ))
 }
 
 #[test]

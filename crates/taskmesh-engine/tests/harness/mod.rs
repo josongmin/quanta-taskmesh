@@ -48,7 +48,7 @@ pub fn contended(list: Vec<(&'static str, ClassPolicy)>) -> Governor {
         .collect();
     classes.insert(TaskClass::new("fill"), fifo_class());
     let resources = ResourceBudget::new().cpu_units(1).memory_units(1_000_000);
-    Governor::new(
+    Governor::new_unchecked(
         PolicySet::new(resources, classes),
         Arc::new(ManualClock::new(1000)),
     )

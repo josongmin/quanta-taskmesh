@@ -48,7 +48,7 @@ fn promotion_order(weights: &[(&'static str, u32)], rounds: usize) -> Vec<&'stat
     );
     // Global budget of one unit → single inflight → observable promotion order.
     let resources = ResourceBudget::new().cpu_units(1).memory_units(1_000_000);
-    let g = Governor::new(
+    let g = Governor::new_unchecked(
         PolicySet::new(resources, classes),
         Arc::new(ManualClock::new(0)),
     );

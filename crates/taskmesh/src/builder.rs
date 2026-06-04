@@ -86,9 +86,9 @@ impl Builder {
         substrates.extend(self.substrates);
 
         let policy = PolicySet::new(self.resources, self.classes).with_substrates(substrates)?;
-        Governor::validate_policy(&policy)?;
-
-        let governor = Arc::new(Governor::new(policy, Arc::new(SystemClock)));
+        // `Governor::new` validates the policy fail-closed (impossible budgets,
+        // mixed-tier fairness, invalid memory scaling, misused degrade/queue).
+        let governor = Arc::new(Governor::new(policy, Arc::new(SystemClock))?);
         let cpu: Arc<dyn CpuExecutor> = self
             .cpu_executor
             .unwrap_or_else(|| default_cpu_executor(&self.topology));

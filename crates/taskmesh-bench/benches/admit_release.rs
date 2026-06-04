@@ -20,7 +20,7 @@ fn build_governor() -> Governor {
     let resources = ResourceBudget::new().cpu_units(0).memory_units(0);
     // Counter clock (not SystemClock): the doc promises "zero runtime noise", so
     // admit/release must not pay a per-call SystemTime syscall.
-    Governor::new(
+    Governor::new_unchecked(
         PolicySet::new(resources, classes),
         Arc::new(ManualClock::new(0)),
     )

@@ -21,7 +21,7 @@ fn governor() -> Governor {
             .cpu_units(1)
             .memory_units(1),
     );
-    Governor::new(
+    Governor::new_unchecked(
         PolicySet::new(ResourceBudget::new(), classes),
         Arc::new(ManualClock::new(0)),
     )

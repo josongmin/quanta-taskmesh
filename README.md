@@ -158,9 +158,12 @@ let ranked: Vec<Hit> = runtime
     .await?;
 
 // non-Send 로컬 경로 (LocalSet)
-let spec = TaskSpec::base(class, taskmesh::SubstrateHint::LocalRuntime).operation("local:job");
+let spec = TaskSpec::local(class).operation("local:job");
 let out = runtime.run_local(spec, async { Ok::<_, MyError>(do_local().await) }).await?;
 ```
+
+> `run_*`에서 보이는 `Runtime` trait은 `taskmesh::Runtime`(top-level)이다. 메서드를
+> 쓰려면 `use taskmesh::Runtime;`이 스코프에 있어야 한다.
 
 자식 작업은 root에 귀속시켜 attribution을 유지한다:
 
@@ -220,6 +223,82 @@ for s in &snap.substrates {
 }
 ```
 
+### 6. 취소 · 타임아웃 · 데드라인 (`SubmitOptions`)
+
+기본 `run_*`는 무제한 대기다. 취소/타임아웃/데드라인이 필요하면 `run_*_with(spec,
+SubmitOptions, …)` 변형을 쓴다.
+
+```rust
+use std::time::Duration;
+use taskmesh::{AdmissionVerdict, CancellationToken, GovernorError, RunError, SubmitOptions, TaskClass, TaskSpec};
+
+let token = CancellationToken::new();
+let opts = SubmitOptions::unbounded()
+    .with_cancel(token.clone())                       // 제출 전/실행 중 협조 취소
+    .with_acquire_timeout(Duration::from_millis(50))  // admission 큐 대기 상한
+    .with_deadline(Duration::from_secs(2));           // 실행 데드라인
+
+let spec = TaskSpec::io(TaskClass::new("retrieval")).operation("fetch");
+let out = runtime.run_io_with(spec, opts, async { Ok::<_, MyError>(fetch().await) }).await;
+
+match out {
+    Err(RunError::Governor(GovernorError::Rejected(AdmissionVerdict::CancelledBeforeSubmit))) => {
+        /* 제출 전 취소 */
+    }
+    Err(RunError::Governor(GovernorError::Cancelled)) => { /* mid-run 협조 취소 */ }
+    Err(RunError::Governor(GovernorError::DeadlineExceeded)) => { /* 실행 데드라인 초과 */ }
+    Err(RunError::Governor(GovernorError::Rejected(
+        AdmissionVerdict::PermitAcquireTimedOut { .. },
+    ))) => { /* 큐 대기 타임아웃 */ }
+    _ => {}
+}
+```
+
+규칙: pre-submit 취소(`CancelledBeforeSubmit`)는 모든 클래스에서 발효된다. **mid-run
+협조 취소**(`Cancelled`)와 **데드라인**(`DeadlineExceeded`)은 클래스의
+`cancellation_policy`가 `Cooperative`/`CooperativeWithDeadline`일 때만 동작한다.
+취소/타임아웃으로 future가 drop돼도 permit과 substrate slot은 항상 반납된다(누수 없음).
+
+### 7. 고급 통합 (`taskmesh::ext`)
+
+일상적 SDK 사용엔 필요 없다. 직접 임베딩·커스텀 어댑터·심층 거버넌스가 필요할 때만:
+
+```rust
+use taskmesh::ext::{Governor, Provenance};
+
+// (a) 거버너 직접 접근 — 메모리 reconcile / leak sweep / substrate 인벤토리
+let gov: &Governor = runtime.governor();
+let report = gov.reap_leaks();                       // LeakDetecting 클래스의 stale permit 회수
+// gov.reconcile_memory(permit_id, measured_bytes);  // measured/hybrid 메모리 정산
+
+// (b) classification provenance — "왜 이 클래스였나"가 submit 이후에도 audit 가능
+// let prov: Option<Provenance> = gov.permit_provenance(permit_id); // source/reason
+let _ = report;
+```
+
+`features = ["rayon"]`만 켜면 `run_cpu`의 기본 executor가 공유 rayon 풀로 **자동
+와이어링**된다(추가 코드 불필요). 풀을 직접 만들어 주입하려면 `taskmesh-rayon`을
+직접 의존성에 추가하고 `Builder::cpu_executor(...)`로 넘긴다:
+
+```rust
+// Cargo.toml: taskmesh-rayon = { git = "…" } 직접 추가
+use std::sync::Arc;
+use taskmesh_rayon::RayonCpuExecutor;
+
+let topo = taskmesh::TopologyConfig::new().cpu_auto().reserve_cores(1);
+let runtime = taskmesh::Builder::new()
+    .topology(topo.clone())
+    .cpu_executor(Arc::new(RayonCpuExecutor::from_topology(&topo)))
+    .class_policy(taskmesh::TaskClass::new("rank"), taskmesh::ClassPolicy::new().cpu_units(1))
+    .build()?;
+```
+
+> `ext`에는 `Governor`, `PolicySet`, `AdmissionDecision`, `Provenance`,
+> `RootAttribution`, `Clock`/`SystemClock`/`ManualClock`, `CpuExecutor`,
+> `PermitWaker`, `BlockingPoolCpuExecutor`, `builtin_records`,
+> `BUILTIN_SUBSTRATES`, `DEFAULT_LEAK_STALE_MS` 등이 있다. `RequestKey`는 더 이상
+> 공개 입력이 아니다 — admission key는 `root_operation_id`에서 권위적으로 파생된다.
+
 ### 클래스 정책 옵션 요약
 
 | 메서드 / 필드 | 의미 |
@@ -258,9 +337,10 @@ for s in &snap.substrates {
    대기 작업을 promote한다.
 7. **정책 검증은 fail-closed다.** 불가능한 budget·mixed-tier fairness·잘못된 memory scaling 등은
    `Builder::build`/`Governor::new`에서 거부되며 런타임 admit로 미루지 않는다.
-8. **child→root 귀속:** `child_of(root).operation(name)`는 root를 유지한다 (operation은 root를
-   재설정하지 않음).
-8. `checkpoint_policy`는 host가 hook point에서 inspect하는 **메타데이터**다(엔진 강제 아님).
+8. **child→root 귀속:** `child_of(root, parent_stage)`는 root를 유지하고 `parent_stage`가
+   재귀 가드·attribution의 권위적 lineage 키다 (substrate가 아님). 같은 `(root, parent_stage)`
+   재진입은 `RecursiveAdmission`. `operation(name)`은 root를 재설정하지 않는다.
+9. `checkpoint_policy`는 host가 hook point에서 inspect하는 **메타데이터**다(엔진 강제 아님).
 
 문서:
 

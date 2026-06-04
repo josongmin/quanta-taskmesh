@@ -13,6 +13,9 @@ rules:
         - "**/tests/**"
         - "**/*_tests.rs"
         - "**/build.rs"
+        - "**/benches/**"
+        # Non-production statistical bench harness (publish = false).
+        - "**/crates/taskmesh-bench/**"
     patterns:
       - pattern-either:
           - pattern: $ARR[$IDX]

@@ -43,5 +43,22 @@ acquire wait.
 3. permit admission/release inseparable from inflight + resource accounting
 4. memory governance: estimated/measured/hybrid reconcile, overcommit, leak sweep
 5. composite root attribution + recursive-admission guard
-6. deterministic reduce enforcement for fan-out stages
+6. deterministic reduce enforcement for fan-out stages (rejected at admission)
 7. snapshot + substrate inventory SSOT
+8. fairness homogeneity validated per tier at construction (no silent override)
+9. adaptive retry-after blends contention with the class fairness params
+
+## Enforcement (not advisory)
+
+The host enforces the declared contract at runtime:
+
+- **substrate hint ↔ run path** must match (else `MalformedTask`); `run_local` is
+  the `LocalRuntime`-only exception.
+- **topology slot counts** are real per-substrate capability-pool limits
+  (`blocking_threads`, `large_stack_slots`, `local_runtime_slots`,
+  `maintenance_workers`); `0` = unlimited.
+- **cancellation_policy** gates mid-run cooperative cancel (async `run_io` only;
+  sync blocking/cpu is pre-submit only) → `GovernorError::Cancelled`.
+- **memory_release_policy::LeakDetecting** is the opt-in for leak-sweep reclaim.
+- `checkpoint_policy` is host-inspected metadata (engine preserves, does not
+  enforce).

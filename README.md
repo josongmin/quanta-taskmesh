@@ -225,9 +225,29 @@ for s in &snap.substrates {
 | `max_queue_depth` | 대기 큐 깊이 (초과 시 `overflow_policy`) |
 | `fairness` | `Fifo` / `WeightedFairQueue` / `DeficitRoundRobin` / `DeadlineAware` / `BestEffortScavenger` |
 | `retry_after_policy` | `None` / `FixedMs(ms)` / `Adaptive` — 거부 시 backoff 힌트 |
-| `overflow_policy` | `Reject` / `QueueWithinDepth` / `DropBestEffort` |
+| `overflow_policy` | `Reject` / `QueueWithinDepth` / `DropBestEffort`(현재 `Reject`와 동치) |
 | `memory_overcommit_policy` | `Reject` / `Queue` / `DegradeToLight { fallback_class }` |
+| `memory_release_policy` | `OnTaskCompletion` / `OnStageBoundary` / `LeakDetecting`(leak sweep 대상) |
 | `cancellation_policy` | `PreSubmitOnly` / `Cooperative` / `CooperativeWithDeadline` |
+
+## 집행 의미 (enforcement semantics)
+
+선언된 contract는 런타임에서 실제로 집행된다 (선언만 하는 inert knob 아님):
+
+1. **substrate 분류는 권위적이다.** 각 `run_*`는 spec의 substrate hint와 일치해야 한다.
+   `run_io`=`AsyncIo`, `run_blocking`=`BlockingPool`/`LargeStackCapability`/`BackgroundOnly`,
+   `run_cpu`=`SharedCpuExecutor`, `run_local`=`LocalRuntime`. 불일치는 `MalformedTask`로 reject.
+2. **topology slot은 실제 capability-pool 상한이다.** `blocking_threads`/`large_stack_slots`/
+   `local_runtime_slots`/`maintenance_workers`는 해당 substrate 동시성을 제한한다. `0 = 무제한`.
+3. **fan-out reduce는 admission에서 강제된다.** reduce policy 없는 fan-out stage는 `MalformedTask`.
+4. **fairness는 tier 단위 discipline이다.** 한 tier(best-effort 여부) 안의 클래스는 같은 discipline을
+   써야 하며, 혼합 시 `build()`가 거부한다. (weight/quantum/slack 등 파라미터는 클래스별로 달라도 됨.)
+5. **cancellation은 정책을 따른다.** `Cooperative`/`CooperativeWithDeadline` 클래스의 `run_io`는
+   토큰으로 mid-run 취소(→`GovernorError::Cancelled`)된다. blocking/cpu(동기)는 pre-submit only.
+6. **`LeakDetecting` 클래스만 leak sweep으로 회수**된다.
+7. **child→root 귀속:** `child_of(root).operation(name)`는 root를 유지한다 (operation은 root를
+   재설정하지 않음).
+8. `checkpoint_policy`는 host가 hook point에서 inspect하는 **메타데이터**다(엔진 강제 아님).
 
 문서:
 

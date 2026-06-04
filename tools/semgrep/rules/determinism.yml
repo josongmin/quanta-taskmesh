@@ -13,11 +13,13 @@ rules:
         - "**/crates/**"
       exclude:
         - "**/crates/taskmesh/src/adapters/**"
-        - "**/crates/taskmesh-tokio/src/adapters/**"
-        # Transitional: SystemClock in core until ADR-0001 host adapter split.
-        - "**/crates/taskmesh-core/**"
+        # The Clock port adapters (SystemClock/ManualClock) live in contract.
+        - "**/crates/taskmesh-contract/src/ports.rs"
+        # Host adapter: tokio monotonic-timer deadlines for bounded acquire waits.
+        - "**/crates/taskmesh/src/runtime.rs"
         - "**/tests/**"
         - "**/benches/**"
+        - "**/crates/taskmesh-bench/**"
     patterns:
       - pattern-either:
           - pattern: SystemTime::now()
@@ -44,6 +46,7 @@ rules:
       exclude:
         - "**/tests/**"
         - "**/benches/**"
+        - "**/crates/taskmesh-bench/**"
     patterns:
       - pattern-either:
           - pattern: rand::thread_rng()
@@ -70,6 +73,7 @@ rules:
       exclude:
         - "**/tests/**"
         - "**/benches/**"
+        - "**/crates/taskmesh-bench/**"
     patterns:
       - pattern-either:
           - pattern: std::env::var(...)

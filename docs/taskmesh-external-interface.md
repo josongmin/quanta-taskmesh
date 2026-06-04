@@ -36,6 +36,10 @@ let out = runtime
 3. unknown class는 `AdmissionVerdict::UnknownClass`로 reject
 4. CPU executor 교체: `Builder::cpu_executor(Arc::new(taskmesh_rayon::RayonCpuExecutor::from_topology(&topo)))`
 5. cancel/timeout: `run_*_with(spec, SubmitOptions::unbounded().with_cancel(token).with_acquire_timeout(d), ...)`
+   - pre-submit cancel는 모든 클래스에서 honored. **mid-run 협조 취소**는 `cancellation_policy`가
+     `Cooperative`/`CooperativeWithDeadline`인 클래스의 `run_io`에서만 동작(→`GovernorError::Cancelled`).
+     동기 `run_blocking`/`run_cpu`는 pre-submit only.
+6. substrate hint는 run path와 일치해야 한다(불일치 → `MalformedTask`). topology slot은 실제 동시성 상한(`0`=무제한).
 
 타입 규칙:
 

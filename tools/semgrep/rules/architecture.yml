@@ -17,6 +17,7 @@ rules:
       exclude:
         - "**/tests/**"
         - "**/benches/**"
+        - "**/crates/taskmesh-bench/**"
     patterns:
       - pattern-either:
           - pattern: use tokio;
@@ -39,6 +40,7 @@ rules:
       exclude:
         - "**/tests/**"
         - "**/benches/**"
+        - "**/crates/taskmesh-bench/**"
     patterns:
       - pattern-either:
           - pattern: use rayon;
@@ -119,6 +121,7 @@ rules:
       exclude:
         - "**/tests/**"
         - "**/benches/**"
+        - "**/crates/taskmesh-bench/**"
     patterns:
       - pattern-either:
           - pattern: use std::fs;
@@ -143,6 +146,7 @@ rules:
       exclude:
         - "**/tests/**"
         - "**/benches/**"
+        - "**/crates/taskmesh-bench/**"
     patterns:
       - pattern-either:
           - pattern: println!(...)

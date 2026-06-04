@@ -126,7 +126,8 @@ def check_edges(metadata: dict) -> list[str]:
             if dep not in allowed and dep not in optional:
                 violations.append(
                     f"forbidden dependency edge: '{crate}' -> '{dep}' "
-                    f"(allowed: {sorted(allowed) or 'none'}; optional: {sorted(optional) or 'none'})"
+                    f"(allowed: {sorted(allowed) or 'none'}; "
+                    f"optional: {sorted(optional) or 'none'})"
                 )
     return violations
 
@@ -137,6 +138,12 @@ def check_contract_deps(metadata: dict) -> list[str]:
         if pkg["name"] != "taskmesh-contract":
             continue
         for dep in pkg.get("dependencies", []):
+            # Only the shipped (runtime) dependency surface is constrained.
+            # dev-dependencies (e.g. serde_json for tests) and build-deps are not
+            # part of the public contract and must not be flagged.
+            kind = dep.get("kind")
+            if kind not in (None, "normal"):
+                continue
             name = dep["name"]
             if name in WORKSPACE_CRATES:
                 violations.append(

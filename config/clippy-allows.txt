@@ -31,3 +31,9 @@
 -A clippy::significant_drop_tightening
 -A clippy::option_if_let_else
 -A clippy::unused_async
+# Widening integer casts (u32 -> u64/u128) are infallible and idiomatic; the
+# fallible casts (truncation/sign/wrap) remain denied in production (pass 2).
+-A clippy::cast_lossless
+# `run_local` deliberately returns a non-Send future (the local-runtime
+# substrate exists precisely for !Send work), so future_not_send is expected.
+-A clippy::future_not_send

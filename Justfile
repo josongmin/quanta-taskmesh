@@ -23,11 +23,14 @@ check:
 test:
     cargo test --workspace
 
-# Pass 1: all targets — pedantic + nursery, test-friendly allows.
+# Pass 1: all shipped targets — pedantic + nursery, test-friendly allows.
 # Pass 2: production (--lib --bins) — restriction lints from config/clippy-restrict.txt.
+# Pass 3: the publish=false bench harness (statistical float code) gets baseline
+#         lint only — pedantic float/cast/flop lints are noise for stats code.
 clippy:
-    CLIPPY_CONF_DIR={{root}}/config cargo clippy --workspace --all-targets -- {{clippy_strict}} {{clippy_allows}}
-    CLIPPY_CONF_DIR={{root}}/config cargo clippy --workspace --lib --bins -- {{clippy_strict}} {{clippy_allows}} {{clippy_restrict}}
+    CLIPPY_CONF_DIR={{root}}/config cargo clippy --workspace --exclude taskmesh-bench --all-targets -- {{clippy_strict}} {{clippy_allows}}
+    CLIPPY_CONF_DIR={{root}}/config cargo clippy --workspace --exclude taskmesh-bench --lib --bins -- {{clippy_strict}} {{clippy_allows}} {{clippy_restrict}}
+    cargo clippy -p taskmesh-bench --all-targets -- -D warnings
 
 deny:
     cargo deny check --config config/deny.toml

@@ -22,8 +22,8 @@ CASES: list[tuple[str, str, str, str]] = [
     (
         "taskmesh-no-unannotated-allow",
         "error-handling.yml",
-        "#![allow(\n    clippy::indexing_slicing,\n    clippy::as_conversions\n)]\n\npub fn f() {}\n",
-        '#![allow(\n    clippy::indexing_slicing,\n    reason = "bounds checked above"\n)]\n\npub fn f() {}\n',
+        "#![allow(\n    clippy::indexing_slicing,\n    clippy::as_conversions\n)]\n\npub fn f() {}\n",  # noqa: E501
+        '#![allow(\n    clippy::indexing_slicing,\n    reason = "bounds checked above"\n)]\n\npub fn f() {}\n',  # noqa: E501
     ),
     (
         "taskmesh-no-randomness-in-contract-and-engine",

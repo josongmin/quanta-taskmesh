@@ -35,6 +35,26 @@ pub enum SubstrateHint {
     BackgroundOnly,
 }
 
+impl SubstrateHint {
+    /// The built-in capability pool this hint dispatches to, or `None` for an
+    /// ungated substrate (`AsyncIo` — async concurrency is unbounded by design).
+    ///
+    /// This is the authoritative hint→pool mapping: the host derives its worker
+    /// gates from the registered inventory by this name, rather than hardcoding
+    /// the relationship. The names match [`crate::SubstrateRecord::capability_pool`]
+    /// of the built-in set.
+    pub fn capability_pool(self) -> Option<&'static str> {
+        match self {
+            Self::AsyncIo => None,
+            Self::BlockingPool => Some("blocking"),
+            Self::SharedCpuExecutor => Some("cpu"),
+            Self::LargeStackCapability => Some("large_stack"),
+            Self::LocalRuntime => Some("local_runtime"),
+            Self::BackgroundOnly => Some("maintenance"),
+        }
+    }
+}
+
 /// A registered substrate. `capability_pool` is required for every kind except
 /// `AuthorityOnly`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

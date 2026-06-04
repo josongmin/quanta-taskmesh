@@ -89,6 +89,18 @@ pub struct StageDescriptor {
 }
 
 /// A fully-described request submitted to the runtime.
+///
+/// Scope note — `stages` is a **declared governance plan, not a host-walked
+/// execution plan.** taskmesh is an admission/governance control-plane: each
+/// `run_*` submission executes the *caller's* closure on the spec's primary
+/// substrate ([`TaskSpec::primary_substrate_hint`], the first stage). The
+/// runtime does not iterate later stages or schedule a closure per stage — the
+/// caller drives execution. What the declared stages *are* authoritative for is
+/// governance: shape validation (every stage's `class` must match the task
+/// class), deterministic-reduce enforcement on `fan_out` stages, and recursion /
+/// root-attribution lineage (via the child's declared `parent_stage`). Treat
+/// stages beyond the first as a governance-validated declaration, not as steps
+/// the runtime will run for you.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskSpec {
     pub class: TaskClass,

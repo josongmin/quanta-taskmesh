@@ -10,6 +10,14 @@ description = "Governance core for taskmesh: admission, fairness, memory, compos
 taskmesh-contract = { workspace = true }
 parking_lot = { workspace = true }
 
+[features]
+# Exposes `Governor::new_unchecked` — the *unvalidated* constructor. Off by
+# default so the public surface only offers the fail-closed `Governor::new`; a
+# direct embedder (via `taskmesh::ext`) cannot accidentally boot a contradictory
+# policy. Enabled for this crate's own tests/benches via the self dev-dependency
+# below, and by `taskmesh-bench`.
+test-util = []
+
 [lints.rust]
 # `loom`/`shuttle` are deliberate model-check cfgs, set via RUSTFLAGS.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)', 'cfg(shuttle)'] }
@@ -17,6 +25,11 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)', 'cfg(shuttle)'] }
 [dev-dependencies]
 serde_json = { workspace = true }
 proptest = { workspace = true }
+# Self dev-dependency: enables `test-util` for this crate's own integration
+# tests, doctests, and benches (which legitimately exercise raw, possibly
+# invalid, scheduler configs) without leaking the unvalidated constructor into
+# the default public surface seen by downstream embedders.
+taskmesh-engine = { path = ".", features = ["test-util"] }
 
 # Concurrency model-checking (ADR 9000 / P6). Only compiled under the matching
 # `--cfg`; normal builds/tests never pull these in. loom = exhaustive (small

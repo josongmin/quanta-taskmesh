@@ -9,7 +9,9 @@ description = "Benchmark harness for taskmesh (heavy dev-deps isolated here). Se
 
 [dependencies]
 taskmesh-contract = { workspace = true }
-taskmesh-engine = { workspace = true }
+# Benches construct raw scheduler configs directly, so they need the unvalidated
+# constructor that is otherwise hidden from the default public surface.
+taskmesh-engine = { workspace = true, features = ["test-util"] }
 taskmesh = { path = "../taskmesh" }
 rand = { workspace = true }
 rand_distr = { workspace = true }

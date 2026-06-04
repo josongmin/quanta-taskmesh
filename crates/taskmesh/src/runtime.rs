@@ -6,6 +6,7 @@
 //! distinct via [`RunError`]; a `spawn_blocking`/worker join failure is a
 //! governor/runtime-side error, never a task error.
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use taskmesh_contract::{
     AdmissionVerdict, CancellationPolicy, CpuExecutor, GovernorError, RunError, Runtime, Snapshot,
-    SubstrateHint, TaskClass, TaskSpec, TopologyConfig,
+    SubstrateHint, SubstrateRecord, TaskClass, TaskSpec, TopologyConfig,
 };
 use taskmesh_engine::{AdmissionDecision, Governor, PermitId, RequestKey};
 use tokio::sync::{oneshot, OwnedSemaphorePermit, Semaphore};
@@ -39,7 +40,10 @@ impl TokioRuntime {
         governor: Arc<Governor>,
         cpu: Arc<dyn CpuExecutor>,
     ) -> Self {
-        let substrates = Arc::new(SubstrateGates::from_topology(&config.topology));
+        let substrates = Arc::new(SubstrateGates::from_inventory(
+            &config.topology,
+            &config.substrates,
+        ));
         Self {
             config,
             governor,
@@ -153,6 +157,21 @@ impl TokioRuntime {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<T, RunError<E>>>,
     {
+        // Worker governance BEFORE semantic policy (AGENTS rule 1: the two are
+        // separate concerns). The substrate capability-pool slot is the physical
+        // worker gate (topology-sized; unlimited pools return immediately). We
+        // take it FIRST so a task waiting for a worker is NOT counted as a live
+        // governor permit — inflight/cpu/memory/root attribution then reflect
+        // tasks that are *actually executing*, and substrate backlog (its own
+        // `SubstratePoolTimedOut`) never pollutes the semantic queue / retry-after
+        // / resource-saturation signals.
+        let _gate = self
+            .substrates
+            .acquire(spec.primary_substrate_hint(), &opts)
+            .await
+            .map_err(RunError::Governor)?;
+        // Now seek semantic admission. The permit's inflight count begins only
+        // once a worker slot is already held.
         let permit = self
             .acquire(&spec, &opts)
             .await
@@ -161,18 +180,9 @@ impl TokioRuntime {
             governor: Arc::clone(&self.governor),
             permit,
         };
-        // Acquire a slot in the substrate's capability pool (topology-sized). Held
-        // for the duration of the work, then dropped. Unlimited pools (slots == 0)
-        // return immediately. On a bounded-wait timeout the `_guard` above still
-        // releases the governor permit.
-        let _gate = self
-            .substrates
-            .acquire(spec.primary_substrate_hint(), &opts)
-            .await
-            .map_err(RunError::Governor)?;
         run().await
-        // `_guard`/`_gate` drop here (success) or on cancellation (future dropped),
-        // releasing the governor permit and substrate slot exactly once.
+        // Drop order is reverse: `_guard` (governor permit) releases first, then
+        // `_gate` (worker slot) — on success or on cancellation (future dropped).
     }
 
     /// Reject a spec whose declared substrate is incompatible with this run path
@@ -459,38 +469,45 @@ impl Drop for TicketGuard {
 /// executor's internal queue. This enforces the "no unbounded competing queue"
 /// rule for the CPU substrate.
 struct SubstrateGates {
-    cpu: Arc<Semaphore>,
-    blocking: Option<Arc<Semaphore>>,
-    large_stack: Option<Arc<Semaphore>>,
-    local_runtime: Option<Arc<Semaphore>>,
-    maintenance: Option<Arc<Semaphore>>,
+    /// Worker gates keyed by capability-pool name, derived from the registered
+    /// substrate inventory (which pools exist) × topology (how many slots each).
+    pools: BTreeMap<String, Arc<Semaphore>>,
 }
 
 impl SubstrateGates {
-    fn from_topology(topology: &TopologyConfig) -> Self {
-        let gate = |n: usize| (n > 0).then(|| Arc::new(Semaphore::new(n)));
+    /// Build the worker gates from the inventory ∩ topology: a gate exists for a
+    /// capability pool iff that substrate is **registered** (inventory is
+    /// authoritative for which pools exist) and topology sizes it `> 0`. The
+    /// `cpu` pool is always gated to the resolved CPU worker count. This makes the
+    /// substrate inventory back the runtime, not just snapshot metadata.
+    fn from_inventory(topology: &TopologyConfig, substrates: &[SubstrateRecord]) -> Self {
         let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
         let cpu_workers = topology.resolved_cpu_workers(available);
-        Self {
-            cpu: Arc::new(Semaphore::new(cpu_workers)),
-            blocking: gate(topology.blocking_threads),
-            large_stack: gate(topology.large_stack_slots),
-            local_runtime: gate(topology.local_runtime_slots),
-            maintenance: gate(topology.maintenance_workers),
+        let slots_for = |pool: &str| match pool {
+            "cpu" => cpu_workers,
+            "blocking" => topology.blocking_threads,
+            "large_stack" => topology.large_stack_slots,
+            "local_runtime" => topology.local_runtime_slots,
+            "maintenance" => topology.maintenance_workers,
+            _ => 0,
+        };
+        let mut pools = BTreeMap::new();
+        for record in substrates {
+            let Some(pool) = record.capability_pool.as_deref() else {
+                continue;
+            };
+            let slots = slots_for(pool);
+            if slots > 0 {
+                pools.insert(pool.to_owned(), Arc::new(Semaphore::new(slots)));
+            }
         }
+        Self { pools }
     }
 
     fn gate_for(&self, hint: SubstrateHint) -> Option<&Arc<Semaphore>> {
-        match hint {
-            SubstrateHint::SharedCpuExecutor => Some(&self.cpu),
-            SubstrateHint::BlockingPool => self.blocking.as_ref(),
-            SubstrateHint::LargeStackCapability => self.large_stack.as_ref(),
-            SubstrateHint::LocalRuntime => self.local_runtime.as_ref(),
-            SubstrateHint::BackgroundOnly => self.maintenance.as_ref(),
-            // AsyncIo is ungated (async is unbounded by design).
-            // `#[non_exhaustive]`: future substrates are ungated until wired.
-            _ => None,
-        }
+        // Authoritative hint→pool mapping lives in the contract; a gate exists
+        // only for a registered, topology-sized pool.
+        self.pools.get(hint.capability_pool()?)
     }
 
     /// Acquire a slot for `hint`, held for the work's duration. `None` when the

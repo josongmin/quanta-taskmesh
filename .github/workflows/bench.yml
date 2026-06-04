@@ -40,11 +40,23 @@ jobs:
 
       # Restore/persist the callgrind baseline across runs so regressions are
       # measured against the previous green run, not a cold start.
+      #
+      # The key is scoped to (os, branch, bench-definition+deps+runner version):
+      # a changed bench, a bumped iai-callgrind, or a different branch all start a
+      # FRESH baseline instead of comparing against an incomparable one (no
+      # false-green from a redefined bench, no false-red from a version bump).
+      # restore-keys lets a new branch warm-start from its base branch's baseline.
       - name: Cache iai baseline
         uses: actions/cache@v4
         with:
           path: target/iai
-          key: iai-baseline-${{ runner.os }}
+          key: >-
+            iai-${{ runner.os }}-${{ github.ref_name }}-${{
+              hashFiles('crates/taskmesh-bench/benches/iai_governance.rs',
+                        'crates/taskmesh-bench/Cargo.toml', 'Cargo.lock') }}
+          restore-keys: |
+            iai-${{ runner.os }}-${{ github.base_ref }}-
+            iai-${{ runner.os }}-main-
 
       - name: Instruction-count benchmark (deterministic, machine-independent)
         run: cargo bench -p taskmesh-bench --features iai --bench iai_governance
@@ -104,23 +116,27 @@ jobs:
           comment-on-alert: true
           fail-on-alert: true
 
-      # On a detected regression, capture a flamegraph + hardware counters so the
-      # PR has the evidence attached, not just a red X (ADR 9000 / P8).
+      # On a detected regression, capture a flamegraph + hardware counters for
+      # EVERY bench that feeds the alert (admit_release AND governance_tax), so the
+      # evidence always covers whichever one regressed — not just one of them
+      # (ADR 9000 / P8).
       - name: Flamegraph + perf counters on regression
         if: failure()
         run: |
           sudo apt-get update && sudo apt-get install -y linux-tools-common linux-tools-generic
           sudo sysctl -w kernel.perf_event_paranoid=1 || true
           cargo install flamegraph --locked || true
-          cargo flamegraph --bench admit_release -p taskmesh-bench -o flamegraph.svg -- --bench || true
-          perf stat -e instructions,cache-misses,branch-misses \
-            cargo bench -p taskmesh-bench --bench admit_release -- --bench 2> perf-stat.txt || true
+          for b in admit_release governance_tax; do
+            cargo flamegraph --bench "$b" -p taskmesh-bench -o "flamegraph-$b.svg" -- --bench || true
+            perf stat -e instructions,cache-misses,branch-misses \
+              cargo bench -p taskmesh-bench --bench "$b" -- --bench 2> "perf-stat-$b.txt" || true
+          done
       - name: Upload regression profile
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: regression-profile
           path: |
-            flamegraph.svg
-            perf-stat.txt
+            flamegraph-*.svg
+            perf-stat-*.txt
           if-no-files-found: ignore

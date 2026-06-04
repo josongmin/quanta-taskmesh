@@ -305,7 +305,8 @@ fn recursion_guard_rejects_reentry_to_an_active_root_stage() {
         o => panic!("root must admit, got {o:?}"),
     };
 
-    // First child on a distinct stage ("cpu") admits and occupies (R, "cpu").
+    // First child declaring parent_stage "blocking" admits and occupies
+    // (R, "blocking") — the declared lineage point, independent of its substrate.
     let child = |op: &'static str| {
         TaskSpec::cpu(worker.clone())
             .child_of("R", TaskStage::new("blocking"))
@@ -316,13 +317,13 @@ fn recursion_guard_rejects_reentry_to_an_active_root_stage() {
         o => panic!("first child must admit, got {o:?}"),
     };
 
-    // Second child re-entering the *same* (R, "cpu") is a recursive loop.
+    // Second child re-entering the *same* (R, "blocking") is a recursive loop.
     match g.admit(&child("c2"), RequestKey::new("c2")) {
         AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission) => {}
         o => panic!("re-entry to active (root,stage) must be RecursiveAdmission, got {o:?}"),
     }
 
-    // Releasing the first child frees (R, "cpu") → a fresh child admits again.
+    // Releasing the first child frees (R, "blocking") → a fresh child admits again.
     g.release(c1);
     match g.admit(&child("c3"), RequestKey::new("c3")) {
         AdmissionDecision::Admitted { permit_id } => g.release(permit_id),

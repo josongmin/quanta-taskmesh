@@ -1302,6 +1302,7 @@ dependencies = [
  "serde_json",
  "shuttle",
  "taskmesh-contract",
+ "taskmesh-engine",
 ]
 
 [[package]]

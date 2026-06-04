@@ -146,3 +146,80 @@ fn downward_reconcile_memory_promotes_queued_work() {
         "downward reconcile must promote queued work"
     );
 }
+
+// ---- direct engine path has authoritative substrate inventory --------------
+
+#[test]
+fn direct_governor_new_exposes_builtin_inventory() {
+    // A governor built straight from the engine (no host `Builder`) must still
+    // expose the canonical built-in substrate inventory in its snapshot — the
+    // inventory is intrinsic to the policy, not injected only by the host.
+    let g = gov(vec![("c", ClassPolicy::new())]);
+    let names: Vec<String> = g
+        .snapshot()
+        .substrates
+        .iter()
+        .map(|s| s.name.to_string())
+        .collect();
+    for builtin in BUILTIN_SUBSTRATES {
+        assert!(
+            names.contains(&(*builtin).to_string()),
+            "direct Governor::new missing built-in substrate {builtin}"
+        );
+    }
+}
+
+// ---- parent_stage is authoritative for recursion identity ------------------
+
+#[test]
+fn same_parent_stage_different_substrate_is_recursive() {
+    // Two children of the same root declaring the SAME parent_stage but running
+    // on DIFFERENT substrates. Recursion identity is the declared lineage point
+    // (root, parent_stage), not the substrate — so the second is a recursive
+    // re-entry. (Before the fix this admitted: the guard keyed on the
+    // substrate-derived bootstrap stage, so "blocking" != "cpu" dodged it.)
+    let g = gov(vec![(
+        "worker",
+        ClassPolicy::new().max_inflight(8).cpu_units(1),
+    )]);
+    let c1 =
+        TaskSpec::blocking(TaskClass::new("worker")).child_of("root", TaskStage::new("fanout"));
+    let c2 = TaskSpec::cpu(TaskClass::new("worker")).child_of("root", TaskStage::new("fanout"));
+    assert!(matches!(
+        g.admit(&c1, RequestKey::new("root")),
+        AdmissionDecision::Admitted { .. }
+    ));
+    assert!(
+        matches!(
+            g.admit(&c2, RequestKey::new("root")),
+            AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission)
+        ),
+        "same (root, parent_stage) is recursive regardless of substrate"
+    );
+}
+
+#[test]
+fn different_parent_stage_same_substrate_admits_both() {
+    // Same substrate, DIFFERENT declared parent_stage -> distinct lineage points,
+    // both admit. (Before the fix the second was rejected: both bootstrap stages
+    // were "blocking", so the substrate-keyed guard saw a collision.)
+    let g = gov(vec![(
+        "worker",
+        ClassPolicy::new().max_inflight(8).cpu_units(1),
+    )]);
+    let a =
+        TaskSpec::blocking(TaskClass::new("worker")).child_of("root", TaskStage::new("stage-a"));
+    let b =
+        TaskSpec::blocking(TaskClass::new("worker")).child_of("root", TaskStage::new("stage-b"));
+    assert!(matches!(
+        g.admit(&a, RequestKey::new("root")),
+        AdmissionDecision::Admitted { .. }
+    ));
+    assert!(
+        matches!(
+            g.admit(&b, RequestKey::new("root")),
+            AdmissionDecision::Admitted { .. }
+        ),
+        "distinct parent_stages under one root are distinct lineage points"
+    );
+}

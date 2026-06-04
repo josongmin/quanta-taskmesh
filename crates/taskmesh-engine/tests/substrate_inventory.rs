@@ -7,10 +7,12 @@ use std::sync::Arc;
 use taskmesh_contract::*;
 use taskmesh_engine::*;
 
-fn gov_with(substrates: Vec<SubstrateRecord>) -> Result<Governor, GovernorError> {
+// `PolicySet::new` auto-seeds the canonical built-ins, so callers pass only the
+// *additional* deployment-specific substrates here.
+fn gov_with(extra: Vec<SubstrateRecord>) -> Result<Governor, GovernorError> {
     let mut classes = BTreeMap::new();
     classes.insert(TaskClass::new("c"), ClassPolicy::new());
-    let policy = PolicySet::new(ResourceBudget::new(), classes).with_substrates(substrates)?;
+    let policy = PolicySet::new(ResourceBudget::new(), classes).with_substrates(extra)?;
     Ok(Governor::new_unchecked(
         policy,
         Arc::new(ManualClock::new(0)),
@@ -19,7 +21,8 @@ fn gov_with(substrates: Vec<SubstrateRecord>) -> Result<Governor, GovernorError>
 
 #[test]
 fn builtin_substrates_appear_in_snapshot() {
-    let g = gov_with(builtin_records()).unwrap();
+    // No extras: the built-ins are seeded by `PolicySet::new` itself.
+    let g = gov_with(vec![]).unwrap();
     let names: Vec<String> = g
         .snapshot()
         .substrates
@@ -33,13 +36,10 @@ fn builtin_substrates_appear_in_snapshot() {
 
 #[test]
 fn duplicate_substrate_registration_rejects() {
-    let mut records = builtin_records();
-    records.push(SubstrateRecord::new(
-        "cpu",
-        SubstrateKind::CompetingExecution,
-        Some("cpu"),
-    ));
-    assert!(gov_with(records).is_err());
+    // Re-registering a built-in name ("cpu") as a deployment extra must be
+    // rejected — additions can never shadow the canonical inventory.
+    let dup = SubstrateRecord::new("cpu", SubstrateKind::CompetingExecution, Some("cpu"));
+    assert!(gov_with(vec![dup]).is_err());
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn builtin_set_matches_allowlist_fixture() {
 
 #[test]
 fn snapshot_substrates_are_name_ordered() {
-    let g = gov_with(builtin_records()).unwrap();
+    let g = gov_with(vec![]).unwrap();
     let names: Vec<String> = g
         .snapshot()
         .substrates

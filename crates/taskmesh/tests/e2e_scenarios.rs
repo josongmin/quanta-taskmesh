@@ -443,15 +443,15 @@ fn composite_pipeline_attribution_recursion_and_reduce() {
         .unwrap();
     let g = rt.governor();
 
-    // Fan three children across distinct substrate stages under one root.
+    // Fan three children across distinct declared lineage stages under one root.
     let mut permits = Vec::new();
-    for (hint, _label) in [
+    for (hint, label) in [
         (SubstrateHint::AsyncIo, "io"),
         (SubstrateHint::BlockingPool, "blocking"),
         (SubstrateHint::SharedCpuExecutor, "cpu"),
     ] {
-        let child =
-            TaskSpec::base(cls("worker"), hint).child_of("root-1", TaskStage::new("fanout"));
+        let child = TaskSpec::base(cls("worker"), hint)
+            .child_of("root-1", TaskStage::new(label.to_string()));
         match g.admit(&child, RequestKey::new("root-1")) {
             AdmissionDecision::Admitted { permit_id } => permits.push(permit_id),
             other => panic!("child must admit: {other:?}"),
@@ -462,8 +462,8 @@ fn composite_pipeline_attribution_recursion_and_reduce() {
     assert_eq!(root.cpu_units, 6); // 3 children * 2 cpu units
     assert_eq!(root.active_stages, 3);
 
-    // A fourth child re-entering an already-active stage is a recursive loop.
-    let dup = TaskSpec::io(cls("worker")).child_of("root-1", TaskStage::new("fanout"));
+    // A fourth child re-entering an already-active stage ("io") is a recursive loop.
+    let dup = TaskSpec::io(cls("worker")).child_of("root-1", TaskStage::new("io"));
     assert!(matches!(
         g.admit(&dup, RequestKey::new("root-1")),
         AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission)

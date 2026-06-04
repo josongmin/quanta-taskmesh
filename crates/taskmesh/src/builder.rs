@@ -9,7 +9,7 @@ use taskmesh_contract::{
     ClassPolicy, CpuExecutor, GovernorError, ResourceBudget, RuntimeConfig, SubstrateRecord,
     TaskClass, TopologyConfig,
 };
-use taskmesh_engine::{builtin_records, Governor, PolicySet, SystemClock};
+use taskmesh_engine::{Governor, PolicySet, SystemClock};
 
 #[cfg(not(feature = "rayon"))]
 use crate::executor::BlockingPoolCpuExecutor;
@@ -58,7 +58,17 @@ impl Builder {
         self
     }
 
-    /// Register an additional substrate beyond the built-in canonical set.
+    /// Register an additional substrate beyond the built-in canonical set, for
+    /// **inventory and governance tracking** (T08) — e.g. a `CompetingExecution`
+    /// or `RetireOrMigrate` pool the deployment wants visible in the snapshot and
+    /// subject to migration governance.
+    ///
+    /// This is *not* a new run target: tasks can only target the closed
+    /// [`taskmesh_contract::SubstrateHint`] set, and the host's execution gates
+    /// are wired to the built-ins. A registered extra substrate therefore appears
+    /// in the inventory (governor snapshot and [`crate::RuntimeConfig`]) but is
+    /// never something a `TaskSpec` schedules onto — that separation is
+    /// intentional (inventory authority vs. execution targeting).
     pub fn substrate(mut self, substrate: SubstrateRecord) -> Self {
         self.substrates.push(substrate);
         self
@@ -74,18 +84,21 @@ impl Builder {
     /// Validate and build. Returns a [`GovernorError`] for any impossible budget,
     /// invalid memory scaling, misused degrade policy, or duplicate substrate.
     pub fn build(self) -> Result<TokioRuntime, GovernorError> {
+        // `PolicySet::new` already seeds the canonical built-in inventory; here we
+        // only layer caller additions on top. The registry rejects duplicates
+        // (including any attempt to shadow a built-in) and invalid records.
+        let policy = PolicySet::new(self.resources.clone(), self.classes.clone())
+            .with_substrates(self.substrates)?;
+
+        // The config captures the *resolved* substrate inventory, so `config()`
+        // is a faithful, serializable description of the built runtime.
         let config = RuntimeConfig {
             topology: self.topology.clone(),
-            resources: self.resources.clone(),
-            classes: self.classes.clone(),
+            resources: self.resources,
+            classes: self.classes,
+            substrates: policy.substrates.values().cloned().collect(),
         };
 
-        // Built-in canonical inventory first, then caller additions; the registry
-        // rejects duplicates and invalid records.
-        let mut substrates = builtin_records();
-        substrates.extend(self.substrates);
-
-        let policy = PolicySet::new(self.resources, self.classes).with_substrates(substrates)?;
         // `Governor::new` validates the policy fail-closed (impossible budgets,
         // mixed-tier fairness, invalid memory scaling, misused degrade/queue).
         let governor = Arc::new(Governor::new(policy, Arc::new(SystemClock))?);

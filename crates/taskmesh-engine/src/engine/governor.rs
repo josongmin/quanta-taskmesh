@@ -15,7 +15,8 @@ use taskmesh_contract::{
 use crate::engine::state::GovernedState;
 use crate::features::{admission, composite, fairness, inventory, memory};
 use crate::shared::{
-    AdmissionDecision, LeakSweepReport, PermitId, PolicySet, RequestKey, RootAttribution, Ticket,
+    AdmissionDecision, LeakSweepReport, PermitId, PolicySet, Provenance, RequestKey,
+    RootAttribution, Ticket,
 };
 
 /// The governed execution control point. Cheap to wrap in `Arc` and share.
@@ -36,13 +37,12 @@ impl Governor {
     /// `Builder` enforces, so contradictory policy can never boot.
     pub fn new(policy: PolicySet, clock: Arc<dyn Clock>) -> Result<Self, GovernorError> {
         Self::validate_policy(&policy)?;
-        Ok(Self::new_unchecked(policy, clock))
+        Ok(Self::construct(policy, clock))
     }
 
-    /// Construct a governor **without** validating the policy. The caller asserts
-    /// the policy was already validated (or is intentionally exercising raw
-    /// scheduler behavior in tests). Prefer [`Governor::new`] everywhere else.
-    pub fn new_unchecked(policy: PolicySet, clock: Arc<dyn Clock>) -> Self {
+    /// Raw constructor (no validation). Private: the validated [`Governor::new`]
+    /// and the `test-util`-gated [`Governor::new_unchecked`] both route through it.
+    fn construct(policy: PolicySet, clock: Arc<dyn Clock>) -> Self {
         Self {
             policy,
             clock,
@@ -51,6 +51,20 @@ impl Governor {
             next_seq: AtomicU64::new(1),
             state: Mutex::new(GovernedState::default()),
         }
+    }
+
+    /// Construct a governor **without** validating the policy — the caller
+    /// asserts the policy was already validated, or is intentionally exercising
+    /// raw scheduler behavior in tests.
+    ///
+    /// Gated behind the off-by-default `test-util` feature so it is absent from
+    /// the public surface a downstream embedder sees: there is no peer-level
+    /// public escape hatch around the fail-closed [`Governor::new`]. Prefer
+    /// [`Governor::new`] everywhere else.
+    #[cfg(feature = "test-util")]
+    #[doc(hidden)]
+    pub fn new_unchecked(policy: PolicySet, clock: Arc<dyn Clock>) -> Self {
+        Self::construct(policy, clock)
     }
 
     pub fn policy(&self) -> &PolicySet {
@@ -164,6 +178,7 @@ impl Governor {
                 &head.root_operation_id,
                 head.scope.clone(),
                 head.target_stage.clone(),
+                head.provenance,
                 head.cost,
                 head.cost.memory_units,
                 now,
@@ -269,6 +284,17 @@ impl Governor {
             memory_units: r.memory_units,
             active_stages: r.active_stages.len(),
         })
+    }
+
+    /// Classification provenance (`source`/`reason`) of a live permit — "why this
+    /// class" stays auditable in runtime state after submit, not just on the
+    /// inbound `TaskSpec`.
+    pub fn permit_provenance(&self, permit_id: PermitId) -> Option<Provenance> {
+        self.state
+            .lock()
+            .permits
+            .get(&permit_id)
+            .map(|r| r.provenance)
     }
 
     /// The (preserved) checkpoint policy for a class.

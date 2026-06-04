@@ -35,12 +35,26 @@ pub fn validate_shape(spec: &TaskSpec) -> Result<(), GovernorError> {
     Ok(())
 }
 
-/// The stage a task occupies for recursion accounting: its first stage.
+/// The stage a task occupies for recursion accounting and root attribution.
+///
+/// For a **child** this is its declared `parent_stage` — the lineage point under
+/// the root it descends from. This makes `parent_stage` authoritative: two
+/// admissions sharing `(root, parent_stage)` are the *same* composite-tree node,
+/// independent of which substrate each child happens to run on. (Substrate is
+/// *how* work runs, not *which* logical stage it is; keying recursion on the
+/// substrate-derived bootstrap stage would let two CPU pipeline stages collide
+/// while letting a true loop that alternates substrates slip through.)
+///
+/// For a **root** it is the first stage. Roots never trip the recursion guard, so
+/// this only labels attribution.
 pub fn target_stage(spec: &TaskSpec) -> TaskStage {
-    spec.stages.first().map_or_else(
-        || TaskStage::new(spec.class.as_str().to_owned()),
-        |s| s.stage.clone(),
-    )
+    match &spec.scope {
+        TaskScope::Child { parent_stage } => parent_stage.clone(),
+        TaskScope::Root => spec.stages.first().map_or_else(
+            || TaskStage::new(spec.class.as_str().to_owned()),
+            |s| s.stage.clone(),
+        ),
+    }
 }
 
 // ---- domain (pure) --------------------------------------------------------
@@ -48,14 +62,17 @@ pub fn target_stage(spec: &TaskSpec) -> TaskStage {
 /// A child re-entering an already-active `(root, stage)` is a recursive
 /// admission loop and must be rejected. Root tasks never trip this guard.
 ///
-/// Scope note: the guard identity is `(root_operation_id, target_stage)` and is
-/// occupancy-based (present/absent), so it cannot distinguish *breadth* (two
-/// parallel children of the same root on the same stage) from *depth* (a child
-/// re-entering its ancestor's stage). Per T06 it rejects the second admission at
-/// the same `(root, stage)`. Parallel fan-out is therefore modeled as a single
-/// task's `reduce_stage`, not as N `child_of` admissions sharing one stage.
-/// Lineage-aware breadth/depth separation would require per-permit ancestry
-/// tracking (out of scope for the startup set).
+/// Scope note: the guard identity is `(root_operation_id, target_stage)` where
+/// `target_stage` is the child's declared `parent_stage` (the authoritative
+/// lineage point). It is occupancy-based (present/absent), so it cannot
+/// distinguish *breadth* (two parallel children of the same root on the same
+/// declared stage) from *depth* (a child re-entering its ancestor's stage). Per
+/// T06 it rejects the second admission at the same `(root, parent_stage)`.
+/// Parallel fan-out is therefore modeled as a single task's `reduce_stage`, not
+/// as N `child_of` admissions sharing one stage; distinct logical stages under a
+/// root must declare distinct `parent_stage`s. Lineage-aware breadth/depth
+/// separation would require per-permit ancestry tracking (out of scope for the
+/// startup set).
 pub fn is_recursive(state: &GovernedState, spec: &TaskSpec) -> bool {
     if !matches!(spec.scope, TaskScope::Child { .. }) {
         return false;

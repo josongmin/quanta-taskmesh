@@ -47,15 +47,31 @@ pub struct PolicySet {
 }
 
 impl PolicySet {
+    /// Build a policy set seeded with the canonical built-in substrate inventory.
+    ///
+    /// The built-ins are intrinsic to *any* governor, so the inventory is never
+    /// empty — a direct `Governor::new` embedder gets the same authoritative
+    /// substrate snapshot the host `Builder` produces, without having to remember
+    /// to call [`PolicySet::with_substrates`]. Deployment-specific substrates are
+    /// layered on top via [`PolicySet::with_substrates`].
     pub fn new(resources: ResourceBudget, classes: BTreeMap<TaskClass, ClassPolicy>) -> Self {
+        let mut substrates = BTreeMap::new();
+        for record in crate::features::inventory::builtin_records() {
+            // The built-in set is the canonical, valid, name-unique SSOT, so
+            // registration cannot fail by construction.
+            crate::features::inventory::register(&mut substrates, record)
+                .expect("built-in substrate records are valid and unique");
+        }
         Self {
             resources,
             classes,
-            substrates: BTreeMap::new(),
+            substrates,
         }
     }
 
-    /// Seed the registry from a list, rejecting duplicates and invalid records.
+    /// Layer *additional* (deployment-specific) substrates onto the built-in set,
+    /// rejecting duplicates (including any attempt to shadow a built-in) and
+    /// invalid records.
     pub fn with_substrates(
         mut self,
         substrates: Vec<SubstrateRecord>,
@@ -68,6 +84,23 @@ impl PolicySet {
 
     pub fn class(&self, class: &TaskClass) -> Option<&ClassPolicy> {
         self.classes.get(class)
+    }
+}
+
+/// Classification provenance carried through admission so "why this class" stays
+/// auditable in runtime state after submit, not just on the inbound `TaskSpec`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Provenance {
+    pub source: taskmesh_contract::PlanSource,
+    pub reason: taskmesh_contract::ClassificationRationale,
+}
+
+impl Provenance {
+    pub fn of(spec: &taskmesh_contract::TaskSpec) -> Self {
+        Self {
+            source: spec.source,
+            reason: spec.reason,
+        }
     }
 }
 

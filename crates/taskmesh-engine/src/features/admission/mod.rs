@@ -13,7 +13,7 @@ use taskmesh_contract::{
 use crate::engine::state::{CapacityBlock, GovernedState, PendingRequest};
 use crate::features::{composite, fairness};
 use crate::shared::{
-    AdmissionDecision, PermitId, PolicySet, RequestKey, ResolvedCost, Seq, Ticket,
+    AdmissionDecision, PermitId, PolicySet, Provenance, RequestKey, ResolvedCost, Seq, Ticket,
 };
 
 // ---- domain (pure) --------------------------------------------------------
@@ -105,6 +105,7 @@ fn admit_class(
                 &spec.root_operation_id,
                 spec.scope.clone(),
                 composite::target_stage(spec),
+                Provenance::of(spec),
                 cost,
                 cost.memory_units,
                 now_ms,
@@ -201,6 +202,7 @@ fn enqueue_or_full(
         root_operation_id: spec.root_operation_id.clone(),
         scope: spec.scope.clone(),
         target_stage: target_stage.clone(),
+        provenance: Provenance::of(spec),
         cost,
         enqueued_at_ms: now_ms,
         deadline_ms,

@@ -57,8 +57,8 @@ fn root_tasks_never_trip_recursion_guard() {
 #[test]
 fn distinct_stages_under_same_root_are_allowed() {
     let g = gov();
-    let a = TaskSpec::blocking(TaskClass::new("worker")).child_of("root-x", TaskStage::new("p"));
-    let b = TaskSpec::cpu(TaskClass::new("worker")).child_of("root-x", TaskStage::new("p"));
+    let a = TaskSpec::blocking(TaskClass::new("worker")).child_of("root-x", TaskStage::new("p1"));
+    let b = TaskSpec::cpu(TaskClass::new("worker")).child_of("root-x", TaskStage::new("p2"));
     assert!(matches!(
         g.admit(&a, RequestKey::new("root-x")),
         AdmissionDecision::Admitted { .. }

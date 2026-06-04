@@ -77,3 +77,26 @@ fn deadline_aware_prioritizes_tighter_slack() {
     let order = drain(&g, &tickets);
     assert_eq!(order, vec!["tight", "tight", "loose", "loose"]);
 }
+
+#[test]
+fn deadline_ties_break_by_arrival_order() {
+    // Equal slack, all enqueued at the same instant → identical deadlines. The
+    // tie-break is arrival (seq) order, so dispatch is global FIFO across classes.
+    let g = contended(vec![("x", deadline_class(100)), ("y", deadline_class(100))]);
+    let filler = admit_filler(&g);
+
+    let tickets = vec![
+        queue(&g, "x", "x1"),
+        queue(&g, "y", "y1"),
+        queue(&g, "x", "x2"),
+        queue(&g, "y", "y2"),
+    ];
+
+    g.release(filler);
+    let order = drain(&g, &tickets);
+    assert_eq!(
+        order,
+        vec!["x", "y", "x", "y"],
+        "equal deadlines must fall back to arrival order"
+    );
+}

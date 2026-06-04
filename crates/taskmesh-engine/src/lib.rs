@@ -23,7 +23,7 @@ mod shared;
 
 pub use engine::Governor;
 pub use shared::{
-    AdmissionDecision, LeakSweepReport, PermitId, PolicySet, RequestKey, ResolvedCost,
+    AdmissionDecision, LeakSweepReport, PermitId, PolicySet, Provenance, RequestKey, ResolvedCost,
     RootAttribution, Seq, Ticket,
 };
 

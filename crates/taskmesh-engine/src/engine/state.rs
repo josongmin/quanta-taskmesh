@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use taskmesh_contract::{PermitWaker, TaskClass, TaskScope, TaskStage};
 
-use crate::shared::{PermitId, RequestKey, ResolvedCost, Seq, Ticket};
+use crate::shared::{PermitId, Provenance, RequestKey, ResolvedCost, Seq, Ticket};
 
 /// A request waiting in a class queue for capacity.
 ///
@@ -30,6 +30,8 @@ pub struct PendingRequest {
     pub root_operation_id: String,
     pub scope: TaskScope,
     pub target_stage: TaskStage,
+    /// Classification provenance (source/reason), preserved through promotion.
+    pub provenance: Provenance,
     pub cost: ResolvedCost,
     #[allow(
         dead_code,
@@ -89,6 +91,8 @@ pub struct PermitRecord {
     pub root_operation_id: String,
     pub scope: TaskScope,
     pub target_stage: TaskStage,
+    /// Classification provenance (source/reason), auditable post-intake.
+    pub provenance: Provenance,
     pub ledger: PermitLedger,
 }
 
@@ -179,6 +183,7 @@ impl GovernedState {
         root_operation_id: &str,
         scope: TaskScope,
         target_stage: TaskStage,
+        provenance: Provenance,
         cost: ResolvedCost,
         reserved_units: u32,
         now_ms: u64,
@@ -192,15 +197,18 @@ impl GovernedState {
         self.cpu_units_held = self.cpu_units_held.saturating_add(cost.cpu_units);
         self.memory_units_held = self.memory_units_held.saturating_add(cost.memory_units);
 
+        // Recursion guard and root attribution are CHILD-only. A root must never
+        // occupy `(root, stage)` itself, else its own first child — which targets
+        // the parent stage — would be (wrongly) rejected as recursive.
         if matches!(scope, TaskScope::Child { .. }) {
             let root = self.roots.entry(root_operation_id.to_owned()).or_default();
             root.child_inflight += 1;
             root.cpu_units = root.cpu_units.saturating_add(cost.cpu_units);
             root.memory_units = root.memory_units.saturating_add(cost.memory_units);
             root.active_stages.insert(target_stage.clone());
+            self.active_recursion
+                .insert((root_operation_id.to_owned(), target_stage.clone()));
         }
-        self.active_recursion
-            .insert((root_operation_id.to_owned(), target_stage.clone()));
 
         self.permits.insert(
             permit_id,
@@ -210,6 +218,7 @@ impl GovernedState {
                 root_operation_id: root_operation_id.to_owned(),
                 scope,
                 target_stage,
+                provenance,
                 ledger: PermitLedger {
                     cpu_units: cost.cpu_units,
                     reserved_units,
@@ -252,11 +261,12 @@ impl GovernedState {
                     self.roots.remove(&record.root_operation_id);
                 }
             }
+            // Symmetric with grant: only children occupy the recursion guard.
+            self.active_recursion.remove(&(
+                record.root_operation_id.clone(),
+                record.target_stage.clone(),
+            ));
         }
-        self.active_recursion.remove(&(
-            record.root_operation_id.clone(),
-            record.target_stage.clone(),
-        ));
         self.assert_consistent();
         Some(record)
     }

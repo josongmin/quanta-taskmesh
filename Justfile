@@ -76,5 +76,20 @@ bench-iai:
 loom:
     RUSTFLAGS="--cfg loom" cargo test -p taskmesh-engine --test loom_governance --release
 
+# Fast local front door: fmt, clippy, unit/integration tests, supply-chain,
+# semgrep, architecture, python, and the deterministic allocation gate. This is
+# the *fast* proof surface — it intentionally does NOT run the heavier rails CI
+# enforces (bench-iai instruction-count, loom + shuttle concurrency model-checks).
+# Run `just proof` to exercise those locally before relying on a green `gate`.
 gate: fmt-check clippy test deny semgrep test-architecture py-lint py-test bench-gate
-    @echo "gate: all required checks passed"
+    @echo "gate: fast local checks passed (CI additionally runs: bench-iai, loom, shuttle — see 'just proof')"
+
+# Exhaustive concurrency model-check with shuttle's randomized scheduler (ADR
+# 9000 / P6). Heavier than loom; matches the CI `shuttle` rail.
+shuttle:
+    RUSTFLAGS="--cfg shuttle" cargo test -p taskmesh-engine --test shuttle_governance --release
+
+# Full proof surface: everything `gate` runs PLUS the heavy rails CI enforces, so
+# a green `proof` locally matches CI's required checks (no local/CI proof gap).
+proof: gate bench-iai loom shuttle
+    @echo "proof: full proof surface passed (matches CI required rails)"

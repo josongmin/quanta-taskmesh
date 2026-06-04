@@ -55,6 +55,11 @@ fn runtime_config_roundtrips_pretty() {
             .memory_units(256)
             .memory_unit_scale(4096),
         classes,
+        substrates: vec![SubstrateRecord::new(
+            "external-gpu",
+            SubstrateKind::CompetingExecution,
+            Some("external-gpu"),
+        )],
     };
     let json = serde_json::to_string_pretty(&config).unwrap();
     let back: RuntimeConfig = serde_json::from_str(&json).unwrap();

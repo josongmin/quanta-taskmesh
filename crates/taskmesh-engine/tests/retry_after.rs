@@ -59,3 +59,37 @@ fn adaptive_retry_after_is_deterministic() {
         .retry_after_policy(RetryAfterPolicy::Adaptive));
     assert_eq!(saturate_then_reject(&g2).retry_after_ms(), first);
 }
+
+fn gov_fair(fairness: FairnessPolicy) -> Governor {
+    gov(ClassPolicy::new()
+        .max_inflight(1)
+        .retry_after_policy(RetryAfterPolicy::Adaptive)
+        .fairness(fairness))
+}
+
+#[test]
+fn adaptive_retry_reflects_fairness_discipline() {
+    // base at inflight=1, queue=0 is 55 (50 + 1*5). Each discipline adjusts it
+    // deterministically from its own params.
+    let weighted = gov_fair(FairnessPolicy::WeightedFairQueue {
+        weight: 4,
+        burst: 0,
+    });
+    assert_eq!(
+        saturate_then_reject(&weighted).retry_after_ms(),
+        Some(55 - 8)
+    ); // weight relief
+
+    let deadline = gov_fair(FairnessPolicy::DeadlineAware { slack_ms: 100 });
+    assert_eq!(
+        saturate_then_reject(&deadline).retry_after_ms(),
+        Some(55 + 10)
+    ); // slack/10
+
+    let drr = gov_fair(FairnessPolicy::DeficitRoundRobin { quantum: 3 });
+    assert_eq!(saturate_then_reject(&drr).retry_after_ms(), Some(55 + 3)); // quantum step
+
+    // FIFO is unchanged (regression: keeps the original 55).
+    let fifo = gov_fair(FairnessPolicy::Fifo);
+    assert_eq!(saturate_then_reject(&fifo).retry_after_ms(), Some(55));
+}

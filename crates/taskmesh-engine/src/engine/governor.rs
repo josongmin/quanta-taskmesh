@@ -351,6 +351,37 @@ impl Governor {
                 }
             }
         }
+
+        // Fairness is a per-tier discipline: when several classes are runnable in
+        // the same tier, the scheduler arbitrates them with ONE discipline. A
+        // heterogeneous mix would let the lexically-first class silently impose
+        // its discipline on the others, so reject it at construction. Weights/
+        // quanta/slack may still differ between classes (same discipline kind);
+        // only the discipline *kind* must agree within a tier. Best-effort forms
+        // a separate tier. Disabled classes never dispatch and are exempt.
+        let mut primary_kind: Option<std::mem::Discriminant<FairnessPolicy>> = None;
+        let mut best_effort_kind: Option<std::mem::Discriminant<FairnessPolicy>> = None;
+        for (class, class_policy) in &policy.classes {
+            if class_policy.is_disabled() {
+                continue;
+            }
+            let kind = std::mem::discriminant(&class_policy.fairness);
+            let tier = if class_policy.best_effort {
+                &mut best_effort_kind
+            } else {
+                &mut primary_kind
+            };
+            match tier {
+                None => *tier = Some(kind),
+                Some(existing) if *existing != kind => {
+                    return Err(violation(format!(
+                        "class {class} mixes a different fairness discipline within its \
+                         scheduling tier; all classes in a tier must share one discipline"
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
         Ok(())
     }
 }

@@ -143,11 +143,16 @@ impl TaskSpec {
         }
     }
 
-    /// Sets both the human-facing operation name and — for a root task — the
-    /// admission key. A root task is identified by its own operation name.
+    /// Sets the human-facing operation name. For a **root** task this also
+    /// becomes the admission/attribution key (`root_operation_id`). For a
+    /// **child** (already reparented via [`TaskSpec::child_of`]) the inherited
+    /// root id is preserved — naming the child's own operation must never
+    /// re-root it, so `child_of(root).operation(name)` keeps `root`.
     pub fn operation(mut self, name: impl Into<String>) -> Self {
         let name = name.into();
-        self.root_operation_id = name.clone();
+        if matches!(self.scope, TaskScope::Root) {
+            self.root_operation_id = name.clone();
+        }
         self.operation = name;
         self
     }

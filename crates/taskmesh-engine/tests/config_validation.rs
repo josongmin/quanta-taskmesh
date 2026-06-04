@@ -139,3 +139,66 @@ fn scavenger_fairness_requires_best_effort() {
     );
     assert!(Governor::validate_policy(&ok).is_ok());
 }
+
+#[test]
+fn mixed_fairness_disciplines_in_a_tier_reject() {
+    // Fifo + DeadlineAware in the same (non-best-effort) tier is rejected, so the
+    // scheduler never silently imposes the lexically-first class's discipline.
+    let p = policy(
+        ResourceBudget::new(),
+        vec![
+            ("a", ClassPolicy::new().fairness(FairnessPolicy::Fifo)),
+            (
+                "z",
+                ClassPolicy::new().fairness(FairnessPolicy::DeadlineAware { slack_ms: 1 }),
+            ),
+        ],
+    );
+    assert!(Governor::validate_policy(&p).is_err());
+}
+
+#[test]
+fn same_discipline_different_weights_is_ok() {
+    // WFQ with different weights is fine — same discipline kind, different params.
+    let p = policy(
+        ResourceBudget::new(),
+        vec![
+            (
+                "a",
+                ClassPolicy::new().fairness(FairnessPolicy::WeightedFairQueue {
+                    weight: 4,
+                    burst: 0,
+                }),
+            ),
+            (
+                "b",
+                ClassPolicy::new().fairness(FairnessPolicy::WeightedFairQueue {
+                    weight: 1,
+                    burst: 0,
+                }),
+            ),
+        ],
+    );
+    assert!(Governor::validate_policy(&p).is_ok());
+}
+
+#[test]
+fn different_discipline_across_tiers_is_ok() {
+    // A best-effort class forms its own tier, so it may differ from the primary.
+    let p = policy(
+        ResourceBudget::new(),
+        vec![
+            (
+                "interactive",
+                ClassPolicy::new().fairness(FairnessPolicy::DeadlineAware { slack_ms: 5 }),
+            ),
+            (
+                "batch",
+                ClassPolicy::new()
+                    .fairness(FairnessPolicy::BestEffortScavenger)
+                    .best_effort(true),
+            ),
+        ],
+    );
+    assert!(Governor::validate_policy(&p).is_ok());
+}

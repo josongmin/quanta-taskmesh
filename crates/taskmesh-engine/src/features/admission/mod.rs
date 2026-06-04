@@ -48,6 +48,12 @@ pub fn admit(
     waker: Option<Arc<dyn PermitWaker>>,
     ids: Ids,
 ) -> AdmissionDecision {
+    // Fail-closed on a malformed plan before any capacity is considered: a
+    // fan-out stage without a complete deterministic reduce policy is never
+    // shippable (T06), so it must never be admitted.
+    if composite::reduce::validate_spec(spec).is_err() {
+        return AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask);
+    }
     admit_class(
         state,
         policies,
@@ -207,6 +213,7 @@ fn enqueue_or_full(
 fn retry(policy: &ClassPolicy, state: &GovernedState, class: &TaskClass) -> Option<u64> {
     fairness::retry_after(
         policy.retry_after_policy,
+        policy.fairness,
         state.queued(class),
         state.inflight(class),
     )

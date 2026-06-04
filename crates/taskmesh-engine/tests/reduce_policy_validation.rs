@@ -36,3 +36,49 @@ fn sequential_stages_need_no_reduce_policy() {
         .stage(TaskStage::new("rank"), SubstrateHint::SharedCpuExecutor);
     assert!(Governor::validate_reduce(&spec).is_ok());
 }
+
+// --- enforcement at the admission choke-point (not just the static helper) ---
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use taskmesh_engine::{AdmissionDecision, ManualClock, PolicySet, RequestKey};
+
+fn gov() -> Governor {
+    let mut classes = BTreeMap::new();
+    classes.insert(
+        TaskClass::new("c"),
+        ClassPolicy::new().max_inflight(8).cpu_units(1),
+    );
+    Governor::new(
+        PolicySet::new(ResourceBudget::new(), classes),
+        Arc::new(ManualClock::new(0)),
+    )
+}
+
+#[test]
+fn admit_rejects_fan_out_without_reduce_policy() {
+    let g = gov();
+    let bad = TaskSpec::cpu(TaskClass::new("c"))
+        .fan_out_stage(TaskStage::new("merge"), SubstrateHint::SharedCpuExecutor)
+        .operation("bad-reduce");
+    assert!(matches!(
+        g.admit(&bad, RequestKey::new("bad-reduce")),
+        AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask)
+    ));
+}
+
+#[test]
+fn admit_accepts_fan_out_with_complete_reduce_policy() {
+    let g = gov();
+    let good = TaskSpec::cpu(TaskClass::new("c"))
+        .reduce_stage(
+            TaskStage::new("merge"),
+            SubstrateHint::SharedCpuExecutor,
+            DeterministicReducePolicy::keyed("doc_id"),
+        )
+        .operation("good-reduce");
+    assert!(matches!(
+        g.admit(&good, RequestKey::new("good-reduce")),
+        AdmissionDecision::Admitted { .. }
+    ));
+}

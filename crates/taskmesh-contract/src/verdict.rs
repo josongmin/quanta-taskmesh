@@ -16,17 +16,30 @@ use crate::task::TaskClass;
 #[non_exhaustive]
 pub enum AdmissionVerdict {
     Admitted,
-    QueueFull { retry_after_ms: Option<u64> },
-    CpuSaturated { retry_after_ms: Option<u64> },
-    MemorySaturated { retry_after_ms: Option<u64> },
+    QueueFull {
+        retry_after_ms: Option<u64>,
+    },
+    CpuSaturated {
+        retry_after_ms: Option<u64>,
+    },
+    MemorySaturated {
+        retry_after_ms: Option<u64>,
+    },
     ClassDisabled,
-    UnknownClass { class: TaskClass },
+    UnknownClass {
+        class: TaskClass,
+    },
     RuntimeUnavailable,
     ClassificationFailed,
-    PermitAcquireTimedOut { retry_after_ms: Option<u64> },
+    PermitAcquireTimedOut {
+        retry_after_ms: Option<u64>,
+    },
     CancelledBeforeSubmit,
     DeadlineExpiredBeforeSubmit,
     RecursiveAdmission,
+    /// The task spec is structurally invalid (e.g. a fan-out stage missing its
+    /// deterministic reduce policy, or a substrate-hint/run-path mismatch).
+    MalformedTask,
 }
 
 impl AdmissionVerdict {
@@ -60,6 +73,7 @@ impl fmt::Display for AdmissionVerdict {
             Self::CancelledBeforeSubmit => f.write_str("cancelled before submit"),
             Self::DeadlineExpiredBeforeSubmit => f.write_str("deadline expired before submit"),
             Self::RecursiveAdmission => f.write_str("recursive admission rejected"),
+            Self::MalformedTask => f.write_str("malformed task spec"),
         }
     }
 }

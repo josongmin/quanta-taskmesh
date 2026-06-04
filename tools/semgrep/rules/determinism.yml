@@ -1,0 +1,80 @@
+# Determinism — wall clock and entropy enter only through driven port adapters.
+
+rules:
+  - id: taskmesh-no-clock-now-outside-host-adapters
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Reading the wall clock is only allowed in host adapter modules
+      (`adapters/clock.rs` or transitional `SystemClock` until ports land in
+      contract). Inject time through contract::Clock everywhere else.
+    paths:
+      include:
+        - "**/crates/**"
+      exclude:
+        - "**/crates/taskmesh/src/adapters/**"
+        - "**/crates/taskmesh-tokio/src/adapters/**"
+        # Transitional: SystemClock in core until ADR-0001 host adapter split.
+        - "**/crates/taskmesh-core/**"
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern: SystemTime::now()
+          - pattern: std::time::SystemTime::now()
+          - pattern: Instant::now()
+          - pattern: std::time::Instant::now()
+          - pattern: tokio::time::Instant::now()
+          - pattern: Utc::now()
+          - pattern: chrono::Utc::now()
+          - pattern: Local::now()
+          - pattern: chrono::Local::now()
+
+  - id: taskmesh-no-randomness-in-contract-and-engine
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Random number / UUID generation is forbidden in contract and engine.
+      Pass entropy through ports from host adapters.
+    paths:
+      include:
+        - "**/crates/taskmesh-contract/**"
+        - "**/crates/taskmesh-engine/**"
+        - "**/crates/taskmesh-core/**"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern: rand::thread_rng()
+          - pattern: thread_rng()
+          - pattern: rand::random(...)
+          - pattern: rand::random::<$T>(...)
+          - pattern: rand::random::<$T>()
+          - pattern: rand::rngs::OsRng
+          - pattern: OsRng
+          - pattern: Uuid::new_v4()
+          - pattern: uuid::Uuid::new_v4()
+
+  - id: taskmesh-no-env-read-in-contract-engine
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Reading the process environment is forbidden in contract and engine. Resolve
+      configuration in the host Builder and pass typed values inward.
+    paths:
+      include:
+        - "**/crates/taskmesh-contract/**"
+        - "**/crates/taskmesh-engine/**"
+        - "**/crates/taskmesh-core/**"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern: std::env::var(...)
+          - pattern: env::var(...)
+          - pattern: std::env::var_os(...)
+          - pattern: env::var_os(...)
+          - pattern: std::env::vars()
+          - pattern: std::env::vars_os()

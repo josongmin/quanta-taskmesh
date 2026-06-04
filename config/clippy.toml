@@ -1,0 +1,12 @@
+# Clippy policy for taskmesh.
+# Applied via CLIPPY_CONF_DIR=config in the Justfile.
+
+cognitive-complexity-threshold = 25
+too-many-arguments-threshold = 7
+type-complexity-threshold = 250
+single-char-binding-names-threshold = 4
+
+disallowed-types = [
+  { path = "std::hash::DefaultHasher", reason = "non-deterministic seed; use BTreeMap or a fixed-seed hasher for persisted/governed state" },
+  { path = "std::collections::hash_map::DefaultHasher", reason = "non-deterministic seed; use BTreeMap or a fixed-seed hasher for persisted/governed state" },
+]

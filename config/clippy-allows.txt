@@ -1,0 +1,33 @@
+# Clippy allows for workspace-wide passes (tests + production pass 1).
+# Pass-2 production restricts (config/clippy-restrict.txt) re-tighten production code.
+-A clippy::cargo_common_metadata
+-A clippy::missing_errors_doc
+-A clippy::missing_panics_doc
+-A clippy::module_name_repetitions
+-A clippy::must_use_candidate
+-A clippy::doc_markdown
+-A clippy::too_many_lines
+-A clippy::items_after_statements
+-A clippy::similar_names
+-A clippy::many_single_char_names
+-A clippy::redundant_clone
+-A clippy::redundant_closure_for_method_calls
+-A clippy::cast_possible_truncation
+-A clippy::cast_sign_loss
+-A clippy::cast_possible_wrap
+-A clippy::format_collect
+-A clippy::format_push_string
+-A clippy::needless_collect
+-A clippy::naive_bytecount
+-A clippy::tuple_array_conversions
+-A clippy::missing_const_for_fn
+-A clippy::uninlined_format_args
+-A clippy::unused_self
+-A clippy::derivable_impls
+-A clippy::return_self_not_must_use
+-A clippy::missing_inline_in_public_items
+-A clippy::struct_excessive_bools
+-A clippy::assigning_clones
+-A clippy::significant_drop_tightening
+-A clippy::option_if_let_else
+-A clippy::unused_async

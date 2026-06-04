@@ -1,0 +1,128 @@
+# Error-handling — fail with context, never panic in production paths.
+
+rules:
+  - id: taskmesh-no-unannotated-allow
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      `#[allow(...)]` / `#![allow(...)]` and `// nosemgrep: ...` must carry a
+      written reason — `reason = "..."` inside the attr, or trailing
+      `-- <reason>` / `reason: <...>` on the same line (≥8 chars).
+    paths:
+      include:
+        - "**/crates/**/*.rs"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern-regex: '(?m)^\s*#!?\[allow\((?:(?!reason\s*=).)*\)\][ \t]*(?:$|//\s*(?!.*(?:--\s\S{8,}|reason:\s*\S)))'
+          - pattern-regex: '#!?\[allow\(\s*\n(?:(?!reason\s*=)(?!\)\])[\s\S])*?\)\]'
+          - pattern-regex: '(?m)//\s*nosemgrep\s*:\s*\S+\s*$'
+
+  - id: taskmesh-no-unwrap-in-production
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      .unwrap() is forbidden in production crates. Use `?` or
+      .expect("<why this cannot fail>") for genuine invariants.
+    paths:
+      include:
+        - "**/crates/**"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern: $X.unwrap()
+          - pattern: Result::unwrap($X)
+          - pattern: Option::unwrap($X)
+          - pattern: $X.unwrap_unchecked()
+      - pattern-not-inside: |
+          mod tests { ... }
+
+  - id: taskmesh-no-todo-unimplemented-in-production
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      todo!() and unimplemented!() must not appear in production crates.
+    paths:
+      include:
+        - "**/crates/**"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern: todo!(...)
+          - pattern: todo!()
+          - pattern: unimplemented!(...)
+          - pattern: unimplemented!()
+      - pattern-not-inside: |
+          mod tests { ... }
+
+  - id: taskmesh-no-panic-in-production
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      panic!() / unreachable!() must not appear in production crates.
+    paths:
+      include:
+        - "**/crates/**"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern: panic!(...)
+          - pattern: unreachable!(...)
+          - pattern: unreachable!()
+      - pattern-not-inside: |
+          mod tests { ... }
+
+  - id: taskmesh-expect-needs-context
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      .expect() must explain why the value cannot be absent.
+    paths:
+      include:
+        - "**/crates/**"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern: $X.expect($MSG)
+      - metavariable-regex:
+          metavariable: $MSG
+          regex: '^"(\s*|todo|TODO|fixme|FIXME|tbd|TBD|\.\.\.|x|X|\?|unwrap|expect|error|err|fail|failed|panic|oops|n/?a)"$'
+
+  - id: taskmesh-no-error-swallowing
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Empty error arms swallow failures silently. Handle the Err instead.
+    paths:
+      include:
+        - "**/crates/**/*.rs"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-regex: 'Err\(\s*(?:_|\.\.|[A-Za-z_]\w*)\s*\)\s*=>\s*(?:\{\s*\}|\(\s*\))'
+
+  - id: taskmesh-no-discarded-result
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Discarding a Result throws away a failure silently.
+    paths:
+      include:
+        - "**/crates/**/*.rs"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern-regex: '\blet\s+_\s*='
+          - pattern-regex: '(?m)^\s*[A-Za-z_][^=\n]*\.ok\(\)\s*;\s*$'

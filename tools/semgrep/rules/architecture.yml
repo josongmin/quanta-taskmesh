@@ -1,0 +1,152 @@
+# Architecture — hexagonal crate boundaries (ADR-0001).
+
+rules:
+  - id: taskmesh-no-tokio-in-contract-engine-rayon
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      tokio is forbidden in contract, engine, and rayon adapter crates. Use the
+      host facade (`crates/taskmesh/`) for async runtime wiring; engine stays
+      runtime-agnostic.
+    paths:
+      include:
+        - "**/crates/taskmesh-contract/**"
+        - "**/crates/taskmesh-engine/**"
+        - "**/crates/taskmesh-core/**"
+        - "**/crates/taskmesh-rayon/**"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern: use tokio;
+          - pattern: use tokio::$X;
+          - pattern: tokio::$X
+          - pattern: extern crate tokio;
+
+  - id: taskmesh-no-rayon-outside-rayon-adapter
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      rayon is only allowed in `taskmesh-rayon` (Executor adapter). The host
+      may depend on it via feature flag but must not use rayon APIs in engine
+      or contract layers.
+    paths:
+      include:
+        - "**/crates/taskmesh-contract/**"
+        - "**/crates/taskmesh-engine/**"
+        - "**/crates/taskmesh-core/**"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern: use rayon;
+          - pattern: use rayon::$X;
+          - pattern: rayon::$X
+          - pattern: extern crate rayon;
+
+  - id: taskmesh-rayon-no-host-or-engine-import
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      taskmesh-rayon must depend only on taskmesh-contract (and rayon). It must
+      not import the host facade or engine — zero cycles, tokio-blind CPU adapter.
+    paths:
+      include:
+        - "**/crates/taskmesh-rayon/**"
+    patterns:
+      - pattern-either:
+          - pattern: use taskmesh;
+          - pattern: use taskmesh::$X;
+          - pattern: use taskmesh_engine;
+          - pattern: use taskmesh_engine::$X;
+          - pattern: use taskmesh_core;
+          - pattern: use taskmesh_core::$X;
+          - pattern: extern crate taskmesh;
+          - pattern: extern crate taskmesh_engine;
+          - pattern: extern crate taskmesh_core;
+
+  - id: taskmesh-engine-no-host-import
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      The governance engine must not import the host facade (`taskmesh`). Compose
+      at the host only; arrows point inward to contract/engine.
+    paths:
+      include:
+        - "**/crates/taskmesh-engine/**"
+        - "**/crates/taskmesh-core/**"
+      exclude:
+        - "**/tests/**"
+    patterns:
+      - pattern-either:
+          - pattern: use taskmesh;
+          - pattern: use taskmesh::$X;
+          - pattern: taskmesh::$X
+          - pattern: extern crate taskmesh;
+
+  - id: taskmesh-no-adapters-in-engine-domain
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Engine domain modules must not import adapters. Domain depends on contract
+      vocabulary/ports only; adapters live in the host (`taskmesh`) or rayon crate.
+    paths:
+      include:
+        - "**/crates/taskmesh-engine/src/features/**/domain.rs"
+        - "**/crates/taskmesh-engine/src/**/domain/**"
+      exclude:
+        - "**/tests/**"
+    patterns:
+      - pattern-either:
+          - pattern: use crate::adapters;
+          - pattern: use crate::adapters::$X;
+          - pattern: crate::adapters::$X
+          - pattern: super::adapters::$X
+
+  - id: taskmesh-no-std-fs-in-contract-engine
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      std::fs is forbidden in contract and engine layers. IO belongs in host
+      adapters only.
+    paths:
+      include:
+        - "**/crates/taskmesh-contract/**"
+        - "**/crates/taskmesh-engine/**"
+        - "**/crates/taskmesh-core/**"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern: use std::fs;
+          - pattern: use std::fs::$X;
+          - pattern: std::fs::$F(...)
+          - pattern: std::fs::$T
+
+  - id: taskmesh-no-terminal-io-in-library-crates
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      println!/eprintln!/process::exit are forbidden in library crates. Surface
+      errors via contract types to the host caller.
+    paths:
+      include:
+        - "**/crates/taskmesh-contract/**"
+        - "**/crates/taskmesh-engine/**"
+        - "**/crates/taskmesh-core/**"
+        - "**/crates/taskmesh-rayon/**"
+        - "**/crates/taskmesh/**"
+        - "**/crates/taskmesh-tokio/**"
+      exclude:
+        - "**/tests/**"
+        - "**/benches/**"
+    patterns:
+      - pattern-either:
+          - pattern: println!(...)
+          - pattern: eprintln!(...)
+          - pattern: print!(...)
+          - pattern: eprint!(...)
+          - pattern: std::process::exit(...)

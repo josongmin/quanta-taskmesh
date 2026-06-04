@@ -1,0 +1,30 @@
+rules:
+  - id: taskmesh-no-unchecked-indexing-in-engine
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Unchecked indexing (`arr[i]`) and unchecked slicing panic on out-of-range
+      input. Use `.get(...)` / checked slicing. Opt-out:
+      `// nosemgrep: taskmesh-no-unchecked-indexing-in-engine -- reason: <why>`.
+    paths:
+      include:
+        - "**/crates/**"
+      exclude:
+        - "**/tests/**"
+        - "**/*_tests.rs"
+        - "**/build.rs"
+    patterns:
+      - pattern-either:
+          - pattern: $ARR[$IDX]
+          - pattern: $SLICE[$A..$B]
+          - pattern: $SLICE[$A..]
+          - pattern: $SLICE[..$B]
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod tests { ... }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod $M { ... }
+      - pattern-not-inside: |
+          #[test]
+          fn $F(...) { ... }

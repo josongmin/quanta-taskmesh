@@ -1,0 +1,51 @@
+# Dependency policy — runtime isolation and adapter independence.
+
+rules:
+  - id: taskmesh-no-async-std
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      async-std is forbidden; the host facade standardizes on tokio.
+    paths:
+      include:
+        - "**/crates/**"
+    patterns:
+      - pattern-either:
+          - pattern: use async_std;
+          - pattern: use async_std::$X;
+          - pattern: async_std::$X
+          - pattern: extern crate async_std;
+
+  - id: taskmesh-rayon-no-tokio
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      taskmesh-rayon must not reference tokio. Rayon implements contract::Executor
+      only and stays tokio-blind.
+    paths:
+      include:
+        - "**/crates/taskmesh-rayon/**"
+    patterns:
+      - pattern-either:
+          - pattern: use tokio;
+          - pattern: use tokio::$X;
+          - pattern: tokio::$X
+          - pattern: extern crate tokio;
+          - pattern: use tokio_util;
+          - pattern: use tokio_util::$X;
+
+  - id: taskmesh-contract-no-parking-lot
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      taskmesh-contract must stay serde-only (plus std). Synchronization primitives
+      belong in taskmesh-engine.
+    paths:
+      include:
+        - "**/crates/taskmesh-contract/**"
+    patterns:
+      - pattern-either:
+          - pattern: use parking_lot;
+          - pattern: use parking_lot::$X;
+          - pattern: parking_lot::$X
+          - pattern: extern crate parking_lot;

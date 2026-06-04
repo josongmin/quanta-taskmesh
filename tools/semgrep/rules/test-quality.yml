@@ -1,0 +1,265 @@
+# Test-quality rules — flag tests that look like they assert something but don't.
+#
+# Layered with cargo-mutants (just mutants-critical) and coverage gate (just cov-gate)
+# under the L1-L5 "cheese detector" model — see Justfile § cheese detector.
+
+rules:
+  # ----- L1.1 Pure tautologies (always pass / always fail) ---------------
+
+  - id: taskmesh-test-trivial-assert-true
+    pattern: assert!(true)
+    message: |
+      `assert!(true)` is a no-op — the test cannot fail.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  - id: taskmesh-test-self-equality
+    pattern: assert_eq!($X, $X)
+    message: |
+      `assert_eq!(x, x)` compares an expression to itself — it cannot fail.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  - id: taskmesh-test-self-inequality
+    pattern: assert_ne!($X, $X)
+    message: |
+      `assert_ne!(x, x)` always fails.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  - id: taskmesh-test-tautological-some-or-none
+    pattern-either:
+      - pattern: assert!($X.is_some() || $X.is_none())
+      - pattern: assert!($X.is_none() || $X.is_some())
+      - pattern: assert!($X.is_ok() || $X.is_err())
+      - pattern: assert!($X.is_err() || $X.is_ok())
+    message: |
+      Tautology — every Option is exactly is_some()|is_none(), every Result is exactly
+      is_ok()|is_err(). Assert what the *value* should be instead.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  - id: taskmesh-test-len-ge-zero
+    pattern-either:
+      - pattern: assert!($X.len() >= 0)
+      # Typed-literal bypass: `assert!(v.len() >= 0u64)`, `>= 0usize`, etc.
+      - pattern-regex: 'assert!\s*\(\s*[^,)]+\.len\(\)\s*>=\s*0(?:u(?:size|8|16|32|64|128))?\s*[,)]'
+    message: |
+      `usize >= 0` is always true regardless of the literal's type suffix.
+      Assert the actual expected length.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  - id: taskmesh-test-contains-empty-substring
+    pattern-either:
+      - pattern: assert!($S.contains(""))
+      - pattern: assert!($S.starts_with(""))
+      - pattern: assert!($S.ends_with(""))
+    message: |
+      Every string contains/starts-with/ends-with the empty substring.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  # ----- L1.2 Existence-only / discard-result smells -------------------
+
+  - id: taskmesh-test-is-ok-without-value-check
+    patterns:
+      - pattern: assert!($X.is_ok())
+      - pattern-inside: |
+          #[test]
+          fn $F() { ... }
+    message: |
+      `assert!(x.is_ok())` discards the inner value. Unwrap and assert the value, or use
+      `assert_eq!(x, Ok(expected))`. If you genuinely don't care about the Ok payload,
+      annotate with `#[allow(...)] -- reason: <why>`.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  - id: taskmesh-test-discards-fallible-let
+    patterns:
+      - pattern: let _ = $X;
+      - pattern-not: let _ = drop(...);
+      - pattern-not: let _ = ();
+      - pattern-inside: |
+          #[test]
+          fn $F() { ... }
+    message: |
+      `let _ = expr;` inside a `#[test]` discards a value. Either bind a name and assert
+      against it, drop it explicitly with `drop(...)`, or annotate the throwaway with
+      `#[allow(...)] -- reason: <why>`.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  # ----- L1.3 Permissive-contract smells ----------------------------------
+
+  - id: taskmesh-test-permissive-exit-code-match
+    # semgrep Rust does not reliably bind a literal against the leading arm of
+    # an or-pattern (`0 | $A | $B`), so match the 3+-integer-alternative shape
+    # with a regex instead. Catches `matches!(c, 0 | 1 | 2)`, `0|1|2|3`, etc.
+    pattern-regex: 'matches!\s*\([^,]+,\s*[0-9]+\s*(?:\|\s*[0-9]+\s*){2,}\)'
+    message: |
+      Accepting three or more exit codes blurs the contract. Either tighten the test to
+      a single expected code, split into separate tests per scenario, or document the
+      ambiguity with a `// nosemgrep: taskmesh-test-permissive-exit-code-match -- reason: <why>`.
+    severity: ERROR
+    languages: [generic]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  # ----- L1.4 Determinism-only / self-function smells ----------------------
+
+  - id: taskmesh-test-self-fn-equality
+    patterns:
+      - pattern: assert_eq!($F(...), $F(...))
+      - pattern-inside: |
+          #[test]
+          fn $T() { ... }
+    message: |
+      `assert_eq!(f(x), f(x))` only proves f is deterministic on a single input — not
+      that f is correct. Assert against an independent oracle or a known constant.
+    severity: WARNING
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  # ----- L1.5 Empty / no-assert test bodies ------------------------------
+
+  - id: taskmesh-test-empty-body
+    pattern: |
+      #[test]
+      fn $F() { }
+    message: |
+      Empty `#[test]` body — the test cannot fail.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  # NOTE: "proptest block with no assertion" is intentionally NOT a semgrep
+  # rule. Both the macro-AST form (doesn't bind in semgrep Rust) and the
+  # regex form (can't balance braces, so it false-fires on blocks whose
+  # prop_assert sits past a nested closure's `}`) are unreliable. This class of
+  # cheese is caught structurally by L3 mutation testing (`just mutants-critical`)
+  # — an assertion-free proptest cannot kill any mutant, so cargo-mutants flags
+  # the surviving mutations. See Justfile § cheese detector.
+
+  # ----- L1.6 Ignored without reason (existing, retained) ---------------
+
+  - id: taskmesh-ignore-needs-reason
+    pattern-regex: '#\[ignore\][ \t]*(?:\r?\n|//|$)'
+    message: |
+      `#[ignore]` must carry a reason: `#[ignore = "pending ticket: ..."]`.
+    severity: ERROR
+    languages: [generic]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  # ----- L1.7 Non-determinism / flakiness in test ------------------------
+
+  - id: taskmesh-test-uninjected-system-time
+    patterns:
+      - pattern-either:
+          - pattern: std::time::SystemTime::now()
+          - pattern: SystemTime::now()
+      - pattern-inside: |
+          #[test]
+          fn $F() { ... }
+    message: |
+      `SystemTime::now()` inside `#[test]` makes the test wall-clock-dependent.
+      Inject the `Clock` port (use `FixedClock` from taskmesh-test-support). If a
+      now-relative anchor is genuinely required (e.g. testing `--since`),
+      annotate with `#[allow(...)] -- reason: <why now() is essential>`.
+    severity: WARNING
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  - id: taskmesh-test-thread-sleep
+    patterns:
+      - pattern-either:
+          - pattern: std::thread::sleep($X)
+          - pattern: thread::sleep($X)
+      - pattern-inside: |
+          #[test]
+          fn $F() { ... }
+    message: |
+      `thread::sleep` in tests is a flake amplifier. Use deterministic
+      synchronization (channels, barriers, `FixedClock`) or `#[allow(...)] --
+      reason: <race window being deliberately forced>`.
+    severity: WARNING
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  - id: taskmesh-test-eprintln-debug-leftover
+    patterns:
+      - pattern-either:
+          - pattern: eprintln!($...)
+          - pattern: println!($...)
+      - pattern-inside: |
+          #[test]
+          fn $F() { ... }
+    message: |
+      `println!`/`eprintln!` inside `#[test]` is almost always a debug leftover.
+      Cargo silences stdout on pass; on fail the panic message is the surface.
+      Remove or convert to an `assert!` message.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  - id: taskmesh-test-rand-without-seed
+    patterns:
+      - pattern-either:
+          - pattern: rand::random()
+          - pattern: rand::thread_rng()
+          - pattern: rand::rngs::ThreadRng::default()
+      - pattern-inside: |
+          #[test]
+          fn $F() { ... }
+    message: |
+      Unseeded RNG in test → non-reproducible failures. Use a fixed-seed
+      `SmallRng::seed_from_u64(SEED)` or the deterministic `Lcg` from
+      taskmesh-test-support.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
+  # ----- L1.8 Vague assertion smells ------------------------------------
+
+  - id: taskmesh-test-vague-stderr-contains-error
+    patterns:
+      - pattern-either:
+          - pattern: assert!($X.contains("error"))
+          - pattern: assert!($X.contains("Error"))
+          - pattern: assert!($X.contains("fail"))
+          - pattern: assert!($X.contains("failed"))
+      - pattern-inside: |
+          #[test]
+          fn $F() { ... }
+    message: |
+      Asserting `stderr.contains("error")` is too broad — every error path emits
+      "error". Lock the specific message ("invalid --from timestamp", "index
+      missing", etc.) so a wrong error wired to the right exit code is still
+      caught.
+    severity: WARNING
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]

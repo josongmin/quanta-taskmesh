@@ -1,0 +1,31 @@
+# cargo-deny supply-chain policy for taskmesh.
+# Run via: cargo deny check --config config/deny.toml
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+ignore = []
+
+[licenses]
+version = 2
+allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib"]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+# Competing async runtimes / schedulers — host standardizes on tokio; rayon is CPU-only.
+deny = [
+  { name = "async-std" },
+  { name = "smol" },
+  { name = "glommio" },
+  { name = "monoio" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

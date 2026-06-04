@@ -1,0 +1,62 @@
+[package]
+name = "taskmesh-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+description = "Benchmark harness for taskmesh (heavy dev-deps isolated here). See docs/adr/9000."
+
+[dependencies]
+taskmesh-contract = { workspace = true }
+taskmesh-engine = { workspace = true }
+taskmesh = { path = "../taskmesh" }
+rand = { workspace = true }
+rand_distr = { workspace = true }
+hdrhistogram = { workspace = true }
+# Instruction-count track (ADR 9000 / P2). Optional: requires valgrind + the
+# matching iai-callgrind-runner, so it is gated behind the `iai` feature and only
+# runs on the Linux CI runner. The default build (incl. macOS dev) never needs it.
+iai-callgrind = { version = "0.14", optional = true }
+
+[features]
+default = []
+iai = ["dep:iai-callgrind"]
+
+[dev-dependencies]
+criterion = { workspace = true, features = ["async_tokio"] }
+tokio = { workspace = true }
+
+# Instruction-count gate (Linux/valgrind only; built with `--features iai`).
+[[bench]]
+name = "iai_governance"
+harness = false
+required-features = ["iai"]
+
+[[bench]]
+name = "admit_release"
+harness = false
+
+[[bench]]
+name = "contention"
+harness = false
+
+[[bench]]
+name = "governance_tax"
+harness = false
+
+[[bench]]
+name = "retrieval_saturation"
+harness = false
+
+[[bench]]
+name = "multiclass_fairness"
+harness = false
+
+[[bench]]
+name = "overload_stability"
+harness = false
+
+[[bench]]
+name = "composite_reduce"
+harness = false

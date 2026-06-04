@@ -1,0 +1,74 @@
+//! End-to-end governance tax (ADR 9000 / P1 + P9): the cost a governed
+//! `run_blocking` adds over raw `spawn_blocking`, with a semaphore-only governor
+//! as a credible middle baseline. Task body is a no-op so the delta is pure
+//! control-plane overhead.
+
+use std::sync::Arc;
+
+use criterion::{criterion_group, criterion_main, Criterion};
+use taskmesh::{Builder, ClassPolicy, ResourceBudget, Runtime, TaskClass, TaskSpec, TokioRuntime};
+use tokio::sync::Semaphore;
+
+fn build_runtime() -> TokioRuntime {
+    Builder::new()
+        .resources(
+            ResourceBudget::new()
+                .cpu_units(1_000_000)
+                .memory_units(1_000_000),
+        )
+        .class_policy(
+            TaskClass::new("retrieval"),
+            ClassPolicy::new()
+                .max_inflight(1_000_000)
+                .cpu_units(1)
+                .memory_units(1),
+        )
+        .build()
+        .expect("runtime must build")
+}
+
+fn governance_tax(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let runtime = build_runtime();
+
+    let mut group = c.benchmark_group("governance_tax_blocking_noop");
+
+    group.bench_function("governed", |b| {
+        b.to_async(&rt).iter(|| {
+            let runtime = runtime.clone();
+            async move {
+                let spec = TaskSpec::blocking(TaskClass::new("retrieval")).operation("noop");
+                runtime
+                    .run_blocking(spec, || Ok::<(), std::convert::Infallible>(()))
+                    .await
+                    .expect("governed noop");
+            }
+        });
+    });
+
+    group.bench_function("raw_spawn_blocking", |b| {
+        b.to_async(&rt)
+            .iter(|| async { tokio::task::spawn_blocking(|| ()).await.expect("join") });
+    });
+
+    let sem = Arc::new(Semaphore::new(1_000_000));
+    group.bench_function("semaphore_only", |b| {
+        b.to_async(&rt).iter(|| {
+            let sem = sem.clone();
+            async move {
+                let permit = sem.acquire_owned().await.expect("permit");
+                tokio::task::spawn_blocking(|| ()).await.expect("join");
+                drop(permit);
+            }
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(benches, governance_tax);
+criterion_main!(benches);

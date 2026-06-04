@@ -17,15 +17,24 @@ use crate::shared::{PermitId, RequestKey, ResolvedCost, Seq, Ticket};
 pub struct PendingRequest {
     pub ticket: Ticket,
     pub seq_no: Seq,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "part of the frozen T03/T05 pending/ledger shape; kept for audit"
+    )]
     pub class: TaskClass,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "part of the frozen T03/T05 pending/ledger shape; kept for audit"
+    )]
     pub request_key: RequestKey,
     pub root_operation_id: String,
     pub scope: TaskScope,
     pub target_stage: TaskStage,
     pub cost: ResolvedCost,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "part of the frozen T03/T05 pending/ledger shape; kept for audit"
+    )]
     pub enqueued_at_ms: u64,
     /// Absolute deadline used by `DeadlineAware`; `u64::MAX` when unset.
     pub deadline_ms: u64,
@@ -51,7 +60,7 @@ pub struct ClassState {
 
 impl ClassState {
     pub fn queued(&self) -> u32 {
-        self.queue.len() as u32
+        u32::try_from(self.queue.len()).unwrap_or(u32::MAX)
     }
 }
 
@@ -63,7 +72,10 @@ pub struct PermitLedger {
     pub measured_bytes: u64,
     pub effective_units: u32,
     /// Lease timestamp; retained per the T05 ledger shape for audit/diagnostics.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "part of the frozen T03/T05 pending/ledger shape; kept for audit"
+    )]
     pub leased_at_ms: u64,
     pub last_touched_ms: u64,
     pub released: bool,
@@ -118,11 +130,11 @@ impl GovernedState {
     }
 
     pub fn inflight(&self, class: &TaskClass) -> u32 {
-        self.classes.get(class).map(|c| c.inflight).unwrap_or(0)
+        self.classes.get(class).map_or(0, |c| c.inflight)
     }
 
     pub fn queued(&self, class: &TaskClass) -> u32 {
-        self.classes.get(class).map(|c| c.queued()).unwrap_or(0)
+        self.classes.get(class).map_or(0, ClassState::queued)
     }
 
     /// Pure capacity check: would a permit of `cost` for `class` fit right now,
@@ -152,7 +164,10 @@ impl GovernedState {
 
     /// Commit a granted permit: bump inflight, global held, root accounting, and
     /// the recursion guard. Returns the stored record's permit id.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "single admission path threads request + ids + waker together"
+    )]
     pub fn grant(
         &mut self,
         permit_id: PermitId,
@@ -174,21 +189,21 @@ impl GovernedState {
         self.memory_units_held = self.memory_units_held.saturating_add(cost.memory_units);
 
         if matches!(scope, TaskScope::Child { .. }) {
-            let root = self.roots.entry(root_operation_id.to_string()).or_default();
+            let root = self.roots.entry(root_operation_id.to_owned()).or_default();
             root.child_inflight += 1;
             root.cpu_units = root.cpu_units.saturating_add(cost.cpu_units);
             root.memory_units = root.memory_units.saturating_add(cost.memory_units);
             root.active_stages.insert(target_stage.clone());
         }
         self.active_recursion
-            .insert((root_operation_id.to_string(), target_stage.clone()));
+            .insert((root_operation_id.to_owned(), target_stage.clone()));
 
         self.permits.insert(
             permit_id,
             PermitRecord {
                 permit_id,
                 class: class.clone(),
-                root_operation_id: root_operation_id.to_string(),
+                root_operation_id: root_operation_id.to_owned(),
                 scope,
                 target_stage,
                 ledger: PermitLedger {

@@ -31,6 +31,7 @@ pub fn resolve_cost(policy: &ClassPolicy) -> ResolvedCost {
 
 /// Pre-allocated identities for one admission attempt. Ids are cheap and unique;
 /// over-allocating on a rejected/queued path is harmless.
+#[derive(Clone, Copy)]
 pub struct Ids {
     pub permit_id: PermitId,
     pub ticket: Ticket,
@@ -67,7 +68,10 @@ pub fn admit(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "single admission path threads request + ids + waker together"
+)]
 fn admit_class(
     state: &mut GovernedState,
     policies: &PolicySet,
@@ -112,11 +116,6 @@ fn admit_class(
             saturated(state, policy, class, spec, key, waker, ids, now_ms)
         }
         CapacityBlock::Memory => match &policy.memory_overcommit_policy {
-            MemoryOvercommitPolicy::Reject => {
-                AdmissionDecision::Rejected(AdmissionVerdict::MemorySaturated {
-                    retry_after_ms: retry(policy, state, class),
-                })
-            }
             MemoryOvercommitPolicy::Queue => {
                 enqueue_or_full(state, policy, class, spec, key, waker, ids, now_ms, true)
             }
@@ -126,7 +125,9 @@ fn admit_class(
                     state, policies, now_ms, spec, &fallback, key, waker, ids, false,
                 )
             }
-            MemoryOvercommitPolicy::DegradeToLight { .. } => {
+            // Reject, or a degrade that is no longer allowed (already degraded
+            // once): both shed with MemorySaturated.
+            MemoryOvercommitPolicy::Reject | MemoryOvercommitPolicy::DegradeToLight { .. } => {
                 AdmissionDecision::Rejected(AdmissionVerdict::MemorySaturated {
                     retry_after_ms: retry(policy, state, class),
                 })
@@ -137,7 +138,10 @@ fn admit_class(
 
 /// Handle an inflight/cpu saturation: queue if the class is queueable, else
 /// reject with a `CpuSaturated` verdict.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "single admission path threads request + ids + waker together"
+)]
 fn saturated(
     state: &mut GovernedState,
     policy: &ClassPolicy,
@@ -160,7 +164,10 @@ fn saturated(
 /// Enqueue within `max_queue_depth`, else `QueueFull`. `memory_overcommit`
 /// distinguishes the memory-driven queue path (which uses `MemorySaturated` for
 /// the full case) from the capacity-driven one.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "single admission path threads request + ids + waker together"
+)]
 fn enqueue_or_full(
     state: &mut GovernedState,
     policy: &ClassPolicy,

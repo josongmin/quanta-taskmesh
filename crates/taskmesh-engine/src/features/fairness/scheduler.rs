@@ -34,8 +34,8 @@ pub fn enqueue_tags(
     let cstate = state.class_mut(class);
     let finish_tag = match policy.fairness {
         FairnessPolicy::WeightedFairQueue { weight, .. } => {
-            let weight = weight.max(1) as u128;
-            let increment = (cost_cpu_units.max(1) as u128 * WFQ_SCALE) / weight;
+            let weight = u128::from(weight.max(1));
+            let increment = (u128::from(cost_cpu_units.max(1)) * WFQ_SCALE) / weight;
             let tag = cstate.last_finish_tag.max(virtual_time) + increment;
             cstate.last_finish_tag = tag;
             tag
@@ -76,17 +76,17 @@ pub fn select(state: &mut GovernedState, policies: &PolicySet) -> Option<TaskCla
         .filter(|c| c.best_effort != has_primary)
         .collect();
 
-    let discipline = pool[0].fairness;
+    let discipline = pool.first()?.fairness;
     let chosen_class = match discipline {
         FairnessPolicy::Fifo | FairnessPolicy::BestEffortScavenger => {
-            pick_min(&pool, |c| (c.head_seq as u128, 0u128))
+            pick_min(&pool, |c| (u128::from(c.head_seq), 0u128))
         }
         FairnessPolicy::WeightedFairQueue { .. } => {
-            pick_min(&pool, |c| (c.head_finish_tag, c.head_seq as u128))
+            pick_min(&pool, |c| (c.head_finish_tag, u128::from(c.head_seq)))
         }
-        FairnessPolicy::DeadlineAware { .. } => {
-            pick_min(&pool, |c| (c.head_deadline_ms as u128, c.head_seq as u128))
-        }
+        FairnessPolicy::DeadlineAware { .. } => pick_min(&pool, |c| {
+            (u128::from(c.head_deadline_ms), u128::from(c.head_seq))
+        }),
         FairnessPolicy::DeficitRoundRobin { .. } => return drr_select(state, &pool),
     };
 
@@ -144,18 +144,18 @@ fn drr_select(state: &mut GovernedState, pool: &[&Candidate]) -> Option<TaskClas
     for c in pool {
         if let FairnessPolicy::DeficitRoundRobin { quantum } = c.fairness {
             let cs = state.class_mut(&c.class);
-            cs.deficit = cs.deficit.saturating_add(quantum.max(1) as u64);
+            cs.deficit = cs.deficit.saturating_add(u64::from(quantum.max(1)));
         }
     }
     let chosen = pool
         .iter()
         .max_by(|a, b| {
-            let da = state.classes.get(&a.class).map(|s| s.deficit).unwrap_or(0);
-            let db = state.classes.get(&b.class).map(|s| s.deficit).unwrap_or(0);
+            let da = state.classes.get(&a.class).map_or(0, |s| s.deficit);
+            let db = state.classes.get(&b.class).map_or(0, |s| s.deficit);
             da.cmp(&db).then(b.class.cmp(&a.class)) // larger deficit, then earlier class
         })
         .map(|c| (c.class.clone(), c.head_cost_cpu))?;
     let cs = state.class_mut(&chosen.0);
-    cs.deficit = cs.deficit.saturating_sub(chosen.1.max(1) as u64);
+    cs.deficit = cs.deficit.saturating_sub(u64::from(chosen.1.max(1)));
     Some(chosen.0)
 }

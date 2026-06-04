@@ -121,21 +121,33 @@ pub fn release_stage_memory(
     freed
 }
 
-/// Sweep outstanding permits for leaks: any non-released permit untouched past
-/// the staleness window is reclaimed (its resources freed) and counted.
-pub fn reap_leaks(state: &mut GovernedState, now_ms: u64, stale_after_ms: u64) -> LeakSweepReport {
+/// Sweep outstanding permits for leaks. Only classes that opted into
+/// [`MemoryReleasePolicy::LeakDetecting`] are eligible: a stale, non-released
+/// permit of such a class is reclaimed (its resources freed) and counted.
+/// Classes with other release policies are never force-reclaimed by the sweep.
+pub fn reap_leaks(
+    state: &mut GovernedState,
+    policies: &crate::shared::PolicySet,
+    now_ms: u64,
+    stale_after_ms: u64,
+) -> LeakSweepReport {
+    use taskmesh_contract::MemoryReleasePolicy;
     let stale: Vec<PermitId> = state
         .permits
         .values()
         .filter(|r| {
-            !r.ledger.released && is_stale(r.ledger.last_touched_ms, now_ms, stale_after_ms)
+            !r.ledger.released
+                && is_stale(r.ledger.last_touched_ms, now_ms, stale_after_ms)
+                && policies
+                    .class(&r.class)
+                    .is_some_and(|p| p.memory_release_policy == MemoryReleasePolicy::LeakDetecting)
         })
         .map(|r| r.permit_id)
         .collect();
 
     let mut report = LeakSweepReport {
         reclaimed_permits: 0,
-        suspected_leaks: stale.len() as u32,
+        suspected_leaks: u32::try_from(stale.len()).unwrap_or(u32::MAX),
     };
     for permit_id in stale {
         if state.unwind(permit_id).is_some() {

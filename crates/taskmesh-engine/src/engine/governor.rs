@@ -189,7 +189,7 @@ impl Governor {
     pub fn reap_leaks_with(&self, stale_after_ms: u64) -> LeakSweepReport {
         let now = self.now_ms();
         let mut state = self.state.lock();
-        let report = memory::reap_leaks(&mut state, now, stale_after_ms);
+        let report = memory::reap_leaks(&mut state, &self.policy, now, stale_after_ms);
         if report.reclaimed_permits > 0 {
             self.promote(&mut state, now);
         }
@@ -243,18 +243,15 @@ impl Governor {
             .chain(state.classes.keys())
             .cloned();
         for class in known {
-            let (inflight, queued, cpu, mem) = state
-                .classes
-                .get(&class)
-                .map(|c| {
+            let (inflight, queued, cpu, mem) =
+                state.classes.get(&class).map_or((0, 0, 0, 0), |c| {
                     (
                         c.inflight,
                         c.queued(),
                         c.cpu_units_held,
                         c.memory_units_held,
                     )
-                })
-                .unwrap_or((0, 0, 0, 0));
+                });
             classes.entry(class).or_insert(ClassSnapshot {
                 inflight,
                 queued,
@@ -330,12 +327,12 @@ impl Governor {
                 )));
             }
 
-            if let MemoryOvercommitPolicy::Queue = class_policy.memory_overcommit_policy {
-                if class_policy.max_queue_depth == 0 {
-                    return Err(violation(format!(
-                        "class {class} queues on overcommit but has max_queue_depth == 0"
-                    )));
-                }
+            if class_policy.memory_overcommit_policy == MemoryOvercommitPolicy::Queue
+                && class_policy.max_queue_depth == 0
+            {
+                return Err(violation(format!(
+                    "class {class} queues on overcommit but has max_queue_depth == 0"
+                )));
             }
 
             if let MemoryOvercommitPolicy::DegradeToLight { fallback_class } =

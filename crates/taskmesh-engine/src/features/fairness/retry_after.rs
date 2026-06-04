@@ -34,8 +34,8 @@ pub fn compute(
         RetryAfterPolicy::FixedMs(value) => Some(value),
         RetryAfterPolicy::Adaptive => {
             let contention = ADAPTIVE_BASE_MS
-                + (queue_depth as u64) * ADAPTIVE_QUEUE_STEP_MS
-                + (inflight as u64) * ADAPTIVE_INFLIGHT_STEP_MS;
+                + u64::from(queue_depth) * ADAPTIVE_QUEUE_STEP_MS
+                + u64::from(inflight) * ADAPTIVE_INFLIGHT_STEP_MS;
             Some(apply_fairness(contention, fairness))
         }
     }
@@ -45,9 +45,11 @@ fn apply_fairness(base: u64, fairness: FairnessPolicy) -> u64 {
     match fairness {
         FairnessPolicy::Fifo => base,
         FairnessPolicy::WeightedFairQueue { weight, .. } => {
-            base.saturating_sub((weight as u64).saturating_mul(WEIGHT_RELIEF_MS))
+            base.saturating_sub(u64::from(weight).saturating_mul(WEIGHT_RELIEF_MS))
         }
-        FairnessPolicy::DeficitRoundRobin { quantum } => base + (quantum as u64) * QUANTUM_STEP_MS,
+        FairnessPolicy::DeficitRoundRobin { quantum } => {
+            base + u64::from(quantum) * QUANTUM_STEP_MS
+        }
         FairnessPolicy::DeadlineAware { slack_ms } => base + slack_ms / SLACK_DIVISOR,
         FairnessPolicy::BestEffortScavenger => base + SCAVENGER_PENALTY_MS,
     }

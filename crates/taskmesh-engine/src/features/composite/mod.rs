@@ -12,10 +12,10 @@ use crate::engine::state::GovernedState;
 
 /// The stage a task occupies for recursion accounting: its first stage.
 pub fn target_stage(spec: &TaskSpec) -> TaskStage {
-    spec.stages
-        .first()
-        .map(|s| s.stage.clone())
-        .unwrap_or_else(|| TaskStage::new(spec.class.as_str().to_string()))
+    spec.stages.first().map_or_else(
+        || TaskStage::new(spec.class.as_str().to_owned()),
+        |s| s.stage.clone(),
+    )
 }
 
 // ---- domain (pure) --------------------------------------------------------

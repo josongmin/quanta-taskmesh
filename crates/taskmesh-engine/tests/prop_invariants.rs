@@ -126,9 +126,10 @@ fn weighted_drain(classes_seq: &[usize], weights: [u32; 3]) -> Vec<usize> {
     let blocking = |class: &str, op: &str| {
         TaskSpec::blocking(TaskClass::new(class.to_string())).operation(op.to_string())
     };
-    let fill = match g.admit(&blocking("fill", "f"), RequestKey::new("f")) {
-        AdmissionDecision::Admitted { permit_id } => permit_id,
-        _ => unreachable!(),
+    let AdmissionDecision::Admitted { permit_id: fill } =
+        g.admit(&blocking("fill", "f"), RequestKey::new("f"))
+    else {
+        unreachable!()
     };
 
     let mut tickets: Vec<(u64, usize)> = Vec::new();

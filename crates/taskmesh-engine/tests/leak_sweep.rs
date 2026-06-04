@@ -14,7 +14,9 @@ fn gov() -> (Governor, Arc<ManualClock>, TaskClass) {
         ClassPolicy::new()
             .max_inflight(8)
             .cpu_units(1)
-            .memory_units(10),
+            .memory_units(10)
+            // Only LeakDetecting classes are force-reclaimed by the sweep.
+            .memory_release_policy(MemoryReleasePolicy::LeakDetecting),
     );
     let clock = Arc::new(ManualClock::new(1000));
     let resources = ResourceBudget::new().cpu_units(100).memory_units(1000);
@@ -69,4 +71,40 @@ fn stage_boundary_release_returns_units_but_keeps_permit() {
     let snap = g.snapshot();
     assert_eq!(snap.classes[&c].memory_units_held, 6);
     assert_eq!(snap.classes[&c].inflight, 1, "permit stays alive");
+}
+
+#[test]
+fn non_leak_detecting_class_is_not_reaped() {
+    // A class with the default OnTaskCompletion release policy must NOT be
+    // force-reclaimed by the sweep, even when stale.
+    let mut classes = BTreeMap::new();
+    classes.insert(
+        TaskClass::new("c"),
+        ClassPolicy::new()
+            .max_inflight(8)
+            .cpu_units(1)
+            .memory_units(10)
+            .memory_release_policy(MemoryReleasePolicy::OnTaskCompletion),
+    );
+    let clock = Arc::new(ManualClock::new(1000));
+    let g = Governor::new(
+        PolicySet::new(
+            ResourceBudget::new().cpu_units(100).memory_units(1000),
+            classes,
+        ),
+        clock.clone(),
+    );
+    let spec = TaskSpec::blocking(TaskClass::new("c")).operation("op");
+    let _p = match g.admit(&spec, RequestKey::new("op")) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        o => panic!("{o:?}"),
+    };
+    clock.advance(60_001);
+    let report = g.reap_leaks_with(60_000);
+    assert_eq!(
+        report.suspected_leaks, 0,
+        "non-leak-detecting class must be exempt"
+    );
+    assert_eq!(report.reclaimed_permits, 0);
+    assert_eq!(g.snapshot().classes[&TaskClass::new("c")].inflight, 1);
 }

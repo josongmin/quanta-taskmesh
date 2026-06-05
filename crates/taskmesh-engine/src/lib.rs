@@ -22,6 +22,8 @@ mod features;
 mod shared;
 
 pub use engine::Governor;
+#[cfg(feature = "test-util")]
+pub use shared::{request_key_derive_count, reset_request_key_derive_count};
 pub use shared::{
     AdmissionDecision, LeakSweepReport, PermitId, PolicySet, Provenance, ResolvedCost,
     RootAttribution, Seq, Ticket,

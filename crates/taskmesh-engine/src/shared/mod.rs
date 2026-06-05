@@ -3,6 +3,8 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+#[cfg(feature = "test-util")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use taskmesh_contract::{ClassPolicy, ResourceBudget, SubstrateRecord, TaskClass};
 
@@ -22,12 +24,29 @@ pub type Seq = u64;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RequestKey(Cow<'static, str>);
 
+#[cfg(feature = "test-util")]
+static REQUEST_KEY_DERIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 impl RequestKey {
     /// Derive the admission key from a spec's root operation id (the only source
     /// of authority).
     pub fn from_root(root_operation_id: &str) -> Self {
+        #[cfg(feature = "test-util")]
+        REQUEST_KEY_DERIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         Self(Cow::Owned(root_operation_id.to_owned()))
     }
+}
+
+#[cfg(feature = "test-util")]
+#[doc(hidden)]
+pub fn request_key_derive_count() -> usize {
+    REQUEST_KEY_DERIVE_COUNT.load(Ordering::Relaxed)
+}
+
+#[cfg(feature = "test-util")]
+#[doc(hidden)]
+pub fn reset_request_key_derive_count() {
+    REQUEST_KEY_DERIVE_COUNT.store(0, Ordering::Relaxed);
 }
 
 /// The concrete resource a permit reserves, after mode resolution.

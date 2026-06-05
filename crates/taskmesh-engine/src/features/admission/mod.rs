@@ -13,7 +13,7 @@ use taskmesh_contract::{
 use crate::engine::state::{CapacityBlock, GovernedState, PendingRequest};
 use crate::features::{composite, fairness};
 use crate::shared::{
-    AdmissionDecision, PermitId, PolicySet, Provenance, RequestKey, ResolvedCost, Seq, Ticket,
+    AdmissionDecision, PermitId, PolicySet, Provenance, ResolvedCost, Seq, Ticket,
 };
 
 // ---- domain (pure) --------------------------------------------------------
@@ -55,20 +55,7 @@ pub fn admit(
     if composite::validate_shape(spec).is_err() || composite::reduce::validate_spec(spec).is_err() {
         return AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask);
     }
-    // The admission key is authoritatively the root operation id — not a caller
-    // input.
-    let key = RequestKey::from_root(&spec.root_operation_id);
-    admit_class(
-        state,
-        policies,
-        now_ms,
-        spec,
-        &spec.class,
-        key,
-        waker,
-        ids,
-        true,
-    )
+    admit_class(state, policies, now_ms, spec, &spec.class, waker, ids, true)
 }
 
 #[allow(
@@ -81,7 +68,6 @@ fn admit_class(
     now_ms: u64,
     spec: &TaskSpec,
     class: &TaskClass,
-    key: RequestKey,
     waker: Option<Arc<dyn PermitWaker>>,
     ids: Ids,
     degrade_allowed: bool,
@@ -117,17 +103,15 @@ fn admit_class(
             }
         }
         CapacityBlock::Inflight | CapacityBlock::Cpu => {
-            saturated(state, policy, class, spec, key, waker, ids, now_ms)
+            saturated(state, policy, class, spec, waker, ids, now_ms)
         }
         CapacityBlock::Memory => match &policy.memory_overcommit_policy {
             MemoryOvercommitPolicy::Queue => {
-                enqueue_or_full(state, policy, class, spec, key, waker, ids, now_ms, true)
+                enqueue_or_full(state, policy, class, spec, waker, ids, now_ms, true)
             }
             MemoryOvercommitPolicy::DegradeToLight { fallback_class } if degrade_allowed => {
                 let fallback = fallback_class.clone();
-                admit_class(
-                    state, policies, now_ms, spec, &fallback, key, waker, ids, false,
-                )
+                admit_class(state, policies, now_ms, spec, &fallback, waker, ids, false)
             }
             // Reject, or a degrade that is no longer allowed (already degraded
             // once): both shed with MemorySaturated.
@@ -151,13 +135,12 @@ fn saturated(
     policy: &ClassPolicy,
     class: &TaskClass,
     spec: &TaskSpec,
-    key: RequestKey,
     waker: Option<Arc<dyn PermitWaker>>,
     ids: Ids,
     now_ms: u64,
 ) -> AdmissionDecision {
     if policy.overflow_policy.is_queueable() {
-        enqueue_or_full(state, policy, class, spec, key, waker, ids, now_ms, false)
+        enqueue_or_full(state, policy, class, spec, waker, ids, now_ms, false)
     } else {
         AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated {
             retry_after_ms: retry(policy, state, class),
@@ -177,7 +160,6 @@ fn enqueue_or_full(
     policy: &ClassPolicy,
     class: &TaskClass,
     spec: &TaskSpec,
-    key: RequestKey,
     waker: Option<Arc<dyn PermitWaker>>,
     ids: Ids,
     now_ms: u64,
@@ -200,7 +182,9 @@ fn enqueue_or_full(
         ticket: ids.ticket,
         seq_no: ids.seq_no,
         class: class.clone(),
-        request_key: key,
+        // Queue/audit only: direct admit and terminal reject paths must not pay
+        // this allocation on the governance hot path.
+        request_key: crate::shared::RequestKey::from_root(&spec.root_operation_id),
         root_operation_id: spec.root_operation_id.clone(),
         scope: spec.scope.clone(),
         target_stage: target_stage.clone(),

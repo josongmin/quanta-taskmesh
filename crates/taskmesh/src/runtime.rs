@@ -72,6 +72,7 @@ impl TokioRuntime {
         &self,
         spec: &TaskSpec,
         opts: &SubmitOptions,
+        acquire_deadline: Option<Instant>,
     ) -> Result<PermitId, GovernorError> {
         if opts.is_cancelled() {
             return Err(GovernorError::Rejected(
@@ -100,7 +101,7 @@ impl TokioRuntime {
                     governor: Arc::clone(&self.governor),
                     ticket: Some(ticket),
                 };
-                let result = self.await_promotion(ticket, &waker, opts).await;
+                let result = self.await_promotion(ticket, &waker, acquire_deadline).await;
                 if result.is_ok() {
                     guard.disarm();
                 }
@@ -113,14 +114,13 @@ impl TokioRuntime {
         &self,
         ticket: u64,
         waker: &TokioPermitWaker,
-        opts: &SubmitOptions,
+        acquire_deadline: Option<Instant>,
     ) -> Result<PermitId, GovernorError> {
-        let until = opts.acquire_timeout.map(|d| Instant::now() + d);
         loop {
             if let Some(permit_id) = self.governor.claim(ticket) {
                 return Ok(permit_id);
             }
-            match until {
+            match acquire_deadline {
                 None => waker.notified().await,
                 Some(deadline) => {
                     if timeout_at(deadline, waker.notified()).await.is_err() {
@@ -156,6 +156,12 @@ impl TokioRuntime {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<T, RunError<E>>>,
     {
+        if opts.is_cancelled() {
+            return Err(RunError::Governor(GovernorError::Rejected(
+                AdmissionVerdict::CancelledBeforeSubmit,
+            )));
+        }
+        let acquire_deadline = opts.acquire_timeout.map(|timeout| Instant::now() + timeout);
         // Worker governance BEFORE semantic policy (AGENTS rule 1: the two are
         // separate concerns). The substrate capability-pool slot is the physical
         // worker gate (topology-sized; unlimited pools return immediately). We
@@ -166,13 +172,13 @@ impl TokioRuntime {
         // / resource-saturation signals.
         let _gate = self
             .substrates
-            .acquire(spec.primary_substrate_hint(), &opts)
+            .acquire(spec.primary_substrate_hint(), acquire_deadline)
             .await
             .map_err(RunError::Governor)?;
         // Now seek semantic admission. The permit's inflight count begins only
         // once a worker slot is already held.
         let permit = self
-            .acquire(&spec, &opts)
+            .acquire(&spec, &opts, acquire_deadline)
             .await
             .map_err(RunError::Governor)?;
         let _guard = PermitGuard {
@@ -528,18 +534,18 @@ impl SubstrateGates {
     async fn acquire(
         &self,
         hint: SubstrateHint,
-        opts: &SubmitOptions,
+        acquire_deadline: Option<Instant>,
     ) -> Result<Option<OwnedSemaphorePermit>, GovernorError> {
         let Some(sem) = self.gate_for(hint) else {
             return Ok(None);
         };
         let sem = Arc::clone(sem);
-        match opts.acquire_timeout {
+        match acquire_deadline {
             None => Ok(Some(
                 sem.acquire_owned().await.expect("substrate semaphore open"),
             )),
             Some(deadline) => {
-                match timeout_at(Instant::now() + deadline, sem.acquire_owned()).await {
+                match timeout_at(deadline, sem.acquire_owned()).await {
                     Ok(permit) => Ok(Some(permit.expect("substrate semaphore open"))),
                     // Distinct from the governor queue-wait timeout so the two
                     // backpressure causes stay separable.

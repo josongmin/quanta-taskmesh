@@ -123,11 +123,9 @@ fn governance_tax(c: &mut Criterion) {
                 token.cancel();
                 let spec = TaskSpec::blocking(TaskClass::new("retrieval")).operation("cancelled");
                 let err = runtime
-                    .run_blocking_with(
-                        spec,
-                        SubmitOptions::unbounded().with_cancel(token),
-                        || Ok::<(), Infallible>(()),
-                    )
+                    .run_blocking_with(spec, SubmitOptions::unbounded().with_cancel(token), || {
+                        Ok::<(), Infallible>(())
+                    })
                     .await
                     .expect_err("cancelled-before-submit must reject");
                 assert!(matches!(

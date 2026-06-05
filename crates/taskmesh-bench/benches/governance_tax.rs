@@ -5,15 +5,38 @@
 
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use taskmesh::{Builder, ClassPolicy, ResourceBudget, Runtime, TaskClass, TaskSpec, TokioRuntime};
+use taskmesh::{
+    AdmissionVerdict, Builder, CancellationToken, ClassPolicy, GovernorError, ResourceBudget,
+    RunError, Runtime, SubmitOptions, TaskClass, TaskSpec, TokioRuntime, TopologyConfig,
+};
 use tokio::sync::Semaphore;
 use tower::limit::ConcurrencyLimit;
 use tower::{service_fn, Service, ServiceExt};
 
 fn build_runtime() -> TokioRuntime {
     Builder::new()
+        .resources(
+            ResourceBudget::new()
+                .cpu_units(1_000_000)
+                .memory_units(1_000_000),
+        )
+        .class_policy(
+            TaskClass::new("retrieval"),
+            ClassPolicy::new()
+                .max_inflight(1_000_000)
+                .cpu_units(1)
+                .memory_units(1),
+        )
+        .build()
+        .expect("runtime must build")
+}
+
+fn build_blocking_gate_runtime() -> TokioRuntime {
+    Builder::new()
+        .topology(TopologyConfig::new().blocking_threads(1))
         .resources(
             ResourceBudget::new()
                 .cpu_units(1_000_000)
@@ -92,7 +115,78 @@ fn governance_tax(c: &mut Criterion) {
         });
     });
 
+    group.bench_function("governed_pre_submit_cancelled", |b| {
+        b.to_async(&rt).iter(|| {
+            let runtime = runtime.clone();
+            async move {
+                let token = CancellationToken::new();
+                token.cancel();
+                let spec = TaskSpec::blocking(TaskClass::new("retrieval")).operation("cancelled");
+                let err = runtime
+                    .run_blocking_with(
+                        spec,
+                        SubmitOptions::unbounded().with_cancel(token),
+                        || Ok::<(), Infallible>(()),
+                    )
+                    .await
+                    .expect_err("cancelled-before-submit must reject");
+                assert!(matches!(
+                    err,
+                    RunError::Governor(GovernorError::Rejected(
+                        AdmissionVerdict::CancelledBeforeSubmit
+                    ))
+                ));
+            }
+        });
+    });
+
+    let gated_runtime = build_blocking_gate_runtime();
+    let (release_holder, hold_holder) = std::sync::mpsc::channel::<()>();
+    let holder_runtime = gated_runtime.clone();
+    let holder = rt.spawn(async move {
+        holder_runtime
+            .run_blocking(
+                TaskSpec::blocking(TaskClass::new("retrieval")).operation("hold-gate"),
+                move || {
+                    let _ = hold_holder.recv();
+                    Ok::<(), Infallible>(())
+                },
+            )
+            .await
+    });
+    rt.block_on(async { tokio::time::sleep(Duration::from_millis(50)).await });
+
+    group.bench_function("governed_substrate_gate_timeout_zero_wait", |b| {
+        b.to_async(&rt).iter(|| {
+            let runtime = gated_runtime.clone();
+            async move {
+                let spec = TaskSpec::blocking(TaskClass::new("retrieval")).operation("blocked");
+                let err = runtime
+                    .run_blocking_with(
+                        spec,
+                        SubmitOptions::unbounded().with_acquire_timeout(Duration::ZERO),
+                        || Ok::<(), Infallible>(()),
+                    )
+                    .await
+                    .expect_err("a full substrate gate must reject immediately");
+                assert!(matches!(
+                    err,
+                    RunError::Governor(GovernorError::Rejected(
+                        AdmissionVerdict::SubstratePoolTimedOut { .. }
+                    ))
+                ));
+            }
+        });
+    });
+
     group.finish();
+    release_holder.send(()).expect("holder receiver alive");
+    rt.block_on(async {
+        holder
+            .await
+            .expect("holder join")
+            .expect("holder finishes cleanly");
+    });
 }
 
 criterion_group!(benches, governance_tax);

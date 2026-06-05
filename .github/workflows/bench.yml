@@ -91,6 +91,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      # Fresh repos/forks may not have the benchmark history branch yet. Detect
+      # that upfront so PRs skip the compare step instead of hard-failing on
+      # `git fetch origin gh-pages:gh-pages`.
+      - name: Detect benchmark history branch
+        id: gh_pages
+        run: |
+          if git ls-remote --exit-code origin refs/heads/gh-pages >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # Emit the libtest "bench" format github-action-benchmark understands.
       - name: Run criterion hot-path benches
         run: |
@@ -103,6 +115,7 @@ jobs:
       # data point; on PRs it only compares and comments. fail-on-alert trips the
       # flamegraph step below.
       - name: Store + alert on regression
+        if: steps.gh_pages.outputs.exists == 'true'
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: taskmesh wall-clock
@@ -115,6 +128,10 @@ jobs:
           alert-threshold: '150%'
           comment-on-alert: true
           fail-on-alert: true
+
+      - name: Skip trend compare until gh-pages exists
+        if: steps.gh_pages.outputs.exists != 'true'
+        run: echo "Skipping trend compare: origin/gh-pages does not exist yet."
 
       # On a detected regression, capture a flamegraph + hardware counters for
       # EVERY bench that feeds the alert (admit_release AND governance_tax), so the

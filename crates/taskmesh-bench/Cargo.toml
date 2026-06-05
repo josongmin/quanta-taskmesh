@@ -51,6 +51,10 @@ name = "governance_tax"
 harness = false
 
 [[bench]]
+name = "host_edge_paths"
+harness = false
+
+[[bench]]
 name = "retrieval_saturation"
 harness = false
 

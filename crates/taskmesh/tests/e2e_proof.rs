@@ -220,7 +220,7 @@ fn snapshot_inventory_and_fail_closed_config() {
     let substrate_names: Vec<String> = snap.substrates.iter().map(|s| s.name.to_string()).collect();
     for builtin in BUILTIN_SUBSTRATES {
         assert!(
-            substrate_names.contains(&builtin.to_string()),
+            substrate_names.contains(&(*builtin).to_string()),
             "missing {builtin}"
         );
     }

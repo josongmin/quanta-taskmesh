@@ -30,7 +30,7 @@ fn builtin_substrates_appear_in_snapshot() {
         .map(|s| s.name.to_string())
         .collect();
     for builtin in BUILTIN_SUBSTRATES {
-        assert!(names.contains(&builtin.to_string()), "missing {builtin}");
+        assert!(names.contains(&(*builtin).to_string()), "missing {builtin}");
     }
 }
 
@@ -65,7 +65,10 @@ fn builtin_set_matches_allowlist_fixture() {
         .iter()
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
-    let code: Vec<String> = BUILTIN_SUBSTRATES.iter().map(|s| s.to_string()).collect();
+    let code: Vec<String> = BUILTIN_SUBSTRATES
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
     assert_eq!(
         fixture, code,
         "BUILTIN_SUBSTRATES drifted from allowlist fixture"

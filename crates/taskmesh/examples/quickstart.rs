@@ -56,6 +56,7 @@ async fn main() {
         )
         .await
         .expect("admitted + succeeded");
+    // nosemgrep: taskmesh-no-terminal-io-in-library-crates -- example binary prints demo output for facade users.
     println!("run_io      -> {io}");
 
     let blocking: u64 = runtime
@@ -65,6 +66,7 @@ async fn main() {
         )
         .await
         .expect("ok");
+    // nosemgrep: taskmesh-no-terminal-io-in-library-crates -- example binary prints demo output for facade users.
     println!("run_blocking-> fib(30) = {blocking}");
 
     let cpu: u64 = runtime
@@ -74,6 +76,7 @@ async fn main() {
         )
         .await
         .expect("ok");
+    // nosemgrep: taskmesh-no-terminal-io-in-library-crates -- example binary prints demo output for facade users.
     println!("run_cpu     -> fib(32) = {cpu}");
 
     // 3. Optional per-submission controls: pre-submit cancel + a bounded wait for
@@ -86,6 +89,7 @@ async fn main() {
             || Ok::<u8, ()>(7),
         )
         .await;
+    // nosemgrep: taskmesh-no-terminal-io-in-library-crates -- example binary prints demo output for facade users.
     println!("bounded     -> {bounded:?}");
 
     // 4. Errors: a task failure is RunError::Task, never flattened with a
@@ -95,12 +99,17 @@ async fn main() {
             Err::<(), _>("domain error")
         })
         .await;
+    // nosemgrep: taskmesh-no-terminal-io-in-library-crates -- example binary prints demo output for facade users.
     println!("task error  -> is_task={}", failed.unwrap_err().is_task());
 
     // 5. Observe governed state: per-class inflight/queued/held + substrate
     //    inventory. (All drained now, so inflight is 0.)
     let snap = runtime.snapshot();
-    let c = &snap.classes[&retrieval];
+    let c = snap
+        .classes
+        .get(&retrieval)
+        .expect("retrieval class snapshot present");
+    // nosemgrep: taskmesh-no-terminal-io-in-library-crates -- example binary prints demo output for facade users.
     println!(
         "snapshot    -> retrieval inflight={} queued={}, {} substrates registered",
         c.inflight,
@@ -111,6 +120,7 @@ async fn main() {
     // 6. Advanced integrators reach the governance engine directly via `ext`
     //    (e.g. to drive admission from a non-Tokio host, or audit provenance).
     let _governor: &taskmesh::ext::Governor = runtime.governor();
+    // nosemgrep: taskmesh-no-terminal-io-in-library-crates -- example binary prints demo output for facade users.
     println!("ext         -> direct governor access available for embedders");
 }
 

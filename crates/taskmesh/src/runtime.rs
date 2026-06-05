@@ -284,25 +284,39 @@ impl TokioRuntime {
         E: Send + 'static,
         T: Send + 'static,
     {
+        enum CpuWorkOutcome<T, E> {
+            Completed(Result<T, E>),
+            Panicked,
+        }
+
         if let Err(e) = Self::require_hint(&spec, &[SubstrateHint::SharedCpuExecutor]) {
             return Err(RunError::Governor(e));
         }
         let (token, deadline) = self.cancel_controls(&spec.class, &opts);
         let cpu = Arc::clone(&self.cpu);
         self.with_permit(spec, opts, move || async move {
-            let (tx, rx) = oneshot::channel();
+            let (tx, rx) = oneshot::channel::<CpuWorkOutcome<T, E>>();
             cpu.spawn(Box::new(move || {
+                // The host contract requires worker panic to surface as a
+                // governor/runtime error instead of aborting the process.
+                let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)) {
+                    Ok(result) => CpuWorkOutcome::Completed(result),
+                    Err(_) => CpuWorkOutcome::Panicked,
+                };
                 // The receiver is gone only if the caller already cancelled; the
                 // result is then intentionally not delivered.
-                let _delivered = tx.send(job());
+                let _delivered = tx.send(outcome);
             }));
             // Wrap the result-await in cooperative cancel/deadline so a cancellable
             // class can escape even a stalled custom CpuExecutor (no liveness
             // guarantee from the port) instead of hanging on `rx` forever.
             let work = async move {
                 match rx.await {
-                    Ok(Ok(value)) => Ok(value),
-                    Ok(Err(err)) => Err(RunError::Task(err)),
+                    Ok(CpuWorkOutcome::Completed(Ok(value))) => Ok(value),
+                    Ok(CpuWorkOutcome::Completed(Err(err))) => Err(RunError::Task(err)),
+                    Ok(CpuWorkOutcome::Panicked) => Err(RunError::Governor(
+                        GovernorError::PolicyViolation("cpu worker panicked".into()),
+                    )),
                     Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
                         "cpu worker dropped result".into(),
                     ))),

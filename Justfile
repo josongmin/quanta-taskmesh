@@ -70,7 +70,7 @@ bench-gate:
 # Instruction-count gate (ADR 9000 / P2). Needs Linux + valgrind + the matching
 # iai-callgrind-runner (`cargo install iai-callgrind-runner --version 0.14.2`).
 bench-iai:
-    cargo bench -p taskmesh-bench --features iai --bench iai_governance
+    bash tools/bench-iai.sh
 
 # Exhaustive concurrency model-check of the governance design (ADR 9000 / P6).
 loom:

@@ -84,7 +84,7 @@ async fn panicking_cpu_task_is_governor_error_and_releases_permit() {
             res,
             Err(RunError::Governor(GovernorError::PolicyViolation(_)))
         ),
-        "a panicking cpu task drops its result channel → governor error"
+        "a panicking cpu task must surface as a governor-side error"
     );
     assert_eq!(inflight(&rt, "c"), 0, "panic must not leak the permit");
 }

@@ -209,6 +209,62 @@ async fn elapsed_absolute_deadline_rejects_before_factory_v1() {
     assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
 }
 
+#[tokio::test]
+async fn absolute_deadline_rejects_non_cancellable_blocking_work_v1() {
+    let rt = rt(CancellationPolicy::CooperativeWithDeadline);
+    let invoked = Arc::new(AtomicBool::new(false));
+    let job_invoked = Arc::clone(&invoked);
+    let options = SubmitOptions::unbounded()
+        .with_absolute_deadline(std::time::Instant::now() + Duration::from_secs(1));
+
+    let error = rt
+        .run_blocking_with(
+            TaskSpec::blocking(TaskClass::new("c")).operation("blocking-absolute-deadline"),
+            options,
+            move || {
+                job_invoked.store(true, Ordering::SeqCst);
+                Ok::<(), ()>(())
+            },
+        )
+        .await
+        .expect_err("blocking work cannot promise cancellation at an absolute deadline");
+
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::PolicyViolation(message))
+            if message.contains("drop-cancellable async work")
+    ));
+    assert!(!invoked.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn absolute_deadline_rejects_non_cancellable_cpu_work_v1() {
+    let rt = rt(CancellationPolicy::CooperativeWithDeadline);
+    let invoked = Arc::new(AtomicBool::new(false));
+    let job_invoked = Arc::clone(&invoked);
+    let options = SubmitOptions::unbounded()
+        .with_absolute_deadline(std::time::Instant::now() + Duration::from_secs(1));
+
+    let error = rt
+        .run_cpu_with(
+            TaskSpec::cpu(TaskClass::new("c")).operation("cpu-absolute-deadline"),
+            options,
+            move || {
+                job_invoked.store(true, Ordering::SeqCst);
+                Ok::<(), ()>(())
+            },
+        )
+        .await
+        .expect_err("CPU work cannot promise cancellation at an absolute deadline");
+
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::PolicyViolation(message))
+            if message.contains("drop-cancellable async work")
+    ));
+    assert!(!invoked.load(Ordering::SeqCst));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn requested_stack_async_runtime_honors_cooperative_cancel_v1() {
     let rt = rt(CancellationPolicy::Cooperative);

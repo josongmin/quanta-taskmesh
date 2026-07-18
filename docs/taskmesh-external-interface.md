@@ -45,6 +45,8 @@ let out = runtime
      plain `Cooperative`는 `deadline`을 무시한다.
    - **absolute deadline**(`with_absolute_deadline`)은 같은 클래스에서 substrate wait, governor admission,
      execution 전체를 하나의 `Instant`로 제한한다. 상대 run budget으로 변환하거나 단계별로 재시작하지 않는다.
+     실제 작업 drop이 취소를 보장하는 `run_io`, `run_local`, requested-stack async에서만 허용되며,
+     동기 blocking/CPU 경로는 permit 조기 반환을 막기 위해 fail-closed로 거부한다.
    - `acquire_timeout`은 governor 입장 큐 대기(→`PermitAcquireTimedOut`)와 substrate capability-pool 슬롯 대기
      (→`SubstratePoolTimedOut`) 둘 다를 bound한다.
 6. substrate hint는 run path와 일치해야 한다(불일치 → `SubstrateMismatch`). topology slot은 실제 동시성 상한(`0`=무제한);

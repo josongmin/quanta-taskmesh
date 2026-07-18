@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780682245543,
+  "lastUpdate": 1784370905729,
   "repoUrl": "https://github.com/josongmin/quanta-taskmesh",
   "entries": {
     "taskmesh wall-clock": [
@@ -127,6 +127,76 @@ window.BENCHMARK_DATA = {
             "name": "governance_tax_blocking_noop/governed_substrate_gate_timeout_zero_wait",
             "value": 1085924,
             "range": "± 22137",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "songmin@Joui-MacBookPro.local",
+            "name": "Jo"
+          },
+          "committer": {
+            "email": "songmin@Joui-MacBookPro.local",
+            "name": "Jo"
+          },
+          "distinct": true,
+          "id": "91ab0b44b663e57c672f00ad611b46321184b54e",
+          "message": "feat: support requested blocking stack size",
+          "timestamp": "2026-07-18T19:32:32+09:00",
+          "tree_id": "793979900f9bb945b29812f2b72877ce03e0c2e6",
+          "url": "https://github.com/josongmin/quanta-taskmesh/commit/91ab0b44b663e57c672f00ad611b46321184b54e"
+        },
+        "date": 1784370904972,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "admit_release_success",
+            "value": 170,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "admit_unknown_class_reject",
+            "value": 25,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/governed",
+            "value": 27482,
+            "range": "± 2646",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/raw_spawn_blocking",
+            "value": 25751,
+            "range": "± 2399",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/semaphore_only",
+            "value": 26182,
+            "range": "± 2319",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/tower_concurrency_limit",
+            "value": 27113,
+            "range": "± 2442",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/governed_pre_submit_cancelled",
+            "value": 336,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/governed_substrate_gate_timeout_zero_wait",
+            "value": 1090970,
+            "range": "± 42541",
             "unit": "ns/iter"
           }
         ]

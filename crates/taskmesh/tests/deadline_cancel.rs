@@ -279,17 +279,10 @@ async fn requested_stack_absolute_deadline_holds_permit_during_long_poll_v1() {
         let rt = rt.clone();
         async move {
             rt.run_async_with_requested_stack_with(spec, options, move || {
-                let mut first_poll = true;
-                std::future::poll_fn(move |cx| {
-                    if first_poll {
-                        first_poll = false;
-                        worker_poll_started.store(true, Ordering::SeqCst);
-                        std::thread::sleep(Duration::from_millis(120));
-                        cx.waker().wake_by_ref();
-                        std::task::Poll::Pending
-                    } else {
-                        std::task::Poll::Ready(Ok::<(), ()>(()))
-                    }
+                std::future::poll_fn(move |_| {
+                    worker_poll_started.store(true, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(120));
+                    std::task::Poll::Ready(Ok::<(), ()>(()))
                 })
             })
             .await
@@ -309,7 +302,7 @@ async fn requested_stack_absolute_deadline_holds_permit_during_long_poll_v1() {
     let error = submission
         .await
         .expect("submission task joins")
-        .expect_err("worker-local deadline must win after the long poll yields");
+        .expect_err("completion after the absolute deadline must fail closed");
     assert!(matches!(
         error,
         RunError::Governor(GovernorError::DeadlineExceeded)

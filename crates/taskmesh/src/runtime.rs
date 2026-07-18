@@ -729,6 +729,19 @@ async fn run_cancellable<T, E>(
     if token.is_none() && deadline.is_none() {
         return work.await;
     }
+    let completion_deadline = match deadline {
+        Some(SubmissionDeadline::RunFor(duration)) => Some(
+            std::time::Instant::now()
+                .checked_add(duration)
+                .ok_or_else(|| {
+                    RunError::Governor(GovernorError::PolicyViolation(
+                        "relative run deadline exceeds Instant range".into(),
+                    ))
+                })?,
+        ),
+        Some(SubmissionDeadline::CompleteBy(instant)) => Some(instant),
+        None => None,
+    };
     let cancelled = async {
         match &token {
             Some(t) => t.cancelled().await,
@@ -736,20 +749,27 @@ async fn run_cancellable<T, E>(
         }
     };
     let timed = async {
-        match deadline {
-            Some(SubmissionDeadline::RunFor(duration)) => tokio::time::sleep(duration).await,
-            Some(SubmissionDeadline::CompleteBy(instant)) => {
-                tokio::time::sleep_until(Instant::from_std(instant)).await
-            }
+        match completion_deadline {
+            Some(instant) => tokio::time::sleep_until(Instant::from_std(instant)).await,
             None => std::future::pending::<()>().await,
         }
     };
-    tokio::pin!(work);
+    let timed_work = async move {
+        let outcome = work.await;
+        (std::time::Instant::now(), outcome)
+    };
+    tokio::pin!(timed_work);
     tokio::select! {
         biased;
         () = cancelled, if token.is_some() => Err(RunError::Governor(GovernorError::Cancelled)),
-        () = timed, if deadline.is_some() => Err(RunError::Governor(GovernorError::DeadlineExceeded)),
-        out = &mut work => out,
+        () = timed, if completion_deadline.is_some() => Err(RunError::Governor(GovernorError::DeadlineExceeded)),
+        (completed_at, outcome) = &mut timed_work => {
+            if completion_deadline.is_some_and(|deadline| completed_at >= deadline) {
+                Err(RunError::Governor(GovernorError::DeadlineExceeded))
+            } else {
+                outcome
+            }
+        },
     }
 }
 

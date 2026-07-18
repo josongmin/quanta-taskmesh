@@ -28,6 +28,9 @@ use crate::executor::SubmitOptions;
 use crate::RuntimeConfig;
 
 type BlockingJobV1<T, E> = Box<dyn FnOnce() -> Result<T, E> + Send + 'static>;
+type RequestedStackAsyncFutureV1<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + 'static>>;
+type RequestedStackAsyncFutureFactoryV1<T, E> =
+    Box<dyn FnOnce() -> RequestedStackAsyncFutureV1<T, E> + Send + 'static>;
 type RuntimeBoxFutureV1<'a, T, E> =
     Pin<Box<dyn Future<Output = Result<T, RunError<E>>> + Send + 'a>>;
 
@@ -41,6 +44,84 @@ pub struct TokioRuntime {
 }
 
 impl TokioRuntime {
+    async fn run_async_with_requested_stack_v1<T, E>(
+        &self,
+        spec: &TaskSpec,
+        make_future: RequestedStackAsyncFutureFactoryV1<T, E>,
+        cancel: Option<CancellationToken>,
+        deadline: Option<Duration>,
+    ) -> Result<T, RunError<E>>
+    where
+        E: Send + 'static,
+        T: Send + 'static,
+    {
+        enum AsyncThreadOutcome<T, E> {
+            Completed(Result<T, RunError<E>>),
+            RuntimeInitializationFailed(String),
+            Panicked,
+        }
+
+        let stack_size_bytes = requested_stack_size_bytes_v1(spec)?;
+        let thread_name = requested_stack_thread_name_v1(spec);
+        let (tx, rx) = oneshot::channel::<AsyncThreadOutcome<T, E>>();
+        std::thread::Builder::new()
+            .name(thread_name)
+            .stack_size(stack_size_bytes)
+            .spawn(move || {
+                let mut tx = tx;
+                let outcome = match panic::catch_unwind(AssertUnwindSafe(|| {
+                    let runtime = match tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        Ok(runtime) => runtime,
+                        Err(error) => {
+                            return AsyncThreadOutcome::RuntimeInitializationFailed(
+                                error.to_string(),
+                            );
+                        }
+                    };
+                    AsyncThreadOutcome::Completed(runtime.block_on(async {
+                        tokio::select! {
+                            biased;
+                            () = tx.closed() => {
+                                Err(RunError::Governor(GovernorError::Cancelled))
+                            }
+                            result = async move {
+                                let future = make_future();
+                                run_cancellable(
+                                    cancel,
+                                    deadline,
+                                    async move { future.await.map_err(RunError::Task) },
+                                )
+                                .await
+                            } => result,
+                        }
+                    }))
+                })) {
+                    Ok(outcome) => outcome,
+                    Err(_) => AsyncThreadOutcome::Panicked,
+                };
+                let _ = tx.send(outcome);
+            })
+            .map_err(|error| requested_stack_spawn_error_v1(error.to_string()))?;
+        match rx.await {
+            Ok(AsyncThreadOutcome::Completed(result)) => result,
+            Ok(AsyncThreadOutcome::RuntimeInitializationFailed(message)) => {
+                Err(RunError::Governor(GovernorError::PolicyViolation(
+                    format!("requested-stack async runtime initialization failed: {message}")
+                        .into(),
+                )))
+            }
+            Ok(AsyncThreadOutcome::Panicked) => Err(RunError::Governor(
+                GovernorError::PolicyViolation("requested-stack async worker panicked".into()),
+            )),
+            Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
+                "requested-stack async worker dropped result".into(),
+            ))),
+        }
+    }
+
     async fn run_blocking_with_requested_stack_v1<T, E>(
         &self,
         spec: &TaskSpec,
@@ -55,20 +136,8 @@ impl TokioRuntime {
             Panicked,
         }
 
-        let stack_size_bytes = spec
-            .requested_stack_size_bytes()
-            .ok_or_else(|| {
-                RunError::Governor(GovernorError::PolicyViolation(
-                    "requested stack size missing on large-stack path".into(),
-                ))
-            })?
-            .try_into()
-            .map_err(|_| {
-                RunError::Governor(GovernorError::PolicyViolation(
-                    "requested stack size does not fit usize".into(),
-                ))
-            })?;
-        let thread_name = format!("taskmesh.large_stack:{}", spec.class.as_str());
+        let stack_size_bytes = requested_stack_size_bytes_v1(spec)?;
+        let thread_name = requested_stack_thread_name_v1(spec);
         let tokio_handle = tokio::runtime::Handle::try_current().ok();
         let (tx, rx) = oneshot::channel::<BlockingThreadOutcome<T, E>>();
         std::thread::Builder::new()
@@ -82,11 +151,7 @@ impl TokioRuntime {
                 };
                 let _ = tx.send(outcome);
             })
-            .map_err(|error| {
-                RunError::Governor(GovernorError::PolicyViolation(
-                    format!("large-stack thread spawn failed: {error}").into(),
-                ))
-            })?;
+            .map_err(|error| requested_stack_spawn_error_v1(error.to_string()))?;
         match rx.await {
             Ok(BlockingThreadOutcome::Completed(Ok(value))) => Ok(value),
             Ok(BlockingThreadOutcome::Completed(Err(error))) => Err(RunError::Task(error)),
@@ -355,6 +420,55 @@ impl TokioRuntime {
         })
     }
 
+    /// Run an async future on an owned current-thread Tokio runtime hosted by
+    /// the requested-stack worker. The factory is invoked on that worker so the
+    /// root future and Tokio children never begin on the caller runtime.
+    pub async fn run_async_with_requested_stack<T, E, F, Fut>(
+        &self,
+        spec: TaskSpec,
+        make_future: F,
+    ) -> Result<T, RunError<E>>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, E>> + 'static,
+        E: Send + 'static,
+        T: Send + 'static,
+    {
+        self.run_async_with_requested_stack_with(spec, SubmitOptions::unbounded(), make_future)
+            .await
+    }
+
+    /// [`Self::run_async_with_requested_stack`] with explicit admission and
+    /// cooperative cancellation controls.
+    pub async fn run_async_with_requested_stack_with<T, E, F, Fut>(
+        &self,
+        spec: TaskSpec,
+        opts: SubmitOptions,
+        make_future: F,
+    ) -> Result<T, RunError<E>>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, E>> + 'static,
+        E: Send + 'static,
+        T: Send + 'static,
+    {
+        Self::require_hint(&spec, &[SubstrateHint::LargeStackCapability])
+            .map_err(RunError::Governor)?;
+        if spec.requested_stack_size_bytes().is_none() {
+            return Err(RunError::Governor(GovernorError::PolicyViolation(
+                "requested stack size missing on async large-stack path".into(),
+            )));
+        }
+        let (cancel, deadline) = self.cancel_controls(&spec.class, &opts);
+        let make_future: RequestedStackAsyncFutureFactoryV1<T, E> =
+            Box::new(move || Box::pin(make_future()));
+        self.with_permit(spec.clone(), opts, move || async move {
+            self.run_async_with_requested_stack_v1(&spec, make_future, cancel, deadline)
+                .await
+        })
+        .await
+    }
+
     pub async fn run_cpu_with<T, E, F>(
         &self,
         spec: TaskSpec,
@@ -437,6 +551,31 @@ impl TokioRuntime {
         })
         .await
     }
+}
+
+fn requested_stack_size_bytes_v1<E>(spec: &TaskSpec) -> Result<usize, RunError<E>> {
+    spec.requested_stack_size_bytes()
+        .ok_or_else(|| {
+            RunError::Governor(GovernorError::PolicyViolation(
+                "requested stack size missing on large-stack path".into(),
+            ))
+        })?
+        .try_into()
+        .map_err(|_| {
+            RunError::Governor(GovernorError::PolicyViolation(
+                "requested stack size does not fit usize".into(),
+            ))
+        })
+}
+
+fn requested_stack_thread_name_v1(spec: &TaskSpec) -> String {
+    format!("taskmesh.large_stack:{}", spec.class.as_str())
+}
+
+fn requested_stack_spawn_error_v1<E>(message: String) -> RunError<E> {
+    RunError::Governor(GovernorError::PolicyViolation(
+        format!("large-stack thread spawn failed: {message}").into(),
+    ))
 }
 
 impl Runtime for TokioRuntime {

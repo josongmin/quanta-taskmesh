@@ -59,6 +59,62 @@ async fn deadline_ignored_for_plain_cooperative() {
     assert_eq!(out, 7);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn requested_stack_async_runtime_honors_cooperative_deadline_v1() {
+    let rt = rt(CancellationPolicy::CooperativeWithDeadline);
+    let spec = TaskSpec::base(TaskClass::new("c"), SubstrateHint::LargeStackCapability)
+        .operation("requested-stack-deadline")
+        .stack_size_bytes(2 * 1024 * 1024);
+    let opts = SubmitOptions::unbounded().with_deadline(Duration::from_millis(40));
+
+    let error = rt
+        .run_async_with_requested_stack_with(spec, opts, || async {
+            std::future::pending::<Result<(), ()>>().await
+        })
+        .await
+        .expect_err("requested-stack async deadline must fire on the owned runtime");
+
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::DeadlineExceeded)
+    ));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn requested_stack_async_runtime_honors_cooperative_cancel_v1() {
+    let rt = rt(CancellationPolicy::Cooperative);
+    let token = CancellationToken::new();
+    let spec = TaskSpec::base(TaskClass::new("c"), SubstrateHint::LargeStackCapability)
+        .operation("requested-stack-cancel")
+        .stack_size_bytes(2 * 1024 * 1024);
+    let opts = SubmitOptions::unbounded().with_cancel(token.clone());
+    let worker = tokio::spawn({
+        let rt = rt.clone();
+        async move {
+            rt.run_async_with_requested_stack_with(spec, opts, || async {
+                std::future::pending::<Result<(), ()>>().await
+            })
+            .await
+        }
+    });
+
+    while rt.snapshot().classes[&TaskClass::new("c")].inflight != 1 {
+        tokio::task::yield_now().await;
+    }
+    token.cancel();
+    let error = worker
+        .await
+        .expect("caller task must complete")
+        .expect_err("requested-stack async cancellation must stop the owned root");
+
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::Cancelled)
+    ));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+}
+
 // ---- F: run_local honors cooperative cancel (was previously excluded) ------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

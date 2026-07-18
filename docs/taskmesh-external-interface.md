@@ -28,6 +28,7 @@ let out = runtime
 2. blocking syscall/FFI -> `run_blocking`
 3. CPU-heavy compute -> `run_cpu`
 4. `!Send`/thread-affinity/current-thread 예외 -> `run_local`
+5. 명시적 large-stack async root -> `run_async_with_requested_stack`
 
 고급 규칙:
 
@@ -48,6 +49,11 @@ let out = runtime
    슬롯이 가득 차면 `SubstratePoolTimedOut`로 backpressure.
 7. spec 형태가 구조적으로 깨지면(0-stage, stage별 class 불일치, reduce 누락 fan-out) 입장 자체가 `MalformedTask`로 reject.
 8. 불가능한 budget·mixed-tier fairness·잘못된 memory scaling 등은 `Builder::build`에서 fail-closed로 reject (런타임 admit로 미룸 없음).
+9. `run_async_with_requested_stack[_with]`는 `SubstrateHint::LargeStackCapability`와
+   `TaskSpec::stack_size_bytes(...)`를 모두 요구한다. host가 requested-stack OS thread와 owned
+   current-thread Tokio runtime을 만들고 그 안에서 future factory를 호출한다. root future는 `!Send`일 수
+   있고 `tokio::spawn` child도 caller runtime으로 이탈하지 않는다. caller future drop은 worker root와
+   runtime-owned child를 함께 종료한다.
 
 타입 규칙:
 

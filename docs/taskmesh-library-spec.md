@@ -33,6 +33,8 @@ but `serde`.
 2. `run_blocking` — blocking pool; join failure is governor-side
 3. `run_cpu`    — pluggable `CpuExecutor` (blocking-pool default, or Rayon)
 4. `run_local`  — non-`Send`, local-runtime exception only (guarded)
+5. `run_async_with_requested_stack` — `!Send` async root on an owned
+   current-thread Tokio runtime hosted by the requested-stack worker
 
 The `*_with` variants accept `SubmitOptions` for pre-submit cancel, mid-run
 cooperative cancel/run-deadline, and a bounded acquire wait (covering both the
@@ -55,6 +57,8 @@ governor queue and the substrate capability-pool slot).
     queue→promote→claim, queryable per permit (`Governor::permit_provenance`)
 11. admission key is derived authoritatively from the root operation id — no
     caller-supplied key (the old key carried no behavior, so it was removed)
+12. requested-stack async execution keeps the future factory, root, and Tokio
+    children on the owned worker runtime instead of borrowing the caller runtime
 
 ## Enforcement (not advisory)
 
@@ -78,6 +82,11 @@ The host enforces the declared contract at runtime:
   `run_io`/`run_local`/`run_cpu` → `GovernorError::Cancelled`; `run_cpu` escapes
   even a stalled `CpuExecutor`. `CooperativeWithDeadline` additionally honors
   `SubmitOptions::deadline` → `GovernorError::DeadlineExceeded`.
+- **requested-stack async execution** requires both
+  `SubstrateHint::LargeStackCapability` and a requested stack size. Missing or
+  invalid shape, worker spawn/runtime initialization failure, and worker panic
+  are fail-closed governor errors. Its admission permit and capability slot stay
+  held until the owned root completes, is cancelled, or its caller drops.
 - **memory_release_policy::LeakDetecting** is the opt-in for leak-sweep reclaim;
   a downward `reconcile_memory` frees budget and promotes queued work.
 - `checkpoint_policy` is host-inspected metadata (engine preserves, does not

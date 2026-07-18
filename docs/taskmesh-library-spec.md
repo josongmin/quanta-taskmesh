@@ -85,8 +85,10 @@ The host enforces the declared contract at runtime:
   `SubmissionDeadline::RunFor` for execution-only budgets and
   `SubmissionDeadline::CompleteBy` for one substrate/admission/execution bound;
   both map expiry to `GovernorError::DeadlineExceeded`. `CompleteBy` is admitted
-  only on drop-cancellable async paths; blocking and CPU work reject it before
-  invoking the job so permits cannot outlive the governed work count.
+  only on cooperative async paths and is polled by the runtime that owns the
+  work; blocking and CPU work reject it before invoking the job. A non-yielding
+  poll retains its permit until it yields, so governed counts never understate
+  live work.
 - **requested-stack async execution** requires both
   `SubstrateHint::LargeStackCapability` and a requested stack size. Missing or
   invalid shape, worker spawn/runtime initialization failure, and worker panic

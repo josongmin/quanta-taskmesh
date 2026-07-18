@@ -232,7 +232,7 @@ async fn absolute_deadline_rejects_non_cancellable_blocking_work_v1() {
     assert!(matches!(
         error,
         RunError::Governor(GovernorError::PolicyViolation(message))
-            if message.contains("drop-cancellable async work")
+            if message.contains("cooperative async work")
     ));
     assert!(!invoked.load(Ordering::SeqCst));
 }
@@ -260,9 +260,61 @@ async fn absolute_deadline_rejects_non_cancellable_cpu_work_v1() {
     assert!(matches!(
         error,
         RunError::Governor(GovernorError::PolicyViolation(message))
-            if message.contains("drop-cancellable async work")
+            if message.contains("cooperative async work")
     ));
     assert!(!invoked.load(Ordering::SeqCst));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn requested_stack_absolute_deadline_holds_permit_during_long_poll_v1() {
+    let rt = rt(CancellationPolicy::CooperativeWithDeadline);
+    let spec = TaskSpec::base(TaskClass::new("c"), SubstrateHint::LargeStackCapability)
+        .operation("requested-stack-long-poll")
+        .stack_size_bytes(2 * 1024 * 1024);
+    let poll_started = Arc::new(AtomicBool::new(false));
+    let worker_poll_started = Arc::clone(&poll_started);
+    let options = SubmitOptions::unbounded()
+        .with_absolute_deadline(std::time::Instant::now() + Duration::from_millis(30));
+    let submission = tokio::spawn({
+        let rt = rt.clone();
+        async move {
+            rt.run_async_with_requested_stack_with(spec, options, move || {
+                let mut first_poll = true;
+                std::future::poll_fn(move |cx| {
+                    if first_poll {
+                        first_poll = false;
+                        worker_poll_started.store(true, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(120));
+                        cx.waker().wake_by_ref();
+                        std::task::Poll::Pending
+                    } else {
+                        std::task::Poll::Ready(Ok::<(), ()>(()))
+                    }
+                })
+            })
+            .await
+        }
+    });
+
+    while !poll_started.load(Ordering::SeqCst) {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    assert_eq!(
+        rt.snapshot().classes[&TaskClass::new("c")].inflight,
+        1,
+        "a long synchronous poll must retain its permit after the deadline instant"
+    );
+
+    let error = submission
+        .await
+        .expect("submission task joins")
+        .expect_err("worker-local deadline must win after the long poll yields");
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::DeadlineExceeded)
+    ));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

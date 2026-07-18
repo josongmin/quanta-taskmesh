@@ -11,7 +11,6 @@ use std::future::{ready, Future};
 use std::panic::{self, AssertUnwindSafe};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
@@ -36,7 +35,7 @@ type RuntimeBoxFutureV1<'a, T, E> =
 
 #[derive(Clone, Copy)]
 enum AbsoluteDeadlineCapabilityV1 {
-    DropCancelsWork,
+    CooperativeAsync,
     Unsupported,
 }
 
@@ -55,7 +54,7 @@ impl TokioRuntime {
         spec: &TaskSpec,
         make_future: RequestedStackAsyncFutureFactoryV1<T, E>,
         cancel: Option<CancellationToken>,
-        deadline: Option<Duration>,
+        deadline: Option<SubmissionDeadline>,
     ) -> Result<T, RunError<E>>
     where
         E: Send + 'static,
@@ -94,11 +93,10 @@ impl TokioRuntime {
                                 Err(RunError::Governor(GovernorError::Cancelled))
                             }
                             result = async move {
-                                let future = make_future();
                                 run_cancellable(
                                     cancel,
                                     deadline,
-                                    async move { future.await.map_err(RunError::Task) },
+                                    async move { make_future().await.map_err(RunError::Task) },
                                 )
                                 .await
                             } => result,
@@ -305,50 +303,47 @@ impl TokioRuntime {
             )
         {
             return Err(RunError::Governor(GovernorError::PolicyViolation(
-                "absolute completion deadline requires drop-cancellable async work".into(),
+                "absolute completion deadline requires cooperative async work".into(),
             )));
         }
-        let governed = async {
-            let acquire_deadline = opts.acquire_timeout.map(|timeout| Instant::now() + timeout);
-            // Worker governance BEFORE semantic policy (AGENTS rule 1: the two are
-            // separate concerns). The substrate capability-pool slot is the physical
-            // worker gate (topology-sized; unlimited pools return immediately). We
-            // take it FIRST so a task waiting for a worker is NOT counted as a live
-            // governor permit — inflight/cpu/memory/root attribution then reflect
-            // tasks that are *actually executing*, and substrate backlog (its own
-            // `SubstratePoolTimedOut`) never pollutes the semantic queue / retry-after
-            // / resource-saturation signals.
-            let _gate = self
-                .substrates
-                .acquire(spec.primary_substrate_hint(), acquire_deadline)
-                .await
-                .map_err(RunError::Governor)?;
-            // Now seek semantic admission. The permit's inflight count begins only
-            // once a worker slot is already held.
-            let permit = self
-                .acquire(&spec, &opts, acquire_deadline)
-                .await
-                .map_err(RunError::Governor)?;
-            let _guard = PermitGuard {
-                governor: Arc::clone(&self.governor),
-                permit,
-            };
-            run().await
-            // Drop order is reverse: `_guard` (governor permit) releases first, then
-            // `_gate` (worker slot) — on success or on cancellation (future dropped).
-        };
-        match absolute_deadline {
-            Some(deadline) => {
-                tokio::select! {
-                    biased;
-                    () = tokio::time::sleep_until(Instant::from_std(deadline)) => {
-                        Err(RunError::Governor(GovernorError::DeadlineExceeded))
-                    }
-                    outcome = governed => outcome,
-                }
-            }
-            None => governed.await,
+        if absolute_deadline.is_some_and(|deadline| deadline <= std::time::Instant::now()) {
+            return Err(RunError::Governor(GovernorError::DeadlineExceeded));
         }
+        let relative_acquire_deadline =
+            opts.acquire_timeout.map(|timeout| Instant::now() + timeout);
+        let absolute_acquire_deadline = absolute_deadline.map(Instant::from_std);
+        let acquire_deadline = match (relative_acquire_deadline, absolute_acquire_deadline) {
+            (Some(relative), Some(absolute)) => Some(relative.min(absolute)),
+            (Some(relative), None) => Some(relative),
+            (None, Some(absolute)) => Some(absolute),
+            (None, None) => None,
+        };
+        // Worker governance BEFORE semantic policy (AGENTS rule 1: the two are
+        // separate concerns). The substrate capability-pool slot is the physical
+        // worker gate (topology-sized; unlimited pools return immediately). We
+        // take it FIRST so a task waiting for a worker is NOT counted as a live
+        // governor permit — inflight/cpu/memory/root attribution then reflect
+        // tasks that are *actually executing*, and substrate backlog (its own
+        // `SubstratePoolTimedOut`) never pollutes the semantic queue / retry-after
+        // / resource-saturation signals.
+        let _gate = self
+            .substrates
+            .acquire(spec.primary_substrate_hint(), acquire_deadline)
+            .await
+            .map_err(|error| absolute_acquire_error_v1(absolute_deadline, error))?;
+        // Now seek semantic admission. The permit's inflight count begins only
+        // once a worker slot is already held.
+        let permit = self
+            .acquire(&spec, &opts, acquire_deadline)
+            .await
+            .map_err(|error| absolute_acquire_error_v1(absolute_deadline, error))?;
+        let _guard = PermitGuard {
+            governor: Arc::clone(&self.governor),
+            permit,
+        };
+        run().await
+        // Drop order is reverse: `_guard` (governor permit) releases first, then
+        // `_gate` (worker slot) — on success or on cancellation (future dropped).
     }
 
     /// Reject a spec whose declared substrate is incompatible with this run path
@@ -369,7 +364,7 @@ impl TokioRuntime {
         &self,
         class: &TaskClass,
         opts: &SubmitOptions,
-    ) -> (Option<CancellationToken>, Option<Duration>) {
+    ) -> (Option<CancellationToken>, Option<SubmissionDeadline>) {
         let policy = self
             .config
             .classes
@@ -382,13 +377,7 @@ impl TokioRuntime {
         let with_deadline = matches!(policy, Some(CancellationPolicy::CooperativeWithDeadline));
         (
             mid_run.then(|| opts.cancel.clone()).flatten(),
-            with_deadline
-                .then_some(opts.deadline)
-                .flatten()
-                .and_then(|deadline| match deadline {
-                    SubmissionDeadline::RunFor(duration) => Some(duration),
-                    SubmissionDeadline::CompleteBy(_) => None,
-                }),
+            with_deadline.then_some(opts.deadline).flatten(),
         )
     }
 
@@ -427,7 +416,7 @@ impl TokioRuntime {
         self.with_permit(
             spec,
             opts,
-            AbsoluteDeadlineCapabilityV1::DropCancelsWork,
+            AbsoluteDeadlineCapabilityV1::CooperativeAsync,
             move || async move {
                 run_cancellable(token, deadline, async { fut.await.map_err(RunError::Task) }).await
             },
@@ -535,7 +524,7 @@ impl TokioRuntime {
         self.with_permit(
             spec.clone(),
             opts,
-            AbsoluteDeadlineCapabilityV1::DropCancelsWork,
+            AbsoluteDeadlineCapabilityV1::CooperativeAsync,
             move || async move {
                 self.run_async_with_requested_stack_v1(&spec, make_future, cancel, deadline)
                     .await
@@ -624,7 +613,7 @@ impl TokioRuntime {
         self.with_permit(
             spec,
             opts,
-            AbsoluteDeadlineCapabilityV1::DropCancelsWork,
+            AbsoluteDeadlineCapabilityV1::CooperativeAsync,
             move || async move {
                 let work = async move {
                     tokio::task::LocalSet::new()
@@ -636,6 +625,26 @@ impl TokioRuntime {
             },
         )
         .await
+    }
+}
+
+fn absolute_acquire_error_v1<E>(
+    absolute_deadline: Option<std::time::Instant>,
+    error: GovernorError,
+) -> RunError<E> {
+    let acquisition_timed_out = matches!(
+        &error,
+        GovernorError::Rejected(
+            AdmissionVerdict::PermitAcquireTimedOut { .. }
+                | AdmissionVerdict::SubstratePoolTimedOut { .. }
+        )
+    );
+    if acquisition_timed_out
+        && absolute_deadline.is_some_and(|deadline| deadline <= std::time::Instant::now())
+    {
+        RunError::Governor(GovernorError::DeadlineExceeded)
+    } else {
+        RunError::Governor(error)
     }
 }
 
@@ -714,7 +723,7 @@ impl Runtime for TokioRuntime {
 /// handled separately (pre-submit cancel only).
 async fn run_cancellable<T, E>(
     token: Option<CancellationToken>,
-    deadline: Option<Duration>,
+    deadline: Option<SubmissionDeadline>,
     work: impl Future<Output = Result<T, RunError<E>>>,
 ) -> Result<T, RunError<E>> {
     if token.is_none() && deadline.is_none() {
@@ -728,7 +737,10 @@ async fn run_cancellable<T, E>(
     };
     let timed = async {
         match deadline {
-            Some(d) => tokio::time::sleep(d).await,
+            Some(SubmissionDeadline::RunFor(duration)) => tokio::time::sleep(duration).await,
+            Some(SubmissionDeadline::CompleteBy(instant)) => {
+                tokio::time::sleep_until(Instant::from_std(instant)).await
+            }
             None => std::future::pending::<()>().await,
         }
     };

@@ -72,6 +72,50 @@ async fn large_stack_blocking_path_avoids_shared_cpu_pool() {
 }
 
 #[tokio::test]
+async fn large_stack_blocking_path_honors_requested_stack_contract_v1() {
+    let (rt, _) = runtime_with_rayon(2);
+
+    let spec = TaskSpec::base(TaskClass::new("c"), SubstrateHint::LargeStackCapability)
+        .operation("big-stack")
+        .stack_size_bytes(2 * 1024 * 1024);
+    let thread_name: String = rt
+        .run_blocking(spec, || {
+            Ok::<_, ()>(
+                std::thread::current()
+                    .name()
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+        })
+        .await
+        .expect("large-stack work runs");
+    assert_eq!(
+        thread_name,
+        "taskmesh.large_stack:c",
+        "requested stack-size contract must route through the host-managed dedicated large-stack thread"
+    );
+}
+
+#[tokio::test]
+async fn large_stack_blocking_path_enters_current_tokio_handle_v1() {
+    let (rt, _) = runtime_with_rayon(2);
+
+    let spec = TaskSpec::base(TaskClass::new("c"), SubstrateHint::LargeStackCapability)
+        .operation("big-stack-reactor")
+        .stack_size_bytes(2 * 1024 * 1024);
+    let has_tokio_context: bool = rt
+        .run_blocking(spec, || {
+            Ok::<_, ()>(tokio::runtime::Handle::try_current().is_ok())
+        })
+        .await
+        .expect("large-stack work runs");
+    assert!(
+        has_tokio_context,
+        "requested large-stack thread must enter the caller Tokio handle before running the job"
+    );
+}
+
+#[tokio::test]
 async fn default_runtime_works_without_rayon() {
     // Without an injected executor, run_cpu still works (blocking-pool default).
     let rt = Builder::new()

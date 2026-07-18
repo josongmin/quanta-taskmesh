@@ -7,7 +7,9 @@
 //! governor/runtime-side error, never a task error.
 
 use std::collections::BTreeMap;
-use std::future::Future;
+use std::future::{ready, Future};
+use std::panic::{self, AssertUnwindSafe};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,6 +27,10 @@ use crate::adapters::TokioPermitWaker;
 use crate::executor::SubmitOptions;
 use crate::RuntimeConfig;
 
+type BlockingJobV1<T, E> = Box<dyn FnOnce() -> Result<T, E> + Send + 'static>;
+type RuntimeBoxFutureV1<'a, T, E> =
+    Pin<Box<dyn Future<Output = Result<T, RunError<E>>> + Send + 'a>>;
+
 /// A governed, Tokio-hosted runtime. Cheap to clone (shared `Arc` internals).
 #[derive(Clone)]
 pub struct TokioRuntime {
@@ -35,6 +41,64 @@ pub struct TokioRuntime {
 }
 
 impl TokioRuntime {
+    async fn run_blocking_with_requested_stack_v1<T, E>(
+        &self,
+        spec: &TaskSpec,
+        job: BlockingJobV1<T, E>,
+    ) -> Result<T, RunError<E>>
+    where
+        E: Send + 'static,
+        T: Send + 'static,
+    {
+        enum BlockingThreadOutcome<T, E> {
+            Completed(Result<T, E>),
+            Panicked,
+        }
+
+        let stack_size_bytes = spec
+            .requested_stack_size_bytes()
+            .ok_or_else(|| {
+                RunError::Governor(GovernorError::PolicyViolation(
+                    "requested stack size missing on large-stack path".into(),
+                ))
+            })?
+            .try_into()
+            .map_err(|_| {
+                RunError::Governor(GovernorError::PolicyViolation(
+                    "requested stack size does not fit usize".into(),
+                ))
+            })?;
+        let thread_name = format!("taskmesh.large_stack:{}", spec.class.as_str());
+        let tokio_handle = tokio::runtime::Handle::try_current().ok();
+        let (tx, rx) = oneshot::channel::<BlockingThreadOutcome<T, E>>();
+        std::thread::Builder::new()
+            .name(thread_name)
+            .stack_size(stack_size_bytes)
+            .spawn(move || {
+                let _tokio_runtime_context = tokio_handle.as_ref().map(|handle| handle.enter());
+                let outcome = match panic::catch_unwind(AssertUnwindSafe(job)) {
+                    Ok(result) => BlockingThreadOutcome::Completed(result),
+                    Err(_) => BlockingThreadOutcome::Panicked,
+                };
+                let _ = tx.send(outcome);
+            })
+            .map_err(|error| {
+                RunError::Governor(GovernorError::PolicyViolation(
+                    format!("large-stack thread spawn failed: {error}").into(),
+                ))
+            })?;
+        match rx.await {
+            Ok(BlockingThreadOutcome::Completed(Ok(value))) => Ok(value),
+            Ok(BlockingThreadOutcome::Completed(Err(error))) => Err(RunError::Task(error)),
+            Ok(BlockingThreadOutcome::Panicked) => Err(RunError::Governor(
+                GovernorError::PolicyViolation("large-stack worker panicked".into()),
+            )),
+            Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
+                "large-stack worker dropped result".into(),
+            ))),
+        }
+    }
+
     pub(crate) fn new(
         config: RuntimeConfig,
         governor: Arc<Governor>,
@@ -246,12 +310,12 @@ impl TokioRuntime {
         .await
     }
 
-    pub async fn run_blocking_with<T, E, F>(
+    pub fn run_blocking_with<T, E, F>(
         &self,
         spec: TaskSpec,
         opts: SubmitOptions,
         job: F,
-    ) -> Result<T, RunError<E>>
+    ) -> RuntimeBoxFutureV1<'_, T, E>
     where
         F: FnOnce() -> Result<T, E> + Send + 'static,
         E: Send + 'static,
@@ -265,18 +329,30 @@ impl TokioRuntime {
                 SubstrateHint::BackgroundOnly,
             ],
         ) {
-            return Err(RunError::Governor(e));
+            return Box::pin(ready(Err(RunError::Governor(e))));
         }
-        self.with_permit(spec, opts, || async move {
-            match tokio::task::spawn_blocking(job).await {
-                Ok(Ok(value)) => Ok(value),
-                Ok(Err(err)) => Err(RunError::Task(err)),
-                Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
-                    "spawn_blocking join failure".into(),
-                ))),
-            }
+        if spec.requested_stack_size_bytes().is_some() {
+            let boxed_job: BlockingJobV1<T, E> = Box::new(job);
+            return Box::pin(async move {
+                self.with_permit(spec.clone(), opts, move || async move {
+                    self.run_blocking_with_requested_stack_v1(&spec, boxed_job)
+                        .await
+                })
+                .await
+            });
+        }
+        Box::pin(async move {
+            self.with_permit(spec, opts, || async move {
+                match tokio::task::spawn_blocking(job).await {
+                    Ok(Ok(value)) => Ok(value),
+                    Ok(Err(err)) => Err(RunError::Task(err)),
+                    Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
+                        "spawn_blocking join failure".into(),
+                    ))),
+                }
+            })
+            .await
         })
-        .await
     }
 
     pub async fn run_cpu_with<T, E, F>(

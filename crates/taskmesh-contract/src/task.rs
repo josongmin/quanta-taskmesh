@@ -109,6 +109,8 @@ pub struct TaskSpec {
     pub source: PlanSource,
     pub reason: ClassificationRationale,
     pub scope: TaskScope,
+    #[serde(default)]
+    pub stack_size_bytes: Option<u64>,
     pub stages: Vec<StageDescriptor>,
 }
 
@@ -145,6 +147,7 @@ impl TaskSpec {
             source: PlanSource::Internal,
             reason: ClassificationRationale::ExplicitMapping,
             scope: TaskScope::Root,
+            stack_size_bytes: None,
             stages: vec![StageDescriptor {
                 class,
                 stage: bootstrap_stage,
@@ -193,6 +196,15 @@ impl TaskSpec {
         self
     }
 
+    /// Declares the requested stack size for the bootstrap execution substrate.
+    ///
+    /// The current Tokio host only consumes this on blocking-family substrates.
+    /// Other hosts may reject or ignore it according to their own policy.
+    pub fn stack_size_bytes(mut self, stack_size_bytes: u64) -> Self {
+        self.stack_size_bytes = Some(stack_size_bytes);
+        self
+    }
+
     /// Appends a parallel/fan-out stage that carries its deterministic reduce policy.
     pub fn reduce_stage(
         mut self,
@@ -228,5 +240,9 @@ impl TaskSpec {
         self.stages
             .first()
             .map_or(SubstrateHint::AsyncIo, |s| s.substrate_hint)
+    }
+
+    pub fn requested_stack_size_bytes(&self) -> Option<u64> {
+        self.stack_size_bytes
     }
 }

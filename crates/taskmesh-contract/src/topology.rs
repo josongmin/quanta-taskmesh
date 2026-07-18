@@ -18,12 +18,13 @@ pub enum SubstrateKind {
 /// these to concrete pools.
 ///
 /// Governance note: in the current Tokio host, `BlockingPool`,
-/// `LargeStackCapability`, and `BackgroundOnly` all *execute* on Tokio's blocking
-/// pool — they are distinguished by **separate capability pools** (independent
-/// topology-sized concurrency gates), not by distinct executors. A dedicated
-/// large-stack/background thread pool is a future host concern; the contract
-/// already names the capability so callers and governance can treat them
-/// separately today.
+/// `LargeStackCapability`, and `BackgroundOnly` are all governed as blocking-family
+/// substrates. `BlockingPool` and `BackgroundOnly` execute on Tokio's blocking
+/// pool. `LargeStackCapability` can either use that pool or, when the submitted
+/// [`crate::TaskSpec`] carries an explicit stack-size request, execute on a
+/// host-managed dedicated thread for that one task. They are distinguished by
+/// **separate capability pools** (independent topology-sized concurrency gates),
+/// not by a permanently separate executor fleet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum SubstrateHint {

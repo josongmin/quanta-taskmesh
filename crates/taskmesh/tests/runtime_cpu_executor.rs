@@ -298,7 +298,66 @@ async fn requested_stack_async_caller_abort_drops_worker_future_v1() {
         .await
         .expect("worker future must be dropped after caller abort")
         .expect("drop signal sender must complete");
-    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while rt.snapshot().classes[&TaskClass::new("c")].inflight != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("permit must release after the worker terminates");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn requested_stack_async_caller_abort_retains_permit_until_sync_poll_terminates_v1() {
+    let (rt, _) = runtime_with_rayon(2);
+    let spec = TaskSpec::base(TaskClass::new("c"), SubstrateHint::LargeStackCapability)
+        .operation("caller-abort-long-poll-stack-async")
+        .stack_size_bytes(2 * 1024 * 1024);
+    let (poll_started_tx, poll_started_rx) = tokio::sync::oneshot::channel();
+    let (release_poll_tx, release_poll_rx) = std::sync::mpsc::channel();
+    let submission = tokio::spawn({
+        let rt = rt.clone();
+        async move {
+            rt.run_async_with_requested_stack(spec, move || {
+                let mut poll_started_tx = Some(poll_started_tx);
+                std::future::poll_fn(move |_| {
+                    if let Some(started) = poll_started_tx.take() {
+                        let _ = started.send(());
+                    }
+                    release_poll_rx
+                        .recv()
+                        .expect("test controls synchronous poll termination");
+                    std::task::Poll::Ready(Ok::<(), ()>(()))
+                })
+            })
+            .await
+        }
+    });
+
+    poll_started_rx
+        .await
+        .expect("requested-stack worker must enter the synchronous poll");
+    submission.abort();
+    let abort = submission
+        .await
+        .expect_err("caller submission must observe task abort");
+    assert!(abort.is_cancelled());
+    assert_eq!(
+        rt.snapshot().classes[&TaskClass::new("c")].inflight,
+        1,
+        "caller abort must not release a permit still owned by the worker"
+    );
+
+    release_poll_tx
+        .send(())
+        .expect("worker must still own the poll receiver");
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while rt.snapshot().classes[&TaskClass::new("c")].inflight != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("permit must release after the worker terminates");
 }
 
 #[tokio::test]

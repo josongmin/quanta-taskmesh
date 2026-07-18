@@ -55,6 +55,7 @@ impl TokioRuntime {
         make_future: RequestedStackAsyncFutureFactoryV1<T, E>,
         cancel: Option<CancellationToken>,
         deadline: Option<SubmissionDeadline>,
+        lease: ExecutionLease,
     ) -> Result<T, RunError<E>>
     where
         E: Send + 'static,
@@ -73,6 +74,9 @@ impl TokioRuntime {
             .name(thread_name)
             .stack_size(stack_size_bytes)
             .spawn(move || {
+                // The dedicated worker, not the caller future, owns governance
+                // until the worker-local runtime and root future have terminated.
+                let _lease = lease;
                 let mut tx = tx;
                 let outcome = match panic::catch_unwind(AssertUnwindSafe(|| {
                     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -273,29 +277,18 @@ impl TokioRuntime {
         }
     }
 
-    /// The single admit→run→release path shared by every substrate.
-    ///
-    /// The acquired permit is held by a [`PermitGuard`] whose `Drop` releases it.
-    /// This makes release cancellation-safe: if the returned future is dropped
-    /// while the work is in flight (timeout wrapper, `select!`, task abort), the
-    /// permit is still returned and queued work is still promoted — no leak.
-    async fn with_permit<T, E, Fut, F>(
+    async fn acquire_execution_lease<E>(
         &self,
-        spec: TaskSpec,
-        opts: SubmitOptions,
+        spec: &TaskSpec,
+        opts: &SubmitOptions,
         absolute_deadline_capability: AbsoluteDeadlineCapabilityV1,
-        run: F,
-    ) -> Result<T, RunError<E>>
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<T, RunError<E>>>,
-    {
+    ) -> Result<ExecutionLease, RunError<E>> {
         if opts.is_cancelled() {
             return Err(RunError::Governor(GovernorError::Rejected(
                 AdmissionVerdict::CancelledBeforeSubmit,
             )));
         }
-        let absolute_deadline = self.absolute_deadline(&spec.class, &opts);
+        let absolute_deadline = self.absolute_deadline(&spec.class, opts);
         if absolute_deadline.is_some()
             && matches!(
                 absolute_deadline_capability,
@@ -326,7 +319,7 @@ impl TokioRuntime {
         // tasks that are *actually executing*, and substrate backlog (its own
         // `SubstratePoolTimedOut`) never pollutes the semantic queue / retry-after
         // / resource-saturation signals.
-        let _gate = self
+        let gate = self
             .substrates
             .acquire(spec.primary_substrate_hint(), acquire_deadline)
             .await
@@ -334,16 +327,35 @@ impl TokioRuntime {
         // Now seek semantic admission. The permit's inflight count begins only
         // once a worker slot is already held.
         let permit = self
-            .acquire(&spec, &opts, acquire_deadline)
+            .acquire(spec, opts, acquire_deadline)
             .await
             .map_err(|error| absolute_acquire_error_v1(absolute_deadline, error))?;
-        let _guard = PermitGuard {
-            governor: Arc::clone(&self.governor),
-            permit,
-        };
+        Ok(ExecutionLease {
+            _permit: PermitGuard {
+                governor: Arc::clone(&self.governor),
+                permit,
+            },
+            _gate: gate,
+        })
+    }
+
+    /// The single admit→run→release path shared by every substrate whose work
+    /// lifetime is identical to the caller future's lifetime.
+    async fn with_permit<T, E, Fut, F>(
+        &self,
+        spec: TaskSpec,
+        opts: SubmitOptions,
+        absolute_deadline_capability: AbsoluteDeadlineCapabilityV1,
+        run: F,
+    ) -> Result<T, RunError<E>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<T, RunError<E>>>,
+    {
+        let _lease = self
+            .acquire_execution_lease(&spec, &opts, absolute_deadline_capability)
+            .await?;
         run().await
-        // Drop order is reverse: `_guard` (governor permit) releases first, then
-        // `_gate` (worker slot) — on success or on cancellation (future dropped).
     }
 
     /// Reject a spec whose declared substrate is incompatible with this run path
@@ -521,16 +533,11 @@ impl TokioRuntime {
         let (cancel, deadline) = self.cancel_controls(&spec.class, &opts);
         let make_future: RequestedStackAsyncFutureFactoryV1<T, E> =
             Box::new(move || Box::pin(make_future()));
-        self.with_permit(
-            spec.clone(),
-            opts,
-            AbsoluteDeadlineCapabilityV1::CooperativeAsync,
-            move || async move {
-                self.run_async_with_requested_stack_v1(&spec, make_future, cancel, deadline)
-                    .await
-            },
-        )
-        .await
+        let lease = self
+            .acquire_execution_lease(&spec, &opts, AbsoluteDeadlineCapabilityV1::CooperativeAsync)
+            .await?;
+        self.run_async_with_requested_stack_v1(&spec, make_future, cancel, deadline, lease)
+            .await
     }
 
     pub async fn run_cpu_with<T, E, F>(
@@ -778,6 +785,14 @@ async fn run_cancellable<T, E>(
 struct PermitGuard {
     governor: Arc<Governor>,
     permit: PermitId,
+}
+
+/// Owns the semantic permit and physical substrate slot for one execution.
+/// Detached workers take this value so caller cancellation cannot report
+/// capacity as free before the worker has actually terminated.
+struct ExecutionLease {
+    _permit: PermitGuard,
+    _gate: Option<OwnedSemaphorePermit>,
 }
 
 impl Drop for PermitGuard {

@@ -42,7 +42,7 @@ mod runtime;
 // types. One crate to depend on; engine internals live under `ext`.
 
 pub use builder::Builder;
-pub use executor::SubmitOptions;
+pub use executor::{SubmissionDeadline, SubmitOptions};
 pub use runtime::TokioRuntime;
 pub use tokio_util::sync::CancellationToken;
 

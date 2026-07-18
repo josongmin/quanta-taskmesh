@@ -43,6 +43,8 @@ let out = runtime
      `CpuExecutor`에서도 탈출시킨다(permit/gate는 정확히 한 번 release).
    - **run deadline**(`with_deadline`)은 `CooperativeWithDeadline` 클래스에서만 발효(→`GovernorError::DeadlineExceeded`);
      plain `Cooperative`는 `deadline`을 무시한다.
+   - **absolute deadline**(`with_absolute_deadline`)은 같은 클래스에서 substrate wait, governor admission,
+     execution 전체를 하나의 `Instant`로 제한한다. 상대 run budget으로 변환하거나 단계별로 재시작하지 않는다.
    - `acquire_timeout`은 governor 입장 큐 대기(→`PermitAcquireTimedOut`)와 substrate capability-pool 슬롯 대기
      (→`SubstratePoolTimedOut`) 둘 다를 bound한다.
 6. substrate hint는 run path와 일치해야 한다(불일치 → `SubstrateMismatch`). topology slot은 실제 동시성 상한(`0`=무제한);

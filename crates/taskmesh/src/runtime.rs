@@ -24,7 +24,7 @@ use tokio::sync::{oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{timeout_at, Instant};
 
 use crate::adapters::TokioPermitWaker;
-use crate::executor::SubmitOptions;
+use crate::executor::{SubmissionDeadline, SubmitOptions};
 use crate::RuntimeConfig;
 
 type BlockingJobV1<T, E> = Box<dyn FnOnce() -> Result<T, E> + Send + 'static>;
@@ -290,33 +290,48 @@ impl TokioRuntime {
                 AdmissionVerdict::CancelledBeforeSubmit,
             )));
         }
-        let acquire_deadline = opts.acquire_timeout.map(|timeout| Instant::now() + timeout);
-        // Worker governance BEFORE semantic policy (AGENTS rule 1: the two are
-        // separate concerns). The substrate capability-pool slot is the physical
-        // worker gate (topology-sized; unlimited pools return immediately). We
-        // take it FIRST so a task waiting for a worker is NOT counted as a live
-        // governor permit — inflight/cpu/memory/root attribution then reflect
-        // tasks that are *actually executing*, and substrate backlog (its own
-        // `SubstratePoolTimedOut`) never pollutes the semantic queue / retry-after
-        // / resource-saturation signals.
-        let _gate = self
-            .substrates
-            .acquire(spec.primary_substrate_hint(), acquire_deadline)
-            .await
-            .map_err(RunError::Governor)?;
-        // Now seek semantic admission. The permit's inflight count begins only
-        // once a worker slot is already held.
-        let permit = self
-            .acquire(&spec, &opts, acquire_deadline)
-            .await
-            .map_err(RunError::Governor)?;
-        let _guard = PermitGuard {
-            governor: Arc::clone(&self.governor),
-            permit,
+        let absolute_deadline = self.absolute_deadline(&spec.class, &opts);
+        let governed = async {
+            let acquire_deadline = opts.acquire_timeout.map(|timeout| Instant::now() + timeout);
+            // Worker governance BEFORE semantic policy (AGENTS rule 1: the two are
+            // separate concerns). The substrate capability-pool slot is the physical
+            // worker gate (topology-sized; unlimited pools return immediately). We
+            // take it FIRST so a task waiting for a worker is NOT counted as a live
+            // governor permit — inflight/cpu/memory/root attribution then reflect
+            // tasks that are *actually executing*, and substrate backlog (its own
+            // `SubstratePoolTimedOut`) never pollutes the semantic queue / retry-after
+            // / resource-saturation signals.
+            let _gate = self
+                .substrates
+                .acquire(spec.primary_substrate_hint(), acquire_deadline)
+                .await
+                .map_err(RunError::Governor)?;
+            // Now seek semantic admission. The permit's inflight count begins only
+            // once a worker slot is already held.
+            let permit = self
+                .acquire(&spec, &opts, acquire_deadline)
+                .await
+                .map_err(RunError::Governor)?;
+            let _guard = PermitGuard {
+                governor: Arc::clone(&self.governor),
+                permit,
+            };
+            run().await
+            // Drop order is reverse: `_guard` (governor permit) releases first, then
+            // `_gate` (worker slot) — on success or on cancellation (future dropped).
         };
-        run().await
-        // Drop order is reverse: `_guard` (governor permit) releases first, then
-        // `_gate` (worker slot) — on success or on cancellation (future dropped).
+        match absolute_deadline {
+            Some(deadline) => {
+                tokio::select! {
+                    biased;
+                    () = tokio::time::sleep_until(Instant::from_std(deadline)) => {
+                        Err(RunError::Governor(GovernorError::DeadlineExceeded))
+                    }
+                    outcome = governed => outcome,
+                }
+            }
+            None => governed.await,
+        }
     }
 
     /// Reject a spec whose declared substrate is incompatible with this run path
@@ -350,8 +365,31 @@ impl TokioRuntime {
         let with_deadline = matches!(policy, Some(CancellationPolicy::CooperativeWithDeadline));
         (
             mid_run.then(|| opts.cancel.clone()).flatten(),
-            with_deadline.then_some(opts.deadline).flatten(),
+            with_deadline
+                .then_some(opts.deadline)
+                .flatten()
+                .and_then(|deadline| match deadline {
+                    SubmissionDeadline::RunFor(duration) => Some(duration),
+                    SubmissionDeadline::CompleteBy(_) => None,
+                }),
         )
+    }
+
+    fn absolute_deadline(
+        &self,
+        class: &TaskClass,
+        opts: &SubmitOptions,
+    ) -> Option<std::time::Instant> {
+        let with_deadline = self.config.classes.get(class).is_some_and(|policy| {
+            policy.cancellation_policy == CancellationPolicy::CooperativeWithDeadline
+        });
+        with_deadline
+            .then_some(opts.deadline)
+            .flatten()
+            .and_then(|deadline| match deadline {
+                SubmissionDeadline::CompleteBy(instant) => Some(instant),
+                SubmissionDeadline::RunFor(_) => None,
+            })
     }
 
     // ---- substrate entry points (with options) ----------------------------

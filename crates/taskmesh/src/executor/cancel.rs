@@ -5,6 +5,15 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
+/// Mutually exclusive deadline authority for one submission.
+#[derive(Debug, Clone, Copy)]
+pub enum SubmissionDeadline {
+    /// Relative budget that starts when governed work begins running.
+    RunFor(Duration),
+    /// Absolute boundary covering substrate wait, admission, and execution.
+    CompleteBy(std::time::Instant),
+}
+
 /// Per-submission control: pre-submit cancellation and a bounded acquire wait.
 ///
 /// The plain `Runtime` trait methods submit with [`SubmitOptions::unbounded`];
@@ -24,10 +33,9 @@ pub struct SubmitOptions {
     /// timeout yields `PermitAcquireTimedOut`; a substrate-pool timeout yields
     /// `SubstratePoolTimedOut`, so the two causes stay distinguishable.
     pub acquire_timeout: Option<Duration>,
-    /// Wall-clock budget for the *running* work, honored only for a
-    /// `CooperativeWithDeadline` class. When exceeded mid-run, the work is
-    /// cancelled with `GovernorError::DeadlineExceeded`. `None` = no run deadline.
-    pub deadline: Option<Duration>,
+    /// Deadline authority honored only for a `CooperativeWithDeadline` class.
+    /// `RunFor` starts after admission; `CompleteBy` covers the full submission.
+    pub deadline: Option<SubmissionDeadline>,
 }
 
 impl SubmitOptions {
@@ -48,7 +56,13 @@ impl SubmitOptions {
 
     /// Set the run deadline (honored for `CooperativeWithDeadline` classes).
     pub fn with_deadline(mut self, deadline: Duration) -> Self {
-        self.deadline = Some(deadline);
+        self.deadline = Some(SubmissionDeadline::RunFor(deadline));
+        self
+    }
+
+    /// Set one absolute deadline across substrate wait, admission, and execution.
+    pub fn with_absolute_deadline(mut self, deadline: std::time::Instant) -> Self {
+        self.deadline = Some(SubmissionDeadline::CompleteBy(deadline));
         self
     }
 

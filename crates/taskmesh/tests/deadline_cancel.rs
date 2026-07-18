@@ -2,6 +2,7 @@
 //! `CooperativeWithDeadline` is real, cooperative cancel covers run_io/run_local,
 //! and run_cpu can escape a stalled CpuExecutor.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -18,6 +19,22 @@ fn rt(policy: CancellationPolicy) -> TokioRuntime {
                 .max_inflight(4)
                 .cpu_units(1)
                 .cancellation_policy(policy),
+        )
+        .build()
+        .unwrap()
+}
+
+fn single_slot_deadline_rt() -> TokioRuntime {
+    Builder::new()
+        .resources(ResourceBudget::new().cpu_units(64).memory_units(64))
+        .class_policy(
+            TaskClass::new("c"),
+            ClassPolicy::new()
+                .max_inflight(1)
+                .max_queue_depth(8)
+                .cpu_units(1)
+                .overflow_policy(OverflowPolicy::QueueWithinDepth)
+                .cancellation_policy(CancellationPolicy::CooperativeWithDeadline),
         )
         .build()
         .unwrap()
@@ -78,6 +95,117 @@ async fn requested_stack_async_runtime_honors_cooperative_deadline_v1() {
         error,
         RunError::Governor(GovernorError::DeadlineExceeded)
     ));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn absolute_deadline_is_one_budget_across_queue_and_execution_v1() {
+    let rt = single_slot_deadline_rt();
+    let spec = TaskSpec::io(TaskClass::new("c")).operation("absolute-deadline");
+    let occupied = match rt.governor().admit(&spec) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("expected occupied permit, got {other:?}"),
+    };
+    let releaser = tokio::spawn({
+        let rt = rt.clone();
+        async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            rt.governor().release(occupied);
+        }
+    });
+    let started = Arc::new(AtomicBool::new(false));
+    let worker_started = Arc::clone(&started);
+    let options = SubmitOptions::unbounded()
+        .with_absolute_deadline(std::time::Instant::now() + Duration::from_millis(250));
+
+    let error = rt
+        .run_io_with(spec, options, async move {
+            worker_started.store(true, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            Ok::<(), ()>(())
+        })
+        .await
+        .expect_err("queue wait and execution must share one absolute deadline");
+
+    releaser.await.expect("permit releaser completes");
+    assert!(
+        started.load(Ordering::SeqCst),
+        "work must start after admission"
+    );
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::DeadlineExceeded)
+    ));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn requested_stack_absolute_deadline_drops_owned_root_v1() {
+    struct DropSignal(Arc<AtomicBool>);
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    let rt = rt(CancellationPolicy::CooperativeWithDeadline);
+    let spec = TaskSpec::base(TaskClass::new("c"), SubstrateHint::LargeStackCapability)
+        .operation("requested-stack-absolute-deadline")
+        .stack_size_bytes(2 * 1024 * 1024);
+    let dropped = Arc::new(AtomicBool::new(false));
+    let drop_state = Arc::clone(&dropped);
+    let options = SubmitOptions::unbounded()
+        .with_absolute_deadline(std::time::Instant::now() + Duration::from_millis(50));
+
+    let error = rt
+        .run_async_with_requested_stack_with(spec, options, move || {
+            let signal = DropSignal(drop_state);
+            async move {
+                let _signal = signal;
+                std::future::pending::<Result<(), ()>>().await
+            }
+        })
+        .await
+        .expect_err("absolute deadline must cancel the owned requested-stack root");
+
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::DeadlineExceeded)
+    ));
+    for _ in 0..50 {
+        if dropped.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(dropped.load(Ordering::SeqCst));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+}
+
+#[tokio::test]
+async fn elapsed_absolute_deadline_rejects_before_factory_v1() {
+    let rt = rt(CancellationPolicy::CooperativeWithDeadline);
+    let spec = TaskSpec::base(TaskClass::new("c"), SubstrateHint::LargeStackCapability)
+        .operation("elapsed-absolute-deadline")
+        .stack_size_bytes(2 * 1024 * 1024);
+    let invoked = Arc::new(AtomicBool::new(false));
+    let factory_invoked = Arc::clone(&invoked);
+    let options = SubmitOptions::unbounded()
+        .with_absolute_deadline(std::time::Instant::now() - Duration::from_millis(1));
+
+    let error = rt
+        .run_async_with_requested_stack_with(spec, options, move || {
+            factory_invoked.store(true, Ordering::SeqCst);
+            async { Ok::<(), ()>(()) }
+        })
+        .await
+        .expect_err("elapsed absolute deadline must fail before admission and factory creation");
+
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::DeadlineExceeded)
+    ));
+    assert!(!invoked.load(Ordering::SeqCst));
     assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
 }
 

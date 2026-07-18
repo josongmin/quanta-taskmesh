@@ -37,8 +37,9 @@ but `serde`.
    current-thread Tokio runtime hosted by the requested-stack worker
 
 The `*_with` variants accept `SubmitOptions` for pre-submit cancel, mid-run
-cooperative cancel/run-deadline, and a bounded acquire wait (covering both the
-governor queue and the substrate capability-pool slot).
+cooperative cancel/run-deadline, one absolute admission-to-completion deadline,
+and a bounded acquire wait (covering both the governor queue and the substrate
+capability-pool slot).
 
 ## Engine Highlights
 
@@ -81,7 +82,9 @@ The host enforces the declared contract at runtime:
 - **cancellation_policy** gates mid-run cooperative cancel across
   `run_io`/`run_local`/`run_cpu` → `GovernorError::Cancelled`; `run_cpu` escapes
   even a stalled `CpuExecutor`. `CooperativeWithDeadline` additionally honors
-  `SubmitOptions::deadline` → `GovernorError::DeadlineExceeded`.
+  `SubmissionDeadline::RunFor` for execution-only budgets and
+  `SubmissionDeadline::CompleteBy` for one substrate/admission/execution bound;
+  both map expiry to `GovernorError::DeadlineExceeded`.
 - **requested-stack async execution** requires both
   `SubstrateHint::LargeStackCapability` and a requested stack size. Missing or
   invalid shape, worker spawn/runtime initialization failure, and worker panic

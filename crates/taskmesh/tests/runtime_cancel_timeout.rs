@@ -118,6 +118,100 @@ async fn cancel_before_submit_beats_substrate_pool_contention() {
     holder.await.unwrap().expect("holder must complete");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_while_waiting_for_substrate_rejects_without_waiting_for_capacity_v1() {
+    let rt = single_slot_runtime();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+
+    let holder = tokio::spawn({
+        let rt = rt.clone();
+        async move {
+            rt.run_blocking_with(spec(), SubmitOptions::unbounded(), move || {
+                started_tx.send(()).expect("holder start receiver alive");
+                release_rx
+                    .recv()
+                    .expect("test controls substrate capacity release");
+                Ok::<(), ()>(())
+            })
+            .await
+        }
+    });
+    started_rx.await.expect("holder must occupy substrate");
+
+    let token = CancellationToken::new();
+    let waiter = tokio::spawn({
+        let rt = rt.clone();
+        let token = token.clone();
+        async move {
+            rt.run_blocking_with(
+                spec(),
+                SubmitOptions::unbounded().with_cancel(token),
+                || Ok::<(), ()>(()),
+            )
+            .await
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    token.cancel();
+    let error = tokio::time::timeout(Duration::from_millis(100), waiter)
+        .await
+        .expect("pre-admission cancellation must wake substrate wait")
+        .expect("submission task must not panic")
+        .expect_err("cancelled waiter must reject");
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::Rejected(
+            AdmissionVerdict::CancelledBeforeSubmit
+        ))
+    ));
+
+    release_tx.send(()).expect("holder must still be running");
+    holder.await.unwrap().expect("holder must complete");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_while_queued_for_governor_abandons_ticket_promptly_v1() {
+    let rt = single_slot_runtime();
+    let io_spec = TaskSpec::io(TaskClass::new("c")).operation("queued-cancel");
+    let occupied = match rt.governor().admit(&io_spec) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("expected direct governor admission, got {other:?}"),
+    };
+
+    let token = CancellationToken::new();
+    let waiter = tokio::spawn({
+        let rt = rt.clone();
+        let token = token.clone();
+        async move {
+            rt.run_io_with(
+                io_spec,
+                SubmitOptions::unbounded().with_cancel(token),
+                async { Ok::<(), ()>(()) },
+            )
+            .await
+        }
+    });
+    wait_until_queue_depth(&rt, 1).await;
+
+    token.cancel();
+    let error = tokio::time::timeout(Duration::from_millis(100), waiter)
+        .await
+        .expect("pre-admission cancellation must wake governor queue wait")
+        .expect("submission task must not panic")
+        .expect_err("cancelled waiter must reject");
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::Rejected(
+            AdmissionVerdict::CancelledBeforeSubmit
+        ))
+    ));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].queued, 0);
+
+    rt.governor().release(occupied);
+}
+
 #[tokio::test]
 async fn timed_acquire_yields_typed_governor_error() {
     let rt = single_slot_runtime();

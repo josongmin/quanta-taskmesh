@@ -1,10 +1,26 @@
 //! T09: run_cpu rides the executor abstraction; the Rayon adapter plugs in and
 //! the large-stack/blocking path stays off the shared CPU pool.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use taskmesh::ext::CpuExecutor;
 use taskmesh::*;
 use taskmesh_rayon::RayonCpuExecutor;
+
+#[derive(Debug)]
+struct PanicOnceCpuExecutor {
+    panicked: AtomicBool,
+}
+
+impl CpuExecutor for PanicOnceCpuExecutor {
+    fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
+        if !self.panicked.swap(true, Ordering::SeqCst) {
+            panic!("executor rejected submission");
+        }
+        work();
+    }
+}
 
 struct AsyncFutureDropSignalV1(Option<tokio::sync::oneshot::Sender<()>>);
 
@@ -466,4 +482,42 @@ async fn default_runtime_works_without_rayon() {
     let spec = TaskSpec::cpu(TaskClass::new("c")).operation("op");
     let out: i32 = rt.run_cpu(spec, || Ok::<_, ()>(5)).await.unwrap();
     assert_eq!(out, 5);
+}
+
+#[tokio::test]
+async fn cpu_executor_spawn_panic_is_typed_and_releases_lease_v1() {
+    let rt = Builder::new()
+        .resources(ResourceBudget::new().cpu_units(64).memory_units(64))
+        .class_policy(
+            TaskClass::new("c"),
+            ClassPolicy::new().max_inflight(1).cpu_units(1),
+        )
+        .cpu_executor(Arc::new(PanicOnceCpuExecutor {
+            panicked: AtomicBool::new(false),
+        }))
+        .build()
+        .expect("runtime must build");
+
+    let error = rt
+        .run_cpu(
+            TaskSpec::cpu(TaskClass::new("c")).operation("spawn-panic"),
+            || Ok::<(), ()>(()),
+        )
+        .await
+        .expect_err("executor submission panic must fail closed");
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::PolicyViolation(message))
+            if message.contains("cpu executor spawn panicked")
+    ));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+
+    let recovery = rt
+        .run_cpu(
+            TaskSpec::cpu(TaskClass::new("c")).operation("after-spawn-panic"),
+            || Ok::<_, ()>(7),
+        )
+        .await
+        .expect("CPU permit and gate must be available after rejected submission");
+    assert_eq!(recovery, 7);
 }

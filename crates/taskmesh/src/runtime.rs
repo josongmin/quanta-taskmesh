@@ -21,7 +21,7 @@ use taskmesh_contract::{
 };
 use taskmesh_engine::{AdmissionDecision, Governor, PermitId};
 use tokio::sync::{oneshot, OwnedSemaphorePermit, Semaphore};
-use tokio::time::{timeout_at, Instant};
+use tokio::time::Instant;
 
 use crate::adapters::TokioPermitWaker;
 use crate::executor::{SubmissionDeadline, SubmitOptions};
@@ -241,7 +241,9 @@ impl TokioRuntime {
                     governor: Arc::clone(&self.governor),
                     ticket: Some(ticket),
                 };
-                let result = self.await_promotion(ticket, &waker, acquire_deadline).await;
+                let result = self
+                    .await_promotion(ticket, &waker, opts.cancel.as_ref(), acquire_deadline)
+                    .await;
                 if result.is_ok() {
                     guard.disarm();
                 }
@@ -254,27 +256,42 @@ impl TokioRuntime {
         &self,
         ticket: u64,
         waker: &TokioPermitWaker,
+        cancel: Option<&CancellationToken>,
         acquire_deadline: Option<Instant>,
     ) -> Result<PermitId, GovernorError> {
         loop {
+            if cancel.is_some_and(CancellationToken::is_cancelled) {
+                return Err(GovernorError::Rejected(
+                    AdmissionVerdict::CancelledBeforeSubmit,
+                ));
+            }
             if let Some(permit_id) = self.governor.claim(ticket) {
                 return Ok(permit_id);
             }
-            match acquire_deadline {
-                None => waker.notified().await,
-                Some(deadline) => {
-                    if timeout_at(deadline, waker.notified()).await.is_err() {
-                        // Last-chance claim in case promotion raced the timeout;
-                        // otherwise the caller's `TicketGuard` abandons the ticket.
-                        if let Some(permit_id) = self.governor.claim(ticket) {
-                            return Ok(permit_id);
-                        }
+            tokio::select! {
+                biased;
+                () = cancellation_requested_v1(cancel), if cancel.is_some() => {
+                    return Err(GovernorError::Rejected(
+                        AdmissionVerdict::CancelledBeforeSubmit,
+                    ));
+                }
+                () = waker.notified() => {}
+                () = acquisition_deadline_reached_v1(acquire_deadline), if acquire_deadline.is_some() => {
+                    if cancel.is_some_and(CancellationToken::is_cancelled) {
                         return Err(GovernorError::Rejected(
-                            AdmissionVerdict::PermitAcquireTimedOut {
-                                retry_after_ms: None,
-                            },
+                            AdmissionVerdict::CancelledBeforeSubmit,
                         ));
                     }
+                    // Last-chance claim in case promotion raced the timeout;
+                    // otherwise the caller's `TicketGuard` abandons the ticket.
+                    if let Some(permit_id) = self.governor.claim(ticket) {
+                        return Ok(permit_id);
+                    }
+                    return Err(GovernorError::Rejected(
+                        AdmissionVerdict::PermitAcquireTimedOut {
+                            retry_after_ms: None,
+                        },
+                    ));
                 }
             }
         }
@@ -330,7 +347,11 @@ impl TokioRuntime {
         // / resource-saturation signals.
         let gate = self
             .substrates
-            .acquire(spec.primary_substrate_hint(), acquire_deadline)
+            .acquire(
+                spec.primary_substrate_hint(),
+                opts.cancel.as_ref(),
+                acquire_deadline,
+            )
             .await
             .map_err(|error| absolute_acquire_error_v1(absolute_deadline, error))?;
         // Now seek semantic admission. The permit's inflight count begins only
@@ -572,9 +593,8 @@ impl TokioRuntime {
         let lease = self
             .acquire_execution_lease(&spec, &opts, AbsoluteDeadlineCapabilityV1::Unsupported)
             .await?;
-        let (tx, rx) = oneshot::channel::<CpuWorkOutcome<T, E>>();
-        cpu.spawn(Box::new(move || {
-            let _lease = lease;
+        let (tx, rx) = oneshot::channel::<(CpuWorkOutcome<T, E>, ExecutionLease)>();
+        let work = Box::new(move || {
             // The host contract requires worker panic to surface as a
             // governor/runtime error instead of aborting the process.
             let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)) {
@@ -582,16 +602,24 @@ impl TokioRuntime {
                 Err(_) => CpuWorkOutcome::Panicked,
             };
             // The receiver is gone only if the caller already cancelled; the
-            // result is then intentionally not delivered.
-            let _delivered = tx.send(outcome);
-        }));
+            // failed send then drops the lease on this worker. On success,
+            // custody transfers with the result so `run_cpu` cannot report
+            // completion before governed capacity is released.
+            let _delivered = tx.send((outcome, lease));
+        });
+        if panic::catch_unwind(AssertUnwindSafe(|| cpu.spawn(work))).is_err() {
+            return Err(RunError::Governor(GovernorError::PolicyViolation(
+                "cpu executor spawn panicked".into(),
+            )));
+        }
         // The caller can stop awaiting a stalled executor, but the queued or
-        // running closure retains its execution lease until it is dropped.
+        // running closure retains its lease through job completion. A completed
+        // result carries custody back so the caller drops it before returning.
         let work = async move {
             match rx.await {
-                Ok(CpuWorkOutcome::Completed(Ok(value))) => Ok(value),
-                Ok(CpuWorkOutcome::Completed(Err(err))) => Err(RunError::Task(err)),
-                Ok(CpuWorkOutcome::Panicked) => Err(RunError::Governor(
+                Ok((CpuWorkOutcome::Completed(Ok(value)), _lease)) => Ok(value),
+                Ok((CpuWorkOutcome::Completed(Err(err)), _lease)) => Err(RunError::Task(err)),
+                Ok((CpuWorkOutcome::Panicked, _lease)) => Err(RunError::Governor(
                     GovernorError::PolicyViolation("cpu worker panicked".into()),
                 )),
                 Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
@@ -782,6 +810,20 @@ async fn run_cancellable<T, E>(
     }
 }
 
+async fn cancellation_requested_v1(token: Option<&CancellationToken>) {
+    match token {
+        Some(token) => token.cancelled().await,
+        None => std::future::pending::<()>().await,
+    }
+}
+
+async fn acquisition_deadline_reached_v1(deadline: Option<Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending::<()>().await,
+    }
+}
+
 /// Releases a held permit on drop. Held across the work future so a cancelled
 /// (dropped) submission still returns its permit and promotes queued work.
 struct PermitGuard {
@@ -884,27 +926,31 @@ impl SubstrateGates {
     async fn acquire(
         &self,
         hint: SubstrateHint,
+        cancel: Option<&CancellationToken>,
         acquire_deadline: Option<Instant>,
     ) -> Result<Option<OwnedSemaphorePermit>, GovernorError> {
         let Some(sem) = self.gate_for(hint) else {
             return Ok(None);
         };
         let sem = Arc::clone(sem);
-        match acquire_deadline {
-            None => Ok(Some(
-                sem.acquire_owned().await.expect("substrate semaphore open"),
-            )),
-            Some(deadline) => {
-                match timeout_at(deadline, sem.acquire_owned()).await {
-                    Ok(permit) => Ok(Some(permit.expect("substrate semaphore open"))),
-                    // Distinct from the governor queue-wait timeout so the two
-                    // backpressure causes stay separable.
-                    Err(_) => Err(GovernorError::Rejected(
-                        AdmissionVerdict::SubstratePoolTimedOut {
-                            retry_after_ms: None,
-                        },
-                    )),
-                }
+        tokio::select! {
+            biased;
+            () = cancellation_requested_v1(cancel), if cancel.is_some() => {
+                Err(GovernorError::Rejected(
+                    AdmissionVerdict::CancelledBeforeSubmit,
+                ))
+            }
+            permit = sem.acquire_owned() => {
+                Ok(Some(permit.expect("substrate semaphore open")))
+            }
+            () = acquisition_deadline_reached_v1(acquire_deadline), if acquire_deadline.is_some() => {
+                // Distinct from the governor queue-wait timeout so the two
+                // backpressure causes stay separable.
+                Err(GovernorError::Rejected(
+                    AdmissionVerdict::SubstratePoolTimedOut {
+                        retry_after_ms: None,
+                    },
+                ))
             }
         }
     }

@@ -360,6 +360,98 @@ async fn requested_stack_async_caller_abort_retains_permit_until_sync_poll_termi
     .expect("permit must release after the worker terminates");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn blocking_caller_abort_retains_permit_until_worker_terminates_v1() {
+    let (rt, _) = runtime_with_rayon(2);
+    let spec = TaskSpec::blocking(TaskClass::new("c")).operation("caller-abort-blocking");
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let submission = tokio::spawn({
+        let rt = rt.clone();
+        async move {
+            rt.run_blocking(spec, move || {
+                let _ = started_tx.send(());
+                release_rx
+                    .recv()
+                    .expect("test controls blocking worker termination");
+                Ok::<(), ()>(())
+            })
+            .await
+        }
+    });
+
+    started_rx.await.expect("blocking worker must start");
+    submission.abort();
+    let abort = submission
+        .await
+        .expect_err("caller submission must observe task abort");
+    assert!(abort.is_cancelled());
+    assert_eq!(
+        rt.snapshot().classes[&TaskClass::new("c")].inflight,
+        1,
+        "caller abort must not release a permit still owned by a blocking worker"
+    );
+
+    release_tx
+        .send(())
+        .expect("blocking worker must still own the receiver");
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while rt.snapshot().classes[&TaskClass::new("c")].inflight != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("permit must release after the blocking worker terminates");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn requested_stack_blocking_caller_abort_retains_permit_until_worker_terminates_v1() {
+    let (rt, _) = runtime_with_rayon(2);
+    let spec = TaskSpec::base(TaskClass::new("c"), SubstrateHint::LargeStackCapability)
+        .operation("caller-abort-stack-blocking")
+        .stack_size_bytes(2 * 1024 * 1024);
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let submission = tokio::spawn({
+        let rt = rt.clone();
+        async move {
+            rt.run_blocking(spec, move || {
+                let _ = started_tx.send(());
+                release_rx
+                    .recv()
+                    .expect("test controls requested-stack worker termination");
+                Ok::<(), ()>(())
+            })
+            .await
+        }
+    });
+
+    started_rx
+        .await
+        .expect("requested-stack blocking worker must start");
+    submission.abort();
+    let abort = submission
+        .await
+        .expect_err("caller submission must observe task abort");
+    assert!(abort.is_cancelled());
+    assert_eq!(
+        rt.snapshot().classes[&TaskClass::new("c")].inflight,
+        1,
+        "caller abort must not release a permit still owned by a requested-stack worker"
+    );
+
+    release_tx
+        .send(())
+        .expect("requested-stack worker must still own the receiver");
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while rt.snapshot().classes[&TaskClass::new("c")].inflight != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("permit must release after the requested-stack worker terminates");
+}
+
 #[tokio::test]
 async fn default_runtime_works_without_rayon() {
     // Without an injected executor, run_cpu still works (blocking-pool default).

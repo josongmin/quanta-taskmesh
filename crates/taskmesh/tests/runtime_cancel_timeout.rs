@@ -196,3 +196,30 @@ async fn acquire_timeout_is_one_budget_across_substrate_and_queue_wait() {
 
     rt.governor().release(occupied);
 }
+
+#[tokio::test]
+async fn acquire_timeout_overflow_fails_closed_before_work_v1() {
+    let rt = single_slot_runtime();
+    let invoked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let job_invoked = std::sync::Arc::clone(&invoked);
+
+    let error = rt
+        .run_blocking_with(
+            spec(),
+            SubmitOptions::unbounded().with_acquire_timeout(Duration::MAX),
+            move || {
+                job_invoked.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok::<(), ()>(())
+            },
+        )
+        .await
+        .expect_err("overflowing acquire timeout must fail closed");
+
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::PolicyViolation(message))
+            if message.contains("acquire timeout exceeds Instant range")
+    ));
+    assert!(!invoked.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+}

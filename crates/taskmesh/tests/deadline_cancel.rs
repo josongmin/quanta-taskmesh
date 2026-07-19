@@ -391,6 +391,9 @@ impl CpuExecutor for StallExecutor {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn run_cpu_escapes_stalled_executor_via_cancel() {
+    let executor = Arc::new(StallExecutor {
+        held: Mutex::new(Vec::new()),
+    });
     let rt = Builder::new()
         .resources(ResourceBudget::new().cpu_units(64).memory_units(64))
         .class_policy(
@@ -400,9 +403,7 @@ async fn run_cpu_escapes_stalled_executor_via_cancel() {
                 .cpu_units(1)
                 .cancellation_policy(CancellationPolicy::Cooperative),
         )
-        .cpu_executor(Arc::new(StallExecutor {
-            held: Mutex::new(Vec::new()),
-        }))
+        .cpu_executor(executor.clone())
         .build()
         .unwrap();
 
@@ -420,7 +421,19 @@ async fn run_cpu_escapes_stalled_executor_via_cancel() {
         .unwrap()
         .expect_err("must escape the stalled executor");
     assert!(matches!(err, RunError::Governor(GovernorError::Cancelled)));
-    // Permit + cpu gate released despite the executor still holding the work.
     tokio::task::yield_now().await;
-    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+    assert_eq!(
+        rt.snapshot().classes[&TaskClass::new("c")].inflight,
+        1,
+        "cancelling the caller must not make queued CPU capacity appear free"
+    );
+
+    executor.held.lock().unwrap().clear();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while rt.snapshot().classes[&TaskClass::new("c")].inflight != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("permit must release after the executor drops the queued work");
 }

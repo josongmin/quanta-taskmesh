@@ -81,14 +81,19 @@ The host enforces the declared contract at runtime:
   share the blocking executor but hold separate capability pools.
 - **cancellation_policy** gates mid-run cooperative cancel across
   `run_io`/`run_local`/`run_cpu` → `GovernorError::Cancelled`; `run_cpu` escapes
-  even a stalled `CpuExecutor`. `CooperativeWithDeadline` additionally honors
-  `SubmissionDeadline::RunFor` for execution-only budgets and
+  even a stalled `CpuExecutor`, while its queued or running worker closure keeps
+  the execution lease until that closure runs or is dropped.
+  `CooperativeWithDeadline` additionally honors `SubmissionDeadline::RunFor`
+  for execution-only budgets and
   `SubmissionDeadline::CompleteBy` for one substrate/admission/execution bound;
   both map expiry to `GovernorError::DeadlineExceeded`. `CompleteBy` is admitted
   only on cooperative async paths and is polled by the runtime that owns the
   work; blocking and CPU work reject it before invoking the job. A non-yielding
   poll retains its permit until it yields, so governed counts never understate
   live work.
+- **synchronous worker lifetime** owns the permit and capability slot:
+  `run_blocking`, requested-stack blocking, and `run_cpu` retain the execution
+  lease through actual worker termination even if the caller future is dropped.
 - **requested-stack async execution** requires both
   `SubstrateHint::LargeStackCapability` and a requested stack size. Missing or
   invalid shape, worker spawn/runtime initialization failure, and worker panic

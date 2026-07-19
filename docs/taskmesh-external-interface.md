@@ -40,7 +40,8 @@ let out = runtime
    - pre-submit cancel는 모든 클래스에서 honored.
    - **mid-run 협조 취소**는 `cancellation_policy`가 `Cooperative`/`CooperativeWithDeadline`인 클래스에서
      `run_io`/`run_local`/`run_cpu` 모두 동작(→`GovernorError::Cancelled`). `run_cpu`는 토큰이 stalled
-     `CpuExecutor`에서도 탈출시킨다(permit/gate는 정확히 한 번 release).
+     `CpuExecutor`에서도 caller wait를 탈출시키되, queued/running worker closure가 종료되거나 drop될 때까지
+     permit/gate를 보유한다.
    - **run deadline**(`with_deadline`)은 `CooperativeWithDeadline` 클래스에서만 발효(→`GovernorError::DeadlineExceeded`);
      plain `Cooperative`는 `deadline`을 무시한다.
    - **absolute deadline**(`with_absolute_deadline`)은 같은 클래스에서 substrate wait, governor admission,
@@ -48,7 +49,8 @@ let out = runtime
      cooperative poll 경계를 소유하는 `run_io`, `run_local`, requested-stack async에서만 허용되며,
      동기 blocking/CPU 경로는 permit 조기 반환을 막기 위해 fail-closed로 거부한다.
    - `acquire_timeout`은 governor 입장 큐 대기(→`PermitAcquireTimedOut`)와 substrate capability-pool 슬롯 대기
-     (→`SubstratePoolTimedOut`) 둘 다를 bound한다.
+     (→`SubstratePoolTimedOut`) 둘 다를 하나의 checked budget으로 bound한다.
+   - caller future가 drop되어도 동기 blocking/requested-stack/CPU worker는 실제 종료 시점까지 permit/gate를 보유한다.
 6. substrate hint는 run path와 일치해야 한다(불일치 → `SubstrateMismatch`). topology slot은 실제 동시성 상한(`0`=무제한);
    슬롯이 가득 차면 `SubstratePoolTimedOut`로 backpressure.
 7. spec 형태가 구조적으로 깨지면(0-stage, stage별 class 불일치, reduce 누락 fan-out) 입장 자체가 `MalformedTask`로 reject.

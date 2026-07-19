@@ -1,10 +1,11 @@
 //! `TokioRuntime` — the host adapter implementing the [`Runtime`] driving port.
 //!
-//! Every path funnels through `with_permit`: acquire a governor permit (waiting,
-//! bounded, on a queue if needed), run the work on the right substrate, then
-//! release — which promotes queued work. Governor rejection and task failure stay
-//! distinct via [`RunError`]; a `spawn_blocking`/worker join failure is a
-//! governor/runtime-side error, never a task error.
+//! Every path acquires one execution lease: a governor permit plus the physical
+//! substrate slot. Async work owns the lease in its caller future; detached
+//! synchronous workers own it in their worker closure until actual termination.
+//! Governor rejection and task failure stay distinct via [`RunError`]; a
+//! `spawn_blocking`/worker join failure is a governor/runtime-side error, never a
+//! task error.
 
 use std::collections::BTreeMap;
 use std::future::{ready, Future};
@@ -134,6 +135,7 @@ impl TokioRuntime {
         &self,
         spec: &TaskSpec,
         job: BlockingJobV1<T, E>,
+        lease: ExecutionLease,
     ) -> Result<T, RunError<E>>
     where
         E: Send + 'static,
@@ -152,6 +154,7 @@ impl TokioRuntime {
             .name(thread_name)
             .stack_size(stack_size_bytes)
             .spawn(move || {
+                let _lease = lease;
                 let _tokio_runtime_context = tokio_handle.as_ref().map(|handle| handle.enter());
                 let outcome = match panic::catch_unwind(AssertUnwindSafe(job)) {
                     Ok(result) => BlockingThreadOutcome::Completed(result),
@@ -302,8 +305,14 @@ impl TokioRuntime {
         if absolute_deadline.is_some_and(|deadline| deadline <= std::time::Instant::now()) {
             return Err(RunError::Governor(GovernorError::DeadlineExceeded));
         }
-        let relative_acquire_deadline =
-            opts.acquire_timeout.map(|timeout| Instant::now() + timeout);
+        let relative_acquire_deadline = match opts.acquire_timeout {
+            Some(timeout) => Some(Instant::now().checked_add(timeout).ok_or_else(|| {
+                RunError::Governor(GovernorError::PolicyViolation(
+                    "acquire timeout exceeds Instant range".into(),
+                ))
+            })?),
+            None => None,
+        };
         let absolute_acquire_deadline = absolute_deadline.map(Instant::from_std);
         let acquire_deadline = match (relative_acquire_deadline, absolute_acquire_deadline) {
             (Some(relative), Some(absolute)) => Some(relative.min(absolute)),
@@ -460,34 +469,33 @@ impl TokioRuntime {
         if spec.requested_stack_size_bytes().is_some() {
             let boxed_job: BlockingJobV1<T, E> = Box::new(job);
             return Box::pin(async move {
-                self.with_permit(
-                    spec.clone(),
-                    opts,
-                    AbsoluteDeadlineCapabilityV1::Unsupported,
-                    move || async move {
-                        self.run_blocking_with_requested_stack_v1(&spec, boxed_job)
-                            .await
-                    },
-                )
-                .await
+                let lease = self
+                    .acquire_execution_lease(
+                        &spec,
+                        &opts,
+                        AbsoluteDeadlineCapabilityV1::Unsupported,
+                    )
+                    .await?;
+                self.run_blocking_with_requested_stack_v1(&spec, boxed_job, lease)
+                    .await
             });
         }
         Box::pin(async move {
-            self.with_permit(
-                spec,
-                opts,
-                AbsoluteDeadlineCapabilityV1::Unsupported,
-                || async move {
-                    match tokio::task::spawn_blocking(job).await {
-                        Ok(Ok(value)) => Ok(value),
-                        Ok(Err(err)) => Err(RunError::Task(err)),
-                        Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
-                            "spawn_blocking join failure".into(),
-                        ))),
-                    }
-                },
-            )
+            let lease = self
+                .acquire_execution_lease(&spec, &opts, AbsoluteDeadlineCapabilityV1::Unsupported)
+                .await?;
+            match tokio::task::spawn_blocking(move || {
+                let _lease = lease;
+                job()
+            })
             .await
+            {
+                Ok(Ok(value)) => Ok(value),
+                Ok(Err(err)) => Err(RunError::Task(err)),
+                Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
+                    "spawn_blocking join failure".into(),
+                ))),
+            }
         })
     }
 
@@ -561,43 +569,37 @@ impl TokioRuntime {
         }
         let (token, deadline) = self.cancel_controls(&spec.class, &opts);
         let cpu = Arc::clone(&self.cpu);
-        self.with_permit(
-            spec,
-            opts,
-            AbsoluteDeadlineCapabilityV1::Unsupported,
-            move || async move {
-                let (tx, rx) = oneshot::channel::<CpuWorkOutcome<T, E>>();
-                cpu.spawn(Box::new(move || {
-                    // The host contract requires worker panic to surface as a
-                    // governor/runtime error instead of aborting the process.
-                    let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(job))
-                    {
-                        Ok(result) => CpuWorkOutcome::Completed(result),
-                        Err(_) => CpuWorkOutcome::Panicked,
-                    };
-                    // The receiver is gone only if the caller already cancelled; the
-                    // result is then intentionally not delivered.
-                    let _delivered = tx.send(outcome);
-                }));
-                // Wrap the result-await in cooperative cancel/deadline so a cancellable
-                // class can escape even a stalled custom CpuExecutor (no liveness
-                // guarantee from the port) instead of hanging on `rx` forever.
-                let work = async move {
-                    match rx.await {
-                        Ok(CpuWorkOutcome::Completed(Ok(value))) => Ok(value),
-                        Ok(CpuWorkOutcome::Completed(Err(err))) => Err(RunError::Task(err)),
-                        Ok(CpuWorkOutcome::Panicked) => Err(RunError::Governor(
-                            GovernorError::PolicyViolation("cpu worker panicked".into()),
-                        )),
-                        Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
-                            "cpu worker dropped result".into(),
-                        ))),
-                    }
-                };
-                run_cancellable(token, deadline, work).await
-            },
-        )
-        .await
+        let lease = self
+            .acquire_execution_lease(&spec, &opts, AbsoluteDeadlineCapabilityV1::Unsupported)
+            .await?;
+        let (tx, rx) = oneshot::channel::<CpuWorkOutcome<T, E>>();
+        cpu.spawn(Box::new(move || {
+            let _lease = lease;
+            // The host contract requires worker panic to surface as a
+            // governor/runtime error instead of aborting the process.
+            let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)) {
+                Ok(result) => CpuWorkOutcome::Completed(result),
+                Err(_) => CpuWorkOutcome::Panicked,
+            };
+            // The receiver is gone only if the caller already cancelled; the
+            // result is then intentionally not delivered.
+            let _delivered = tx.send(outcome);
+        }));
+        // The caller can stop awaiting a stalled executor, but the queued or
+        // running closure retains its execution lease until it is dropped.
+        let work = async move {
+            match rx.await {
+                Ok(CpuWorkOutcome::Completed(Ok(value))) => Ok(value),
+                Ok(CpuWorkOutcome::Completed(Err(err))) => Err(RunError::Task(err)),
+                Ok(CpuWorkOutcome::Panicked) => Err(RunError::Governor(
+                    GovernorError::PolicyViolation("cpu worker panicked".into()),
+                )),
+                Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
+                    "cpu worker dropped result".into(),
+                ))),
+            }
+        };
+        run_cancellable(token, deadline, work).await
     }
 
     pub async fn run_local_with<T, E, Fut>(

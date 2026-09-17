@@ -20,7 +20,9 @@ use std::thread;
 use taskmesh_contract::{
     ClassPolicy, ManualClock, MemoryPermitMode, ResourceBudget, TaskClass, TaskSpec,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, ReleaseOutcome};
+use taskmesh_engine::{
+    AdmissionDecision, Governor, PolicySet, ReleaseOutcome, StageReleaseOutcome,
+};
 
 struct Lcg(u64);
 impl Lcg {
@@ -125,7 +127,15 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
                                 if !held.is_empty() {
                                     let i = (lcg.next() as usize) % held.len();
                                     let units = (lcg.next() % 4) as u32;
-                                    g.release_stage_memory(held[i].0, units);
+                                    // The permit is held by this thread, so the
+                                    // only outcomes are the policy's own answers;
+                                    // an unknown permit here would be a lost lease.
+                                    let outcome = g.release_stage_memory(held[i].0, units);
+                                    assert!(
+                                        !matches!(outcome, StageReleaseOutcome::UnknownPermit),
+                                        "held permit {} reported unknown on stage release",
+                                        held[i].0
+                                    );
                                 }
                             }
                         }

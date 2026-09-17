@@ -123,7 +123,8 @@ public surface는 `taskmesh` (+ `taskmesh::ext`)이며, 릴리스마다
 
 ```rust
 use taskmesh::{
-    Builder, ClassPolicy, FairnessPolicy, ResourceBudget, TaskClass, TopologyConfig,
+    Builder, CancellationPolicy, ClassPolicy, FairnessPolicy, ResourceBudget, TaskClass,
+    TopologyConfig,
 };
 
 let runtime = Builder::new()
@@ -153,7 +154,10 @@ let runtime = Builder::new()
             .max_queue_depth(128)
             .cpu_units(1)
             .memory_units(2)
-            .fairness(FairnessPolicy::DeficitRoundRobin { quantum: 4 }),
+            .fairness(FairnessPolicy::DeficitRoundRobin { quantum: 4 })
+            // §6의 mid-run 취소·데드라인은 이 정책이 있어야 발효된다. 기본값
+            // `PreSubmitOnly`인 클래스에 deadline을 주면 `DeadlineUnsupported`로 거절된다.
+            .cancellation_policy(CancellationPolicy::CooperativeWithDeadline),
     )
     .build()
     .expect("policy must validate");
@@ -300,13 +304,18 @@ match out {
     Err(RunError::Governor(GovernorError::Rejected(
         AdmissionVerdict::PermitAcquireTimedOut { .. },
     ))) => { /* 큐 대기 타임아웃 */ }
+    Err(RunError::Governor(GovernorError::DeadlineUnsupported { class, policy })) => {
+        /* 구성 오류: `class`의 `policy`는 데드라인을 집행할 수 없다 (제출 전 거절, 작업 미시작) */
+    }
     _ => {}
 }
 ```
 
 규칙: pre-submit 취소(`CancelledBeforeSubmit`)는 모든 클래스에서 발효된다. **mid-run
-협조 취소**(`Cancelled`)는 `Cooperative`/`CooperativeWithDeadline` 클래스에서, **데드라인**
-(`DeadlineExceeded`)은 `CooperativeWithDeadline` 클래스에서만 동작한다. 데드라인을 집행할 수
+협조 취소**(`Cancelled`)는 `Cooperative`/`CooperativeWithDeadline` 클래스에서 동작한다 —
+`run_io`/`run_local`/`run_cpu`/`run_blocking` 모두에서 caller의 대기를 끝내며, 동기 worker
+(`run_cpu`/`run_blocking`)의 시작된 작업은 중단되지 않고 charged 상태로 끝까지 실행된다.
+**데드라인**(`DeadlineExceeded`)은 `CooperativeWithDeadline` 클래스에서만 동작한다. 데드라인을 집행할 수
 없는 클래스에 `deadline`을 주면 조용히 버려지는 대신 제출 시점에
 `GovernorError::DeadlineUnsupported { class, policy }`로 거절된다 — 요청한 상한 없이 끝까지
 실행하고 `Ok`를 돌려주는 것은 이 host가 만들지 않는 종류의 실패다.
@@ -350,13 +359,13 @@ let _ = report;
 ```
 
 `features = ["rayon"]`만 켜면 `run_cpu`의 기본 executor가 공유 rayon 풀로 **자동
-와이어링**된다(추가 코드 불필요). 풀을 직접 만들어 주입하려면 `taskmesh-rayon`을
-직접 의존성에 추가하고 `Builder::cpu_executor(...)`로 넘긴다:
+와이어링**된다(추가 코드 불필요). 풀을 직접 만들어 주입하려면 같은 feature 아래
+`taskmesh::ext::RayonCpuExecutor`를 쓴다 — `taskmesh-rayon`을 직접 의존할 필요는 없다:
 
 ```rust
-// Cargo.toml: taskmesh-rayon = { git = "…" } 직접 추가
+// Cargo.toml: taskmesh = { …, features = ["rayon"] }
 use std::sync::Arc;
-use taskmesh_rayon::RayonCpuExecutor;
+use taskmesh::ext::RayonCpuExecutor;
 
 let topo = taskmesh::TopologyConfig::new().cpu_auto().reserve_cores(1);
 let runtime = taskmesh::Builder::new()
@@ -366,9 +375,16 @@ let runtime = taskmesh::Builder::new()
     .build()?;
 ```
 
+주의: `RayonCpuExecutor::with_pool(pool)`은 그 pool의 실제 thread 수를 선언하므로, topology가
+resolve한 `cpu` gate보다 좁은 pool은 `build()`에서 `ExecutorDeclaresFewerWorkers`로 거절된다.
+직접 `Governor`를 구동하는 embedder는 `advance_phase(permit, Running)`/`CleanupPending`을
+자기가 선언해야 한다: leak sweep(`DEFAULT_LEAK_STALE_MS` = 60 000 ms)은 `DispatchReserved`인
+permit만 회수하므로, 전진시키지 않은 permit은 실행 중에도 회수 대상이다.
+
 > `ext`에는 `Governor`, `PolicySet`, `AdmissionDecision`, `Provenance`,
 > `RootAttribution`, `Clock`/`SystemClock`/`ManualClock`, `CpuExecutor`,
-> `PermitWaker`, `BlockingPoolCpuExecutor`, `builtin_records`,
+> `PermitWaker`, `TokioPermitWaker`, `BlockingPoolCpuExecutor` (+ `RayonCpuExecutor` with
+> `rayon`), `RequestKey`, `builtin_records`,
 > `BUILTIN_SUBSTRATES`, `DEFAULT_LEAK_STALE_MS`, `ClaimOutcome`, `ReleaseOutcome`,
 > `StageReleaseOutcome`, `ReconcileOutcome`, `PermitLedgerView`, `CapacityBlock` 등이 있다.
 > `Governor::release`는 `ReleaseOutcome`(`#[must_use]`)을 돌려준다 — `UnknownPermit`은 double
@@ -416,8 +432,9 @@ let runtime = taskmesh::Builder::new()
    *다른* capability pool에 막혀 있을 때만 추월한다. 한 번의 promotion pass는 `PROMOTION_BUDGET`(64)
    개까지 grant하고 lock을 놓은 뒤 이어가며, 그 경계에서 fairness 비용이 어긋나지 않는다.
 5. **cancellation은 정책을 따른다.** `Cooperative`/`CooperativeWithDeadline` 클래스는
-   `run_io`/`run_local`/`run_cpu` 모두에서 토큰으로 mid-run 취소(→`GovernorError::Cancelled`)된다
-   (`run_cpu`는 stalled `CpuExecutor`에서도 탈출). `CooperativeWithDeadline`는 추가로
+   `run_io`/`run_local`/`run_cpu`/`run_blocking` 모두에서 토큰으로 mid-run 취소(→`GovernorError::Cancelled`)된다
+   (`run_cpu`는 stalled `CpuExecutor`에서도 탈출; `run_cpu`/`run_blocking`의 시작된 동기 작업은
+   중단되지 않고 charged 상태로 끝까지 실행된다 — caller의 대기만 끝난다). `CooperativeWithDeadline`는 추가로
    `SubmitOptions::deadline`을 발효(→`GovernorError::DeadlineExceeded`); 다른 정책의 클래스에 deadline을
    주면 `DeadlineUnsupported`로 거절된다(무시하지 않는다).
    `RunFor`는 worker 자신의 시작 시각을 기준으로 하며(inline executor 포함) 완료 시각이 budget을

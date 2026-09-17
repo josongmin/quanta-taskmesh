@@ -79,6 +79,7 @@ pub fn stage_release_allowed(policy: MemoryReleasePolicy) -> bool {
 /// Outcome of a memory reconcile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[must_use = "a rejected or stale reading was not applied; check the outcome"]
 pub enum ReconcileOutcome {
     /// The reading was applied; `held_units` is the new effective charge.
     Applied { held_units: u32 },

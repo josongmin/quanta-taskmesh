@@ -144,7 +144,8 @@ The host enforces the declared contract at runtime:
   whichever blocking-family hint carried it. `Blocking`/`LargeStack`/`Background`
   share the blocking executor but hold separate capability pools.
 - **cancellation_policy** gates mid-run cooperative cancel across
-  `run_io`/`run_local`/`run_cpu` → `GovernorError::Cancelled`; `run_cpu` escapes
+  `run_io`/`run_local`/`run_cpu`/`run_blocking` → `GovernorError::Cancelled` (on the
+  synchronous paths the caller's wait ends; a started job runs on, charged); `run_cpu` escapes
   even a stalled `CpuExecutor`, while its queued or running worker closure keeps
   the execution lease until that closure runs or is dropped.
   `CooperativeWithDeadline` additionally honors `SubmissionDeadline::RunFor`

@@ -40,6 +40,21 @@ pub struct Builder {
     cpu_executor: Option<Arc<dyn CpuExecutor>>,
 }
 
+impl std::fmt::Debug for Builder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Builder")
+            .field("topology", &self.topology)
+            .field("resources", &self.resources)
+            .field("classes", &self.classes)
+            .field("substrates", &self.substrates)
+            .field(
+                "cpu_executor",
+                &self.cpu_executor.as_ref().map(|cpu| cpu.capabilities()),
+            )
+            .finish()
+    }
+}
+
 impl Default for Builder {
     fn default() -> Self {
         Self {

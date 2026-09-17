@@ -136,7 +136,12 @@ fn fuzz_conservation_and_caps_under_adversarial_churn() {
                 5 => {
                     if !held.is_empty() {
                         let p = held[rng.gen_range(0..held.len())];
-                        g.release_stage_memory(p, rng.gen_range(0..3));
+                        // Held by this fuzzer, so "unknown" would be a lost lease.
+                        let outcome = g.release_stage_memory(p, rng.gen_range(0..3));
+                        assert!(
+                            !matches!(outcome, StageReleaseOutcome::UnknownPermit),
+                            "held permit {p} reported unknown on stage release"
+                        );
                     }
                 }
                 _ => unreachable!(),

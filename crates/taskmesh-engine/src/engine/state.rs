@@ -206,6 +206,7 @@ pub enum TicketState {
 /// answers: conflating them (as a bare `None` does) is what turns a reclaimed
 /// permit into a waiter that parks forever.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "a Ready permit that is dropped is leaked capacity; handle every arm"]
 pub enum ClaimOutcome {
     /// Ownership transferred to the caller.
     Ready(PermitId),

@@ -72,6 +72,18 @@ pub struct TokioRuntime {
     cpu: Arc<dyn CpuExecutor>,
 }
 
+impl std::fmt::Debug for TokioRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The executor is a trait object with no `Debug` bound; its declared
+        // capabilities are the honest summary of it.
+        f.debug_struct("TokioRuntime")
+            .field("config", &self.config)
+            .field("governor", &self.governor)
+            .field("cpu_executor", &self.cpu.capabilities())
+            .finish()
+    }
+}
+
 impl TokioRuntime {
     pub(crate) fn new(
         config: RuntimeConfig,

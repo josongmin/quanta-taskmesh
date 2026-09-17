@@ -44,8 +44,10 @@ pub enum AdmissionVerdict {
     /// The spec's declared substrate is incompatible with the chosen run path
     /// (e.g. an `AsyncIo` spec submitted via `run_blocking`).
     SubstrateMismatch,
-    /// Timed out waiting for a host substrate capability-pool slot (distinct from
-    /// `PermitAcquireTimedOut`, which is the governor admission-queue wait).
+    /// The acquisition budget expired while the request was queued for a
+    /// capability-pool slot (the intake decision recorded the pool as the
+    /// blocking cause). Distinct from `PermitAcquireTimedOut`, the same expiry
+    /// while queued for class capacity.
     SubstratePoolTimedOut {
         retry_after_ms: Option<u64>,
     },

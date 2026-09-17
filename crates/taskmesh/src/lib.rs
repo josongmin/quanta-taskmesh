@@ -94,6 +94,7 @@ pub use taskmesh_contract::{
     TieBreakPolicy,
     TopologyConfig,
     TopologyError,
+    MAX_CAPABILITY_SLOTS,
     SNAPSHOT_SCHEMA_VERSION,
 };
 
@@ -113,12 +114,25 @@ pub mod ext {
     /// The default host CPU executor adapter (Tokio blocking pool).
     pub use crate::executor::BlockingPoolCpuExecutor;
 
+    /// The host's `PermitWaker` adapter (`tokio::sync::Notify` underneath): what
+    /// a direct embedder registers with `Governor::admit_waitable` and awaits
+    /// (`notified()`) between `claim` attempts. No wakeup is lost if the
+    /// promotion races ahead of the wait.
+    pub use crate::adapters::TokioPermitWaker;
+
+    /// The shared Rayon CPU executor adapter, when the `rayon` feature is on.
+    /// Re-exported so a consumer who wants to size or share the pool
+    /// (`RayonCpuExecutor::with_pool`, `from_topology`) does not have to add
+    /// `taskmesh-rayon` as a direct dependency.
+    #[cfg(feature = "rayon")]
+    pub use taskmesh_rayon::RayonCpuExecutor;
+
     /// The governance engine and its admission primitives, for embedding in a
     /// non-Tokio host or driving admission directly.
     pub use taskmesh_engine::{
         builtin_records, AdmissionDecision, CapabilityName, CapacityBlock, ClaimOutcome, Governor,
         LeakSweepReport, PendingView, PermitId, PermitLedgerView, PolicySet, Provenance,
-        ReconcileOutcome, ReleaseOutcome, RootAttribution, StageReleaseOutcome, Ticket,
+        ReconcileOutcome, ReleaseOutcome, RequestKey, RootAttribution, StageReleaseOutcome, Ticket,
         BUILTIN_SUBSTRATES, DEFAULT_LEAK_STALE_MS, MAX_TERMINAL_TICKETS, PROMOTION_BUDGET,
     };
 }

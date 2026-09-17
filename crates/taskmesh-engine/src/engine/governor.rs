@@ -52,6 +52,10 @@ use crate::sync::{AtomicU64, Mutex, Ordering};
 pub const PROMOTION_BUDGET: usize = 64;
 
 /// The governed execution control point. Cheap to wrap in `Arc` and share.
+///
+/// `Debug` prints the policy's class set and the id counters — never the
+/// guarded state, which would take the mutex inside a formatter (a host
+/// `Debug` in a log line must not contend with admission).
 pub struct Governor {
     policy: PolicySet,
     clock: Arc<dyn Clock>,
@@ -59,6 +63,16 @@ pub struct Governor {
     next_ticket: AtomicU64,
     next_seq: AtomicU64,
     state: Mutex<GovernedState>,
+}
+
+impl std::fmt::Debug for Governor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Governor")
+            .field("classes", &self.policy.classes.keys().collect::<Vec<_>>())
+            .field("next_permit", &self.next_permit.load(Ordering::Relaxed))
+            .field("next_ticket", &self.next_ticket.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
 }
 
 impl Governor {
@@ -361,6 +375,13 @@ impl Governor {
     /// a timed-out caller has its result while the permit is still `Running`, and
     /// the gauges say so instead of reporting the worker as gone. Monotonic —
     /// a backwards or repeated declaration returns `false` and changes nothing.
+    ///
+    /// An embedder that drives the engine directly (via `taskmesh::ext`) owes
+    /// these transitions: the leak sweep reclaims only `DispatchReserved`
+    /// permits, so work that is never advanced to `Running` is *reclaimable*
+    /// while it runs, and `started_total`/the phase gauges only mean something
+    /// if the phases are declared.
+    #[must_use = "`false` means the permit is gone or the phase did not advance; a caller that ignores it runs on capacity it may not hold"]
     pub fn advance_phase(&self, permit_id: PermitId, phase: ExecutionPhase) -> bool {
         self.state.lock().advance_phase(permit_id, phase)
     }
@@ -720,7 +741,20 @@ impl Governor {
                 });
             classes.entry(class).or_insert(projection);
         }
+        // Every registered pool is always present — gated (`limit > 0`) or
+        // ungated (`limit == 0`) — so a consumer can index `capabilities["x"]`
+        // and a dashboard never sees a key appear and vanish with occupancy.
         let mut capabilities: BTreeMap<String, CapabilityUsage> = BTreeMap::new();
+        for record in self.policy.substrates().values() {
+            if let Some(pool) = record.capability_pool.as_deref() {
+                capabilities
+                    .entry(pool.to_owned())
+                    .or_insert_with(|| CapabilityUsage {
+                        in_use: state.capability_in_use(pool),
+                        limit: 0,
+                    });
+            }
+        }
         for (pool, limit) in self.policy.capability_limits() {
             capabilities.insert(
                 pool.clone(),

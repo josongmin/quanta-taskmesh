@@ -40,6 +40,18 @@ impl RequestKey {
         REQUEST_KEY_DERIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         Self(Cow::Owned(root_operation_id.to_owned()))
     }
+
+    /// The key as text (the root operation id it was derived from). Read-only:
+    /// a key is never a caller input.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for RequestKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
 }
 
 #[cfg(feature = "test-util")]
@@ -264,6 +276,7 @@ fn intern_capability_names(
 /// cannot tell an enforced policy from a permit that happened to hold nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[must_use = "a refused or stale stage release is not a release; check the outcome"]
 pub enum StageReleaseOutcome {
     /// Units were returned to the pool.
     Released { freed_units: u32 },
@@ -293,7 +306,10 @@ impl StageReleaseOutcome {
 }
 
 /// The outcome of an admission decision at the engine boundary.
+///
+/// `#[must_use]`: a dropped `Admitted` is a permit nobody will ever release.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "an Admitted permit that is dropped is leaked capacity; handle every arm"]
 pub enum AdmissionDecision {
     /// Admitted immediately; caller owns `permit_id` until release.
     Admitted { permit_id: PermitId },

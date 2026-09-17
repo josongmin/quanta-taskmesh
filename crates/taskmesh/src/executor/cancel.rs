@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 /// Mutually exclusive deadline authority for one submission.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubmissionDeadline {
     /// Relative budget that starts when governed work begins running.
     RunFor(Duration),
@@ -27,14 +27,21 @@ pub struct SubmitOptions {
     /// this token mid-run also cancels in-flight async work
     /// (→ `GovernorError::Cancelled`).
     pub cancel: Option<CancellationToken>,
-    /// Maximum time to wait to *acquire* a slot — covering BOTH the governor
-    /// admission-queue wait AND the host substrate capability-pool wait. `None`
-    /// waits indefinitely; `Some(Duration::ZERO)` means "do not wait". A queue
-    /// timeout yields `PermitAcquireTimedOut`; a substrate-pool timeout yields
-    /// `SubstratePoolTimedOut`, so the two causes stay distinguishable.
+    /// Maximum time to wait to *acquire* the execution lease: the whole
+    /// admission wait, including time blocked on the admission mutex and time
+    /// queued for class capacity or for a capability pool (one decision, one
+    /// queue — there is no separate host pool wait). `None` waits indefinitely;
+    /// `Some(Duration::ZERO)` means "try, do not wait". On expiry the verdict
+    /// names what the request was waiting on: `PermitAcquireTimedOut` for class
+    /// capacity, `SubstratePoolTimedOut` for a capability pool. A permit that
+    /// arrives after the budget expired is returned unstarted (D09).
     pub acquire_timeout: Option<Duration>,
-    /// Deadline authority honored only for a `CooperativeWithDeadline` class.
-    /// `RunFor` starts after admission; `CompleteBy` covers the full submission.
+    /// Deadline authority for a `CooperativeWithDeadline` class; any other
+    /// class refuses a deadline with `GovernorError::DeadlineUnsupported`.
+    /// `RunFor` is anchored to the worker's own start (not to admission or to
+    /// `spawn` returning); `CompleteBy` is one instant across queue wait and
+    /// execution. For synchronous dispatches (`run_blocking`, `run_cpu`) a
+    /// `RunFor` bounds the caller's wait while the job stays charged.
     pub deadline: Option<SubmissionDeadline>,
 }
 

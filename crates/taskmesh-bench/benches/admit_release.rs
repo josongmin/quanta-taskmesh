@@ -51,8 +51,13 @@ fn bench_admit_release(c: &mut Criterion) {
             "unknown class must reject"
         );
         b.iter(|| {
-            // black_box the verdict so the dead return cannot be elided.
-            black_box(governor.admit(&ghost));
+            // The verdict is the measured output: keep it alive for the
+            // optimizer and refuse to time anything but the reject path.
+            let verdict = black_box(governor.admit(&ghost));
+            assert!(
+                matches!(verdict, AdmissionDecision::Rejected(_)),
+                "the reject benchmark must reject"
+            );
         });
     });
 }

@@ -82,9 +82,10 @@ fn the_cpu_gate_and_the_rayon_pool_are_sized_from_one_answer() {
             ClassPolicy::new().max_inflight(8).cpu_units(1),
         )
         .cpu_executor(Arc::new(RayonCpuExecutor::new(2)))
-        .build()
-        .err()
-        .expect("a narrower pool is refused");
+        .build();
+    let Err(error) = error else {
+        panic!("a narrower pool is refused");
+    };
     assert_eq!(
         error,
         GovernorError::InvalidTopology(TopologyError::ExecutorDeclaresFewerWorkers {

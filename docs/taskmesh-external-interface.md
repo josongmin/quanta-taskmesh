@@ -1,7 +1,7 @@
 # Taskmesh External Interface
 
 ```rust
-use taskmesh::{Builder, ClassPolicy, ResourceBudget, Runtime, TaskClass, TaskSpec, TopologyConfig};
+use taskmesh::{Builder, CancellationPolicy, ClassPolicy, ResourceBudget, Runtime, TaskClass, TaskSpec, TopologyConfig};
 ```
 
 기본 사용법:
@@ -12,7 +12,11 @@ let runtime = Builder::new()
     .resources(ResourceBudget::new().cpu_units(64).memory_units(256))
     .class_policy(
         TaskClass::new("retrieval"),
-        ClassPolicy::new().max_inflight(32).max_queue_depth(128),
+        ClassPolicy::new()
+            .max_inflight(32)
+            .max_queue_depth(128)
+            // 아래 5번의 mid-run cancel·deadline은 이 정책이 있어야 발효된다.
+            .cancellation_policy(CancellationPolicy::CooperativeWithDeadline),
     )
     .build()?;
 
@@ -35,11 +39,14 @@ let out = runtime
 1. `.stage(...)`는 adapter/runtime owner용; `.reduce_stage(...)`는 fan-out + 결정적 reduce용
 2. `child_of(...)`는 composite permit attribution용 (root에 귀속)
 3. unknown class는 `AdmissionVerdict::UnknownClass`로 reject
-4. CPU executor 교체: `Builder::cpu_executor(Arc::new(taskmesh_rayon::RayonCpuExecutor::from_topology(&topo)))`
+4. CPU executor 교체: `Builder::cpu_executor(Arc::new(taskmesh::ext::RayonCpuExecutor::from_topology(&topo)))`
+   (`features = ["rayon"]`; 직접 `taskmesh-rayon` 의존 불필요). adapter가 `declared_workers`를 topology의
+   `cpu` gate보다 작게 선언하면 `build()`가 `ExecutorDeclaresFewerWorkers`로 거절한다.
 5. cancel/timeout: `run_*_with(spec, SubmitOptions::unbounded().with_cancel(token).with_acquire_timeout(d).with_deadline(d), ...)`
    - pre-submit cancel는 모든 클래스에서 honored.
    - **mid-run 협조 취소**는 `cancellation_policy`가 `Cooperative`/`CooperativeWithDeadline`인 클래스에서
-     `run_io`/`run_local`/`run_cpu` 모두 동작(→`GovernorError::Cancelled`). `run_cpu`는 토큰이 stalled
+     `run_io`/`run_local`/`run_cpu`/`run_blocking` 모두 동작(→`GovernorError::Cancelled`; 동기 경로에서는
+     caller의 대기만 끝나고 시작된 작업은 charged 상태로 끝까지 실행된다). `run_cpu`는 토큰이 stalled
      `CpuExecutor`에서도 caller wait를 탈출시키되, queued/running worker closure가 종료되거나 drop될 때까지
      permit/gate를 보유한다.
    - **run deadline**(`with_deadline`)은 `CooperativeWithDeadline` 클래스에서만 발효(→`GovernorError::DeadlineExceeded`).

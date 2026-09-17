@@ -44,8 +44,9 @@ The public surface a downstream consumer depends on is the `taskmesh` crate
 - `ExecutionPhase` (`DispatchReserved → Accepted → Running → CleanupPending`), the
   ownership phase of a live request; `rank()`, `has_started()`, `Display`.
 - `AdmissionVerdict::SubstrateSaturated { retry_after_ms }` (D01): an immediate
-  shed because the capability pool is full and the class does not queue. Its
-  `retry_after_ms` is reported by `AdmissionVerdict::retry_after_ms()`.
+  shed because the capability pool is full and there is no room to wait — the
+  class does not queue, or its queue is already full while its head waits on
+  that pool. Its `retry_after_ms` is reported by `AdmissionVerdict::retry_after_ms()`.
 - `TerminalReason` (`Reclaimed`, `Released`, `Abandoned`): why a queued ticket
   ended without its waiter taking ownership.
 - `GovernorError` variants (all additive; the enum was and is `#[non_exhaustive]`):
@@ -100,9 +101,32 @@ The public surface a downstream consumer depends on is the `taskmesh` crate
 - `LeakSweepReport::retained_active`: stale leak-detecting permits the sweep
   observed but left charged because their work had already reached an executor
   (TM16-010). Stale is not dead.
-- `RequestKey` is now exported from `taskmesh-engine` as the type of the
-  read-only `PendingView::request_key` field. It is *not* an input: no API
-  accepts one, and it is derived authoritatively from `root_operation_id`.
+- `RequestKey` is exported from `taskmesh-engine` and `taskmesh::ext` as the type
+  of the read-only `PendingView::request_key` field, with `as_str()` and
+  `Display`. It is *not* an input: no API accepts one, and it is derived
+  authoritatively from `root_operation_id`.
+- `taskmesh::MAX_REQUESTED_STACK_BYTES` (16 GiB): a `stack_size_bytes` above it
+  is refused by the host with `PolicyViolation("requested stack size … exceeds
+  the supported maximum …")` before `std::thread` sees it. Requests up to the
+  maximum are handed to the OS as before (an OS refusal is `WorkerUnavailable`).
+- `taskmesh::ext::TokioPermitWaker`: the host's `PermitWaker` adapter, for
+  embedders that drive `Governor::admit_waitable` / `claim` themselves.
+- `taskmesh::ext::RayonCpuExecutor` (with `features = ["rayon"]`): the Rayon
+  adapter is reachable through the facade; a direct `taskmesh-rayon`
+  dependency is no longer needed to size or share the pool.
+- `#[non_exhaustive]` — a `match` needs a `_` arm — on `GovernorError`,
+  `AdmissionVerdict`, `TerminalReason`, `ExecutionPhase`, `TopologyError`,
+  `ResourceConversionError`, `StageReleaseOutcome`, `ReconcileOutcome`, and the
+  struct `ExecutorCapabilities` (construct it from `legacy()` + builders, never
+  as a literal). Exhaustive by design, matchable without a wildcard:
+  `ClaimOutcome`, `ReleaseOutcome`, `CapacityBlock`, `AdmissionDecision`.
+- `#[must_use]` on every outcome an embedder could drop by mistake:
+  `AdmissionDecision`, `ClaimOutcome`, `ReleaseOutcome`, `StageReleaseOutcome`,
+  `ReconcileOutcome`, and `Governor::advance_phase`. A statement-form
+  `governor.admit(&spec);` is now a warning, because a dropped `Admitted` is a
+  leaked permit.
+- `Debug` for `TokioRuntime`, `Builder`, and `Governor` (identity and policy
+  summary; never the guarded state), `PartialEq`/`Eq` for `SubmissionDeadline`.
 - `ExecutionPhase` and `TerminalReason` are re-exported at the engine root.
 - `test-util` additions (not part of the consumer surface): `PolicySet::forge_substrates`,
   `Governor::drr_ring_visits`. New optional features `loom` and `shuttle` for
@@ -234,7 +258,7 @@ The public surface a downstream consumer depends on is the `taskmesh` crate
   `WorkerUnavailable`.
 - The saturating (`u32::MAX`) and unscaled (`0`) results of
   `MemoryUnitScale::units_for`; both are now typed errors.
-- Silent coercion of `FairnessPolicy::WeightedFairQueue { weight: 0 }` to
+- Silent coercion of `FairnessPolicy::WeightedFairQueue { weight: 0, .. }` to
   weight 1; weight `0` is rejected at construction.
 - Service debt for cancelled requests and idle credit accumulation in the
   fairness schedulers (TM16-014, TM16-037): a class that drained its queue does
@@ -302,15 +326,24 @@ loop {
     if let Some(permit) = governor.claim(ticket) {
         break permit;
     }
-    waker.wait().await;
+    waker.notified().await;
 }
 
-// 0.2.0
-use taskmesh::ext::ClaimOutcome;
+// 0.2.0 — the waker is the host adapter, registered at admission
+use std::sync::Arc;
+use taskmesh::ext::{AdmissionDecision, ClaimOutcome, PermitWaker, TokioPermitWaker};
+
+let waker = TokioPermitWaker::new(); // Arc<TokioPermitWaker>
+let port: Arc<dyn PermitWaker> = waker.clone();
+let ticket = match governor.admit_waitable(&spec, port) {
+    AdmissionDecision::Queued { ticket } => ticket,
+    AdmissionDecision::Admitted { permit_id } => return Ok(permit_id),
+    AdmissionDecision::Rejected(verdict) => return Err(GovernorError::Rejected(verdict)),
+};
 loop {
     match governor.claim(ticket) {
         ClaimOutcome::Ready(permit) => break Ok(permit),
-        ClaimOutcome::Pending => waker.wait().await,
+        ClaimOutcome::Pending => waker.notified().await,
         ClaimOutcome::Terminal(reason) => {
             break Err(GovernorError::TicketClaimTerminated { ticket, reason })
         }
@@ -318,6 +351,13 @@ loop {
     }
 }
 ```
+
+An embedder that drives the engine this way also owes the ownership phases:
+`governor.advance_phase(permit, ExecutionPhase::Running)` before the work and
+`CleanupPending` after. The leak sweep reclaims only `DispatchReserved` permits,
+so a permit that is never advanced is *reclaimable while its work runs* once
+`DEFAULT_LEAK_STALE_MS` (60 000 ms) passes on a `LeakDetecting` class; the phase
+gauges and `started_total` are meaningless without the declarations.
 
 `claim` consumes the ticket; use `Governor::ticket_status(ticket)` for a
 read-only look.
@@ -398,7 +438,7 @@ deserialize as 0.2.0 and vice versa. Changes:
 
 | Field | 0.1.0 | 0.2.0 |
 |---|---|---|
-| `Snapshot.schema_version` | — | `2` (`SNAPSHOT_SCHEMA_VERSION`, `taskmesh_contract`) |
+| `Snapshot.schema_version` | — | `2` (`taskmesh::SNAPSHOT_SCHEMA_VERSION`, also in `taskmesh_contract`) |
 | `Snapshot.capabilities` | — | `BTreeMap<String, CapabilityUsage { in_use: u32, limit: u32 }>`; `limit == 0` means ungated |
 | `ClassSnapshot.cpu_units_held`, `memory_units_held` | `u32`, JSON number | `u128`, JSON **decimal string** (`"6"`) |
 | `ClassSnapshot.dispatch_reserved`, `accepted`, `running`, `cleanup_pending` | — | `u32` phase gauges; they partition `inflight` |
@@ -441,7 +481,7 @@ strings. In 0.2.0:
 
 | Situation | 0.1.0 | 0.2.0 |
 |---|---|---|
-| job or adapter `spawn` panicked | `PolicyViolation("… panicked")` | `WorkerPanicked { context }` |
+| job or adapter `spawn` panicked | `PolicyViolation("… panicked")` (CPU / dedicated thread) or `PolicyViolation("spawn_blocking join failure")` (blocking pool) | `WorkerPanicked { context }` |
 | thread / owned runtime could not be created | `PolicyViolation("… spawn failed: …")` | `WorkerUnavailable { context, detail }` (job never started) |
 | adapter dropped the closure; worker vanished | `PolicyViolation("… dropped result")` | `JobAbandoned { context }` |
 | leak sweep reclaimed the lease before dispatch | not reported | `LeaseReclaimed { permit_id }` (job never started) |
@@ -456,7 +496,8 @@ consumer that matched `PolicyViolation` to detect worker failure must add arms
 for the new variants:
 
 ```rust
-// 0.1.0
+// 0.1.0 (the blocking pool said "spawn_blocking join failure", so this arm never
+// caught a blocking-pool panic — one more reason the strings were not a contract)
 Err(RunError::Governor(GovernorError::PolicyViolation(msg))) if msg.contains("panicked") => retry(),
 
 // 0.2.0
@@ -505,7 +546,10 @@ capability pool (`blocking`, `large_stack`, `maintenance`, `local_runtime`,
 `AdmissionVerdict::SubstrateSaturated { retry_after_ms }`. In 0.1.0 it waited
 in an unbounded host semaphore and either ran eventually or, with an
 `acquire_timeout`, came back as `SubstratePoolTimedOut`. `SubstratePoolTimedOut`
-is now only the expiry of a *bounded* wait by a queueing class.
+is now only the expiry of a *bounded* wait by a queueing class. A queueing class
+whose queue is *full* while blocked on a pool is also shed as
+`SubstrateSaturated` (not `QueueFull`): the verdict names the resource, and the
+full queue is why it could not wait for it.
 
 ```rust
 // 0.2.0 — keep the "eventually runs" behaviour by opting into a queue:
@@ -610,11 +654,24 @@ registry).
 - `MemoryUnitScale::units_for(bytes)` returns `Result<u32, ResourceConversionError>`
   (was `u32`, `0` when unscaled, `u32::MAX` on overflow). `Measured` / `Hybrid`
   reconciles that hit either edge report `ReconcileOutcome::ConversionFailed`.
-- `FairnessPolicy::WeightedFairQueue { weight: 0 }` and
+- `FairnessPolicy::WeightedFairQueue { weight: 0, burst: _ }` and
   `MemoryOvercommitPolicy::DegradeToLight` to a disabled fallback are rejected
   by `Builder::build` / `Governor::new` (`PolicyViolation`).
 - `acquire_timeout` includes the admission-lock wait; a permit granted after the
   budget expired is unwound and reported as `PermitAcquireTimedOut`, not started.
+- `run_blocking` honours a cancel token on a `Cooperative` /
+  `CooperativeWithDeadline` class as a **caller-wait** cancellation: the caller
+  gets `GovernorError::Cancelled` when the token fires, the started job keeps
+  running and stays charged until it returns (D10). In 0.1.0 `run_blocking`
+  never raced the token and always returned the job's result; a consumer that
+  passed a token to a blocking job on such a class now sees `Cancelled` instead.
+  `PreSubmitOnly` classes are unchanged (pre-submit only).
+- `Snapshot::capabilities` always contains every registered pool (`cpu`,
+  `blocking`, `large_stack`, `local_runtime`, `maintenance`, plus registered
+  extras): gated pools with their limit, ungated pools with `limit == 0` and
+  the live `in_use`. Before, an ungated pool was a key only while a job held it,
+  so `capabilities["maintenance"]` could panic on an idle runtime and a
+  dashboard saw keys appear and vanish.
 - After a deadline / cancel / dropped future, a synchronous worker stays charged
   (`running` / `cleanup_pending`) until it finishes; do not expect `inflight == 0`
   immediately after an `Err(DeadlineExceeded)` on `run_blocking` / `run_cpu`.

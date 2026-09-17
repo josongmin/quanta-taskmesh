@@ -449,9 +449,10 @@ fn a_cpu_gate_wider_than_the_executor_declares_is_refused_at_build() {
             ClassPolicy::new().max_inflight(8).cpu_units(1),
         )
         .cpu_executor(Arc::new(DeclaringExecutor { workers: 2 }))
-        .build()
-        .err()
-        .expect("fewer declared workers than the gate must be refused");
+        .build();
+    let Err(error) = error else {
+        panic!("fewer declared workers than the gate must be refused");
+    };
     assert_eq!(
         error,
         GovernorError::InvalidTopology(TopologyError::ExecutorDeclaresFewerWorkers {
@@ -469,9 +470,10 @@ fn a_cpu_gate_wider_than_the_executor_declares_is_refused_at_build() {
             ClassPolicy::new().max_inflight(8).cpu_units(1),
         )
         .cpu_executor(Arc::new(DeclaringExecutor { workers: 3 }))
-        .build()
-        .err()
-        .expect("one worker short of the gate is still fewer");
+        .build();
+    let Err(error) = error else {
+        panic!("one worker short of the gate is still fewer");
+    };
     assert_eq!(
         error,
         GovernorError::InvalidTopology(TopologyError::ExecutorDeclaresFewerWorkers {

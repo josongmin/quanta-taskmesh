@@ -497,7 +497,11 @@ async fn requested_stack_absolute_deadline_holds_permit_during_long_poll_v1() {
         error,
         RunError::Governor(GovernorError::DeadlineExceeded)
     ));
-    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+    // D10: the deadline answer is sent *before* the owned runtime is torn
+    // down, and the lease travels with the teardown. So the caller can hold
+    // the error while the worker is still charged for a moment; the contract
+    // is that it drains, not that it is already zero.
+    assert_drains(&rt, "c", "requested-stack deadline teardown").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -531,7 +535,9 @@ async fn requested_stack_async_runtime_honors_cooperative_cancel_v1() {
         error,
         RunError::Governor(GovernorError::Cancelled)
     ));
-    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+    // As for the deadline: the terminal reply precedes the owned runtime's
+    // teardown (D10), so drain rather than assert an instant zero.
+    assert_drains(&rt, "c", "requested-stack cancel teardown").await;
 }
 
 // ---- F: run_local honors cooperative cancel (was previously excluded) ------

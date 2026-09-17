@@ -224,6 +224,101 @@ fn drr_selection_matches_the_reference_for_mixed_quanta_and_costs() {
 }
 
 #[test]
+fn drr_selection_matches_the_reference_for_heterogeneous_costs() {
+    // Every other DRR fixture costs one unit per request, which leaves the
+    // arithmetic ring walk's closed forms degenerate: `cost - deficit` is
+    // always one, one visit always suffices, and the credit for skipped rounds
+    // is always a single quantum. Heterogeneous costs are where the closed
+    // form has to agree with the naive walk: a head costing several quanta is
+    // served on a later lap, and every class passed on the way is credited
+    // exactly the laps it was passed. One release frees the whole budget, so
+    // capacity never filters a candidate and the order is the scheduler's
+    // alone; fewer than `PROMOTION_BUDGET` requests keeps it to one pass.
+    let classes = [("a", 1u32, 3u32), ("b", 2, 1), ("c", 1, 2)]; // (name, quantum, cost)
+    let per_class = 6u32;
+    let total: u32 = classes.iter().map(|(_, _, cost)| cost * per_class).sum();
+    let queued_total = usize::try_from(per_class).expect("small") * classes.len();
+    assert!(
+        queued_total < taskmesh_engine::PROMOTION_BUDGET,
+        "the whole backlog is promoted in one pass"
+    );
+    let mut map: BTreeMap<TaskClass, ClassPolicy> = BTreeMap::new();
+    for (name, quantum, cost) in &classes {
+        map.insert(
+            TaskClass::new(*name),
+            ClassPolicy::new()
+                .max_inflight(1_000)
+                .max_queue_depth(1_000)
+                .cpu_units(*cost)
+                .overflow_policy(OverflowPolicy::QueueWithinDepth)
+                .fairness(FairnessPolicy::DeficitRoundRobin { quantum: *quantum }),
+        );
+    }
+    map.insert(
+        TaskClass::new("holder"),
+        ClassPolicy::new()
+            .max_inflight(1)
+            .cpu_units(total)
+            .fairness(FairnessPolicy::DeficitRoundRobin { quantum: 1 }),
+    );
+    let g = Governor::new(
+        PolicySet::new(ResourceBudget::new().cpu_units(total), map),
+        Arc::new(ManualClock::new(0)),
+    )
+    .expect("valid policy");
+    let mut reference = ReferenceDrr::new(
+        classes
+            .iter()
+            .map(|(name, quantum, _)| ((*name).to_string(), u64::from(*quantum)))
+            .collect(),
+    );
+
+    let holder = admit_one(&g, "holder", "holder");
+    let mut tickets: Vec<(u64, String)> = Vec::new();
+    for round in 0..per_class {
+        for (name, _, cost) in &classes {
+            tickets.push((
+                queue_one(&g, name, &format!("{name}{round}")),
+                (*name).to_string(),
+            ));
+            reference.enqueue(name, u64::from(*cost));
+        }
+    }
+
+    // One release frees exactly the backlog's total cost.
+    assert_eq!(g.release(holder), ReleaseOutcome::Released);
+    let mut promoted: Vec<(PermitId, String)> = tickets
+        .iter()
+        .filter_map(|(ticket, class)| match g.ticket_status(*ticket) {
+            ClaimOutcome::Ready(permit) => Some((permit, class.clone())),
+            _ => None,
+        })
+        .collect();
+    promoted.sort_by_key(|(permit, _)| *permit);
+    assert_eq!(
+        promoted.len(),
+        queued_total,
+        "every queued request fits the freed budget, so all of them are promoted"
+    );
+    let observed: Vec<String> = promoted.iter().map(|(_, class)| class.clone()).collect();
+    let expected: Vec<String> = (0..queued_total)
+        .map(|_| reference.select().expect("the reference still has work"))
+        .collect();
+    assert_eq!(
+        observed, expected,
+        "heterogeneous-cost DRR order must equal the reference walk"
+    );
+
+    for (ticket, _) in &tickets {
+        let ClaimOutcome::Ready(permit) = g.claim(*ticket) else {
+            panic!("promoted by the single pass");
+        };
+        assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    }
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
+#[test]
 fn drr_order_is_exact_across_the_promotion_budget_boundary() {
     // One release frees far more than `PROMOTION_BUDGET` units at once, so
     // promotion runs as several bounded passes with the lock dropped between
@@ -612,6 +707,172 @@ fn a_newcomer_of_another_class_also_waits_for_the_pending_continuation() {
 }
 
 #[test]
+fn an_unqueueable_newcomer_is_admitted_in_the_continuation_gap() {
+    // The pending-continuation rule queues a gap arrival so the pass can order
+    // it against the earlier arrivals — but only a class that *has* a queue
+    // can be ordered that way. A `Reject`-overflow class whose memory policy
+    // does not queue has nowhere to wait: routed to a queue it does not have,
+    // it would be shed as `QueueFull` at depth zero while capacity sits free.
+    // It is admitted instead — the one overtake the gap permits, and only by
+    // work that could not have waited.
+    let budget = taskmesh_engine::PROMOTION_BUDGET;
+    let queued_total = budget + 36; // one full pass and a tail
+    let units = u32::try_from(queued_total + 1).expect("small");
+    let mut map: BTreeMap<TaskClass, ClassPolicy> = BTreeMap::new();
+    map.insert(
+        TaskClass::new("a"),
+        ClassPolicy::new()
+            .max_inflight(1_000)
+            .max_queue_depth(1_000)
+            .cpu_units(1)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth)
+            .fairness(FairnessPolicy::Fifo),
+    );
+    // `Reject` overflow, `Reject` memory overcommit: no queue at all.
+    map.insert(
+        TaskClass::new("b"),
+        ClassPolicy::new().max_inflight(1_000).cpu_units(1),
+    );
+    map.insert(
+        TaskClass::new("holder"),
+        ClassPolicy::new().max_inflight(1).cpu_units(units),
+    );
+    let g = Arc::new(
+        Governor::new(
+            PolicySet::new(ResourceBudget::new().cpu_units(units), map),
+            Arc::new(ManualClock::new(0)),
+        )
+        .expect("valid policy"),
+    );
+    let holder = admit_one(&g, "holder", "holder");
+    let waker = Arc::new(CrossClassSubmittingWaker {
+        governor: Arc::clone(&g),
+        newcomer_class: "b",
+        outcome: std::sync::Mutex::new(None),
+    });
+    let port: Arc<dyn taskmesh_contract::PermitWaker> = waker.clone();
+    let AdmissionDecision::Queued { ticket: first } = g.admit_waitable(&spec("a", "a0"), port)
+    else {
+        panic!("queues behind the holder");
+    };
+    let mut tickets = vec![first];
+    for i in 1..queued_total {
+        tickets.push(queue_one(&g, "a", &format!("a{i}")));
+    }
+
+    assert_eq!(g.release(holder), ReleaseOutcome::Released);
+
+    let (decision, blocked_on) = waker
+        .outcome
+        .lock()
+        .expect("lock")
+        .take()
+        .expect("woken by the first pass");
+    let AdmissionDecision::Admitted {
+        permit_id: newcomer,
+    } = decision
+    else {
+        panic!(
+            "an unqueueable newcomer must be admitted in the gap, not routed to a queue it does not have: got {decision:?}"
+        );
+    };
+    assert_eq!(blocked_on, None, "an admitted request was not blocked");
+
+    // Every earlier `a` arrival is still promoted by the continuation; the
+    // newcomer took the one spare unit, so the tail waits for its release.
+    assert_eq!(g.release(newcomer), ReleaseOutcome::Released);
+    for ticket in &tickets {
+        let ClaimOutcome::Ready(permit) = g.claim(*ticket) else {
+            panic!("every earlier `a` arrival is promoted once the budget allows");
+        };
+        assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    }
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
+#[test]
+fn no_continuation_is_owed_when_a_pass_ends_exactly_at_its_budget() {
+    // A pass that grants exactly `PROMOTION_BUDGET` permits has spent its
+    // budget, and only then asks whether anything runnable remains. With the
+    // queues drained the honest answer is no — and that answer is what the
+    // woken waiters see. A queueable newcomer submitted from the wake must be
+    // admitted directly: nothing is pending, so there is nothing to queue
+    // behind. An oracle that always claims more work would queue it behind an
+    // empty ring, waiting for a continuation pass with nothing to do.
+    let budget = taskmesh_engine::PROMOTION_BUDGET;
+    let units = u32::try_from(budget + 1).expect("small"); // the pass + the newcomer
+    let mut map: BTreeMap<TaskClass, ClassPolicy> = BTreeMap::new();
+    for name in ["a", "b"] {
+        map.insert(
+            TaskClass::new(name),
+            ClassPolicy::new()
+                .max_inflight(1_000)
+                .max_queue_depth(1_000)
+                .cpu_units(1)
+                .overflow_policy(OverflowPolicy::QueueWithinDepth)
+                .fairness(FairnessPolicy::Fifo),
+        );
+    }
+    map.insert(
+        TaskClass::new("holder"),
+        ClassPolicy::new().max_inflight(1).cpu_units(units),
+    );
+    let g = Arc::new(
+        Governor::new(
+            PolicySet::new(ResourceBudget::new().cpu_units(units), map),
+            Arc::new(ManualClock::new(0)),
+        )
+        .expect("valid policy"),
+    );
+    let holder = admit_one(&g, "holder", "holder");
+    let waker = Arc::new(CrossClassSubmittingWaker {
+        governor: Arc::clone(&g),
+        newcomer_class: "b",
+        outcome: std::sync::Mutex::new(None),
+    });
+    let port: Arc<dyn taskmesh_contract::PermitWaker> = waker.clone();
+    let AdmissionDecision::Queued { ticket: first } = g.admit_waitable(&spec("a", "a0"), port)
+    else {
+        panic!("queues behind the holder");
+    };
+    let mut tickets = vec![first];
+    for i in 1..budget {
+        tickets.push(queue_one(&g, "a", &format!("a{i}")));
+    }
+    assert_eq!(
+        tickets.len(),
+        budget,
+        "exactly one budget's worth is queued"
+    );
+
+    assert_eq!(g.release(holder), ReleaseOutcome::Released);
+
+    let (decision, blocked_on) = waker
+        .outcome
+        .lock()
+        .expect("lock")
+        .take()
+        .expect("woken by the pass");
+    let AdmissionDecision::Admitted {
+        permit_id: newcomer,
+    } = decision
+    else {
+        panic!(
+            "no continuation is owed at exactly the budget: a queueable newcomer must be admitted directly, got {decision:?}"
+        );
+    };
+    assert_eq!(blocked_on, None);
+    for ticket in &tickets {
+        let ClaimOutcome::Ready(permit) = g.claim(*ticket) else {
+            panic!("every queued `a` was granted by the one pass");
+        };
+        assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    }
+    assert_eq!(g.release(newcomer), ReleaseOutcome::Released);
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
+#[test]
 fn a_reject_class_that_queues_on_memory_joins_its_queue_behind_a_runnable_head() {
     // `overflow_policy = Reject` but `memory_overcommit_policy = Queue`: the
     // class *does* have a queue (memory-blocked requests wait in it). A
@@ -925,6 +1186,13 @@ fn drr_examines_each_runnable_class_once_per_selection() {
     assert!(
         visits <= 2,
         "selection examined {visits} ring positions; the bound is O(runnable classes), not O(cost/quantum)"
+    );
+    // The oracle must have counted the selection at all: a promotion that
+    // examined no ring position is not a DRR selection, and an oracle stuck at
+    // zero would satisfy any upper bound.
+    assert!(
+        visits >= 1,
+        "the selection that promoted the expensive head examined no ring position; the oracle is not counting"
     );
     assert!(
         matches!(g.ticket_status(expensive), ClaimOutcome::Ready(_)),

@@ -10,6 +10,20 @@ use std::time::Duration;
 use taskmesh::ext::*;
 use taskmesh::*;
 
+/// How long a bounded-wait assertion waits before declaring a hang. Far above
+/// any budget under test, far below "the test binary never finishes".
+const HANG: Duration = Duration::from_secs(5);
+
+/// Await `future` for at most [`HANG`]; a longer wait is reported as the named
+/// regression, not endured. A test whose only failure mode is a hang is not a
+/// test the CI runner can attribute to anything.
+async fn bounded<F: std::future::Future>(what: &str, future: F) -> F::Output {
+    let Ok(output) = tokio::time::timeout(HANG, future).await else {
+        panic!("{what}: the caller was still waiting after {HANG:?}");
+    };
+    output
+}
+
 /// Wait (bounded) for a class to drain, then assert it did.
 ///
 /// A caller's answer and the work's custody are separate events: a deadline
@@ -79,10 +93,12 @@ async fn deadline_cancels_cooperative_with_deadline() {
     let rt = rt(CancellationPolicy::CooperativeWithDeadline);
     let spec = TaskSpec::io(TaskClass::new("c")).operation("op");
     let opts = SubmitOptions::unbounded().with_deadline(Duration::from_millis(40));
-    let err = rt
-        .run_io_with(spec, opts, std::future::pending::<Result<(), ()>>())
-        .await
-        .expect_err("deadline must fire");
+    let err = bounded(
+        "deadline_cancels_cooperative_with_deadline: the 40ms run deadline never fired",
+        rt.run_io_with(spec, opts, std::future::pending::<Result<(), ()>>()),
+    )
+    .await
+    .expect_err("deadline must fire");
     assert!(matches!(
         err,
         RunError::Governor(GovernorError::DeadlineExceeded)
@@ -197,6 +213,79 @@ async fn absolute_deadline_is_one_budget_across_queue_and_execution_v1() {
         RunError::Governor(GovernorError::DeadlineExceeded)
     ));
     assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_absolute_deadline_that_expires_while_queued_is_deadline_exceeded_v1() {
+    // The absolute deadline is one budget across the queue wait and the run.
+    // When it expires while the request is still queued, the queue wait ends
+    // as an acquisition timeout — but the caller asked for a completion bound,
+    // not an acquisition bound, and the error must say which budget ran out.
+    // The occupied permit is never released: the deadline is the only thing
+    // that can end the wait.
+    let rt = single_slot_deadline_rt();
+    let spec = TaskSpec::io(TaskClass::new("c")).operation("expires-while-queued");
+    let occupied = match rt.governor().admit(&spec) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("expected occupied permit, got {other:?}"),
+    };
+    let started = Arc::new(AtomicBool::new(false));
+    let worker_started = Arc::clone(&started);
+    let options = SubmitOptions::unbounded()
+        .with_absolute_deadline(std::time::Instant::now() + Duration::from_millis(60));
+    let error = bounded(
+        "an_absolute_deadline_that_expires_while_queued_is_deadline_exceeded_v1: the queue wait never ended",
+        rt.run_io_with(spec, options, async move {
+            worker_started.store(true, Ordering::SeqCst);
+            Ok::<(), ()>(())
+        }),
+    )
+    .await
+    .expect_err("the absolute deadline expires before the slot frees");
+    assert!(
+        !started.load(Ordering::SeqCst),
+        "work that never acquired a permit must not start"
+    );
+    assert!(
+        matches!(error, RunError::Governor(GovernorError::DeadlineExceeded)),
+        "an absolute deadline expiring in the queue is DeadlineExceeded, not an acquisition timeout: got {error:?}"
+    );
+    assert_eq!(rt.governor().release(occupied), ReleaseOutcome::Released);
+    assert_drains(&rt, "c", "queued request abandoned on deadline").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_acquire_timeout_under_a_far_absolute_deadline_stays_an_acquisition_timeout_v1() {
+    // The converse: the acquisition budget ran out while the completion budget
+    // has most of a minute left. The caller's completion bound was not the
+    // reason the wait ended, so reporting `DeadlineExceeded` would blame a
+    // budget that never expired. The occupied permit is never released.
+    let rt = single_slot_deadline_rt();
+    let spec = TaskSpec::io(TaskClass::new("c")).operation("acquire-times-out");
+    let occupied = match rt.governor().admit(&spec) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("expected occupied permit, got {other:?}"),
+    };
+    let options = SubmitOptions::unbounded()
+        .with_acquire_timeout(Duration::from_millis(40))
+        .with_absolute_deadline(std::time::Instant::now() + Duration::from_secs(60));
+    let error = bounded(
+        "an_acquire_timeout_under_a_far_absolute_deadline_stays_an_acquisition_timeout_v1: the acquire timeout never fired",
+        rt.run_io_with(spec, options, async { Ok::<(), ()>(()) }),
+    )
+    .await
+    .expect_err("the acquire timeout expires before the slot frees");
+    assert!(
+        matches!(
+            error,
+            RunError::Governor(GovernorError::Rejected(
+                AdmissionVerdict::PermitAcquireTimedOut { .. }
+            ))
+        ),
+        "an acquisition timeout under a live absolute deadline stays PermitAcquireTimedOut: got {error:?}"
+    );
+    assert_eq!(rt.governor().release(occupied), ReleaseOutcome::Released);
+    assert_drains(&rt, "c", "queued request abandoned on acquire timeout").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -384,9 +473,15 @@ async fn requested_stack_absolute_deadline_holds_permit_during_long_poll_v1() {
         }
     });
 
-    while !poll_started.load(Ordering::SeqCst) {
-        tokio::task::yield_now().await;
-    }
+    bounded(
+        "requested_stack_absolute_deadline_holds_permit_during_long_poll_v1: the worker never started polling",
+        async {
+            while !poll_started.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        },
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(60)).await;
     assert_eq!(
         rt.snapshot().classes[&TaskClass::new("c")].inflight,

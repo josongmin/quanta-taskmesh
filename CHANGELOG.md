@@ -278,7 +278,9 @@ The public surface a downstream consumer depends on is the `taskmesh` crate
   permit granted after expiry started the job anyway.
 - `MemoryOvercommitPolicy::DegradeToLight` pointing at a disabled fallback
   (`max_inflight = 0`) shed every degraded request as `ClassDisabled` naming the
-  wrong class; it is now rejected at construction (D14).
+  wrong class; it is now rejected at construction (D14). A fallback that itself
+  declares `DegradeToLight` (a chain `a → b → c` or a cycle `a → b → a`) promised
+  a second hop the engine never takes; it is rejected at construction too (D03).
 - A panic in the root future of a requested-stack async worker is reported to
   the caller *before* the owned runtime is torn down (D10 revision).
 
@@ -611,8 +613,9 @@ registry).
   (was `u32`, `0` when unscaled, `u32::MAX` on overflow). `Measured` / `Hybrid`
   reconciles that hit either edge report `ReconcileOutcome::ConversionFailed`.
 - `FairnessPolicy::WeightedFairQueue { weight: 0 }` and
-  `MemoryOvercommitPolicy::DegradeToLight` to a disabled fallback are rejected
-  by `Builder::build` / `Governor::new` (`PolicyViolation`).
+  `MemoryOvercommitPolicy::DegradeToLight` to a disabled fallback — or to a
+  fallback that itself degrades (a degrade is one hop) — are rejected by
+  `Builder::build` / `Governor::new` (`PolicyViolation`).
 - `acquire_timeout` includes the admission-lock wait; a permit granted after the
   budget expired is unwound and reported as `PermitAcquireTimedOut`, not started.
 - After a deadline / cancel / dropped future, a synchronous worker stays charged

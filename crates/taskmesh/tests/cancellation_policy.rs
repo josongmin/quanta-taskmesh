@@ -6,6 +6,20 @@ use std::time::Duration;
 
 use taskmesh::*;
 
+/// How long a bounded-wait assertion waits before declaring a hang. Far above
+/// any budget under test, far below "the test binary never finishes".
+const HANG: Duration = Duration::from_secs(5);
+
+/// Await `future` for at most [`HANG`]; a longer wait is reported as the named
+/// regression, not endured. A test whose only failure mode is a hang is not a
+/// test the CI runner can attribute to anything.
+async fn bounded<F: std::future::Future>(what: &str, future: F) -> F::Output {
+    let Ok(output) = tokio::time::timeout(HANG, future).await else {
+        panic!("{what}: the caller was still waiting after {HANG:?}");
+    };
+    output
+}
+
 fn runtime(policy: CancellationPolicy) -> TokioRuntime {
     Builder::new()
         .resources(ResourceBudget::new().cpu_units(64).memory_units(64))
@@ -44,10 +58,13 @@ async fn cooperative_class_cancels_mid_run() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     token.cancel(); // fire mid-run
 
-    let err = handle
-        .await
-        .unwrap()
-        .expect_err("must be cancelled mid-run");
+    let err = bounded(
+        "cooperative_class_cancels_mid_run: the cancelled work never returned",
+        handle,
+    )
+    .await
+    .unwrap()
+    .expect_err("must be cancelled mid-run");
     assert!(matches!(err, RunError::Governor(GovernorError::Cancelled)));
 
     // Permit released by the guard — runtime drained and usable.

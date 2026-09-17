@@ -122,6 +122,82 @@ fn queue_depth_exceeded_returns_queue_full() {
 }
 
 #[test]
+fn a_full_queue_sheds_with_the_cause_that_blocked_the_request() {
+    // A queueable class at its queue depth sheds the next arrival. The verdict
+    // names what that arrival was blocked on — the saturated capability pool,
+    // or memory — not a generic `QueueFull`: an operator sizing a worker pool
+    // and one sizing a queue are solving different problems, and one verdict
+    // for both hides which it is.
+    let mut classes = BTreeMap::new();
+    classes.insert(
+        TaskClass::new("c"),
+        ClassPolicy::new()
+            .max_inflight(8)
+            .max_queue_depth(1)
+            .cpu_units(1)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth),
+    );
+    let g = Governor::new(
+        PolicySet::new(ResourceBudget::new().cpu_units(100), classes)
+            .with_capability_limits(BTreeMap::from([("blocking".to_string(), 1)]))
+            .expect("registered pool"),
+        Arc::new(ManualClock::new(0)),
+    )
+    .expect("valid policy");
+    let AdmissionDecision::Admitted { permit_id: holder } = g.admit(&spec("c")) else {
+        panic!("the single blocking slot is free");
+    };
+    let AdmissionDecision::Queued { ticket } = g.admit(&spec("c")) else {
+        panic!("the second request waits for the slot");
+    };
+    assert_eq!(
+        g.pending_block_reason(ticket),
+        Some(CapacityBlock::Capability)
+    );
+    let third = g.admit(&spec("c"));
+    assert!(
+        matches!(
+            third,
+            AdmissionDecision::Rejected(AdmissionVerdict::SubstrateSaturated { .. })
+        ),
+        "a full queue behind a saturated capability pool sheds with SubstrateSaturated, got {third:?}"
+    );
+    assert_eq!(g.release(holder), ReleaseOutcome::Released);
+
+    // The memory twin: a class that queues on overcommit, at depth.
+    let mut classes = BTreeMap::new();
+    classes.insert(
+        TaskClass::new("m"),
+        ClassPolicy::new()
+            .max_inflight(8)
+            .max_queue_depth(1)
+            .memory_units(10)
+            .memory_overcommit_policy(MemoryOvercommitPolicy::Queue),
+    );
+    let g = Governor::new(
+        PolicySet::new(ResourceBudget::new().memory_units(10), classes),
+        Arc::new(ManualClock::new(0)),
+    )
+    .expect("valid policy");
+    let AdmissionDecision::Admitted { permit_id: holder } = g.admit(&spec("m")) else {
+        panic!("the whole memory budget is free");
+    };
+    let AdmissionDecision::Queued { ticket } = g.admit(&spec("m")) else {
+        panic!("the second request queues on memory");
+    };
+    assert_eq!(g.pending_block_reason(ticket), Some(CapacityBlock::Memory));
+    let third = g.admit(&spec("m"));
+    assert!(
+        matches!(
+            third,
+            AdmissionDecision::Rejected(AdmissionVerdict::MemorySaturated { .. })
+        ),
+        "a full queue behind saturated memory sheds with MemorySaturated, got {third:?}"
+    );
+    assert_eq!(g.release(holder), ReleaseOutcome::Released);
+}
+
+#[test]
 fn release_promotes_queued_work() {
     let g = gov(
         ResourceBudget::new(),

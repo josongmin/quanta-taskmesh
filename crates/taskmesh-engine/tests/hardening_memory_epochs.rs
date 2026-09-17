@@ -17,12 +17,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use taskmesh_contract::{
-    ClassPolicy, ManualClock, MemoryPermitMode, MemoryReleasePolicy, ResourceBudget, TaskClass,
-    TaskSpec,
+    ClassPolicy, ManualClock, MemoryOvercommitPolicy, MemoryPermitMode, MemoryReleasePolicy,
+    ResourceBudget, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
-    AdmissionDecision, Governor, PermitId, PolicySet, ReconcileOutcome, ReleaseOutcome,
-    StageReleaseOutcome,
+    AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId, PolicySet,
+    ReconcileOutcome, ReleaseOutcome, StageReleaseOutcome,
 };
 
 fn gov(policy: ClassPolicy) -> (Governor, Arc<ManualClock>) {
@@ -215,6 +215,119 @@ fn stage_release_reports_unknown_and_duplicate_events() {
     );
     assert_eq!(held(&g), 5);
     assert_eq!(g.release(permit), ReleaseOutcome::Released);
+}
+
+// ---- R3-mutants: a stage release hands its units to queued work -------------
+
+/// A governor whose memory budget fits exactly two permits of class `c`; a
+/// third queues on memory and is only promotable by units coming back.
+fn memory_contended() -> Governor {
+    let mut classes = BTreeMap::new();
+    classes.insert(
+        TaskClass::new("c"),
+        ClassPolicy::new()
+            .max_inflight(8)
+            .max_queue_depth(4)
+            .memory_units(5)
+            .memory_release_policy(MemoryReleasePolicy::OnStageBoundary)
+            .memory_overcommit_policy(MemoryOvercommitPolicy::Queue),
+    );
+    Governor::new(
+        PolicySet::new(
+            ResourceBudget::new()
+                .memory_units(10)
+                .cpu_units(10_000)
+                .memory_unit_scale(1),
+            classes,
+        ),
+        Arc::new(ManualClock::new(1_000)),
+    )
+    .expect("valid policy")
+}
+
+#[test]
+fn a_stage_release_promotes_work_queued_on_memory() {
+    // Returning memory at a stage boundary is a capacity-freeing transition
+    // like a release or a downward reconcile: the units it returns belong to
+    // whoever is queued for them, in the same transition. A stage release that
+    // only updated the ledger would leave the queued request waiting for an
+    // event that never comes — the holder is still running, so no
+    // task-completion release is due, and nothing else frees memory.
+    let g = memory_contended();
+    let first = admit(&g, "first");
+    let second = admit(&g, "second");
+    let AdmissionDecision::Queued { ticket } =
+        g.admit(&TaskSpec::io(TaskClass::new("c")).operation("third"))
+    else {
+        panic!("the third request does not fit a budget of two");
+    };
+    assert_eq!(g.pending_block_reason(ticket), Some(CapacityBlock::Memory));
+
+    assert_eq!(
+        g.release_stage_memory(first, 5),
+        StageReleaseOutcome::Released { freed_units: 5 }
+    );
+    let status = g.ticket_status(ticket);
+    assert!(
+        matches!(status, ClaimOutcome::Ready(_)),
+        "a stage release that freed 5 units must promote the request queued on memory, got {status:?}"
+    );
+    let ClaimOutcome::Ready(third) = g.claim(ticket) else {
+        panic!("promoted a moment ago");
+    };
+    assert_eq!(
+        held(&g),
+        10,
+        "the freed units are held by the promoted request"
+    );
+    for permit in [first, second, third] {
+        assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    }
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
+#[test]
+fn stage_release_outcomes_report_their_freed_units() {
+    // The accessors are how a host folds the outcome into its own accounting:
+    // only a real release reports units, and every refusal reports zero *and*
+    // says it was not a release.
+    let released = StageReleaseOutcome::Released { freed_units: 6 };
+    assert_eq!(released.freed_units(), 6);
+    assert!(released.is_released());
+    let forbidden = StageReleaseOutcome::PolicyForbids {
+        policy: MemoryReleasePolicy::OnTaskCompletion,
+    };
+    assert_eq!(
+        forbidden.freed_units(),
+        0,
+        "a refused release freed nothing"
+    );
+    assert!(
+        !forbidden.is_released(),
+        "a refused release is not a release"
+    );
+    assert_eq!(StageReleaseOutcome::UnknownPermit.freed_units(), 0);
+    assert!(!StageReleaseOutcome::UnknownPermit.is_released());
+    let stale = StageReleaseOutcome::StaleSequence {
+        current_sequence: 3,
+    };
+    assert_eq!(stale.freed_units(), 0);
+    assert!(!stale.is_released());
+}
+
+#[test]
+fn reconciling_an_unknown_permit_applies_nothing() {
+    let (g, _clock) = gov(ClassPolicy::new().max_inflight(4).memory_units(4));
+    assert!(
+        !g.reconcile_memory(u64::MAX, 1),
+        "a reconcile against a permit that does not exist is not applied"
+    );
+    assert_eq!(
+        g.reconcile_memory_at(u64::MAX, 1, 1),
+        ReconcileOutcome::UnknownPermit
+    );
+    assert!(!ReconcileOutcome::UnknownPermit.is_applied());
+    assert!(ReconcileOutcome::Applied { held_units: 1 }.is_applied());
 }
 
 // ---- TM16-009: stage activity is a heartbeat --------------------------------

@@ -51,6 +51,32 @@ fn unknown_class_reject_does_not_derive_request_key() {
 }
 
 #[test]
+fn registered_capability_names_are_interned_once() {
+    // Admission resolves a request's pool to a shared name. For a registered
+    // pool that is a clone of one interned `Arc` — the same allocation every
+    // time — which is what keeps the governance hot path allocation-free for
+    // every built-in hint. A pool no substrate provides has nothing interned.
+    let g = gov(ClassPolicy::new().max_inflight(8));
+    let first = g
+        .policy()
+        .capability_name("blocking")
+        .expect("the built-in blocking pool is registered, so its name is interned");
+    let second = g
+        .policy()
+        .capability_name("blocking")
+        .expect("a second lookup finds the same registered pool");
+    assert!(
+        Arc::ptr_eq(&first, &second),
+        "two lookups of a registered pool must share one interned allocation"
+    );
+    assert_eq!(&*first, "blocking");
+    assert!(
+        g.policy().capability_name("gpu").is_none(),
+        "an unregistered pool has no interned name"
+    );
+}
+
+#[test]
 fn queued_request_derives_request_key_once() {
     let _guard = REQUEST_KEY_COUNTER_LOCK.lock().expect("lock");
     reset_request_key_derive_count();

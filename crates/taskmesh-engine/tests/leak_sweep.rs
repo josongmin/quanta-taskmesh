@@ -60,6 +60,96 @@ fn default_leak_window_is_exposed() {
 }
 
 #[test]
+fn the_default_sweep_window_is_exclusive_at_its_boundary() {
+    // `reap_leaks()` is `reap_leaks_with(DEFAULT_LEAK_STALE_MS)`, and staleness
+    // is "untouched for *longer than* the window": a lease exactly the window
+    // old is not yet stale, one millisecond older is.
+    let (g, clock, c) = gov();
+    let permit = admit(&g);
+    clock.advance(DEFAULT_LEAK_STALE_MS);
+    let at_boundary = g.reap_leaks();
+    assert_eq!(
+        at_boundary.reclaimed_permits, 0,
+        "a lease exactly DEFAULT_LEAK_STALE_MS old is not stale: the window is exclusive"
+    );
+    assert_eq!(at_boundary.suspected_leaks, 0);
+    assert_eq!(g.snapshot().classes[&c].inflight, 1);
+
+    clock.advance(1);
+    let past = g.reap_leaks();
+    assert_eq!(
+        past.reclaimed_permits, 1,
+        "one millisecond past the default window the lease is reclaimed"
+    );
+    assert!(
+        g.permit_ledger(permit).is_none(),
+        "the reclaimed permit is gone"
+    );
+    assert_eq!(g.snapshot().classes[&c].inflight, 0);
+}
+
+#[test]
+fn a_reclaimed_leak_promotes_work_queued_on_memory() {
+    // Reclaiming a leaked lease returns its memory, and that memory belongs to
+    // whoever is queued for it — in the same sweep. A sweep that only unwound
+    // the ledger would leave the queued request waiting: nothing else frees
+    // memory, because the other holder is live and running.
+    let mut classes = BTreeMap::new();
+    classes.insert(
+        TaskClass::new("c"),
+        ClassPolicy::new()
+            .max_inflight(8)
+            .max_queue_depth(4)
+            .memory_units(5)
+            .memory_release_policy(MemoryReleasePolicy::LeakDetecting)
+            .memory_overcommit_policy(MemoryOvercommitPolicy::Queue),
+    );
+    let clock = Arc::new(ManualClock::new(1_000));
+    let g = Governor::new(
+        PolicySet::new(
+            ResourceBudget::new().cpu_units(100).memory_units(10),
+            classes,
+        ),
+        clock.clone(),
+    )
+    .expect("valid policy");
+    let leaked = admit(&g);
+    let running = admit(&g);
+    assert!(g.advance_phase(running, ExecutionPhase::Running));
+    let AdmissionDecision::Queued { ticket } =
+        g.admit(&TaskSpec::blocking(TaskClass::new("c")).operation("third"))
+    else {
+        panic!("the third request does not fit a budget of two");
+    };
+    assert_eq!(g.pending_block_reason(ticket), Some(CapacityBlock::Memory));
+
+    clock.advance(10_000);
+    let report = g.reap_leaks_with(1_000);
+    assert_eq!(
+        report.reclaimed_permits, 1,
+        "only the lease that never reached an executor is reclaimed"
+    );
+    assert_eq!(report.retained_active, 1, "the running lease stays charged");
+    let status = g.ticket_status(ticket);
+    assert!(
+        matches!(status, ClaimOutcome::Ready(_)),
+        "a sweep that reclaimed 5 units must promote the request queued on memory, got {status:?}"
+    );
+    assert!(g.permit_ledger(leaked).is_none());
+    let ClaimOutcome::Ready(third) = g.claim(ticket) else {
+        panic!("promoted a moment ago");
+    };
+    assert_eq!(
+        g.snapshot().classes[&TaskClass::new("c")].memory_units_held,
+        10
+    );
+    for permit in [running, third] {
+        assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    }
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
+#[test]
 fn stage_boundary_release_returns_units_but_keeps_permit() {
     let (g, _clock, c) = gov();
     let p = admit(&g);

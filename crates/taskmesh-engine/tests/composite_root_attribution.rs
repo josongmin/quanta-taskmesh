@@ -70,6 +70,48 @@ fn child_saturation_bubbles_to_root_verdict() {
 }
 
 #[test]
+fn an_upward_child_reconcile_is_attributed_to_the_root() {
+    // A measured overage on a child is real memory the root's fan-out is
+    // using. It is charged to the root's attribution as well as to the
+    // class, so a root-level budget check sees what the children actually
+    // hold, not what they estimated at admission.
+    let g = gov(vec![(
+        "worker",
+        ClassPolicy::new()
+            .max_inflight(8)
+            .cpu_units(1)
+            .memory_units(3)
+            .memory_permit_mode(MemoryPermitMode::Hybrid),
+    )]);
+    let permit = match g.admit(&child("worker", "R", "stage")) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("the child fits, got {other:?}"),
+    };
+    assert_eq!(
+        g.root_attribution("R").expect("root tracked").memory_units,
+        3,
+        "the estimate is attributed at admission"
+    );
+    // The harness scale is one byte per unit: 8 bytes measured is 8 units,
+    // above the 3-unit reservation, so `Hybrid` follows the measurement.
+    assert!(g.reconcile_memory(permit, 8));
+    assert_eq!(
+        g.root_attribution("R").expect("root tracked").memory_units,
+        8,
+        "a measured overage on a child is charged to its root, not only to its class"
+    );
+    assert_eq!(
+        g.snapshot().classes[&TaskClass::new("worker")].memory_units_held,
+        8
+    );
+    assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    assert!(
+        g.root_attribution("R").is_none(),
+        "the reconciled overage is returned with the child"
+    );
+}
+
+#[test]
 fn root_attribution_clears_on_release() {
     let g = gov(vec![(
         "worker",

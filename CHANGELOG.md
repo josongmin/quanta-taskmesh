@@ -1,0 +1,651 @@
+# Changelog
+
+All notable changes to the taskmesh workspace (`taskmesh`, `taskmesh-contract`,
+`taskmesh-engine`, `taskmesh-rayon`) are documented here. The four crates share
+one workspace version.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+While the major version is `0`, a minor bump (`0.1 → 0.2`) may contain breaking
+changes; every one of them is listed under **Breaking changes and migration**.
+
+The contract behind each entry is recorded in
+[ADR 0003 — Sep-16 hardening contracts (D01–D16)](docs/adr/0003-sep-16-hardening-contracts.md);
+entries cite the decision (`D..`) or audit finding (`TM16-..`) they implement.
+The public surface a downstream consumer depends on is the `taskmesh` crate
+(everyday SDK) and `taskmesh::ext` (direct engine embedding, custom adapters).
+
+## [0.2.0] - 2026-09-18
+
+### Added
+
+**Contract (`taskmesh-contract`, re-exported by `taskmesh`)**
+
+- `ExecutorCapabilities` and a default-implemented `CpuExecutor::capabilities()`
+  (D05). An adapter declares what it guarantees — `nonblocking_submit`,
+  `declared_workers`, `exclusive_pool` — and the host never assumes more. The
+  default is `ExecutorCapabilities::legacy()` (submission may block, worker count
+  unknown, pool shared), so an existing `impl CpuExecutor` compiles unchanged.
+- `TokioRuntime::executor_capabilities()` exposes the built runtime's adapter
+  declaration.
+- `TopologyError` (`InvertedCpuWorkerBounds`, `SlotCountTooLarge`,
+  `ZeroFixedCpuWorkers`, `ExecutorDeclaresFewerWorkers`), `MAX_CAPABILITY_SLOTS`,
+  `TopologyConfig::validate()`, `TopologyConfig::declared_slots()`, and
+  `TopologyConfig::try_resolved_cpu_workers()` (TM16-003). `GovernorError::InvalidTopology`
+  wraps it, `From<TopologyError> for GovernorError` and `Error::source()` are
+  implemented.
+- `Snapshot` wire schema 2 (D06): `SNAPSHOT_SCHEMA_VERSION`, `Snapshot::schema_version`,
+  `Snapshot::capabilities` (per capability-pool `CapabilityUsage { in_use, limit }`),
+  `ClassSnapshot` phase gauges `dispatch_reserved` / `accepted` / `running` /
+  `cleanup_pending`, and cumulative `admitted_total` / `started_total` /
+  `terminated_total`. `ClassSnapshot::conservation_violation()` and
+  `Snapshot::conservation_violation()` check the published identities.
+  `ClassSnapshot` now implements `Default`.
+- `ExecutionPhase` (`DispatchReserved → Accepted → Running → CleanupPending`), the
+  ownership phase of a live request; `rank()`, `has_started()`, `Display`.
+- `AdmissionVerdict::SubstrateSaturated { retry_after_ms }` (D01): an immediate
+  shed because the capability pool is full and the class does not queue. Its
+  `retry_after_ms` is reported by `AdmissionVerdict::retry_after_ms()`.
+- `TerminalReason` (`Reclaimed`, `Released`, `Abandoned`): why a queued ticket
+  ended without its waiter taking ownership.
+- `GovernorError` variants (all additive; the enum was and is `#[non_exhaustive]`):
+  `TicketClaimTerminated { ticket, reason }`, `InvalidTicketClaim { ticket }`,
+  `InvalidTopology(TopologyError)`, `DeadlineUnsupported { class, policy }`,
+  `LeaseReclaimed { permit_id }`, `WorkerUnavailable { context, detail }`,
+  `WorkerPanicked { context }`, `JobAbandoned { context }` (D14).
+- `ResourceConversionError` (`UnscaledMemoryUnits`, `MemoryUnitsOverflow`), the
+  typed error of the now-checked `MemoryUnitScale::units_for` (D06).
+- `Clock` documentation now states the lock discipline the engine guarantees:
+  `now_ms` is sampled *before* the state mutex is taken, never under it, and a
+  commit watermark keeps lease timestamps monotonic (D07). The trait itself is
+  unchanged.
+
+**Engine (`taskmesh-engine`, via `taskmesh::ext`)**
+
+- Typed outcomes for every transition that used to answer with a primitive
+  (D14): `ClaimOutcome` (`Ready(PermitId)`, `Pending`, `Terminal(TerminalReason)`,
+  `Invalid`), `ReleaseOutcome` (`Released`, `UnknownPermit`; `#[must_use]`),
+  `StageReleaseOutcome` (`Released { freed_units }`, `PolicyForbids { policy }`,
+  `UnknownPermit`, `StaleSequence { current_sequence }`; with `freed_units()` and
+  `is_released()`), `ReconcileOutcome` (`Applied { held_units }`, `UnknownPermit`,
+  `StaleEpoch { current_epoch }`, `ConversionFailed(ResourceConversionError)`;
+  with `is_applied()`). `ClaimOutcome` and `ReleaseOutcome` are exhaustive (a
+  waiter must handle every outcome); `StageReleaseOutcome` and
+  `ReconcileOutcome` are `#[non_exhaustive]`.
+- `Governor::reconcile_memory_at(permit, bytes, epoch) -> ReconcileOutcome`
+  (epoch-ordered reconcile for concurrent reporters; the epoch is assigned inside
+  the same transition that applies the reading, D15) and
+  `Governor::release_stage_memory_seq(permit, units, sequence) -> StageReleaseOutcome`
+  (replayed or reordered stage events are rejected, D02).
+- `Governor::admit_resolved(spec, capability, waker)`: admit against an
+  explicitly resolved capability pool (D04).
+- `Governor::ticket_status(ticket) -> ClaimOutcome` (read-only; `claim` consumes).
+- `Governor::advance_phase(permit, ExecutionPhase) -> bool` and
+  `Governor::phase(permit) -> Option<ExecutionPhase>` (monotonic; a backwards or
+  repeated declaration returns `false`).
+- Diagnostics: `PendingView` (`Governor::pending_view`), `PermitLedgerView`
+  (`Governor::permit_ledger`, `Governor::permit_ledgers`) exposing
+  `original_estimate_units` / `remaining_reservation_units` / `effective_units`
+  (D02), `Governor::pending_block_reason -> Option<CapacityBlock>`,
+  `Governor::accounting_fault()`, `Governor::retained_terminal_tickets()`.
+- `CapacityBlock` (`Ok`, `Inflight`, `Capability`, `Cpu`, `Memory`,
+  `QueuedBehind`, `AccountingFault`), `CapabilityName` (`Arc<str>`),
+  `PROMOTION_BUDGET` (64 grants per promotion pass), `MAX_TERMINAL_TICKETS`
+  (4096 retained terminal tickets).
+- `PolicySet::with_capability_limits(BTreeMap<String, u32>)` — the single
+  physical-capacity authority, checked in the same admission transition as class
+  inflight and the resource budget (D01) — plus the accessors
+  `PolicySet::substrates()`, `PolicySet::capability_limits()`,
+  `PolicySet::capability_limit(pool)`, `PolicySet::capability_name(pool)`.
+- `LeakSweepReport::retained_active`: stale leak-detecting permits the sweep
+  observed but left charged because their work had already reached an executor
+  (TM16-010). Stale is not dead.
+- `RequestKey` is now exported from `taskmesh-engine` as the type of the
+  read-only `PendingView::request_key` field. It is *not* an input: no API
+  accepts one, and it is derived authoritatively from `root_operation_id`.
+- `ExecutionPhase` and `TerminalReason` are re-exported at the engine root.
+- `test-util` additions (not part of the consumer surface): `PolicySet::forge_substrates`,
+  `Governor::drr_ring_visits`. New optional features `loom` and `shuttle` for
+  the model-check builds (D13); they are off by default and resolve no extra
+  dependency in a downstream lockfile.
+
+**Facade (`taskmesh`)**
+
+- Root re-exports: `CapabilityUsage`, `ExecutionPhase`, `TerminalReason`,
+  `TopologyError`.
+- `taskmesh::ext` re-exports: `ExecutorCapabilities`, `CapabilityName`,
+  `CapacityBlock`, `ClaimOutcome`, `PendingView`, `PermitLedgerView`,
+  `ReconcileOutcome`, `ReleaseOutcome`, `StageReleaseOutcome`,
+  `MAX_TERMINAL_TICKETS`, `PROMOTION_BUDGET`.
+
+**Rayon adapter (`taskmesh-rayon`)**
+
+- `RayonCpuExecutor::capabilities()` declares `nonblocking_submit = true`, the
+  pool's real thread count as `declared_workers`, and `exclusive_pool = true` for
+  pools the adapter built (`try_new` / `from_topology`) or `false` for a pool
+  handed in through `with_pool` (D05).
+
+**Tooling and documentation**
+
+- `tools/consumer-msrv` is now the migration fixture: it compiles *and runs*
+  every migrated API shape in this changelog on the declared MSRV (Rust 1.81),
+  with the default feature set and with `rayon`. `just consumer-msrv` fails
+  when any documented outcome differs from what a consumer observes.
+- `docs/adr/0003-sep-16-hardening-contracts.md` records the contracts behind
+  this release; `docs/release-checklist.md` gains the `cargo semver-checks`
+  step.
+
+### Changed
+
+- **Admission is one transition (D01, TM16-001).** Semantic class capacity and
+  the physical capability-pool slot are decided together, in the engine, under
+  the class's own `OverflowPolicy`. The host-side substrate semaphore that
+  requests used to wait on *before* admission is gone, so `Snapshot::queued`
+  now counts every waiting request and `max_queue_depth` / `OverflowPolicy::Reject`
+  govern the only queue there is.
+- **Reservation, measurement, and release are separate facts (D02, TM16-005,
+  TM16-011).** The permit ledger keeps `original_estimate_units`
+  (provenance), `remaining_reservation_units` (shrinks on stage release, never
+  grows), and `effective_units` (the current charge). `MemoryPermitMode::Estimated`
+  charges the *remaining* reservation, so a reconcile after a stage release no
+  longer resurrects the released units. `MemoryReleasePolicy` is enforced.
+- **Aggregates are exact (D06, TM16-008).** Per-request cost stays `u32`;
+  per-class and global held totals are `u128`; every capacity comparison is
+  checked. An unrepresentable total is `CapacityBlock::AccountingFault` (the
+  engine refuses new work) and is visible through `Governor::accounting_fault()`.
+  `MemoryUnitScale::units_for` returns `Result` instead of saturating.
+- **Clock is read outside the lock (D07, TM16-026).** The engine samples `Clock`
+  before taking its state mutex and clamps the committed time to a monotonic
+  watermark. A custom `Clock` is never called under the transition lock and no
+  longer needs `now_ms` itself to be monotonic for lease timestamps to be.
+- **Fairness picks fully runnable candidates (D08).** A class is a scheduling
+  candidate only when both its semantic capacity and the capability pool frozen
+  at intake are available; strict FIFO within a class is preserved
+  (`CapacityBlock::QueuedBehind`). WFQ fixed-point scale is `2^64` so no
+  admissible weight (`1..=u32::MAX`) yields a zero increment (TM16-013). DRR
+  ring traversal is arithmetic, `O(classes)` per selection (TM16-012).
+- **Acquisition budget covers every wait (D09, TM16-032).** `SubmitOptions::acquire_timeout`
+  includes admission-lock wait. A permit that arrives after the budget expired —
+  immediately or via a promotion racing the timeout — is returned unstarted and
+  the caller gets `PermitAcquireTimedOut` (or `SubstratePoolTimedOut`).
+  `Some(Duration::ZERO)` still means "try, do not wait".
+- **Response is not custody (D10, TM16-015, TM16-024).** A deadline reply, a
+  cancel, or a dropped caller future ends the caller's wait; a synchronous
+  worker (blocking, CPU, requested-stack) keeps its execution lease until it
+  actually terminates, including tearing down an owned runtime. On normal
+  completion custody moves with the result, so capacity is already released
+  when the caller sees the value. The snapshot reports such a request as
+  `running` / `cleanup_pending` until then.
+- **`run_blocking` honours `RunFor` as a caller-wait bound (D10, TM16-002).**
+  Previously the deadline on the blocking path was inert. A started blocking job
+  is not aborted; the caller's wait is bounded and `DeadlineExceeded` is returned.
+- **CPU `RunFor` is anchored to the worker's own start (D05, TM16-022).** The
+  budget starts when the job starts on the worker, not when `spawn` returned, so
+  an inline executor cannot return a late success as `Ok`. Ties go to the deadline.
+- **Stack requests occupy `large_stack` (D04, TM16-023).** A blocking-family
+  submission with `stack_size_bytes` reserves the `large_stack` capability
+  regardless of its declared hint, so `large_stack_slots` actually caps dedicated
+  workers.
+- **Topology is resolved once (D05).** `Builder::build` reads detected
+  parallelism once and sizes the `cpu` capability gate and the default executor
+  from that single answer. `TopologyConfig::resolved_cpu_workers` is now total
+  (an inverted window resolves instead of panicking); prefer
+  `try_resolved_cpu_workers` on construction paths.
+- **`PolicySet::default()` seeds the built-in inventory (TM16-004).** It now
+  delegates to `PolicySet::new`, so a defaulted policy set carries `cpu`,
+  `blocking`, `large_stack`, `maintenance`, `local_runtime`. `Governor::new`
+  validates the registry as a whole (presence and binding of the built-ins,
+  key/record agreement) regardless of how it was assembled.
+- **Lease activity is recorded in the transition that proves it (D15,
+  TM16-009).** `claim` touches the lease (the sweep's staleness clock restarts
+  at claim, not at promotion) and a successful stage release counts as a
+  heartbeat. Terminal ticket retention is bounded (`MAX_TERMINAL_TICKETS`) and
+  indexed.
+- **Dedicated-thread labels are derived, not interpolated (TM16-031).** The OS
+  thread name for a requested-stack worker is a bounded, sanitised label; a class
+  name containing NUL or non-ASCII no longer panics inside `thread::Builder`.
+  Class identity itself is unchanged.
+- **Waker destructors run outside the governor lock (TM16-030).** Host
+  `PermitWaker` values are retired after the transition, so a waker `Drop` that
+  re-enters the governor cannot deadlock.
+- `LeakSweepReport::reclaimed_permits` can now be smaller than
+  `suspected_leaks`: the sweep still counts every stale leak-detecting permit as
+  suspected, but reclaims only those that never reached an executor; the rest
+  are reported in the new `retained_active` (TM16-010).
+- `taskmesh-engine`'s `loom` / `shuttle` dependencies moved from cfg-gated
+  dev-dependencies to cfg-gated *optional* dependencies behind the features of
+  the same name (D13).
+
+### Removed
+
+- `PolicySet::substrates` as a public field. Read the registry through
+  `PolicySet::substrates()`; add records through `with_substrates`. `PolicySet`
+  can no longer be built with a struct literal or `..Default::default()`
+  functional-update syntax (it gained private fields); use `PolicySet::new`.
+- The unbounded host-side wait in front of admission (D01). A non-queueing
+  class whose capability pool is full is rejected immediately with
+  `SubstrateSaturated`; it no longer parks until a slot frees.
+- The silent drop of `SubmitOptions::deadline` on a class that cannot enforce
+  it (the `deadline_ignored_for_plain_cooperative` behaviour). It is now
+  `GovernorError::DeadlineUnsupported`.
+- The `PolicyViolation(String)` encoding of worker failures ("cpu worker
+  panicked", "… dropped result", "large-stack thread spawn failed", "requested-stack
+  async runtime initialization failed"). See `WorkerPanicked`, `JobAbandoned`,
+  `WorkerUnavailable`.
+- The saturating (`u32::MAX`) and unscaled (`0`) results of
+  `MemoryUnitScale::units_for`; both are now typed errors.
+- Silent coercion of `FairnessPolicy::WeightedFairQueue { weight: 0 }` to
+  weight 1; weight `0` is rejected at construction.
+- Service debt for cancelled requests and idle credit accumulation in the
+  fairness schedulers (TM16-014, TM16-037): a class that drained its queue does
+  not carry credit into its next arrival, and a cancelled request leaves no debt.
+
+### Fixed
+
+- TM16-001: `OverflowPolicy::Reject` classes could accumulate unbounded waiters
+  in the substrate gate while `queued` reported `0`.
+- TM16-002: `run_blocking` + `RunFor` deadline was inert.
+- TM16-003: an inverted `min_workers > max_workers` window or an oversized slot
+  count panicked in a clamp / semaphore constructor instead of failing `build()`.
+- TM16-004: `PolicySet::default()` produced an empty substrate registry that
+  bypassed inventory validation.
+- TM16-005: `MemoryReleasePolicy` was never read; `OnTaskCompletion` classes
+  accepted stage releases.
+- TM16-008: `saturating_add` in capacity checks let two `2^31`-unit requests
+  both admit against a `2^32 - 1` budget.
+- TM16-009 / TM16-010: stage activity did not touch the leak lease; the leak
+  sweep could reclaim a permit whose work was already running.
+- TM16-011: an `Estimated` reconcile after a stage release restored the
+  original reservation.
+- TM16-012: DRR selection iterated `O(cost / quantum)` under the lock, up to
+  `u32::MAX` times for admissible policies.
+- TM16-013: WFQ produced a zero virtual-time increment for large weights.
+- TM16-014 / TM16-037: WFQ cancelled-service debt and DRR idle credit let past
+  history decide the order of identical queue states.
+- TM16-015: requested-stack workers released their lease *after* sending the
+  result, leaving a phantom `inflight` visible right after completion.
+- TM16-022: the CPU relative deadline started after `spawn` returned.
+- TM16-023: stack requests were gated by the declared hint's pool, not
+  `large_stack`, so `large_stack_slots = 1` allowed two dedicated workers.
+- TM16-024: an owned runtime's teardown ran before the deadline response, so a
+  blocking child could delay the caller indefinitely.
+- TM16-026: lease timestamps were sampled before the lock and committed
+  unclamped, creating leases that were stale on creation.
+- TM16-030: a `PermitWaker` destructor ran under the governor lock.
+- TM16-031: a class name with NUL panicked thread construction outside the
+  worker's unwind boundary.
+- TM16-032: `acquire_timeout` did not cover the admission-lock wait, and a
+  permit granted after expiry started the job anyway.
+- `MemoryOvercommitPolicy::DegradeToLight` pointing at a disabled fallback
+  (`max_inflight = 0`) shed every degraded request as `ClassDisabled` naming the
+  wrong class; it is now rejected at construction (D14).
+- A panic in the root future of a requested-stack async worker is reported to
+  the caller *before* the owned runtime is torn down (D10 revision).
+
+### Breaking changes and migration
+
+Every entry below is either a signature change, a removed item, or a behaviour a
+0.1.0 consumer could have relied on. `cargo semver-checks` (0.50.0, baseline
+`9ae9547`) reports the struct-field items; the return-type, field-type, and
+behavioural items are invisible to it and were taken from a manual diff of the
+public surface and from the contract tests in `crates/*/tests/hardening_*.rs`.
+
+#### `Governor::claim` returns `ClaimOutcome` (was `Option<PermitId>`)
+
+`None` used to mean both "not promoted yet" and "the permit this ticket held was
+reclaimed"; a waiter treating the second as the first waited forever. All four
+outcomes are terminal-or-not by construction (`Invalid` is terminal).
+
+```rust
+// 0.1.0
+loop {
+    if let Some(permit) = governor.claim(ticket) {
+        break permit;
+    }
+    waker.wait().await;
+}
+
+// 0.2.0
+use taskmesh::ext::ClaimOutcome;
+loop {
+    match governor.claim(ticket) {
+        ClaimOutcome::Ready(permit) => break Ok(permit),
+        ClaimOutcome::Pending => waker.wait().await,
+        ClaimOutcome::Terminal(reason) => {
+            break Err(GovernorError::TicketClaimTerminated { ticket, reason })
+        }
+        ClaimOutcome::Invalid => break Err(GovernorError::InvalidTicketClaim { ticket }),
+    }
+}
+```
+
+`claim` consumes the ticket; use `Governor::ticket_status(ticket)` for a
+read-only look.
+
+#### `Governor::release` returns `ReleaseOutcome` (was `()`), `#[must_use]`
+
+`UnknownPermit` is a double release (host bug) or a lease the leak sweep already
+reclaimed (a race the host must notice). A statement-form call now warns.
+
+```rust
+// 0.1.0
+governor.release(permit);
+
+// 0.2.0
+use taskmesh::ext::ReleaseOutcome;
+match governor.release(permit) {
+    ReleaseOutcome::Released => {}
+    ReleaseOutcome::UnknownPermit => {
+        // before dispatch: the sweep reclaimed a stale DispatchReserved lease;
+        // after dispatch: a double release — treat as a bug.
+    }
+}
+// or, where a double release is impossible by construction:
+assert_eq!(governor.release(permit), ReleaseOutcome::Released);
+```
+
+#### `Governor::release_stage_memory` returns `StageReleaseOutcome` (was `u32`)
+
+A policy refusal was folded into "freed 0 units". Stage release now requires the
+class to declare `MemoryReleasePolicy::OnStageBoundary` or `LeakDetecting`;
+`OnTaskCompletion` (the default) answers `PolicyForbids`.
+
+```rust
+// 0.1.0
+let freed: u32 = governor.release_stage_memory(permit, 2);
+
+// 0.2.0
+use taskmesh::ext::StageReleaseOutcome;
+match governor.release_stage_memory(permit, 2) {
+    StageReleaseOutcome::Released { freed_units } => { /* freed_units <= 2 */ }
+    StageReleaseOutcome::PolicyForbids { policy } => {
+        // the class's MemoryReleasePolicy does not allow stage release
+    }
+    StageReleaseOutcome::UnknownPermit => { /* no such live permit */ }
+    StageReleaseOutcome::StaleSequence { current_sequence } => {
+        // only with release_stage_memory_seq: a replayed / reordered event
+    }
+    _ => {} // the enum is non_exhaustive
+}
+// `.freed_units()` gives the 0.1.0 number back when that is all you need.
+```
+
+Ordered reporters should use `release_stage_memory_seq(permit, units, sequence)`
+with a strictly increasing `sequence`.
+
+#### `Governor::reconcile_memory_at` → `ReconcileOutcome` (new; `reconcile_memory` keeps `bool`)
+
+Concurrent reporters need an order. `reconcile_memory(permit, bytes) -> bool` is
+unchanged and assigns the next epoch itself; `reconcile_memory_at` takes an
+explicit epoch and reports why a reading was not applied. A stage-released
+reservation is no longer resurrected by an `Estimated` reconcile (D02).
+
+```rust
+use taskmesh::ext::ReconcileOutcome;
+match governor.reconcile_memory_at(permit, measured_bytes, epoch) {
+    ReconcileOutcome::Applied { held_units } => { /* new effective charge */ }
+    ReconcileOutcome::StaleEpoch { current_epoch } => { /* a newer reading won */ }
+    ReconcileOutcome::UnknownPermit => {}
+    ReconcileOutcome::ConversionFailed(error) => { /* bytes not expressible in units */ }
+    _ => {}
+}
+```
+
+#### `Snapshot` wire schema 2
+
+`Snapshot` and `ClassSnapshot` are serde types. A 0.1.0 JSON snapshot does not
+deserialize as 0.2.0 and vice versa. Changes:
+
+| Field | 0.1.0 | 0.2.0 |
+|---|---|---|
+| `Snapshot.schema_version` | — | `2` (`SNAPSHOT_SCHEMA_VERSION`, `taskmesh_contract`) |
+| `Snapshot.capabilities` | — | `BTreeMap<String, CapabilityUsage { in_use: u32, limit: u32 }>`; `limit == 0` means ungated |
+| `ClassSnapshot.cpu_units_held`, `memory_units_held` | `u32`, JSON number | `u128`, JSON **decimal string** (`"6"`) |
+| `ClassSnapshot.dispatch_reserved`, `accepted`, `running`, `cleanup_pending` | — | `u32` phase gauges; they partition `inflight` |
+| `ClassSnapshot.admitted_total`, `started_total`, `terminated_total` | — | `u128`, JSON decimal string |
+
+Conservation identities you may assert on any snapshot:
+`inflight == dispatch_reserved + accepted + running + cleanup_pending`,
+`admitted_total == inflight + terminated_total`,
+`started_total >= running + cleanup_pending`, and for every capability
+`in_use <= limit` when `limit != 0`. `Snapshot::conservation_violation()` checks
+them all.
+
+```rust
+// 0.1.0
+let held: u32 = snapshot.classes[&class].cpu_units_held;
+
+// 0.2.0
+assert_eq!(snapshot.schema_version, 2);
+let held: u128 = snapshot.classes[&class].cpu_units_held;
+let cpu_pool = &snapshot.capabilities["cpu"]; // (in_use, limit)
+if let Some(violation) = snapshot.conservation_violation() {
+    // the projection is inconsistent — report it
+}
+```
+
+A JSON consumer must parse `cpu_units_held` / `memory_units_held` /
+`*_total` as strings and convert; reading them as numbers is what schema 2
+exists to prevent (a large `u128` does not survive an `f64`). Struct-literal
+construction of `ClassSnapshot` / `Snapshot` needs the new fields, or use
+`..Default::default()` (both types implement `Default`).
+
+`RootAttribution::cpu_units` / `memory_units` are likewise `u128` (were `u32`).
+
+#### `GovernorError` new variants; `PolicyViolation` no longer means "worker failed"
+
+`GovernorError` is `#[non_exhaustive]`, so a `match` with a `_` arm keeps
+compiling. What silently changes is *which arm fires*: in 0.1.0 a panicking or
+vanished worker was `PolicyViolation("cpu worker panicked")` and similar
+strings. In 0.2.0:
+
+| Situation | 0.1.0 | 0.2.0 |
+|---|---|---|
+| job or adapter `spawn` panicked | `PolicyViolation("… panicked")` | `WorkerPanicked { context }` |
+| thread / owned runtime could not be created | `PolicyViolation("… spawn failed: …")` | `WorkerUnavailable { context, detail }` (job never started) |
+| adapter dropped the closure; worker vanished | `PolicyViolation("… dropped result")` | `JobAbandoned { context }` |
+| leak sweep reclaimed the lease before dispatch | not reported | `LeaseReclaimed { permit_id }` (job never started) |
+| queued ticket ended without ownership | `None` from `claim` | `TicketClaimTerminated { ticket, reason }` / `InvalidTicketClaim { ticket }` |
+| impossible topology | panic | `InvalidTopology(TopologyError)` |
+| deadline on a class that cannot enforce it | silently ignored | `DeadlineUnsupported { class, policy }` |
+
+`PolicyViolation(Cow<str>)` remains for host configuration/usage errors only
+(`CompleteBy` on a blocking path, missing or oversized stack size, `Instant`
+overflow, non-monotonic phase declaration, policy validation failures). A
+consumer that matched `PolicyViolation` to detect worker failure must add arms
+for the new variants:
+
+```rust
+// 0.1.0
+Err(RunError::Governor(GovernorError::PolicyViolation(msg))) if msg.contains("panicked") => retry(),
+
+// 0.2.0
+Err(RunError::Governor(GovernorError::WorkerPanicked { .. })) => { /* side effects unknown */ }
+Err(RunError::Governor(GovernorError::WorkerUnavailable { .. })) => retry(), // never started
+Err(RunError::Governor(GovernorError::JobAbandoned { .. })) => { /* side effects unknown */ }
+Err(RunError::Governor(GovernorError::LeaseReclaimed { .. })) => retry(),    // never started
+Err(RunError::Governor(GovernorError::PolicyViolation(msg))) => { /* fix the call site */ }
+Err(RunError::Governor(_)) => {}
+```
+
+#### `SubmitOptions::deadline` on a non-`CooperativeWithDeadline` class → `DeadlineUnsupported`
+
+In 0.1.0 `with_deadline` / `with_absolute_deadline` on a class whose
+`cancellation_policy` was `PreSubmitOnly` or `Cooperative` was dropped and the
+work ran to completion returning `Ok`. In 0.2.0 the submission is refused before
+admission (nothing is admitted, nothing is charged). Either declare the policy
+or stop passing a deadline:
+
+```rust
+// 0.2.0 — the class must be able to enforce what the submission asks for
+.class_policy(
+    TaskClass::new("fetch"),
+    ClassPolicy::new()
+        .max_inflight(8)
+        .cancellation_policy(CancellationPolicy::CooperativeWithDeadline),
+)
+// …
+match runtime.run_io_with(spec, SubmitOptions::unbounded().with_deadline(d), fut).await {
+    Err(RunError::Governor(GovernorError::DeadlineUnsupported { class, policy })) => {
+        // configuration error: `class` has `policy`, which cannot enforce a deadline
+    }
+    Err(RunError::Governor(GovernorError::DeadlineExceeded)) => { /* enforced */ }
+    other => {}
+}
+```
+
+Blocking-path `RunFor` now bounds the *caller's wait* (the started job is not
+aborted). `CompleteBy` on a blocking path is still `PolicyViolation`.
+
+#### `SubstrateSaturated` vs `SubstratePoolTimedOut`
+
+A class that does not queue (`OverflowPolicy::Reject`, the default) whose
+capability pool (`blocking`, `large_stack`, `maintenance`, `local_runtime`,
+`cpu`) is full is now rejected immediately with
+`AdmissionVerdict::SubstrateSaturated { retry_after_ms }`. In 0.1.0 it waited
+in an unbounded host semaphore and either ran eventually or, with an
+`acquire_timeout`, came back as `SubstratePoolTimedOut`. `SubstratePoolTimedOut`
+is now only the expiry of a *bounded* wait by a queueing class.
+
+```rust
+// 0.2.0 — keep the "eventually runs" behaviour by opting into a queue:
+ClassPolicy::new()
+    .max_inflight(8)
+    .max_queue_depth(64)
+    .overflow_policy(OverflowPolicy::QueueWithinDepth)
+
+// …and handle both verdicts:
+Err(RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstrateSaturated { retry_after_ms }))) => {
+    // immediate shed: the pool is full and this class does not queue
+}
+Err(RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstratePoolTimedOut { .. }))) => {
+    // a queueing class's bounded wait expired
+}
+```
+
+`Snapshot::queued` now includes every waiting request, and
+`Snapshot::capabilities[pool]` shows the occupancy that caused the shed.
+
+#### `ExecutorCapabilities` / `ExecutorDeclaresFewerWorkers`
+
+`CpuExecutor::capabilities()` has a default (`legacy()`), so every existing
+adapter compiles. **But** `Builder::build` now compares an adapter's
+`declared_workers` with the `cpu` gate the topology resolved, and refuses a
+declaration that is smaller:
+
+```rust
+// A custom adapter that declares its pool:
+impl CpuExecutor for MyPool {
+    fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) { self.pool.execute(work) }
+    fn capabilities(&self) -> ExecutorCapabilities {
+        ExecutorCapabilities::legacy()
+            .nonblocking_submit(true)
+            .declared_workers(self.pool.threads() as u32)
+            .exclusive_pool(true)
+    }
+}
+
+// 0.2.0: topology asks for 4, adapter has 2 → typed refusal at build()
+let err = Builder::new()
+    .topology(TopologyConfig::new().cpu_fixed(4))
+    .cpu_executor(Arc::new(MyPool::with_threads(2)))
+    /* … */
+    .build()
+    .unwrap_err();
+assert!(matches!(
+    err,
+    GovernorError::InvalidTopology(TopologyError::ExecutorDeclaresFewerWorkers { declared: 2, resolved: 4 })
+));
+```
+
+Fix by sizing the adapter from the same number (`TopologyConfig::try_resolved_cpu_workers`)
+or by declaring at least the gate. An adapter that leaves `declared_workers`
+unset (`None`, the legacy default, and `BlockingPoolCpuExecutor`) is *not*
+refused — unknown is not "fewer" — and is not upgraded to a guarantee either.
+`RayonCpuExecutor::with_pool` declares the pool as shared. Read the built
+runtime's declaration with `TokioRuntime::executor_capabilities()`.
+
+#### `TopologyConfig::validate` — impossible topologies are `Err`, not panics
+
+`Builder::build` validates the topology before sizing anything:
+`min_workers > max_workers`, `CpuMode::Fixed(0)`, and any slot count above
+`MAX_CAPABILITY_SLOTS` (`u32::MAX`) return
+`GovernorError::InvalidTopology(TopologyError::…)`. In 0.1.0 these panicked in
+`clamp` or in the semaphore constructor. `TopologyConfig::validate()` is
+public for callers that check deserialized input before building:
+
+```rust
+let topology: TopologyConfig = serde_json::from_str(input)?;
+topology.validate()?;                       // TopologyError
+let workers = topology.try_resolved_cpu_workers(available)?;
+```
+
+#### `RequestKey` is not a public input
+
+No `taskmesh` API accepts an admission key. The key is derived from
+`TaskSpec::root_operation_id` inside the engine; `RequestKey` appears in 0.2.0
+only as the read-only `PendingView::request_key` diagnostic field
+(`taskmesh_engine::RequestKey`). Nothing to migrate unless code was
+constructing one to pass somewhere — it never had an effect.
+
+#### `PolicySet` substrate registry: field → accessor; no struct literal
+
+```rust
+// 0.1.0
+let records = policy.substrates.values();
+let custom = PolicySet { resources, classes, substrates: my_map };
+
+// 0.2.0
+let records = policy.substrates().values();
+let custom = PolicySet::new(resources, classes)
+    .with_substrates(my_records)?               // duplicate / shadowing built-ins rejected
+    .with_capability_limits(limits)?;           // limits for unregistered pools rejected
+```
+
+`PolicySet::default()` now contains the built-in inventory (0.1.0: an empty
+registry).
+
+#### Other behavioural changes a 0.1.0 consumer might have relied on
+
+- `MemoryUnitScale::units_for(bytes)` returns `Result<u32, ResourceConversionError>`
+  (was `u32`, `0` when unscaled, `u32::MAX` on overflow). `Measured` / `Hybrid`
+  reconciles that hit either edge report `ReconcileOutcome::ConversionFailed`.
+- `FairnessPolicy::WeightedFairQueue { weight: 0 }` and
+  `MemoryOvercommitPolicy::DegradeToLight` to a disabled fallback are rejected
+  by `Builder::build` / `Governor::new` (`PolicyViolation`).
+- `acquire_timeout` includes the admission-lock wait; a permit granted after the
+  budget expired is unwound and reported as `PermitAcquireTimedOut`, not started.
+- After a deadline / cancel / dropped future, a synchronous worker stays charged
+  (`running` / `cleanup_pending`) until it finishes; do not expect `inflight == 0`
+  immediately after an `Err(DeadlineExceeded)` on `run_blocking` / `run_cpu`.
+- A blocking-family `TaskSpec` with `stack_size_bytes` counts against
+  `large_stack_slots`, whichever hint it declares.
+- `LeakSweepReport` gained `retained_active`; struct-literal construction needs
+  it (or `..Default::default()`).
+- `Governor::reap_leaks` reclaims only permits that never reached an executor;
+  a stale lease on running work is retained and counted in `retained_active`.
+
+#### Cross-check against `cargo semver-checks`
+
+| Crate | Checks | Failing | Items |
+|---|---|---|---|
+| `taskmesh-contract` | 196 | 1 (`constructible_struct_adds_field`) | `ClassSnapshot.{dispatch_reserved, accepted, running, cleanup_pending, admitted_total, started_total, terminated_total}`, `Snapshot.{schema_version, capabilities}` — all covered under *Snapshot wire schema 2* |
+| `taskmesh-engine` | 196 | 4 (`constructible_struct_adds_field`, `constructible_struct_adds_private_field`, `struct_pub_field_missing`, `struct_pub_field_now_doc_hidden`) | `LeakSweepReport.retained_active`; `PolicySet.{capability_limits, capability_names}` (private), `PolicySet.substrates` (removed / now private) — covered under *PolicySet* and *Other behavioural changes* |
+| `taskmesh` | 196 | 0 | the facade only re-exports; the tool does not analyse cross-crate re-exports, so every contract/engine item above is reachable through `taskmesh` / `taskmesh::ext` regardless |
+| `taskmesh-rayon` | 196 | 0 | `capabilities()` is an additive trait-method implementation |
+
+Not flagged by the tool (it does not compare types): the return-type changes of
+`Governor::claim` / `release` / `release_stage_memory` and
+`MemoryUnitScale::units_for`; the `u32 → u128` widening of
+`ClassSnapshot.{cpu,memory}_units_held` and `RootAttribution.{cpu,memory}_units`;
+the serde representation change; and every behavioural entry in this section.
+No tool finding is unmapped.
+
+## [0.1.0] - 2026-07-19
+
+Initial workspace version: `taskmesh-contract`, `taskmesh-engine`, `taskmesh`,
+`taskmesh-rayon`. The 0.2.0 comparison baseline is commit `9ae9547` (the last
+commit at version 0.1.0); the date is that commit's.
+
+[0.2.0]: https://github.com/josongmin/quanta-taskmesh/compare/9ae9547...hardening/sep-16
+[0.1.0]: https://github.com/josongmin/quanta-taskmesh/tree/9ae9547

@@ -245,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "taskmesh"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "taskmesh-contract",
  "taskmesh-engine",
@@ -264,14 +264,14 @@ dependencies = [
 
 [[package]]
 name = "taskmesh-contract"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "taskmesh-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "parking_lot",
  "taskmesh-contract",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "taskmesh-rayon"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rayon",
  "taskmesh-contract",

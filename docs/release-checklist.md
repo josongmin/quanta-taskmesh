@@ -1,4 +1,4 @@
-# Release Checklist — first stable (0.1.x)
+# Release Checklist
 
 ## Proof gate (must be green)
 
@@ -89,12 +89,53 @@ The gate set is `tools/gates/inventory.json`; the required subset is
 - [ ] README / library-spec / external-interface describe the same contract.
 - [ ] `taskmesh-rayon` included; workspace green with and without the `rayon`
       feature.
-- [ ] Crate versions in sync (workspace `version`).
+- [ ] Crate versions in sync (workspace `version` in the root `Cargo.toml`,
+      the `[workspace.dependencies]` path entries that pin it, the root
+      `Cargo.lock`, and `tools/consumer-msrv/Cargo.lock`). Update the locks
+      with `cargo update -p taskmesh -p taskmesh-engine -p taskmesh-contract
+      -p taskmesh-rayon -p taskmesh-bench --offline` (and the same, minus
+      `-p taskmesh-bench`, under `cargo +<msrv>` inside `tools/consumer-msrv`)
+      — never a wholesale regenerate. `cargo metadata --locked` must succeed
+      in both places on stable and on the declared MSRV toolchain.
+- [ ] `CHANGELOG.md` has a section for the version being released, with
+      `### Breaking changes and migration` carrying before/after code for every
+      breaking item (signature, wire, *and* behavioural).
+
+## Semver gate
+
+- [ ] `cargo semver-checks check-release -p <crate> --baseline-rev <last release>`
+      for each library crate (`taskmesh-contract`, `taskmesh-engine`, `taskmesh`,
+      `taskmesh-rayon`), with `--default-features` (the consumer surface; the
+      baseline may lack newer optional features). Pass
+      `--release-type minor` while the major is `0` so every *major*-level
+      finding is listed instead of being waived by the 0.x bump. Every finding
+      must map to a CHANGELOG entry; the raw output is kept with the release
+      notes.
+- [ ] Reconcile the tool's blind spots by hand: `cargo-semver-checks` does not
+      compare types, so a changed return type, a widened field (`u32 → u128`),
+      a serde representation change, or a behavioural change (a verdict that
+      now fires where none did, a deadline that is now refused) is invisible to
+      it. Diff the `pub` items of `crates/*/src` against the baseline and read
+      the contract tests (`crates/*/tests/hardening_*.rs`) for behaviour. The
+      `taskmesh` facade is all re-exports, which the tool does not follow — a
+      clean facade report says nothing about the surface consumers use.
+- [ ] `just consumer-msrv` PASS after the fixture in `tools/consumer-msrv`
+      has been extended to exercise every migrated shape named in the
+      CHANGELOG (it *runs* and fails loudly on a wrong outcome).
 
 ## Semver scope
 
 - Public surface = `taskmesh` re-exports (contract + selected engine items).
   Adding ports/verdict variants is additive; renames are breaking.
+- `GovernorError`, `AdmissionVerdict`, `TopologyError`, `ExecutionPhase`,
+  `TerminalReason`, `ResourceConversionError`, `ExecutorCapabilities`,
+  `StageReleaseOutcome` and `ReconcileOutcome` are `#[non_exhaustive]`: adding
+  a variant/field is additive for compilation, but a new variant that
+  *replaces* where an existing arm used to fire (0.2.0: worker failures moved
+  out of `PolicyViolation`) is a behavioural break and goes in the migration
+  section. `ClaimOutcome`, `ReleaseOutcome` and `CapacityBlock` are exhaustive
+  on purpose (a waiter loop must handle every outcome); adding a variant to
+  them is a major change.
 
 ## Known residue (intentional, tracked)
 

@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """Consumer MSRV check (H16-019 / TM16-021).
 
-Compiles `tools/consumer-msrv` — a standalone package outside the root
-workspace — on the toolchain the library *declares* as its minimum, with the
-default feature set and again with `rayon`.
+Compiles **and runs** `tools/consumer-msrv` — a standalone package outside
+the root workspace — on the toolchain the library *declares* as its minimum,
+with the default feature set and again with `rayon`.
+
+The fixture is also the 0.2.0 migration fixture (see CHANGELOG.md): its
+`main` exercises every migrated API shape and exits non-zero with a message
+when an assertion is wrong, so the check runs the binary rather than only
+type-checking it. A compile-only pass would prove the shapes exist; running
+proves the documented outcomes are the ones a consumer actually observes.
 
 Two things are deliberately kept apart:
 
@@ -27,6 +33,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).resolve().parent
+# The fixture's last line of output; printed only after every assertion held.
+FIXTURE_OK_LINE = "taskmesh-consumer-msrv ok"
 
 
 def declared_msrv(manifest: Path) -> str:
@@ -101,7 +109,8 @@ def main(argv: list[str] | None = None) -> int:
         cmd = [
             "cargo",
             f"+{toolchain}",
-            "check",
+            "run",
+            "--quiet",
             "--locked",
             "--manifest-path",
             str(FIXTURE / "Cargo.toml"),
@@ -113,11 +122,20 @@ def main(argv: list[str] | None = None) -> int:
             # one that toolchain can read.
             cmd.remove("--locked")
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=FIXTURE)
-        status = "PASS" if proc.returncode == 0 else "FAIL"
+        # Both halves must hold: the fixture compiled *and* its assertions ran
+        # to the final line. A binary that exits 0 without reaching it (or one
+        # that never ran) is not a pass.
+        ran_to_completion = FIXTURE_OK_LINE in proc.stdout
+        status = "PASS" if proc.returncode == 0 and ran_to_completion else "FAIL"
         results.append((label, status))
         print(f"taskmesh-consumer-msrv surface={label} toolchain={toolchain} status={status}")
-        if proc.returncode != 0:
+        if status != "PASS":
+            sys.stderr.write(proc.stdout[-3000:])
             sys.stderr.write(proc.stderr[-6000:])
+            if proc.returncode == 0 and not ran_to_completion:
+                sys.stderr.write(
+                    f"FAIL: fixture exited 0 without printing {FIXTURE_OK_LINE!r}\n"
+                )
 
     if any(status != "PASS" for _, status in results):
         return 1

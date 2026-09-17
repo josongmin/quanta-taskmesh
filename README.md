@@ -73,7 +73,7 @@ async fn main() {
 | 모델 검사 | production `Governor`의 모든 interleaving(작은 상태) / 무작위 schedule, D08 promotion-gap 규칙 포함 | `just loom` (5) / `just shuttle` (6) — engine `src/sync.rs` seam, replica 아님 |
 | 실행 가능한 명세 | admission/promotion 상태기계 ≡ ~150줄 reference model (매 op 뒤 verdict·gauge·ticket·ledger 동치) | `cargo test -p taskmesh-engine --test differential_model` (proptest, `just test`에 포함) |
 | 실제 메모리 시스템 | parking_lot·Tokio·OS thread 위의 data race | `just tsan` (nightly `-Zbuild-std -Zsanitizer=thread`) |
-| 테스트가 실제로 실패할 수 있는가 | 고친 결함 하나를 다시 넣으면 named test가 named reason으로 죽는가 | `just mutants-critical` (45 entries, cargo + pytest runner) |
+| 테스트가 실제로 실패할 수 있는가 | 고친 결함 하나를 다시 넣으면 named test가 named reason으로 죽는가 | `just mutants-critical` (60 entries, cargo + pytest runner) |
 | 객관 지표 | 실행된 production 라인 (threshold 아님) | `just coverage-report` (cargo-llvm-cov, receipt에 기록) |
 | 소비자 계약 | Rust 1.81에서 default·rayon 표면 컴파일 | `just consumer-msrv` |
 | 성능 | allocs/op(=측정값 3.0), Linux instruction count | `just bench-gate`, `just bench-iai` |

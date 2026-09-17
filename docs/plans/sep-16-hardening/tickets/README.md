@@ -8,14 +8,17 @@
   **NOT_QUALIFIED**: dirty working tree(immutable checkout 아님)와 Linux-only `bench-iai` 미실행(macOS).
   두 사유는 [H16-022](H16-022-qualification-and-rollout.md)와 receipt에 명시되어 있다.
 - 구현된 계약: [ADR 0003](../../../adr/0003-sep-16-hardening-contracts.md). 로컬 증거:
-  `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 375+ green,
-  loom 5 / shuttle 6 green **on the production `Governor`**, mutation gate 45/45
-  (Python 도구 5건·shuttle 모델 2건 포함), consumer MSRV 1.81 PASS(default·rayon), allocation gate 3.0 allocs/op
+  `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 414 green (contract 38 · engine 180 · host 138 · rayon 3 · bench 55),
+  loom 5 / shuttle 6 green **on the production `Governor`**, mutation gate 60/60
+  (Python 도구 5건·shuttle 모델 2건·differential 모델 1건·객관 sweep 갭 13건 포함), consumer MSRV 1.81 PASS(default·rayon), allocation gate 3.0 allocs/op
   (threshold = 측정값).
 - 구현 직후 3-track 적대적 감사(engine/runtime · 증명 강도 · tooling/CI/docs)를 실행했고 P0 3건·P1 12건·
   P2 다수를 모두 처리했다; 그 처리 위에 다시 2-track 감사(코드/주장 · 증명 표면)를 돌려 P1 4건·P2 8건을
-  추가로 처리했다: [AUDIT-2026-09-16](../AUDIT-2026-09-16.md). 계약 변경은 ADR 0003
-  D05/D08/D09/D10 개정과 D13–D16.
+  추가로 처리했다. breaking change가 승인된 뒤 3차로 release 0.2.0(semver 감사·CHANGELOG·실행되는
+  migration fixture), TSan/coverage/CI qualification rail, `cargo mutants` 전수 sweep(생존자 전원
+  triage, HIGH 갭 13건은 inventory entry), shuttle gap 모델·differential 명세, 소비자 시선·증명 표면
+  적대 감사를 처리했다: [AUDIT-2026-09-16](../AUDIT-2026-09-16.md). 계약 변경은 ADR 0003
+  D03/D05/D08/D09/D10 개정과 D13–D16.
 - 원본 분류: P1 4 / P2 29 / P3 7. TM16-005는 계약 결정이며 독립적으로 확인된 runtime defect로 계산하지 않는다.
 - 계획의 P0/P1/P2는 실행 순서다. 원본 severity를 상향한 것이 아니다.
 - “SOTA++”는 정확한 계약·유한한 소유권·독립 검증을 목표로 한 설계안의 이름이다. 최신 업계 대비 우월성이나 성능 개선을 측정한 결과가 아니다.

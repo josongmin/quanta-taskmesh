@@ -203,3 +203,65 @@ fn a_capability_limit_for_an_unregistered_pool_is_rejected() {
     };
     assert!(message.contains("ghost-pool"), "unexpected: {message}");
 }
+
+#[test]
+fn the_readable_limit_is_the_limit_admission_enforces_and_zero_means_ungated() {
+    // `capability_limit` is the operator's reading of the policy. It is only
+    // worth having if it is the *same* number admission enforces, and if an
+    // undeclared pool reads as `0` *and* behaves as ungated — a reading that
+    // disagreed with the engine would have an operator sizing the wrong pool.
+    use taskmesh_contract::{AdmissionVerdict, TaskSpec};
+    use taskmesh_engine::AdmissionDecision;
+
+    let mut classes = BTreeMap::new();
+    classes.insert(
+        TaskClass::new("c"),
+        ClassPolicy::new().max_inflight(16).cpu_units(1),
+    );
+    let policy = PolicySet::new(ResourceBudget::new().cpu_units(100), classes)
+        .with_capability_limits(BTreeMap::from([("cpu".to_string(), 2)]))
+        .expect("cpu is a registered pool");
+    assert_eq!(
+        policy.capability_limit("cpu"),
+        2,
+        "the declared limit reads back"
+    );
+    assert_eq!(
+        policy.capability_limit("blocking"),
+        0,
+        "a pool with no declared limit reads as 0 = ungated"
+    );
+
+    let governor = Governor::new(policy, Arc::new(ManualClock::new(0))).expect("valid policy");
+    let cpu = || TaskSpec::cpu(TaskClass::new("c")).operation("cpu");
+    let blocking = || TaskSpec::blocking(TaskClass::new("c")).operation("blocking");
+
+    // Exactly the read-back limit is admitted on the declared pool; the next
+    // arrival is shed on that pool, not on the class.
+    for _ in 0..governor.policy().capability_limit("cpu") {
+        assert!(
+            matches!(governor.admit(&cpu()), AdmissionDecision::Admitted { .. }),
+            "the declared cpu limit admits up to the number it reads back"
+        );
+    }
+    let third = governor.admit(&cpu());
+    assert!(
+        matches!(
+            third,
+            AdmissionDecision::Rejected(AdmissionVerdict::SubstrateSaturated { .. })
+        ),
+        "the arrival past the read-back limit is SubstrateSaturated, got {third:?}"
+    );
+
+    // The pool that reads as 0 admits past any number that would have been a
+    // limit: 0 is "ungated", not "closed".
+    for _ in 0..4 {
+        assert!(
+            matches!(
+                governor.admit(&blocking()),
+                AdmissionDecision::Admitted { .. }
+            ),
+            "a pool whose limit reads as 0 is ungated"
+        );
+    }
+}

@@ -58,7 +58,7 @@
 - hang 재현: deadlock probe는 worker thread + `recv_timeout`으로 bounded 관측
   (`hardening_effect_retirement.rs::with_deadline`).
 
-Receipt: `docs/plans/sep-16-hardening/receipts/local-2026-09-16.mutations.json`.
+Receipt: `docs/plans/sep-16-hardening/receipts/local-2026-09-18.mutations.json`.
 
 ## 검증 / 완료 조건
 

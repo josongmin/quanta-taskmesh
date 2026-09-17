@@ -7,6 +7,12 @@ was not run, was skipped for a platform reason, or reported a conditional
 non-result (exit 2 = NOT_RUN by convention) is recorded as such and makes the
 receipt NOT_QUALIFIED. Nothing here turns "did not run" into "passed".
 
+A gate with `status_line: {marker, require}` in the inventory self-reports on
+stdout (`taskmesh-<gate> status=… …`). Its *final* marker line is the verdict:
+it is kept verbatim in the result (`status_line`) — the output tail is bounded
+and cannot be relied on to contain it — and the run is PASS only if that line
+carries the required token. Exit 0 without it is NOT_RUN.
+
 Usage:
     python3 tools/gates/run.py --tier fast              # e.g. the fast gate
     python3 tools/gates/run.py --id clippy --id test    # named gates
@@ -53,9 +59,16 @@ def status_line_qualifies(gate: dict, stdout: str) -> bool:
     spec = gate.get("status_line")
     if not spec:
         return True
-    marker = spec["marker"]
+    verdict = final_status_line(spec["marker"], stdout)
+    return verdict is not None and spec["require"] in verdict.split()
+
+
+def final_status_line(marker: str, stdout: str) -> str | None:
+    """The *last* `<marker> …` line on stdout: a recipe that reports per-surface
+    lines before its summary (consumer-msrv) ends with the verdict, and an
+    earlier line must not stand in for it."""
     lines = [line for line in stdout.splitlines() if line.startswith(marker + " ")]
-    return any(spec["require"] in line.split() for line in lines)
+    return lines[-1] if lines else None
 
 
 def run_gate(gate: dict) -> dict:
@@ -110,11 +123,9 @@ def run_gate(gate: dict) -> dict:
         "output_tail": tail,
     }
     if gate.get("status_line"):
-        marker = gate["status_line"]["marker"]
-        result["status_line"] = next(
-            (line for line in proc.stdout.splitlines() if line.startswith(marker + " ")),
-            None,
-        )
+        # Kept verbatim: the output tail is bounded and cargo's stderr can push
+        # this line out of it, and for coverage/tsan the line *is* the evidence.
+        result["status_line"] = final_status_line(gate["status_line"]["marker"], proc.stdout)
     return result
 
 

@@ -18,7 +18,14 @@ Fails closed on:
   CI runs that the local proof surface skips is a local/CI proof gap),
 - a workflow step that *invokes* an inventory gate but cannot *fail* on it
   (`continue-on-error`, an `if:` condition, `|| true`, `set +e`, `exit 0`):
-  parity is about enforcement, and a masked gate is a green check over nothing.
+  parity is about enforcement, and a masked gate is a green check over nothing,
+- a self-reporting recipe (its script prints `taskmesh-<gate> status=…`) whose
+  gate declares no `status_line`, or a `status_line` whose marker no script of
+  that recipe prints: the runner keeps the recipe's final marker line verbatim
+  in the receipt and requires the declared token on it, so a missing
+  declaration makes exit 0 alone a PASS and loses the verdict line (the
+  bounded output tail does not reliably contain it), while a wrong marker
+  makes every run NOT_RUN.
 
 Workflow invocations are read from the parsed YAML: every `run:` script of
 every step, whatever its shape (`- run: just x`, a `|` block, `cd d && just x`,
@@ -76,6 +83,39 @@ def recipe_dependencies(recipe: str, text: str | None = None) -> list[str]:
     if not match:
         raise RuntimeError(f"Justfile has no `{recipe}:` recipe")
     return match.group(1).split()
+
+
+def recipe_body(recipe: str, text: str | None = None) -> str:
+    """The indented body lines of `just <recipe>` (the commands it runs)."""
+    text = JUSTFILE.read_text(encoding="utf-8") if text is None else text
+    match = re.search(
+        rf"^{re.escape(recipe)}(?:\s+[+*]?[A-Za-z_][A-Za-z0-9_]*(?:=\S+)?)*:[^\n]*\n"
+        r"((?:[ \t]+[^\n]*\n?)*)",
+        text,
+        re.MULTILINE,
+    )
+    if not match:
+        raise RuntimeError(f"Justfile has no `{recipe}:` recipe")
+    return match.group(1)
+
+
+SCRIPT_PATH = re.compile(r"\btools/[\w./-]+\.(?:sh|py)\b")
+# A self-report line: `taskmesh-<gate> status=<VERDICT> …` on stdout. The
+# receipt keeps only a bounded tail of a gate's output, so this line is the one
+# thing about a run that must survive verbatim.
+STATUS_MARKER = re.compile(r"(taskmesh-[a-z0-9-]+) status=")
+
+
+def self_report_markers(recipe: str, text: str | None = None, root: Path = REPO) -> set[str]:
+    """The status-line markers printed by the scripts `just <recipe>` runs
+    (found by reading those scripts' sources). Empty for a recipe that runs
+    cargo/uv directly."""
+    markers: set[str] = set()
+    for script in SCRIPT_PATH.findall(recipe_body(recipe, text)):
+        path = root / script
+        if path.is_file():
+            markers.update(STATUS_MARKER.findall(path.read_text(encoding="utf-8")))
+    return markers
 
 
 def gate_recipe_dependencies() -> list[str]:
@@ -184,6 +224,7 @@ def validate(
     matrix_deps: list[str] | None = None,
     proof_leaves: set[str] | None = None,
     enforcement_problems: list[str] | None = None,
+    self_reports: dict[str, set[str]] | None = None,
 ) -> list[str]:
     problems: list[str] = list(enforcement_problems or [])
     gates = inventory.get("gates", [])
@@ -224,6 +265,31 @@ def validate(
                 f"{gate_id}: declared in workflow {gate['workflow']} "
                 f"but that file does not invoke `just {recipe}`"
             )
+        if self_reports is not None:
+            printed = self_reports.get(recipe, set())
+            spec = gate.get("status_line")
+            if spec is not None and (
+                not isinstance(spec, dict)
+                or not isinstance(spec.get("marker"), str)
+                or not isinstance(spec.get("require"), str)
+                or not spec["marker"]
+                or not spec["require"]
+            ):
+                problems.append(
+                    f"{gate_id}: status_line must be {{marker: str, require: str}}, got {spec!r}"
+                )
+            elif spec is not None and spec["marker"] not in printed:
+                problems.append(
+                    f"{gate_id}: status_line marker {spec['marker']!r} is not printed by any "
+                    f"script `just {recipe}` runs (found {sorted(printed)}): every run would "
+                    "be NOT_RUN"
+                )
+            elif spec is None and printed:
+                problems.append(
+                    f"{gate_id}: `just {recipe}` self-reports ({sorted(printed)}) but the "
+                    "inventory declares no status_line — the receipt would drop the verdict "
+                    "line and exit 0 alone would count as PASS"
+                )
 
     for recipe, files in invocations.items():
         if recipe not in {gate.get("recipe") for gate in gates}:
@@ -281,6 +347,9 @@ def main() -> int:
         proof_leaves = expand_recipe("proof")
         inventory_recipes = {g.get("recipe") for g in inventory.get("gates", []) if g.get("recipe")}
         enforcement = workflow_enforcement_problems(WORKFLOWS, inventory_recipes)
+        self_reports = {
+            recipe: self_report_markers(recipe) for recipe in inventory_recipes if recipe in recipes
+        }
     except (
         OSError,
         json.JSONDecodeError,
@@ -299,6 +368,7 @@ def main() -> int:
         matrix_deps,
         proof_leaves,
         enforcement,
+        self_reports,
     )
     if problems:
         print("gate inventory FAILED:", file=sys.stderr)

@@ -749,6 +749,30 @@
       "env": {
         "PROPTEST_CASES": "2048"
       }
+    },
+    {
+      "id": "self-reporting-gate-passes-on-exit-zero-alone",
+      "finding": "R3C-1",
+      "runner": "pytest",
+      "rationale": "The receipt keeps a bounded output tail per gate; the coverage percentages and the TSan target were pushed out of it by cargo's stderr. A self-reporting recipe whose gate declares no status_line loses its verdict line and is PASS on exit 0 alone (the round-3B bench-iai defect, generalised). The validator must refuse the inventory in that state.",
+      "file": "tools/gates/validate_inventory.py",
+      "find": "            elif spec is None and printed:",
+      "replace": "            elif spec is None and printed and False:",
+      "test_target": "tools/gates/tests/test_inventory.py::test_every_self_reporting_recipe_declares_the_status_line_it_prints",
+      "expect_failing_test": "test_every_self_reporting_recipe_declares_the_status_line_it_prints",
+      "expect_message": "a self-reporting recipe without a status_line must be reported"
+    },
+    {
+      "id": "an-earlier-status-line-stands-in-for-the-verdict",
+      "finding": "R3C-1",
+      "runner": "pytest",
+      "rationale": "consumer-msrv prints a per-surface line before its summary; taking the first marker line as the verdict qualifies a run whose final line is NOT_RUN or FAIL, and records the wrong line in the receipt.",
+      "file": "tools/gates/run.py",
+      "find": "    return lines[-1] if lines else None",
+      "replace": "    return lines[0] if lines else None",
+      "test_target": "tools/gates/tests/test_inventory.py::test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps",
+      "expect_failing_test": "test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps",
+      "expect_message": "the recipe's final status line is the verdict, not an earlier one"
     }
   ]
 }

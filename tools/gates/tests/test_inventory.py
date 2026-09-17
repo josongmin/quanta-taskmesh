@@ -303,3 +303,120 @@ def test_a_self_reported_baseline_run_is_not_a_pass() -> None:
     inventory = json.loads(vi.INVENTORY.read_text(encoding="utf-8"))
     bench = next(g for g in inventory["gates"] if g["id"] == "bench-iai")
     assert bench["status_line"] == {"marker": "taskmesh-iai-gate", "require": "status=QUALIFIED"}
+
+
+def _real_self_reports() -> dict[str, set[str]]:
+    inventory = json.loads(vi.INVENTORY.read_text(encoding="utf-8"))
+    return {gate["recipe"]: vi.self_report_markers(gate["recipe"]) for gate in inventory["gates"]}
+
+
+def test_self_report_markers_are_read_from_the_scripts_a_recipe_runs(tmp_path: Path) -> None:
+    """The marker set comes from the *sources* of the scripts named in the
+    recipe body — not from a hand-kept list — so a script that starts (or
+    stops) self-reporting moves the inventory check with it."""
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / "probe.sh").write_text(
+        'echo "taskmesh-probe status=CLEAN target=x"\n', encoding="utf-8"
+    )
+    (tmp_path / "tools" / "quiet.py").write_text("print('done')\n", encoding="utf-8")
+    justfile = (
+        "probe:\n    bash tools/probe.sh\n\n"
+        "quiet:\n    python3 tools/quiet.py\n\n"
+        "direct:\n    cargo test --workspace\n"
+    )
+    assert vi.self_report_markers("probe", justfile, tmp_path) == {"taskmesh-probe"}
+    assert vi.self_report_markers("quiet", justfile, tmp_path) == set()
+    assert vi.self_report_markers("direct", justfile, tmp_path) == set()
+
+
+def test_every_self_reporting_recipe_declares_the_status_line_it_prints() -> None:
+    """Both directions, on the committed inventory. A self-reporting recipe
+    without a `status_line` is the bench-iai defect from round 3B generalised:
+    exit 0 alone would be PASS and the receipt's bounded output tail would drop
+    the verdict line (it did drop the coverage percentages and the TSan target
+    once). A `status_line` whose marker no script prints makes every run
+    NOT_RUN — loud, but a lie about which script is the evidence."""
+    self_reports = _real_self_reports()
+    assert self_reports["tsan"] == {"taskmesh-tsan"}
+    assert self_reports["coverage-report"] == {"taskmesh-coverage"}
+    assert self_reports["consumer-msrv"] == {"taskmesh-consumer-msrv"}
+    assert self_reports["bench-iai"] == {"taskmesh-iai-gate"}
+    assert problems_with(self_reports=self_reports) == []
+
+    inventory, *_ = real_inputs()
+    inventory = copy.deepcopy(inventory)
+    tsan = next(g for g in inventory["gates"] if g["id"] == "tsan")
+    del tsan["status_line"]
+    problems = problems_with(inventory=inventory, self_reports=self_reports)
+    assert any("tsan" in p and "self-reports" in p for p in problems), (
+        f"a self-reporting recipe without a status_line must be reported: {problems}"
+    )
+
+    inventory, *_ = real_inputs()
+    inventory = copy.deepcopy(inventory)
+    cov = next(g for g in inventory["gates"] if g["id"] == "coverage-report")
+    cov["status_line"] = {"marker": "taskmesh-covrage", "require": "status=REPORTED"}
+    problems = problems_with(inventory=inventory, self_reports=self_reports)
+    assert any("coverage-report" in p and "not printed" in p for p in problems), (
+        f"a marker no script prints must be reported: {problems}"
+    )
+
+    inventory, *_ = real_inputs()
+    inventory = copy.deepcopy(inventory)
+    cov = next(g for g in inventory["gates"] if g["id"] == "coverage-report")
+    cov["status_line"] = {"marker": "taskmesh-coverage"}
+    problems = problems_with(inventory=inventory, self_reports=self_reports)
+    assert any("coverage-report" in p and "must be" in p for p in problems), (
+        f"a malformed status_line must be reported: {problems}"
+    )
+
+
+def test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps(monkeypatch) -> None:
+    """consumer-msrv prints one line per surface and then its summary. The
+    summary is the verdict: an earlier per-surface PASS must not qualify a run
+    whose final line is not PASS, and the receipt keeps the final line — the
+    bounded output tail cannot be relied on to contain it."""
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    gate = {
+        "id": "consumer-msrv",
+        "recipe": "consumer-msrv",
+        "status_line": {"marker": "taskmesh-consumer-msrv", "require": "status=PASS"},
+    }
+
+    def fake_run(stdout: str, returncode: int = 0):
+        def _run(*_args, **_kwargs):
+            return subprocess.CompletedProcess(
+                args=["just", "consumer-msrv"],
+                returncode=returncode,
+                stdout=stdout,
+                stderr="x" * 4000,  # enough stderr to push stdout out of the tail
+            )
+
+        return _run
+
+    misleading = (
+        "taskmesh-consumer-msrv surface=default toolchain=1.81 status=PASS\n"
+        "taskmesh-consumer-msrv status=NOT_RUN msrv=1.81 reason=toolchain-missing\n"
+    )
+    monkeypatch.setattr(module.subprocess, "run", fake_run(misleading))
+    result = module.run_gate(gate)
+    assert result["status"] == "NOT_RUN", (
+        f"the recipe's final status line is the verdict, not an earlier one: {result}"
+    )
+    assert result["status_line"].startswith("taskmesh-consumer-msrv status=NOT_RUN")
+
+    passing = (
+        "taskmesh-consumer-msrv surface=default toolchain=1.81 status=PASS\n"
+        "taskmesh-consumer-msrv surface=rayon toolchain=1.81 status=PASS\n"
+        "taskmesh-consumer-msrv status=PASS msrv=1.81 toolchain=1.81\n"
+    )
+    monkeypatch.setattr(module.subprocess, "run", fake_run(passing))
+    result = module.run_gate(gate)
+    assert result["status"] == "PASS"
+    assert result["status_line"] == "taskmesh-consumer-msrv status=PASS msrv=1.81 toolchain=1.81"
+    assert "status=PASS msrv=1.81" not in result["output_tail"], (
+        "the tail is not where the verdict survives; the status_line field is"
+    )

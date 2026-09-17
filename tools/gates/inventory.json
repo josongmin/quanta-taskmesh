@@ -301,7 +301,11 @@
         "rustup toolchain = declared rust-version"
       ],
       "workflow": "ci.yml",
-      "conditional": "reports NOT_RUN (exit 2) when the declared toolchain is not installed; CI installs it"
+      "conditional": "reports NOT_RUN (exit 2) when the declared toolchain is not installed; CI installs it. The final `taskmesh-consumer-msrv status=PASS msrv=…` line is the verdict the receipt keeps",
+      "status_line": {
+        "marker": "taskmesh-consumer-msrv",
+        "require": "status=PASS"
+      }
     },
     {
       "id": "bench-iai",
@@ -341,8 +345,12 @@
         "x86_64/aarch64 linux or macOS"
       ],
       "workflow": "ci.yml",
-      "conditional": "reports NOT_RUN (exit 2) when nightly+rust-src are missing or the target is unsupported; CI installs them",
-      "note": "ThreadSanitizer on the real memory system (engine concurrency/effect/lifecycle tests, host chaos/executor/deadline/cancel tests). Complements loom/shuttle, which model interleavings."
+      "conditional": "reports NOT_RUN (exit 2) when nightly+rust-src are missing or the target is unsupported; CI installs them. Only `taskmesh-tsan status=CLEAN` is PASS; the line (with the target triple) is kept in the receipt",
+      "note": "ThreadSanitizer on the real memory system (engine concurrency/effect/lifecycle tests, host chaos/executor/deadline/cancel tests). Complements loom/shuttle, which model interleavings.",
+      "status_line": {
+        "marker": "taskmesh-tsan",
+        "require": "status=CLEAN"
+      }
     },
     {
       "id": "coverage-report",
@@ -359,8 +367,12 @@
         "cargo-llvm-cov"
       ],
       "workflow": "ci.yml",
-      "conditional": "reports NOT_RUN (exit 2) when cargo-llvm-cov is missing; CI installs it",
-      "note": "A report, not a threshold: the repository makes no coverage-gate promise. PASS means the report was produced; the percentages are recorded for review."
+      "conditional": "reports NOT_RUN (exit 2) when cargo-llvm-cov is missing; CI installs it. Only `taskmesh-coverage status=REPORTED …` is PASS; that line carries the percentages the receipt records",
+      "note": "A report, not a threshold: the repository makes no coverage-gate promise. PASS means the report was produced; the percentages are recorded for review.",
+      "status_line": {
+        "marker": "taskmesh-coverage",
+        "require": "status=REPORTED"
+      }
     }
   ]
 }

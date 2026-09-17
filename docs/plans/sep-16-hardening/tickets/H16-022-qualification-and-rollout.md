@@ -39,9 +39,10 @@
   `validate`(schema, 현재 tree와 digest 대조, required gate 전부 PASS, mutation 0 problem, msrv PASS).
   dirty tree·SKIPPED_PLATFORM·NOT_RUN·mismatch는 모두 NOT_QUALIFIED 사유로 나열된다.
 - 22 ticket acceptance, 40 finding(COVERAGE 표), Q01–Q33 처분이 추적된다.
-- 실제 receipt: `docs/plans/sep-16-hardening/receipts/`. 이 tree에서의 verdict는 **NOT_QUALIFIED**이며
-  사유는 (1) dirty working tree(immutable checkout 아님), (2) `bench-iai` SKIPPED_PLATFORM(macOS).
-  두 사유 모두 이 저장소의 상태를 정확히 말하는 것이며 숨기지 않는다.
+- 실제 receipt: `docs/plans/sep-16-hardening/receipts/local-2026-09-18.json` (clean committed tree,
+  branch `hardening/sep-16`). verdict는 **NOT_QUALIFIED**이며 사유는 `bench-iai` SKIPPED_PLATFORM(macOS)
+  하나다 — 이 저장소의 상태를 정확히 말하는 것이며 숨기지 않는다. Linux에서 같은 collector를 도는 CI
+  `qualification` job이 receipt of record다.
 - rollout/rollback: 새 snapshot schema(v2)는 구버전 reader가 읽지 못하므로 downgrade는
   drain-and-restart 또는 forward fix가 필요하다(release-checklist 기록). 배포/activation은 수행하지 않았다.
 

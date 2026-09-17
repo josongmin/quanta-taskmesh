@@ -85,6 +85,18 @@ feature 플래그:
    - shared CPU executor 어댑터를 켠다. `run_cpu` 경로의 실제 CPU 풀 구현.
    - 끄면 CPU 작업도 blocking 풀로 폴백한다.
 
+**버전 / 호환성.** 네 crate는 하나의 workspace 버전을 공유하며 현재 `0.2.0`이다.
+`0.x`에서는 minor bump(`0.1 → 0.2`)에 breaking change가 포함될 수 있고, 그 전부는
+[CHANGELOG.md](CHANGELOG.md)의 *Breaking changes and migration* 절에 before/after 코드와
+함께 열거된다 (`Governor::claim → ClaimOutcome`, `Governor::release → ReleaseOutcome`,
+`Snapshot` wire schema 2, `DeadlineUnsupported`, `SubstrateSaturated`,
+`ExecutorCapabilities` 등). 각 변경의 계약과 근거는
+[ADR 0003](docs/adr/0003-sep-16-hardening-contracts.md)(D01–D16)에 있다. 소비자가 의존하는
+public surface는 `taskmesh` (+ `taskmesh::ext`)이며, 릴리스마다
+`cargo semver-checks check-release --baseline-rev <직전 릴리스>`와 MSRV(1.81) 소비자 fixture
+(`just consumer-msrv`, [tools/consumer-msrv](tools/consumer-msrv/src/main.rs))로 검증한다 —
+[docs/release-checklist.md](docs/release-checklist.md) 참조.
+
 ### 2. 런타임 구성
 
 `Builder`로 **worker governance(topology/resources)** 와 **semantic policy(class_policy)** 를

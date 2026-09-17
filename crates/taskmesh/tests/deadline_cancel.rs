@@ -522,9 +522,18 @@ async fn requested_stack_async_runtime_honors_cooperative_cancel_v1() {
         }
     });
 
-    while rt.snapshot().classes[&TaskClass::new("c")].inflight != 1 {
-        tokio::task::yield_now().await;
-    }
+    // Bounded: a host that refuses the stack request (or never charges it)
+    // must fail this test by name, not hang the binary — a hang is not an
+    // attributable verdict for the mutation harness (D16).
+    bounded(
+        "requested_stack_async_runtime_honors_cooperative_cancel_v1: the work was never charged to the class",
+        async {
+            while rt.snapshot().classes[&TaskClass::new("c")].inflight != 1 {
+                tokio::task::yield_now().await;
+            }
+        },
+    )
+    .await;
     token.cancel();
     let error = worker
         .await

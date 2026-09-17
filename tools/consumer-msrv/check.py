@@ -133,9 +133,7 @@ def main(argv: list[str] | None = None) -> int:
             sys.stderr.write(proc.stdout[-3000:])
             sys.stderr.write(proc.stderr[-6000:])
             if proc.returncode == 0 and not ran_to_completion:
-                sys.stderr.write(
-                    f"FAIL: fixture exited 0 without printing {FIXTURE_OK_LINE!r}\n"
-                )
+                sys.stderr.write(f"FAIL: fixture exited 0 without printing {FIXTURE_OK_LINE!r}\n")
 
     if any(status != "PASS" for _, status in results):
         return 1

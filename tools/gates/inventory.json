@@ -319,7 +319,11 @@
         "iai-callgrind-runner (version from tools/bench/perf-gate.json)"
       ],
       "workflow": "bench.yml",
-      "conditional": "Linux only; a run without a compatible baseline reports BASELINE_CREATED and is not regression-qualified"
+      "conditional": "Linux only; the recipe prints `taskmesh-iai-gate status=…`. Only status=QUALIFIED is PASS: BASELINE_CREATED (first run for a fingerprint) is recorded as NOT_RUN — a baseline was written, nothing was compared",
+      "status_line": {
+        "marker": "taskmesh-iai-gate",
+        "require": "status=QUALIFIED"
+      }
     },
     {
       "id": "tsan",

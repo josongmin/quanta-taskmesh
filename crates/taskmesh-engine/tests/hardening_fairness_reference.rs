@@ -873,6 +873,97 @@ fn no_continuation_is_owed_when_a_pass_ends_exactly_at_its_budget() {
 }
 
 #[test]
+fn a_reject_class_that_queues_on_memory_waits_for_the_pending_continuation_too() {
+    // Rule 2's second half: `class_can_queue` is true for a `Reject`-overflow
+    // class whose memory policy is `Queue` — it has a queue, so in the gap it
+    // waits for the continuation like any queueable class (its own queue is
+    // empty here, so rule 1 does not apply). Dropping the memory clause would
+    // let it overtake the runnable `a` heads.
+    let budget = taskmesh_engine::PROMOTION_BUDGET;
+    let queued_total = budget + 8;
+    let units = u32::try_from(queued_total + 1).expect("small");
+    let mut map: BTreeMap<TaskClass, ClassPolicy> = BTreeMap::new();
+    map.insert(
+        TaskClass::new("a"),
+        ClassPolicy::new()
+            .max_inflight(1_000)
+            .max_queue_depth(1_000)
+            .cpu_units(1)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth)
+            .fairness(FairnessPolicy::Fifo),
+    );
+    map.insert(
+        TaskClass::new("c"),
+        ClassPolicy::new()
+            .max_inflight(1_000)
+            .max_queue_depth(1_000)
+            .cpu_units(1)
+            .memory_units(1)
+            .overflow_policy(OverflowPolicy::Reject)
+            .memory_overcommit_policy(taskmesh_contract::MemoryOvercommitPolicy::Queue)
+            .fairness(FairnessPolicy::Fifo),
+    );
+    map.insert(
+        TaskClass::new("holder"),
+        ClassPolicy::new().max_inflight(1).cpu_units(units),
+    );
+    let g = Arc::new(
+        Governor::new(
+            PolicySet::new(
+                ResourceBudget::new().cpu_units(units).memory_units(1_000),
+                map,
+            ),
+            Arc::new(ManualClock::new(0)),
+        )
+        .expect("valid policy"),
+    );
+    let holder = admit_one(&g, "holder", "holder");
+    let waker = Arc::new(CrossClassSubmittingWaker {
+        governor: Arc::clone(&g),
+        newcomer_class: "c",
+        outcome: std::sync::Mutex::new(None),
+    });
+    let port: Arc<dyn taskmesh_contract::PermitWaker> = waker.clone();
+    let AdmissionDecision::Queued { ticket: first } = g.admit_waitable(&spec("a", "a0"), port)
+    else {
+        panic!("queues behind the holder");
+    };
+    let mut tickets = vec![first];
+    for i in 1..queued_total {
+        tickets.push(queue_one(&g, "a", &format!("a{i}")));
+    }
+    assert_eq!(g.release(holder), ReleaseOutcome::Released);
+    let (decision, blocked_on) = waker
+        .outcome
+        .lock()
+        .expect("lock")
+        .take()
+        .expect("woken by the first pass");
+    let AdmissionDecision::Queued { ticket: newcomer } = decision else {
+        panic!("a Reject class that queues on memory can queue, so it waits for the pending pass; got {decision:?}");
+    };
+    assert_eq!(
+        blocked_on,
+        Some(taskmesh_engine::CapacityBlock::QueuedBehind)
+    );
+    let mut permits: Vec<PermitId> = Vec::new();
+    for ticket in &tickets {
+        let ClaimOutcome::Ready(permit) = g.claim(*ticket) else {
+            panic!("promoted by the continuation");
+        };
+        permits.push(permit);
+    }
+    let ClaimOutcome::Ready(last) = g.claim(newcomer) else {
+        panic!("promoted after the earlier arrivals");
+    };
+    assert!(permits.iter().all(|p| *p < last));
+    for permit in permits.into_iter().chain(std::iter::once(last)) {
+        assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    }
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
+#[test]
 fn a_reject_class_that_queues_on_memory_joins_its_queue_behind_a_runnable_head() {
     // `overflow_policy = Reject` but `memory_overcommit_policy = Queue`: the
     // class *does* have a queue (memory-blocked requests wait in it). A

@@ -220,3 +220,94 @@ def test_the_live_validator_rejects_a_forged_clean_receipt_on_a_dirty_tree(
     # The digest itself matched (it was copied from the real identity): the
     # dirtiness re-derivation is what caught it.
     assert not any("source digest" in r for r in reasons)
+
+
+def test_receipt_files_written_at_the_repo_root_are_not_source(repo: Path) -> None:
+    """CI collects with `--out receipt.json` at the repository root. The three
+    files `collect` writes there must be outside both the identity digest and
+    the dirtiness check, or the very run that produces the receipt reads its
+    own output as an uncommitted change and declares itself NOT_QUALIFIED.
+    The live `.gitignore` carries the rule; the fixture repo copies it."""
+    live_ignore = (REPO / ".gitignore").read_text(encoding="utf-8")
+    assert "/receipt*.json" in live_ignore, "the live .gitignore must ignore root receipts"
+    (repo / ".gitignore").write_text("/receipt*.json\n")
+    subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "ignore",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    before = receipt.source_identity(repo)
+    for name in ("receipt.json", "receipt.gates.json", "receipt.mutations.json"):
+        (repo / name).write_text("{}\n")
+    after = receipt.source_identity(repo)
+    assert after["paths_digest"] == before["paths_digest"]
+    assert not after["dirty"]
+
+
+def test_collect_qualifies_on_a_clean_tree_with_receipts_written_at_the_root(
+    repo: Path, monkeypatch
+) -> None:
+    """End to end through `collect`, with the gate runner, the mutation runner
+    and the MSRV check stubbed to their passing shapes: the only thing that
+    could make this NOT_QUALIFIED is the receipt output itself. Before the
+    ignore rule that is exactly what happened on the first CI run."""
+    (repo / ".gitignore").write_text("/receipt*.json\n")
+    subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "ignore",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    required = json.loads((REPO / "tools" / "gates" / "required.json").read_text())["required"]
+    monkeypatch.setattr(receipt, "REPO", repo)
+
+    def fake_run_json(cmd: list[str], receipt_path: Path) -> dict:
+        if "run_mutations.py" in cmd[1]:
+            payload = {"schema_version": 1, "total": 3, "problems": 0, "dirty_tree": False}
+        else:
+            payload = {
+                "results": [
+                    {"id": g, "status": "PASS"} for g in required if g != receipt.MUTATION_GATE_ID
+                ]
+            }
+        receipt_path.write_text(json.dumps(payload))
+        return payload
+
+    monkeypatch.setattr(receipt, "run_json", fake_run_json)
+    monkeypatch.setattr(
+        receipt,
+        "run_msrv_check",
+        lambda: subprocess.CompletedProcess(args=["msrv"], returncode=0, stdout="ok\n", stderr=""),
+    )
+    out = repo / "receipt.json"
+    code = receipt.collect(out, ["fast", "matrix", "proof"], skip_mutations=False)
+    written = json.loads(out.read_text())
+    assert written["verdict"]["reasons"] == [], written["verdict"]
+    assert written["verdict"]["status"] == "QUALIFIED"
+    assert code == 0
+    assert (repo / "receipt.gates.json").exists() and (repo / "receipt.mutations.json").exists()
+    # The mutation gate result was derived from the sub-receipt, once.
+    derived = [r for r in written["gates"]["results"] if r["id"] == receipt.MUTATION_GATE_ID]
+    assert derived and derived[0]["status"] == "PASS"
+    assert not receipt.source_identity(repo)["dirty"]

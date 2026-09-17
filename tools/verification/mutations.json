@@ -721,6 +721,34 @@
       "test_target": "hardening_fairness_reference",
       "expect_failing_test": "no_continuation_is_owed_when_a_pass_ends_exactly_at_its_budget",
       "expect_message": "no continuation is owed at exactly the budget"
+    },
+    {
+      "id": "class-can-queue-ignores-the-memory-queue",
+      "finding": "R3B-P2-1",
+      "rationale": "A Reject-overflow class whose memory policy is Queue has a queue; treating only the overflow policy as 'can queue' lets it take capacity in the continuation gap ahead of earlier runnable arrivals.",
+      "file": "crates/taskmesh-engine/src/features/admission/mod.rs",
+      "find": "    policy.overflow_policy.is_queueable()\n        || policy.memory_overcommit_policy == MemoryOvercommitPolicy::Queue\n}",
+      "replace": "    policy.overflow_policy.is_queueable()\n}",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_fairness_reference",
+      "expect_failing_test": "a_reject_class_that_queues_on_memory_waits_for_the_pending_continuation_too",
+      "expect_message": "can queue, so it waits for the pending pass"
+    },
+    {
+      "id": "abandoning-a-queued-ticket-never-promotes",
+      "finding": "R3B-P3-5",
+      "rationale": "Abandoning a queued ticket changes the queue shape (a blocked head may leave a runnable one behind it); skipping the promotion pass strands that work. Only the differential model observes it: every other test abandons tails or heads with nothing runnable behind them.",
+      "file": "crates/taskmesh-engine/src/engine/governor.rs",
+      "find": "                    fairness::on_queue_changed(&mut state, &class);\n                    let pass = self.promote(&mut state, now);\n                    effects.absorb(pass);",
+      "replace": "                    fairness::on_queue_changed(&mut state, &class);",
+      "package": "taskmesh-engine",
+      "test_target": "differential_model",
+      "expect_failing_test": "engine_agrees_with_the_reference_model",
+      "expect_message": "step ",
+      "note": "The differential test labels every disagreement `step N: <what>`; the shrunk counterexample converges to the same minimal case (`class a inflight`) but its step number is seed-dependent, so the message pins only the label shape. 2,048 cases (the test's own default is 1,024) leave the probability of not generating an 'abandon a blocked head with runnable work behind it' sequence negligible: at 256 cases the mutant survived roughly one run in three.",
+      "env": {
+        "PROPTEST_CASES": "2048"
+      }
     }
   ]
 }

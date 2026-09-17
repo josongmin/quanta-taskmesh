@@ -95,6 +95,9 @@ jobs:
       - run: rustup default stable
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
+      # TSan on recent kernels can abort with "unexpected memory mapping" under
+      # 32-bit mmap randomisation; 28 bits is the documented workaround.
+      - run: sudo sysctl -w vm.mmap_rnd_bits=28
       - run: just tsan
 
   coverage:
@@ -153,6 +156,7 @@ jobs:
         run: |
           version="$(python3 tools/bench/iai_gate.py config iai_callgrind_runner)"
           cargo install iai-callgrind-runner --version "${version}" --locked
+      - run: sudo sysctl -w vm.mmap_rnd_bits=28
       - name: Restore iai baseline (same key as bench.yml)
         id: fingerprint
         run: |

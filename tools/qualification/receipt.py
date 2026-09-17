@@ -174,6 +174,16 @@ def run_json(cmd: list[str], receipt_path: Path) -> dict | None:
     return {"error": proc.stderr[-2000:], "exit_code": proc.returncode}
 
 
+def run_msrv_check() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "tools/consumer-msrv/check.py"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def collect(out: Path, tiers: list[str], skip_mutations: bool) -> int:
     started = datetime.now(timezone.utc).isoformat()
     source = source_identity()
@@ -211,13 +221,7 @@ def collect(out: Path, tiers: list[str], skip_mutations: bool) -> int:
                     "derived_from": str(out.with_suffix(".mutations.json").name),
                 }
             )
-    msrv = subprocess.run(
-        [sys.executable, "tools/consumer-msrv/check.py"],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    msrv = run_msrv_check()
 
     # Source identity is re-derived AFTER the gates: a gate that modified the
     # tree (a mutation runner that failed to restore, a formatter) invalidates

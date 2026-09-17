@@ -220,6 +220,12 @@ continuation이 돌기 전(gap). 그 gap에 도착한 요청은 두 규칙을 �
 같은 클래스, 다른 물리 pool이며, 이때 newcomer를 잡아두면 한 pool의 포화가 그 클래스가
 쓸 수 있는 다른 모든 pool을 놀리게 한다. `QueuedBehind`는 항상 queue로 간다(class가 queue를
 갖고 있다는 뜻이므로): `Reject`-overflow지만 memory `Queue`인 클래스도 queue에 합류한다.
+`pending_block_reason`/`PendingView::blocked_on`은 *intake 시점*의 이유다(그 뒤 다른 한계에 막혀도
+갱신하지 않는다 — 진단용이지 상태 머신의 입력이 아니다). 그리고 이 규칙의 대가를 한 문장으로: 같은
+클래스에서 pool에 막힌 head *뒤에* 선 pool 불필요 요청 H2는, 그 pool이 차 있는 동안 나중에 온
+pool 불필요 newcomer들에게 계속 추월당한다 — 클래스 내부 FIFO는 head를 넘지 못하고, 예외는 newcomer에게만
+열리기 때문이다. 이것은 head-of-line 손실을 클래스 전체가 아니라 그 pool을 기다리는 요청들로 한정하는
+선택이며, pool이 풀리면 H1·H2가 순서대로 나간다.
 gap은 lock이 풀린 어느 admit에서든 관찰되지만, test는 promotion 중 waker에서 재진입하는
 admit를 결정적 vantage point로 쓴다 (same-class, cross-class, Reject+memory-Queue, gap 안의
 capability 예외 각 1개, gap 밖의 capability 예외 1개 — 각각 mutation을 가진다).
@@ -443,11 +449,17 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
   `crates/taskmesh-contract/tests/topology_validation.rs`.
 - `just mutants-critical`: 45 entries — 44 KILLED + 1 CONTROL_GREEN
   (`tools/verification/mutations.json`; 각 entry는 named test와 named assertion
-  message로 kill된다). `just loom` 5/5, `just shuttle` 4/4 — production `Governor`.
+  message로 kill된다). `just loom` 5/5, `just shuttle` 6/6 — production `Governor`.
 - `just tsan` CLEAN (engine 4 + host 5 test binaries, macOS aarch64), `just coverage-report`
   REPORTED (수치는 receipt). `tests/differential_model.rs`: admission/promotion 상태기계를 ~150줄
   실행 가능한 명세와 무작위 op 시퀀스(proptest, 매 op 뒤 verdict·gauge·ticket·ledger 동치)로 대조 —
-  10개 engine mutation을 최소 반례로 잡음; D08 gap 규칙은 단일 스레드에서 도달 불가하므로 shuttle 모델이 담당.
+  engine mutation(release가 promote하지 않음, queued abandon이 promote하지 않음 — 이건 이 test만 잡는다 —,
+  LIFO promotion, inflight 경계 off-by-one, claim이 ticket을 남김, terminal record 유실, 잘못된 QueueFull
+  verdict, head의 pool 무시 등)을 최소 반례로 잡는다; inventory entry `abandoning-a-queued-ticket-never-promotes`가
+  그중 하나를 고정한다. D08 gap 규칙은 단일 스레드(waker 재진입 제외)에서 도달 불가하므로 shuttle 모델이 담당.
+  범위 밖(명시): memory mode, DRR/WFQ, waker/wake 경로, child scope·recursion guard, stale-lease reap,
+  retry-after, best-effort/deadline tier, budget 경계(≤12 queued). verdict 우선순위(Inflight → Capability →
+  Cpu → Memory)와 "queue가 꽉 찼을 때는 막힌 자원의 verdict"는 library spec에 표로 적었고 모델은 그 표를 따른다.
 - 이 ADR은 **local** 검증 상태를 기술한다. hosted CI, Linux instruction-count
   qualification, 배포/activation은 여기서 주장하지 않는다. consumer MSRV는 local
   1.81 toolchain에서 default+rayon PASS다.

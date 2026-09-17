@@ -47,7 +47,7 @@
   최초 구현의 두 파일은 locking 설계를 손으로 베낀 toy model이었다. 지금은 engine `src/sync.rs`
   seam으로 **production `Governor`**를 checker의 mutex/atomics 위에 컴파일하며, loom 5개
   (9–810 interleavings 전수: admit/release conservation, promote-claim-abandon 3-way,
-  lost-wakeup freedom, claim-vs-reap 양방향, 무순서 reconcile)와 shuttle 4개(각 10,000 schedule)가
+  lost-wakeup freedom, claim-vs-reap 양방향, 무순서 reconcile)와 shuttle 6개(4개 × 10,000 schedule + D08 gap 모델 2개 × 5,000)가
   실제 `admit`/`claim`/`abandon`/`release`/`reap_leaks`/`reconcile_memory`를 호출한다.
   checker는 optional feature(`loom`/`shuttle`) 뒤에 있어 consumer lockfile을 바꾸지 않는다.
 - mutation inventory는 감사 후 45건(control 1, `runner: pytest` 5, shuttle target 2)이며 모든 non-control entry에

@@ -43,21 +43,31 @@ export RUSTFLAGS="-Zsanitizer=thread"
 export RUSTDOCFLAGS="-Zsanitizer=thread"
 export TSAN_OPTIONS="halt_on_error=1"
 
-# Engine: the OS-thread stress and fuzz drivers, effect retirement (wakers fired
-# outside the lock), and the ticket lifecycle races.
+# Engine: the OS-thread stress and fuzz drivers and effect retirement (wakers
+# fired outside the lock). Single-threaded lifecycle tests are covered by the
+# model checkers; TSan adds nothing there and they are the slowest binaries.
 cargo +nightly test -Zbuild-std --target "${target}" -p taskmesh-engine \
   --test concurrency_stress \
   --test concurrency_fuzz \
-  --test hardening_effect_retirement \
-  --test hardening_lifecycle
+  --test hardening_effect_retirement
 
-# Host: Tokio workers, the blocking pool, dedicated stack threads, cancellation
-# and deadline races, and the mixed soak.
+# Host: the TicketGuard/lease handoff (in-crate unit tests), custom CpuExecutor
+# adapters and lease custody across threads, dedicated stack threads with
+# cancellation and deadlines, concurrent submitters against the intake gate,
+# the blocking pool, cancel-leak races, and the mixed soak.
 cargo +nightly test -Zbuild-std --target "${target}" -p taskmesh \
+  --lib \
+  --test runtime_cpu_executor \
+  --test deadline_cancel \
+  --test hardening_intake_bounds \
+  --test runtime_cancel_leak \
   --test e2e_chaos \
   --test hardening_executor_protocol \
   --test hardening_deadline_custody \
   --test runtime_cancel_timeout \
   --test host_inferno
+
+# The only work-stealing adapter.
+cargo +nightly test -Zbuild-std --target "${target}" -p taskmesh-rayon
 
 echo "taskmesh-tsan status=CLEAN target=${target}"

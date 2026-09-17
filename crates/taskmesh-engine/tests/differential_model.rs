@@ -17,8 +17,9 @@
 //!  * a capacity-freeing transition promotes until no queued head fits, FIFO by
 //!    arrival across classes and strict FIFO inside one — so after any
 //!    operation returns, no queued head fits (`QueuedBehind` is a lock-gap
-//!    phenomenon a single-threaded sequence never observes; a block reason the
-//!    engine reports must be one of the three limits);
+//!    phenomenon a single-threaded sequence without a re-entrant waker never
+//!    observes — the waker-driven and shuttle tests own it; a block reason the
+//!    engine reports here must be one of the three limits);
 //!  * a newcomer that fits is admitted even when its class has a queued head,
 //!    because that head can only be waiting on a pool the newcomer does not
 //!    need — the one D08 overtake;
@@ -27,8 +28,15 @@
 //!
 //! Restricted configuration: one to three FIFO classes, `max_inflight`, an
 //! overflow policy (queue within depth, or reject), a per-class cpu cost, an
-//! optional global cpu budget, two capability pools with optional limits. No
-//! memory modes, no DRR/WFQ.
+//! optional global cpu budget, two capability pools with optional limits.
+//! Deliberately outside the model (covered elsewhere or not at all): memory
+//! modes and reconcile, DRR/WFQ/deadline/best-effort tiers, wakers and the
+//! wake path, child scope and the recursion guard, stale-lease reaping (only
+//! the no-op sweep is exercised), retry-after policies (always `None`), and
+//! the promotion budget boundary (sequences queue at most a dozen requests).
+//! The verdict table the model encodes (which limit is reported when several
+//! apply; what a full queue sheds with) is the one in
+//! `docs/taskmesh-library-spec.md` §"Admission verdicts".
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
@@ -89,7 +97,9 @@ struct Config {
     large_stack_limit: u32,
 }
 
-/// The limit a request runs into, in the order the contract checks them.
+/// The limit a request runs into. The order is the documented verdict
+/// precedence (library spec, "Admission verdicts"): class inflight, then the
+/// capability pool, then the cpu budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Limit {
     Inflight,
@@ -737,8 +747,15 @@ fn apply(
 }
 
 proptest! {
-    // `ProptestConfig::default()` honours `PROPTEST_CASES`; the default is 256.
-    #![proptest_config(ProptestConfig::default())]
+    // 1,024 cases by default (`PROPTEST_CASES` still overrides). 256 was
+    // marginal: a mutant that skips the promotion pass after abandoning a
+    // queued ticket needs an abandon of a *blocked head with runnable work
+    // behind it*, which 256 random sequences sometimes never generate. At
+    // 1,024 that mutant was found in every one of ten runs.
+    #![proptest_config(ProptestConfig {
+        cases: 1_024,
+        ..ProptestConfig::default()
+    })]
 
     /// The production governor and the reference model agree on every verdict
     /// and every observable, after every operation of a random sequence.

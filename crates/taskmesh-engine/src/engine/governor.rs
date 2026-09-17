@@ -805,7 +805,10 @@ impl Governor {
         })
     }
 
-    /// Why a queued ticket is waiting, or `None` if it is not queued.
+    /// Why a queued ticket was blocked **at intake**, or `None` if it is not
+    /// queued. A diagnostic, not state: the reason is frozen when the request
+    /// is enqueued and is not rewritten if a later transition leaves the head
+    /// waiting on a different limit.
     pub fn pending_block_reason(&self, ticket: Ticket) -> Option<CapacityBlock> {
         self.pending_view(ticket).map(|view| view.blocked_on)
     }

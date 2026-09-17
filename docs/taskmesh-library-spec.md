@@ -118,6 +118,29 @@ budget expired is unwound, not started. `Duration::ZERO` keeps its
 12. requested-stack async execution keeps the future factory, root, and Tokio
     children on the owned worker runtime instead of borrowing the caller runtime
 
+## Admission verdicts
+
+One intake transition checks the limits in this order and reports the first
+one that blocks; a queueing class then queues within `max_queue_depth` and a
+non-queueing class is shed with the verdict of that limit. A *full* queue sheds
+with the verdict of the limit its head is blocked on, not with `QueueFull`,
+unless that limit is the class quota or the cpu budget.
+
+| Limit (checked in this order) | `CapacityBlock` | Shed verdict (no queue / queue full) |
+|---|---|---|
+| unknown / disabled class, recursive child, malformed plan | — | `UnknownClass` / `ClassDisabled` / `RecursiveAdmission` / `MalformedTask` |
+| class `max_inflight` reached | `Inflight` | `CpuSaturated` (no queue) / `QueueFull` (queue full) |
+| resolved capability pool at its limit | `Capability` | `SubstrateSaturated` |
+| global cpu budget | `Cpu` | `CpuSaturated` / `QueueFull` |
+| global memory budget | `Memory` | per `MemoryOvercommitPolicy`: `Queue` queues (full → `MemorySaturated`), `Reject` → `MemorySaturated`, `DegradeToLight` re-accounts once under the fallback class |
+| capacity free but a promotion pass is owed (D08 gap) | `QueuedBehind` | never shed here: the class demonstrably has a queue and the request joins it |
+| ledger cannot represent the total | `AccountingFault` | `RuntimeUnavailable` (sticky) |
+
+`CpuSaturated` is the class-busy verdict even for a class whose `cpu_units` is
+`0` (the name is historical; the cause is the class quota). The block reason a
+queued ticket reports (`Governor::pending_block_reason`) is the one recorded at
+intake and is diagnostic only.
+
 ## Enforcement (not advisory)
 
 The host enforces the declared contract at runtime:

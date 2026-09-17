@@ -45,6 +45,19 @@ def applicable(gate: dict, here: str) -> bool:
 GATE_TIMEOUT_SECONDS = 3600
 
 
+def status_line_qualifies(gate: dict, stdout: str) -> bool:
+    """For a gate that self-reports (`status_line` in the inventory: a marker
+    and a token that must appear on the marker's line), exit 0 alone is not
+    PASS. A missing marker line is treated as not qualified too: a recipe that
+    stopped printing its verdict has not proved anything."""
+    spec = gate.get("status_line")
+    if not spec:
+        return True
+    marker = spec["marker"]
+    lines = [line for line in stdout.splitlines() if line.startswith(marker + " ")]
+    return any(spec["require"] in line.split() for line in lines)
+
+
 def run_gate(gate: dict) -> dict:
     started = time.monotonic()
     started_at = datetime.now(timezone.utc).isoformat()
@@ -71,7 +84,12 @@ def run_gate(gate: dict) -> dict:
             "output_tail": f"TIMEOUT after {GATE_TIMEOUT_SECONDS}s\n" + tail[-1500:],
         }
     duration = time.monotonic() - started
-    if proc.returncode == 0:
+    if proc.returncode == 0 and not status_line_qualifies(gate, proc.stdout):
+        # The recipe ran and exited 0 but its own machine-readable line says
+        # it did not reach the qualifying state (e.g. bench-iai recorded a
+        # baseline instead of comparing against one). That is not a pass.
+        status = "NOT_RUN"
+    elif proc.returncode == 0:
         status = "PASS"
     elif proc.returncode == 2 and gate.get("conditional"):
         # Conditional gates use exit 2 for "could not run here"; that is a
@@ -82,7 +100,7 @@ def run_gate(gate: dict) -> dict:
     else:
         status = "FAIL"
     tail = (proc.stdout + proc.stderr)[-2000:]
-    return {
+    result = {
         "id": gate["id"],
         "recipe": gate["recipe"],
         "status": status,
@@ -91,6 +109,13 @@ def run_gate(gate: dict) -> dict:
         "duration_s": round(duration, 3),
         "output_tail": tail,
     }
+    if gate.get("status_line"):
+        marker = gate["status_line"]["marker"]
+        result["status_line"] = next(
+            (line for line in proc.stdout.splitlines() if line.startswith(marker + " ")),
+            None,
+        )
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:

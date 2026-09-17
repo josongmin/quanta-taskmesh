@@ -327,6 +327,9 @@ const GAP_QUEUED: usize = PROMOTION_BUDGET + 4;
 /// Heavier per schedule than the models above (a 68-deep queue and a full drain),
 /// so fewer schedules; still far more than the gap needs to be hit.
 const GAP_SCHEDULES: usize = 5_000;
+/// Schedules that must land a newcomer inside the gap (5% of the sample; the
+/// measured rate is ≈49%). A sampler that stops reaching the gap fails here.
+const MIN_IN_GAP: usize = GAP_SCHEDULES / 20;
 
 fn class_named(name: &str) -> TaskClass {
     TaskClass::new(name.to_string())
@@ -566,14 +569,18 @@ fn randomized_gap_arrivals_queue_behind_runnable_heads() {
         GAP_SCHEDULES,
     );
     // The sample must actually have put newcomers inside the gap; a run that
-    // only ever saw `Cpu` proved nothing about the rule.
+    // only ever saw `Cpu` proved nothing about the rule. Measured hit rate is
+    // ≈49% of schedules; the floor is set an order of magnitude below that so
+    // it detects a sampler that stopped exploring the gap, not normal variance.
+    let same = SAME_CLASS_IN_GAP.load(Ordering::SeqCst);
+    let cross = CROSS_CLASS_IN_GAP.load(Ordering::SeqCst);
     assert!(
-        SAME_CLASS_IN_GAP.load(Ordering::SeqCst) > 0,
-        "no schedule landed the same-class newcomer in the gap"
+        same >= MIN_IN_GAP,
+        "only {same} of {GAP_SCHEDULES} schedules landed the same-class newcomer in the gap"
     );
     assert!(
-        CROSS_CLASS_IN_GAP.load(Ordering::SeqCst) > 0,
-        "no schedule landed the cross-class newcomer in the gap"
+        cross >= MIN_IN_GAP,
+        "only {cross} of {GAP_SCHEDULES} schedules landed the cross-class newcomer in the gap"
     );
 }
 
@@ -659,8 +666,9 @@ fn randomized_only_unqueueable_work_overtakes_in_the_gap() {
         },
         GAP_SCHEDULES,
     );
+    let overtook = OVERTOOK_IN_GAP.load(Ordering::SeqCst);
     assert!(
-        OVERTOOK_IN_GAP.load(Ordering::SeqCst) > 0,
-        "no schedule admitted the unqueueable newcomer inside the gap"
+        overtook >= MIN_IN_GAP,
+        "only {overtook} of {GAP_SCHEDULES} schedules admitted the unqueueable newcomer inside the gap"
     );
 }

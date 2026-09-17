@@ -274,3 +274,32 @@ def test_an_unknown_skip_id_is_refused() -> None:
     )
     assert proc.returncode != 0
     assert "unknown gate id(s) in --skip" in proc.stderr
+
+
+def test_a_self_reported_baseline_run_is_not_a_pass() -> None:
+    """bench-iai exits 0 on BASELINE_CREATED (a baseline was written, nothing
+    was compared). Through the gate runner that must be NOT_RUN, never PASS,
+    or a receipt could be QUALIFIED with no instruction-count comparison."""
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    gate = {
+        "id": "bench-iai",
+        "status_line": {"marker": "taskmesh-iai-gate", "require": "status=QUALIFIED"},
+    }
+    assert module.status_line_qualifies(
+        gate, "taskmesh-iai-gate status=QUALIFIED fingerprint=abc\n"
+    )
+    assert not module.status_line_qualifies(
+        gate, "taskmesh-iai-gate status=BASELINE_CREATED fingerprint=abc\n"
+    )
+    assert not module.status_line_qualifies(gate, "no marker line at all\n"), (
+        "a recipe that stopped printing its verdict has not proved anything"
+    )
+    assert module.status_line_qualifies({"id": "plain"}, ""), (
+        "gates without a status line keep exit-0 semantics"
+    )
+    inventory = json.loads(vi.INVENTORY.read_text(encoding="utf-8"))
+    bench = next(g for g in inventory["gates"] if g["id"] == "bench-iai")
+    assert bench["status_line"] == {"marker": "taskmesh-iai-gate", "require": "status=QUALIFIED"}

@@ -22,7 +22,8 @@ Two runners are supported, chosen per entry by `runner`:
 
 - `cargo` (default): `package` + `test_target` (`lib` or a `tests/` target),
   optionally `profile: "release"` when a debug assertion would otherwise fire
-  before the named test gets to observe the defect.
+  before the named test gets to observe the defect, plus `cargo_args` and
+  `env` for targets that need a feature and a `--cfg` (the shuttle models).
 - `pytest`: `test_target` is a pytest node id; the mutated file is one of the
   Python tools, whose own tests are the proof.
 
@@ -85,6 +86,16 @@ def validate_entry(mutation: dict) -> None:
         raise SystemExit(f"mutation {mutation_id}: cargo runner needs a package")
     if mutation.get("profile", "debug") not in PROFILES:
         raise SystemExit(f"mutation {mutation_id}: unknown profile {mutation.get('profile')!r}")
+    env = mutation.get("env", {})
+    if not isinstance(env, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in env.items()
+    ):
+        raise SystemExit(f"mutation {mutation_id}: env must be a string→string map")
+    cargo_args = mutation.get("cargo_args", [])
+    if not isinstance(cargo_args, list) or not all(isinstance(a, str) for a in cargo_args):
+        raise SystemExit(f"mutation {mutation_id}: cargo_args must be a list of strings")
+    if runner == "pytest" and (env or cargo_args):
+        raise SystemExit(f"mutation {mutation_id}: env/cargo_args apply to the cargo runner only")
     control = bool(mutation.get("expect_no_failure"))
     if control:
         if mutation["finding"] != "control":
@@ -139,12 +150,16 @@ def test_command(mutation: dict) -> list[str]:
     # test target under `tests/`.
     selector = ["--lib"] if test_target == "lib" else ["--test", test_target]
     profile = ["--release"] if mutation.get("profile") == "release" else []
+    # Extra cargo arguments (e.g. `--features shuttle` for a model-check target
+    # that is `#![cfg(shuttle)]`); paired with `env` (RUSTFLAGS) in `run_tests`.
+    extra = list(mutation.get("cargo_args", []))
     return [
         "cargo",
         "test",
         "-p",
         mutation["package"],
         *profile,
+        *extra,
         *selector,
         "--",
         "--test-threads",
@@ -156,7 +171,7 @@ def run_tests(mutation: dict) -> subprocess.CompletedProcess[str]:
     # No bytecode cache for the pytest runner: Python validates a `.pyc` by
     # mtime-seconds + size, so an equal-size edit within the same second as the
     # previous compile could run the *unmutated* module.
-    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", **mutation.get("env", {})}
     return subprocess.run(
         test_command(mutation),
         capture_output=True,

@@ -76,6 +76,7 @@ pub use taskmesh_contract::{
     PermitCost,
     PlanSource,
     ResourceBudget,
+    ResourceConversionError,
     RetryAfterPolicy,
     RunError,
     Runtime,
@@ -93,6 +94,7 @@ pub use taskmesh_contract::{
     TieBreakPolicy,
     TopologyConfig,
     TopologyError,
+    SNAPSHOT_SCHEMA_VERSION,
 };
 
 // ---- ext: advanced integrator surface -------------------------------------

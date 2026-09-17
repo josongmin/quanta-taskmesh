@@ -167,6 +167,12 @@ def test_the_test_command_reflects_runner_and_profile() -> None:
     py = rm.test_command({**MUT, "runner": "pytest", "test_target": "a.py::t"})
     assert py[1:3] == ["-m", "pytest"] and py[-1] == "a.py::t"
     assert "-rfE" in py, "errors must be listed in the summary, not only failures"
+    # A model-check target needs its feature and its cfg together.
+    shuttle = rm.test_command(
+        {**MUT, "cargo_args": ["--features", "shuttle"], "env": {"RUSTFLAGS": "--cfg shuttle"}}
+    )
+    assert shuttle[shuttle.index("--features") + 1] == "shuttle"
+    assert shuttle.index("--features") < shuttle.index("--test"), "cargo args precede the selector"
 
 
 @pytest.mark.parametrize(
@@ -179,6 +185,9 @@ def test_the_test_command_reflects_runner_and_profile() -> None:
         ({**MUT, "expect_no_failure": True}, "labelled finding=control"),
         ({**MUT, "finding": "control"}, "without expect_no_failure"),
         ({k: v for k, v in MUT.items() if k != "expect_failing_test"}, "expect_failing_test"),
+        ({**MUT, "env": {"RUSTFLAGS": 1}}, "env must be"),
+        ({**MUT, "cargo_args": "--features shuttle"}, "cargo_args must be"),
+        ({**MUT, "runner": "pytest", "env": {"X": "1"}}, "cargo runner only"),
     ],
 )
 def test_an_entry_that_cannot_prove_its_claim_is_refused(broken: dict, reason: str) -> None:

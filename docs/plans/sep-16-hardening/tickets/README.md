@@ -9,8 +9,8 @@
   두 사유는 [H16-022](H16-022-qualification-and-rollout.md)와 receipt에 명시되어 있다.
 - 구현된 계약: [ADR 0003](../../../adr/0003-sep-16-hardening-contracts.md). 로컬 증거:
   `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 375+ green,
-  loom 5 / shuttle 4 green **on the production `Governor`**, mutation gate 43/43
-  (Python 도구 5건 포함), consumer MSRV 1.81 PASS(default·rayon), allocation gate 3.0 allocs/op
+  loom 5 / shuttle 6 green **on the production `Governor`**, mutation gate 45/45
+  (Python 도구 5건·shuttle 모델 2건 포함), consumer MSRV 1.81 PASS(default·rayon), allocation gate 3.0 allocs/op
   (threshold = 측정값).
 - 구현 직후 3-track 적대적 감사(engine/runtime · 증명 강도 · tooling/CI/docs)를 실행했고 P0 3건·P1 12건·
   P2 다수를 모두 처리했다; 그 처리 위에 다시 2-track 감사(코드/주장 · 증명 표면)를 돌려 P1 4건·P2 8건을

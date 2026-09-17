@@ -52,7 +52,7 @@
       임시 git repo fixture로 hermetic). 감사(A3-P1-3): validator는 이제 HEAD·dirtiness를 tree에서
       재도출하고 sub-receipt 일관성을 검사한다; gate 결과 자체는 `collect`가 attest하며 그 경계를
       `receipt.py` docstring과 release-checklist에 명시했다 (mutation `receipt-validator-trusts-the-receipts-dirty-flag`)
-- [x] `H16-022-A03` mutation 43건 KILLED/CONTROL_GREEN (receipt; 최초 20건 → 1차 감사 후 37건 → 2차 감사 후 43건)
+- [x] `H16-022-A03` mutation 45건 KILLED/CONTROL_GREEN (receipt; 최초 20건 → 1차 감사 후 37건 → 2차 감사 후 43건 → 증명 강화 후 45건)
 - [ ] `H16-022-A04` MSRV consumer receipt 존재(PASS); Linux IAI는 **명시적 blocker** (macOS). CI
       `qualification` job(ci.yml)이 clean ubuntu checkout에서 `receipt.py collect`를 실행하고 artifact로
       올리도록 wired — 첫 push에서 BASELINE_CREATED, 두 번째부터 bench-iai QUALIFIED. 이 저장소에서

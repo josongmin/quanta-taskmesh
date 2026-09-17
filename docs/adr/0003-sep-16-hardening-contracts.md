@@ -296,7 +296,7 @@ task에 남는다. 중앙 kernel에는 metadata와 handle만 둔다 — 중앙�
 `std` atomics를, `--cfg loom --features loom` / `--cfg shuttle --features shuttle`
 빌드는 checker의 mutex/atomics를 같은 `Governor` 코드에 컴파일한다.
 `tests/loom_governance.rs`(5개, 9–810 interleaving 전수)와 `tests/shuttle_governance.rs`
-(4개, 각 10,000 schedule)는 실제 `admit`/`claim`/`abandon`/`release`/`reap_leaks`/
+(6개: 4개 × 10,000 schedule + D08 gap 모델 2개 × 5,000 schedule)는 실제 `admit`/`claim`/`abandon`/`release`/`reap_leaks`/
 `reconcile_memory`를 호출한다: promote-claim-abandon 3-way exactly-once, `Pending` 뒤에
 반드시 wake가 오는 lost-wakeup freedom, claim-vs-reap 양방향 fail-closed, 무순서 동시
 reconcile 양쪽 적용, 4-thread churn conservation.
@@ -373,7 +373,7 @@ spec 문자열을 빌려 allocation 없이 한다.
 - CI `qualification` job이 clean checkout에서 `receipt.py collect`를 돌려 receipt of record를
   artifact로 남긴다; verdict가 QUALIFIED가 아니면 job이 red다. local receipt는 증거지 자격이
   아니다.
-- mutation inventory(43개)의 모든 non-control entry는 `expect_message`를 가져야 하며
+- mutation inventory(45개)의 모든 non-control entry는 `expect_message`를 가져야 하며
   runner가 이를 거부한다. 그 message는 named test *자신의* 출력 블록(libtest의
   `---- name stdout ----`, pytest의 `___ name ___`/`FAILED …::name`)에서만 찾는다 — 다른
   실패 test가 공유 helper 문자열로 이유를 대신 채울 수 없다. control은 `finding=control`로만 표기한다. `runner: pytest`
@@ -432,11 +432,13 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
   `crates/taskmesh/tests/hardening_*.rs`,
   `crates/taskmesh/src/runtime/claim_acquisition_tests.rs`,
   `crates/taskmesh-contract/tests/topology_validation.rs`.
-- `just mutants-critical`: 43 entries — 42 KILLED + 1 CONTROL_GREEN
+- `just mutants-critical`: 45 entries — 44 KILLED + 1 CONTROL_GREEN
   (`tools/verification/mutations.json`; 각 entry는 named test와 named assertion
   message로 kill된다). `just loom` 5/5, `just shuttle` 4/4 — production `Governor`.
 - `just tsan` CLEAN (engine 4 + host 5 test binaries, macOS aarch64), `just coverage-report`
-  REPORTED (수치는 receipt).
+  REPORTED (수치는 receipt). `tests/differential_model.rs`: admission/promotion 상태기계를 ~150줄
+  실행 가능한 명세와 무작위 op 시퀀스(proptest, 매 op 뒤 verdict·gauge·ticket·ledger 동치)로 대조 —
+  10개 engine mutation을 최소 반례로 잡음; D08 gap 규칙은 단일 스레드에서 도달 불가하므로 shuttle 모델이 담당.
 - 이 ADR은 **local** 검증 상태를 기술한다. hosted CI, Linux instruction-count
   qualification, 배포/activation은 여기서 주장하지 않는다. consumer MSRV는 local
   1.81 toolchain에서 default+rayon PASS다.

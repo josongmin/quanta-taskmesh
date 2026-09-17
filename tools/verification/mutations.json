@@ -525,6 +525,46 @@
       "test_target": "deadline_cancel",
       "expect_failing_test": "absolute_deadline_rejects_non_cancellable_blocking_work_v1",
       "expect_message": "a blocking job on a dedicated thread cannot promise cancellation either"
+    },
+    {
+      "id": "promotion-pending-is-sticky",
+      "finding": "R3-shuttle",
+      "rationale": "If the pending-continuation flag only ever accumulates, every direct admit after the first budget overflow is queued forever (`QueuedBehind` with nothing to wait for). Only the shuttle gap model observes the post-drain direct admit under concurrency.",
+      "file": "crates/taskmesh-engine/src/engine/governor.rs",
+      "find": "        state.promotion_pending = effects.more_runnable;",
+      "replace": "        state.promotion_pending |= effects.more_runnable;",
+      "package": "taskmesh-engine",
+      "test_target": "shuttle_governance",
+      "profile": "release",
+      "cargo_args": [
+        "--features",
+        "shuttle"
+      ],
+      "env": {
+        "RUSTFLAGS": "--cfg shuttle"
+      },
+      "expect_failing_test": "randomized_gap_arrivals_queue_behind_runnable_heads",
+      "expect_message": "no continuation is owed after the drain: direct admit expected"
+    },
+    {
+      "id": "unqueueable-newcomer-queued-in-the-gap",
+      "finding": "R3-shuttle",
+      "rationale": "A Reject-overflow class has nowhere to wait; queueing it in the gap sheds it as QueueFull for a queue it never had. Only the shuttle overtake model races such a class against the drain.",
+      "file": "crates/taskmesh-engine/src/features/admission/mod.rs",
+      "find": "        ) || (state.promotion_pending && class_can_queue(policy) && state.queued(class) == 0))",
+      "replace": "        ) || (state.promotion_pending && state.queued(class) == 0))",
+      "package": "taskmesh-engine",
+      "test_target": "shuttle_governance",
+      "profile": "release",
+      "cargo_args": [
+        "--features",
+        "shuttle"
+      ],
+      "env": {
+        "RUSTFLAGS": "--cfg shuttle"
+      },
+      "expect_failing_test": "randomized_only_unqueueable_work_overtakes_in_the_gap",
+      "expect_message": "an unqueueable newcomer is admitted in the gap or shed with CpuSaturated, never queued"
     }
   ]
 }

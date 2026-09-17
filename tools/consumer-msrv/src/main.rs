@@ -24,7 +24,10 @@ use taskmesh::{
     SubmitOptions, TaskClass, TaskSpec, TokioRuntime, TopologyConfig, TopologyError,
 };
 
-/// The wire schema a 0.2.0 consumer must expect (`SNAPSHOT_SCHEMA_VERSION`).
+/// The wire schema a 0.2.0 consumer must expect. The literal is the consumer's
+/// own knowledge (what its deserializer was written against); the facade's
+/// `SNAPSHOT_SCHEMA_VERSION` must agree with it, and that agreement is checked
+/// below — through `taskmesh`, the only crate a consumer depends on.
 const EXPECTED_SNAPSHOT_SCHEMA: u32 = 2;
 
 /// Fail loudly: a wrong assertion is a message on stderr and a non-zero exit.
@@ -223,6 +226,11 @@ async fn snapshot_schema_2() {
         snapshot.schema_version == EXPECTED_SNAPSHOT_SCHEMA,
         "snapshot schema_version {} != {EXPECTED_SNAPSHOT_SCHEMA}",
         snapshot.schema_version
+    );
+    check!(
+        taskmesh::SNAPSHOT_SCHEMA_VERSION == EXPECTED_SNAPSHOT_SCHEMA,
+        "the facade exports SNAPSHOT_SCHEMA_VERSION = {} but the consumer expects {EXPECTED_SNAPSHOT_SCHEMA}",
+        taskmesh::SNAPSHOT_SCHEMA_VERSION
     );
     check!(
         snapshot.conservation_violation().is_none(),
@@ -813,14 +821,19 @@ fn memory_outcomes() {
     };
     check!(scale.units_for(2048) == Ok(2), "2048 bytes at 1024/unit");
     check!(scale.units_for(2049) == Ok(3), "rounds up");
+    // The error type is reachable through the facade, and each edge names its
+    // own cause — a consumer can tell "your scale is 0" from "your reading is
+    // too large" without parsing a string.
     check!(
-        MemoryUnitScale { bytes_per_unit: 0 }.units_for(1).is_err(),
-        "an unscaled conversion is an error, not 0"
+        MemoryUnitScale { bytes_per_unit: 0 }.units_for(1)
+            == Err(taskmesh::ResourceConversionError::UnscaledMemoryUnits),
+        "an unscaled conversion is UnscaledMemoryUnits, not 0"
     );
     check!(
-        MemoryUnitScale { bytes_per_unit: 1 }
-            .units_for(u64::MAX)
-            .is_err(),
-        "a reading past the u32 unit domain is an error, not u32::MAX"
+        matches!(
+            MemoryUnitScale { bytes_per_unit: 1 }.units_for(u64::MAX),
+            Err(taskmesh::ResourceConversionError::MemoryUnitsOverflow { bytes: u64::MAX, .. })
+        ),
+        "a reading past the u32 unit domain is MemoryUnitsOverflow, not u32::MAX"
     );
 }

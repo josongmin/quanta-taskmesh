@@ -103,3 +103,34 @@ fn valid_topologies_resolve_as_documented() {
     assert_eq!(TopologyConfig::default().validate(), Ok(()));
     assert_eq!(TopologyConfig::default().cpu.mode, CpuMode::Auto);
 }
+
+#[test]
+fn equal_worker_bounds_are_a_valid_window() {
+    // The clamp window is inclusive on both ends: `min == max` is a window of
+    // exactly one value, not an inverted one. It pins the pool to that size
+    // whatever the machine offers.
+    let pinned = TopologyConfig::new().min_workers(4).max_workers(4);
+    assert_eq!(pinned.validate(), Ok(()));
+    assert_eq!(pinned.try_resolved_cpu_workers(64), Ok(4));
+    assert_eq!(pinned.try_resolved_cpu_workers(1), Ok(4));
+}
+
+#[test]
+fn cpu_mode_setters_touch_only_the_cpu_mode() {
+    // `cpu_auto` / `cpu_fixed` switch the mode and nothing else: a blocking
+    // pool sized earlier in the builder chain is kept, and switching back to
+    // `Auto` after `Fixed` really is `Auto`.
+    let topology = TopologyConfig::new().blocking_threads(2).cpu_auto();
+    assert_eq!(topology.blocking_threads, 2);
+    assert_eq!(topology.cpu.mode, CpuMode::Auto);
+    let switched = TopologyConfig::new()
+        .blocking_threads(2)
+        .cpu_fixed(3)
+        .cpu_auto();
+    assert_eq!(switched.cpu.mode, CpuMode::Auto);
+    assert_eq!(switched.blocking_threads, 2);
+    assert_eq!(
+        TopologyConfig::new().cpu_auto().cpu_fixed(3).cpu.mode,
+        CpuMode::Fixed(3)
+    );
+}

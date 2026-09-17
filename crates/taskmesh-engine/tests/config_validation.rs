@@ -1,6 +1,7 @@
 //! T02: fail-closed configuration validation.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use taskmesh_contract::*;
 use taskmesh_engine::*;
@@ -51,6 +52,44 @@ fn per_request_limit_overflow_fails() {
         vec![("c", ClassPolicy::new().cpu_units(4))],
     );
     assert!(Governor::validate_policy(&p).is_err());
+}
+
+#[test]
+fn per_request_memory_limit_overflow_fails() {
+    // The per-request memory cap is a separate check from the cpu one: a class
+    // whose memory cost exceeds it is impossible to admit under that budget,
+    // so it is refused at construction rather than shed on every admit.
+    let p = policy(
+        ResourceBudget::new()
+            .memory_units(100)
+            .per_request_memory_units(2),
+        vec![("c", ClassPolicy::new().memory_units(4))],
+    );
+    let error = Governor::validate_policy(&p)
+        .expect_err("a class costing more memory than the per-request cap must be rejected");
+    assert!(
+        matches!(&error, GovernorError::PolicyViolation(message) if message.contains("per-request memory limit")),
+        "the rejection names the per-request memory limit, got {error:?}"
+    );
+}
+
+#[test]
+fn per_request_limits_are_inclusive_at_the_boundary() {
+    // A cost *equal* to the cap is within it, for cpu and memory alike. The
+    // cap bounds a request, it does not require strictly smaller requests.
+    let p = policy(
+        ResourceBudget::new()
+            .cpu_units(100)
+            .memory_units(100)
+            .per_request_cpu_units(4)
+            .per_request_memory_units(2),
+        vec![("c", ClassPolicy::new().cpu_units(4).memory_units(2))],
+    );
+    assert_eq!(
+        Governor::validate_policy(&p),
+        Ok(()),
+        "a cost equal to the per-request cap is within the cap"
+    );
 }
 
 #[test]
@@ -141,6 +180,72 @@ fn degrade_to_a_disabled_fallback_is_rejected() {
     assert!(
         matches!(&error, GovernorError::PolicyViolation(message) if message.contains("disabled fallback light")),
         "got {error:?}"
+    );
+}
+
+#[test]
+fn a_degrade_chain_is_rejected() {
+    // A degrade is one hop (D03): a request that already degraded is admitted
+    // against the fallback's account without consulting the fallback's own
+    // overcommit policy. A fallback that itself degrades therefore declares a
+    // second hop the engine never takes — silently, on a chain (a → b → c), or
+    // back to the class that just failed, on a cycle (a → b → a). Both are
+    // refused at construction, not discovered as an unexplained shed.
+    fn degrade_to(fallback: &'static str) -> ClassPolicy {
+        ClassPolicy::new().memory_units(1).memory_overcommit_policy(
+            MemoryOvercommitPolicy::DegradeToLight {
+                fallback_class: TaskClass::new(fallback),
+            },
+        )
+    }
+    let chain = policy(
+        ResourceBudget::new().memory_units(8),
+        vec![
+            ("a", degrade_to("b")),
+            ("b", degrade_to("c")),
+            ("c", ClassPolicy::new().memory_units(1)),
+        ],
+    );
+    let cycle = policy(
+        ResourceBudget::new().memory_units(8),
+        vec![("a", degrade_to("b")), ("b", degrade_to("a"))],
+    );
+    for (label, p) in [("a → b → c", chain), ("a → b → a", cycle)] {
+        let error = Governor::validate_policy(&p)
+            .expect_err("a fallback that itself degrades must be rejected");
+        assert!(
+            matches!(&error, GovernorError::PolicyViolation(message) if message.contains("which itself degrades")),
+            "{label}: the rejection names the chained degrade, got {error:?}"
+        );
+    }
+}
+
+#[test]
+fn a_capability_limit_on_an_authority_only_pool_is_rejected() {
+    // A limit gates the executing substrate that provides the pool. An
+    // `AuthorityOnly` substrate executes nothing, so a limit on the pool it
+    // names is consulted by no dispatch path: the registry accepts the record
+    // (it may name a pool), the limit lookup finds a provider, and only the
+    // whole-inventory validation at construction sees that the provider can
+    // never occupy a slot.
+    let policy = PolicySet::new(
+        ResourceBudget::new(),
+        classes(vec![("c", ClassPolicy::new())]),
+    )
+    .with_substrates(vec![SubstrateRecord::new(
+        "gpu",
+        SubstrateKind::AuthorityOnly,
+        Some("gpu"),
+    )])
+    .expect("an authority-only record may name a pool")
+    .with_capability_limits(BTreeMap::from([("gpu".to_string(), 2)]))
+    .expect("the registry knows the pool by name");
+    let Err(error) = Governor::new(policy, Arc::new(ManualClock::new(0))) else {
+        panic!("a limit on a pool only an authority-only substrate provides must be rejected");
+    };
+    assert!(
+        matches!(&error, GovernorError::PolicyViolation(message) if message.contains("no executing substrate provides")),
+        "the rejection says the pool has no executing provider, got {error:?}"
     );
 }
 

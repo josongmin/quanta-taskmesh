@@ -248,6 +248,56 @@ fn terminal_records_stay_bounded_under_repeated_churn() {
 }
 
 #[test]
+fn terminal_retention_holds_exactly_the_bound_and_evicts_the_oldest_first() {
+    // The bound is exact and inclusive: `MAX_TERMINAL_TICKETS` outcomes are
+    // all retained with their reason, and the next one evicts precisely the
+    // oldest — not a batch, not a newer one. A waiter that looks at its
+    // terminal record just inside the bound must still be told *why*.
+    let (g, clock, class) = gov(leak_detecting_single_slot());
+    let bound = taskmesh_engine::MAX_TERMINAL_TICKETS;
+    // One promote-then-reclaim cycle, which is the transition that retains a
+    // terminal reason for the unclaimed ticket.
+    let churn = |i: usize| -> u64 {
+        let holder = admit(&g, &format!("h{i}"));
+        let ticket = queue(&g, &format!("q{i}"));
+        assert_eq!(g.release(holder), ReleaseOutcome::Released);
+        clock.advance(100);
+        assert_eq!(g.reap_leaks_with(10).reclaimed_permits, 1);
+        ticket
+    };
+    let first = churn(0);
+    for i in 1..bound {
+        churn(i);
+    }
+    assert_eq!(
+        g.retained_terminal_tickets(),
+        bound,
+        "exactly MAX_TERMINAL_TICKETS outcomes fit the retention"
+    );
+    assert_eq!(
+        g.ticket_status(first),
+        ClaimOutcome::Terminal(TerminalReason::Reclaimed),
+        "at the bound the oldest outcome is still retained with its reason"
+    );
+
+    churn(bound);
+    assert_eq!(
+        g.retained_terminal_tickets(),
+        bound,
+        "one past the bound, retention does not grow"
+    );
+    assert_eq!(
+        g.ticket_status(first),
+        ClaimOutcome::Invalid,
+        "the oldest outcome is the one evicted"
+    );
+    let snapshot = g.snapshot();
+    assert_eq!(snapshot.classes[&class].inflight, 0);
+    assert_eq!(snapshot.classes[&class].queued, 0);
+    assert_eq!(snapshot.conservation_violation(), None);
+}
+
+#[test]
 fn observing_a_terminal_record_releases_its_retention_slot() {
     // Retention is for waiters that have not looked yet. Once a waiter has read
     // its terminal reason the record is gone — from the index *and* from the

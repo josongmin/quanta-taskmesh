@@ -91,6 +91,38 @@ fn identifier_ordering_hash_equality() {
 }
 
 #[test]
+fn the_system_clock_reads_the_wall_clock_in_milliseconds() {
+    // `SystemClock` is the one production adapter of the `Clock` port. Its
+    // reading is unix-epoch milliseconds: bracketed by two wall-clock samples
+    // taken around it, and within one second of either. A clock that reported
+    // seconds, or an unrelated origin, would put every lease timestamp — and
+    // therefore every leak-sweep decision — off by orders of magnitude.
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    let unix_ms = |at: SystemTime| {
+        u64::try_from(
+            at.duration_since(UNIX_EPOCH)
+                .expect("the test runs after 1970")
+                .as_millis(),
+        )
+        .expect("fits u64 for a very long time")
+    };
+    // nosemgrep: taskmesh-test-uninjected-system-time -- reason: the adapter under test *is* the wall clock; the assertion brackets its reading between two direct samples.
+    let before = unix_ms(SystemTime::now());
+    let observed = SystemClock.now_ms();
+    // nosemgrep: taskmesh-test-uninjected-system-time -- reason: same bracket, closing sample.
+    let after = unix_ms(SystemTime::now());
+    assert!(
+        before <= observed && observed <= after,
+        "SystemClock::now_ms ({observed}) must lie between the wall-clock samples around it ({before}..={after})"
+    );
+    let second = u64::try_from(Duration::from_secs(1).as_millis()).expect("small");
+    assert!(
+        after - before < second,
+        "the bracket itself is far narrower than a second, so the reading is within one second of SystemTime::now()"
+    );
+}
+
+#[test]
 fn memory_unit_scale_rounds_up() {
     let scale = MemoryUnitScale {
         bytes_per_unit: 4096,

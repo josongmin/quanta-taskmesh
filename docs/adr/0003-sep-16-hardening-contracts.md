@@ -86,6 +86,15 @@ worker pool에서 실행 가능해지지는 않는다. full-policy fallback이 �
 **관측 방법.** 선언 클래스는 caller의 `TaskSpec`에, 유효 클래스는
 `Governor::permit_ledger(permit).class`에 있다. 세 번째 사본은 두지 않았다.
 
+**degrade는 한 hop이다.** 이미 degrade된 요청은 fallback 클래스의 자원 계정으로
+admit되며, 그 fallback 자신의 `memory_overcommit_policy`는 다시 참조하지 않는다.
+따라서 fallback이 다시 `DegradeToLight`를 선언하는 구성(`a → b → c` 체인, 또는
+`a → b → a` 순환)은 런타임이 하지 않는 두 번째 hop을 약속하는 것이다 — 체인이면
+조용히 건너뛰어지고, 순환이면 "두 번째 hop"이 방금 실패한 클래스다. 두 경우 모두
+`Governor::validate_policy`가 구성 시점에 거절한다(`degrades to fallback …, which
+itself degrades`). full-policy chained fallback이 필요한 소비자가 확인되면 hop 수를
+계약으로 명시한 별도 variant로 추가한다.
+
 ---
 
 ## D04 — stack 요청은 large-stack capability를 소비한다

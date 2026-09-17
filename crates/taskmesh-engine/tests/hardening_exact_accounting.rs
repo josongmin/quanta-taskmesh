@@ -64,6 +64,13 @@ fn assert_oracle_agrees(g: &Governor) {
 
     let snapshot = g.snapshot();
     assert_eq!(snapshot.conservation_violation(), None);
+    // Exact arithmetic never trips the fail-closed ledger fault: the sticky
+    // flag stays clear across every admit and release the oracle has seen.
+    assert_eq!(
+        g.accounting_fault(),
+        None,
+        "an exact ledger records no accounting fault"
+    );
     let mut snapshot_cpu: u128 = 0;
     let mut snapshot_memory: u128 = 0;
     for (class, observed) in &snapshot.classes {

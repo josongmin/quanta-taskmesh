@@ -979,6 +979,23 @@ impl Governor {
                         "class {class} degrades to disabled fallback {fallback_class}"
                     )));
                 }
+                // A degrade is one hop (D03): a request that already degraded
+                // is admitted against the fallback's resource account without
+                // consulting the fallback's own overcommit policy. A fallback
+                // that itself declares `DegradeToLight` therefore promises a
+                // second hop the engine never takes — and on a cycle (a → b →
+                // a) the "second hop" is the class that just failed. Either
+                // way the configuration says something the runtime does not
+                // do, so it is refused at construction.
+                if matches!(
+                    fallback.memory_overcommit_policy,
+                    MemoryOvercommitPolicy::DegradeToLight { .. }
+                ) {
+                    return Err(violation(format!(
+                        "class {class} degrades to fallback {fallback_class}, which itself \
+                         degrades; a degrade is one hop and cannot chain"
+                    )));
+                }
             }
         }
 

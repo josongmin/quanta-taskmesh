@@ -446,7 +446,8 @@ permit만 회수하므로, 전진시키지 않은 permit은 실행 중에도 회
    downward `reconcile_memory`는 예산을 풀고 대기 작업을 promote한다. lease timestamp는 monotonic
    commit watermark로 clamp되므로 늦게 도착한 clock 샘플이 lease를 과거로 되돌리지 못한다.
 7. **정책 검증은 fail-closed다.** 불가능한 budget·mixed-tier fairness·잘못된 memory scaling·disabled
-   클래스로의 `DegradeToLight` 등은 `Builder::build`/`Governor::new`에서 거부되며 런타임 admit로
+   클래스로의 `DegradeToLight`·스스로 다시 degrade하는 fallback으로의 `DegradeToLight`(degrade는 한
+   hop이며 체인·순환은 거부) 등은 `Builder::build`/`Governor::new`에서 거부되며 런타임 admit로
    미루지 않는다. `CpuExecutor`가 `declared_workers`를 선언하면 topology가 resolve한 `cpu` gate보다
    작을 수 없다(`TopologyError::ExecutorDeclaresFewerWorkers`) — gate와 pool은 한 답에서 나온다.
    `runtime.executor_capabilities()`가 adapter의 선언(worker 수·exclusive 여부·non-blocking submit)을

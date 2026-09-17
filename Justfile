@@ -138,10 +138,22 @@ matrix: test-rayon doctest rustdoc bench-smoke consumer-msrv
 shuttle:
     RUSTFLAGS="--cfg shuttle" cargo test -p taskmesh-engine --features shuttle --test shuttle_governance --release
 
+# ThreadSanitizer over the production engine and host concurrency tests
+# (nightly + rust-src; NOT_RUN/exit 2 without them — never PASS). Complements
+# loom/shuttle: they explore interleavings of a modelled memory system, TSan
+# watches the real one.
+tsan:
+    bash tools/tsan/run.sh
+
+# Coverage REPORT (cargo-llvm-cov). Numbers for the receipt; never a threshold —
+# this repository makes no coverage-gate promise. NOT_RUN/exit 2 without the tool.
+coverage-report:
+    bash tools/coverage/report.sh
+
 # Full proof surface: every gate in tools/gates/required.json — `gate`, the
 # feature `matrix`, and the heavy rails — so a green `proof` locally is the
 # same set of checks CI requires. tools/gates/validate_inventory.py verifies
 # that this chain expands to exactly the required set; a gate added to CI
 # without being added here fails `gates-inventory`.
-proof: gate matrix mutants-critical loom shuttle bench-iai
+proof: gate matrix mutants-critical loom shuttle tsan coverage-report bench-iai
     @echo "proof: full proof surface passed (matches CI required rails)"

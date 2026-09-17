@@ -62,6 +62,24 @@ async fn main() {
 }
 ```
 
+## 검증 표면 (proof surface)
+
+`just gate`(fast) → `just matrix`(feature/doc/bench-smoke/MSRV) → `just proof`(전체). `proof`는
+`tools/gates/required.json`과 정확히 같은 집합으로 expand되어야 하며 `just gates-inventory`가 이를
+강제한다. 증명은 세 층으로 겹친다:
+
+| 층 | 무엇을 | 무엇으로 |
+|---|---|---|
+| 모델 검사 | production `Governor`의 모든 interleaving(작은 상태) / 무작위 schedule | `just loom` (5) / `just shuttle` (4) — engine `src/sync.rs` seam, replica 아님 |
+| 실제 메모리 시스템 | parking_lot·Tokio·OS thread 위의 data race | `just tsan` (nightly `-Zbuild-std -Zsanitizer=thread`) |
+| 테스트가 실제로 실패할 수 있는가 | 고친 결함 하나를 다시 넣으면 named test가 named reason으로 죽는가 | `just mutants-critical` (43 entries, cargo + pytest runner) |
+| 객관 지표 | 실행된 production 라인 (threshold 아님) | `just coverage-report` (cargo-llvm-cov, receipt에 기록) |
+| 소비자 계약 | Rust 1.81에서 default·rayon 표면 컴파일 | `just consumer-msrv` |
+| 성능 | allocs/op(=측정값 3.0), Linux instruction count | `just bench-gate`, `just bench-iai` |
+
+자격(QUALIFIED)은 `tools/qualification/receipt.py collect`가 **clean checkout**에서 만든 receipt에만
+붙는다(CI `qualification` job). local receipt는 증거일 뿐이다. `docs/release-checklist.md` 참조.
+
 ## 외부 사용 가이드 (Rust)
 
 외부 소비자는 `taskmesh` crate 하나만 의존한다. `taskmesh-contract`, `taskmesh-engine`,

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "The gates a source revision must pass to be qualified. Authored independently of inventory.json so that deleting a gate from the inventory does not delete the requirement \u2014 the validator reports the mismatch instead.",
+  "description": "The gates a source revision must pass to be qualified. Authored independently of inventory.json so that deleting a gate from the inventory does not delete the requirement — the validator reports the mismatch instead.",
   "required": [
     "fmt-check",
     "clippy",
@@ -21,10 +21,14 @@
     "loom",
     "shuttle",
     "consumer-msrv",
-    "bench-iai"
+    "bench-iai",
+    "tsan",
+    "coverage-report"
   ],
   "platform_conditional": {
     "bench-iai": "linux",
-    "consumer-msrv": "declared-toolchain-installed"
+    "consumer-msrv": "declared-toolchain-installed",
+    "tsan": "nightly-toolchain-with-rust-src",
+    "coverage-report": "cargo-llvm-cov-installed"
   }
 }

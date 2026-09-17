@@ -224,3 +224,53 @@ def test_runner_refuses_to_qualify_when_required_gates_did_not_run() -> None:
     assert proc.returncode == 1
     assert "NOT_QUALIFIED" in proc.stderr
     assert "required gates not run" in proc.stderr
+
+
+def test_a_skipped_gate_is_absent_from_the_receipt_and_never_passes(tmp_path: Path) -> None:
+    """`--skip` exists so the receipt collector can run the mutation gate once,
+    through its own runner, and derive the inventory result from that. A
+    skipped gate must simply be *absent* — recorded neither as PASS nor as
+    anything else — so a receipt that forgets to fill it in is NOT qualified."""
+    receipt_path = tmp_path / "gates.json"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "tools" / "gates" / "run.py"),
+            "--id",
+            "fmt-check",
+            "--id",
+            "pm-lint",
+            "--skip",
+            "pm-lint",
+            "--receipt",
+            str(receipt_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=REPO,
+    )
+    assert proc.returncode == 1, proc.stderr
+    receipt = json.loads(receipt_path.read_text())
+    assert [r["id"] for r in receipt["results"]] == ["fmt-check"]
+    assert "pm-lint" in receipt["required_not_run"]
+    assert receipt["qualified"] is False
+
+
+def test_an_unknown_skip_id_is_refused() -> None:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "tools" / "gates" / "run.py"),
+            "--id",
+            "fmt-check",
+            "--skip",
+            "nope",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=REPO,
+    )
+    assert proc.returncode != 0
+    assert "unknown gate id(s) in --skip" in proc.stderr

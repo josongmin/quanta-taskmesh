@@ -64,7 +64,10 @@
       후 workflow `run:` block은 YAML로 parse되어 multi-line/`&&`/flag 형태를 모두 본다. 감사(A3-P1-2):
       `just proof`가 required 4개를 건너뛰던 gap → `just matrix` 추가, `proof` expansion == `required.json`을
       validator가 강제 (`test_the_real_proof_recipe_expands_to_exactly_the_required_set`; mutation
-      `proof-parity-not-checked`)
+      `proof-parity-not-checked`). 추가 범위: inventory 22 gates — `tsan`(ThreadSanitizer, nightly+rust-src,
+      NOT_RUN 가능)과 `coverage-report`(cargo-llvm-cov 수치 기록, threshold 아님); `just proof`가 둘을 포함;
+      CI `tsan`·`coverage` job + clean checkout에서 receipt를 만드는 `qualification` job; parity는 집행까지
+      검사(`continue-on-error`/`if:`/`|| true`/`set +e`/`exit 0` 거절).
 
 ## 실행 명령
 

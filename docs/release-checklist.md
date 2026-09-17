@@ -12,6 +12,13 @@ The gate set is `tools/gates/inventory.json`; the required subset is
 - [ ] `just mutants-critical` — every mutation in
       `tools/verification/mutations.json` KILLED (and the control CONTROL_GREEN)
 - [ ] `just loom` / `just shuttle`
+- [ ] `just tsan` — `status=CLEAN` (ThreadSanitizer over the production engine and
+      host concurrency tests; needs nightly + rust-src, otherwise NOT_RUN which is
+      not a pass)
+- [ ] `just coverage-report` — `status=REPORTED`; read the uncovered production
+      lines in `target/coverage/lcov.info` and account for each (unreachable by
+      design, or a gap). The percentage is information for this review, never a
+      threshold.
 - [ ] `just consumer-msrv` — PASS on the declared `rust-version` (NOT_RUN is
       not a pass)
 - [ ] `just bench-iai` on Linux — `status=QUALIFIED`. The first run for a given

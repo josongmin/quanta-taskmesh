@@ -362,6 +362,17 @@ spec 문자열을 빌려 allocation 없이 한다.
 ## D16 — 증명 도구는 스스로를 증명한다
 
 **선택.**
+- 증명은 세 층이다: **모델**(loom/shuttle — production `Governor`를 checker의 메모리 모델
+  위에서), **실제 메모리 시스템**(`just tsan` — nightly `-Zbuild-std -Zsanitizer=thread`로
+  engine/host 동시성 test를 실제 parking_lot·Tokio·OS thread 위에서; 도구가 없으면 NOT_RUN),
+  **객관 지표**(`just coverage-report` — cargo-llvm-cov 수치를 receipt에 기록; 절대 threshold가
+  아니다. 이 저장소는 coverage gate를 약속하지 않는다). 첫 TSan 실행이 실제 취약점을 하나
+  드러냈다: `stack_size_bytes(u64::MAX)`가 "OS가 거절한다"에 의존했는데 debug-built `std`에서는
+  spawn 안에서 overflow panic이 났다 → host가 `MAX_REQUESTED_STACK_BYTES`(16 GiB) 초과 요청을
+  결정적으로 거절한다. 환경 의존 동작은 계약이 아니다.
+- CI `qualification` job이 clean checkout에서 `receipt.py collect`를 돌려 receipt of record를
+  artifact로 남긴다; verdict가 QUALIFIED가 아니면 job이 red다. local receipt는 증거지 자격이
+  아니다.
 - mutation inventory(43개)의 모든 non-control entry는 `expect_message`를 가져야 하며
   runner가 이를 거부한다. 그 message는 named test *자신의* 출력 블록(libtest의
   `---- name stdout ----`, pytest의 `___ name ___`/`FAILED …::name`)에서만 찾는다 — 다른
@@ -424,6 +435,8 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
 - `just mutants-critical`: 43 entries — 42 KILLED + 1 CONTROL_GREEN
   (`tools/verification/mutations.json`; 각 entry는 named test와 named assertion
   message로 kill된다). `just loom` 5/5, `just shuttle` 4/4 — production `Governor`.
+- `just tsan` CLEAN (engine 4 + host 5 test binaries, macOS aarch64), `just coverage-report`
+  REPORTED (수치는 receipt).
 - 이 ADR은 **local** 검증 상태를 기술한다. hosted CI, Linux instruction-count
   qualification, 배포/activation은 여기서 주장하지 않는다. consumer MSRV는 local
   1.81 toolchain에서 default+rayon PASS다.

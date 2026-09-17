@@ -53,7 +53,10 @@
       재도출하고 sub-receipt 일관성을 검사한다; gate 결과 자체는 `collect`가 attest하며 그 경계를
       `receipt.py` docstring과 release-checklist에 명시했다 (mutation `receipt-validator-trusts-the-receipts-dirty-flag`)
 - [x] `H16-022-A03` mutation 43건 KILLED/CONTROL_GREEN (receipt; 최초 20건 → 1차 감사 후 37건 → 2차 감사 후 43건)
-- [ ] `H16-022-A04` MSRV consumer receipt 존재(PASS); Linux IAI는 **명시적 blocker** (macOS)
+- [ ] `H16-022-A04` MSRV consumer receipt 존재(PASS); Linux IAI는 **명시적 blocker** (macOS). CI
+      `qualification` job(ci.yml)이 clean ubuntu checkout에서 `receipt.py collect`를 실행하고 artifact로
+      올리도록 wired — 첫 push에서 BASELINE_CREATED, 두 번째부터 bench-iai QUALIFIED. 이 저장소에서
+      push 권한이 없어(`songminjo` → `josongmin/quanta-taskmesh` 403) 실제 실행은 owner의 push 후다.
 - [ ] `H16-022-A05` review/merge/consumer/activation은 **UNVERIFIED** (commit/push 미수행, 외부 접근 없음)
 - [ ] `H16-022-A06` rollback 계약 문서화; owner 승인은 별도
 

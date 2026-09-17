@@ -81,6 +81,99 @@ jobs:
       # A dirty checkout would make the score meaningless; CI refuses one.
       - run: just mutants-critical --require-clean
 
+  tsan:
+    name: ThreadSanitizer (just tsan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # `stable` is what `just tsan` reads the host triple from; nightly with
+      # rust-src is what it builds with (-Zbuild-std instruments std as well).
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - run: just tsan
+
+  coverage:
+    name: coverage report (just coverage-report)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - run: just coverage-report
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            target/coverage/summary.json
+            target/coverage/lcov.info
+
+  # The receipt of record (H16-022). Everything above also runs here, once
+  # more, through tools/qualification/receipt.py on a clean checkout — that is
+  # the only place a QUALIFIED verdict is meaningful (the validator re-derives
+  # source identity; the gate results are this job's attestation). Uploaded as
+  # an artifact; the job fails unless the verdict is QUALIFIED, so a required
+  # gate that could not run here (a missing tool) is red, not silently NOT_RUN.
+  qualification:
+    name: qualification receipt (immutable checkout)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.81.0"
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - uses: astral-sh/setup-uv@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-llvm-cov
+      - name: Install semgrep
+        run: uv tool install semgrep
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Install iai-callgrind-runner (version from tools/bench/perf-gate.json)
+        run: |
+          version="$(python3 tools/bench/iai_gate.py config iai_callgrind_runner)"
+          cargo install iai-callgrind-runner --version "${version}" --locked
+      - name: Restore iai baseline (same key as bench.yml)
+        id: fingerprint
+        run: |
+          value="$(bash tools/bench-iai.sh fingerprint)"
+          [[ -n "${value}" ]] || { echo "::error::empty fingerprint"; exit 1; }
+          echo "value=${value}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: target/iai
+          key: iai-v3-${{ runner.os }}-${{ steps.fingerprint.outputs.value }}
+      - name: Collect the receipt
+        run: uv run python tools/qualification/receipt.py collect --out receipt.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qualification-receipt
+          path: |
+            receipt.json
+            receipt.gates.json
+            receipt.mutations.json
+
   loom:
     name: concurrency model-check (loom)
     runs-on: ubuntu-latest

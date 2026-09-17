@@ -983,19 +983,37 @@ fn absolute_acquire_error_v1<E>(
     }
 }
 
+/// The largest stack a submission may request: 16 GiB.
+///
+/// `std::thread::Builder::stack_size` is handed to the OS after `std` rounds it
+/// up to a page boundary; near `usize::MAX` that arithmetic overflows, and what
+/// happens next depends on how `std` was built (a release `std` wraps and the
+/// OS refuses the mangled size; a debug `std`, as under `-Zbuild-std` with a
+/// sanitizer, panics inside the spawn). A request that large is a caller error
+/// in every case, so the host refuses it here, deterministically, before `std`
+/// is involved. Real OS refusals of *sane* sizes remain `WorkerUnavailable`.
+pub const MAX_REQUESTED_STACK_BYTES: u64 = 1 << 34;
+
 fn requested_stack_size_bytes_v1<E>(spec: &TaskSpec) -> Result<usize, RunError<E>> {
-    spec.requested_stack_size_bytes()
-        .ok_or_else(|| {
-            RunError::Governor(GovernorError::PolicyViolation(
-                "requested stack size missing on large-stack path".into(),
-            ))
-        })?
-        .try_into()
-        .map_err(|_too_large| {
-            RunError::Governor(GovernorError::PolicyViolation(
-                "requested stack size does not fit usize".into(),
-            ))
-        })
+    let requested = spec.requested_stack_size_bytes().ok_or_else(|| {
+        RunError::Governor(GovernorError::PolicyViolation(
+            "requested stack size missing on large-stack path".into(),
+        ))
+    })?;
+    if requested > MAX_REQUESTED_STACK_BYTES {
+        return Err(RunError::Governor(GovernorError::PolicyViolation(
+            format!(
+                "requested stack size {requested} bytes exceeds the supported maximum \
+                 {MAX_REQUESTED_STACK_BYTES}"
+            )
+            .into(),
+        )));
+    }
+    usize::try_from(requested).map_err(|_too_large| {
+        RunError::Governor(GovernorError::PolicyViolation(
+            "requested stack size does not fit usize".into(),
+        ))
+    })
 }
 
 /// Build the OS thread label for a dedicated worker.

@@ -320,6 +320,43 @@
       ],
       "workflow": "bench.yml",
       "conditional": "Linux only; a run without a compatible baseline reports BASELINE_CREATED and is not regression-qualified"
+    },
+    {
+      "id": "tsan",
+      "recipe": "tsan",
+      "tier": "proof",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "rustup nightly toolchain with rust-src",
+        "x86_64/aarch64 linux or macOS"
+      ],
+      "workflow": "ci.yml",
+      "conditional": "reports NOT_RUN (exit 2) when nightly+rust-src are missing or the target is unsupported; CI installs them",
+      "note": "ThreadSanitizer on the real memory system (engine concurrency/effect/lifecycle tests, host chaos/executor/deadline/cancel tests). Complements loom/shuttle, which model interleavings."
+    },
+    {
+      "id": "coverage-report",
+      "recipe": "coverage-report",
+      "tier": "proof",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "cargo-llvm-cov"
+      ],
+      "workflow": "ci.yml",
+      "conditional": "reports NOT_RUN (exit 2) when cargo-llvm-cov is missing; CI installs it",
+      "note": "A report, not a threshold: the repository makes no coverage-gate promise. PASS means the report was produced; the percentages are recorded for review."
     }
   ]
 }

@@ -269,46 +269,70 @@ async fn each_failure_mode_is_reported_as_itself() {
         })
     );
 
-    // A worker that cannot be *created* is a different failure from one that
-    // panicked: the job never started, so its side effects are known (none).
-    // An absurd stack request is refused by the OS at spawn time.
+    // An absurd stack request is a caller error and is refused by the host
+    // *before* `std::thread` sees it — deterministically, on every platform and
+    // every build of `std`. (Handing `u64::MAX` to `Builder::stack_size` used
+    // to be the test for "the OS refuses": under a debug-built `std`, as with
+    // `-Zbuild-std -Zsanitizer=thread`, that arithmetic overflows and panics
+    // inside the spawn instead. Environment-dependent behaviour is not a
+    // contract.) The job never starts.
     let ran = Arc::new(AtomicUsize::new(0));
     let job_ran = Arc::clone(&ran);
     let error = rt
         .run_blocking(
             TaskSpec::blocking(class.clone())
-                .operation("unspawnable")
-                .stack_size_bytes(u64::MAX),
+                .operation("absurd-stack")
+                .stack_size_bytes(MAX_REQUESTED_STACK_BYTES + 1),
             move || -> Result<i32, ()> {
                 job_ran.fetch_add(1, Ordering::SeqCst);
                 Ok(1)
             },
         )
         .await
-        .expect_err("an unspawnable worker must fail closed");
-    match &error {
-        RunError::Governor(GovernorError::WorkerUnavailable { context, detail }) => {
-            assert_eq!(context, "large-stack worker");
-            assert!(!detail.is_empty(), "the OS reason travels with the error");
-        }
-        other => panic!("expected WorkerUnavailable, got {other:?}"),
-    }
-    assert_eq!(ran.load(Ordering::SeqCst), 0, "the job never started");
-    // The same distinction on the requested-stack async path.
-    let error = rt
-        .run_async_with_requested_stack(
-            TaskSpec::base(class.clone(), SubstrateHint::LargeStackCapability)
-                .operation("unspawnable-async")
-                .stack_size_bytes(u64::MAX),
-            || async { Ok::<i32, ()>(1) },
-        )
-        .await
-        .expect_err("an unspawnable async worker must fail closed");
+        .expect_err("an absurd stack request must be refused");
     assert!(
         matches!(
             &error,
-            RunError::Governor(GovernorError::WorkerUnavailable { context, .. })
-                if context == "requested-stack async worker"
+            RunError::Governor(GovernorError::PolicyViolation(message))
+                if message.contains("exceeds the supported maximum")
+        ),
+        "got {error:?}"
+    );
+    assert_eq!(ran.load(Ordering::SeqCst), 0, "the job never started");
+    // Exactly the maximum is *not* refused by this check (whether the OS can
+    // actually provide 16 GiB is the OS's answer — `WorkerUnavailable` — and
+    // is not asserted here because it is not deterministic across hosts).
+    let boundary = rt
+        .run_blocking(
+            TaskSpec::blocking(class.clone())
+                .operation("max-stack")
+                .stack_size_bytes(MAX_REQUESTED_STACK_BYTES),
+            || -> Result<i32, ()> { Ok(1) },
+        )
+        .await;
+    match boundary {
+        Ok(1) => {}
+        Err(RunError::Governor(GovernorError::WorkerUnavailable { context, detail })) => {
+            assert_eq!(context, "large-stack worker");
+            assert!(!detail.is_empty(), "the OS reason travels with the error");
+        }
+        other => panic!("the maximum is either honored or refused by the OS, got {other:?}"),
+    }
+    // The same refusal on the requested-stack async path.
+    let error = rt
+        .run_async_with_requested_stack(
+            TaskSpec::base(class.clone(), SubstrateHint::LargeStackCapability)
+                .operation("absurd-stack-async")
+                .stack_size_bytes(MAX_REQUESTED_STACK_BYTES + 1),
+            || async { Ok::<i32, ()>(1) },
+        )
+        .await
+        .expect_err("an absurd async stack request must be refused");
+    assert!(
+        matches!(
+            &error,
+            RunError::Governor(GovernorError::PolicyViolation(message))
+                if message.contains("exceeds the supported maximum")
         ),
         "got {error:?}"
     );

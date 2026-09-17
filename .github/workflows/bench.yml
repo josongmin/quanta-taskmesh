@@ -2,84 +2,122 @@ name: bench-gates
 
 # Benchmark regression gates (ADR 9000 / P2 + P8). Separate from `ci.yml` so the
 # heavier valgrind run does not block the fast proof matrix.
+#
+# Every shell step runs under `bash` with `pipefail` (via `defaults.run.shell`),
+# so a benchmark that fails behind a `tee` fails the step (TM16-019).
 
 on:
   push:
     branches: [main]
   pull_request:
 
-jobs:
-  alloc-gate:
-    name: allocation gate (deterministic, cross-platform)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      # admit→release allocs/op must not exceed the committed baseline.
-      - run: bash tools/bench-gate.sh
+defaults:
+  run:
+    shell: bash
 
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
   instruction-count:
     name: instruction-count gate (iai-callgrind / valgrind)
     runs-on: ubuntu-latest
-    env:
-      # Fail the bench if any event (instructions, cache, RAM hits) regresses by
-      # more than 5% vs the cached baseline. Best-effort: ignored until a baseline
-      # exists, so the first run on a fresh cache only records.
-      IAI_CALLGRIND_REGRESSION: "Ir=5.0"
+    outputs:
+      status: ${{ steps.iai.outputs.status }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The status step diffs the fingerprint inputs against the PR base.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
 
       - name: Install valgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind
 
-      - name: Install iai-callgrind-runner (version must match the crate)
-        run: cargo install iai-callgrind-runner --version 0.14.2 --locked
+      - name: Install iai-callgrind-runner (version from tools/bench/perf-gate.json)
+        run: |
+          version="$(python3 -c 'import json; print(json.load(open("tools/bench/perf-gate.json"))["instruction_count_gate"]["iai_callgrind_runner"])')"
+          cargo install iai-callgrind-runner --version "${version}" --locked
 
-      # Restore/persist the callgrind baseline across runs so regressions are
-      # measured against the previous green run, not a cold start.
+      # The baseline cache key is the SAME fingerprint tools/bench-iai.sh
+      # compares the cached stamp against: bench definition, dependency graph,
+      # gate config, toolchain, valgrind, runner. Computed by the script itself
+      # (after the tools it hashes are installed) so the key and the stamp can
+      # never disagree — a key built from a subset of the inputs is how a
+      # toolchain bump turned every later run into BASELINE_CREATED forever
+      # (the entry was immutable and its stamp never matched again).
       #
-      # The key is scoped to (os, branch, bench-definition+deps+runner version):
-      # a changed bench, a bumped iai-callgrind, or a different branch all start a
-      # FRESH baseline instead of comparing against an incomparable one (no
-      # false-green from a redefined bench, no false-red from a version bump).
-      # restore-keys lets a new branch warm-start from its base branch's baseline.
+      # No ref in the key: a PR whose fingerprint equals main's reads main's
+      # baseline (caches flow base → head, never the reverse) and is compared
+      # against it, which is the comparison that matters. A PR that changes the
+      # measured definition gets a fresh key and BASELINE_CREATED — a
+      # definitional change is not a regression and is not qualified either.
+      - name: Compute baseline fingerprint
+        id: fingerprint
+        run: |
+          # Assigned first so a failing script fails the step here, with its own
+          # diagnostic, instead of keying the cache on an empty value.
+          value="$(bash tools/bench-iai.sh fingerprint)"
+          [[ -n "${value}" ]] || { echo "::error::empty fingerprint"; exit 1; }
+          echo "value=${value}" >> "$GITHUB_OUTPUT"
+
       - name: Cache iai baseline
         uses: actions/cache@v4
         with:
           path: target/iai
-          key: >-
-            iai-${{ runner.os }}-${{ github.ref_name }}-${{
-              hashFiles('crates/taskmesh-bench/benches/iai_governance.rs',
-                        'crates/taskmesh-bench/Cargo.toml', 'Cargo.lock') }}
-          restore-keys: |
-            iai-${{ runner.os }}-${{ github.base_ref }}-
-            iai-${{ runner.os }}-main-
+          key: iai-v3-${{ runner.os }}-${{ steps.fingerprint.outputs.value }}
 
-      - name: Instruction-count benchmark (deterministic, machine-independent)
-        run: cargo bench -p taskmesh-bench --features iai --bench iai_governance
+      - name: Instruction-count benchmark (thresholds from tools/bench/perf-gate.json)
+        id: iai
+        run: just bench-iai
 
-  loom:
-    name: concurrency model-check (loom)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      # Exhaustively explore admit/release interleavings (ADR 9000 / P6).
-      - run: RUSTFLAGS="--cfg loom" cargo test -p taskmesh-engine --test loom_governance --release
-
-  shuttle:
-    name: concurrency model-check (shuttle)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      # Randomized schedules over larger thread/op state (ADR 9000 / P6).
-      - run: RUSTFLAGS="--cfg shuttle" cargo test -p taskmesh-engine --test shuttle_governance --release
+      # The verdict is explicit. QUALIFIED is the only regression-qualified
+      # outcome. BASELINE_CREATED is allowed — it is the first run for this
+      # fingerprint — but it is announced as such, and on a pull request whose
+      # fingerprint inputs did NOT change it means main's baseline was missing
+      # (evicted, or never recorded), which is worth a warning rather than a
+      # silent green. Anything else fails the job.
+      - name: Report qualification status
+        env:
+          STATUS: ${{ steps.iai.outputs.status }}
+          FINGERPRINT: ${{ steps.iai.outputs.fingerprint }}
+          EXPECTED_FINGERPRINT: ${{ steps.fingerprint.outputs.value }}
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          {
+            echo "## instruction-count gate"
+            echo "status: **${STATUS}**"
+            echo "fingerprint: \`${FINGERPRINT}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${FINGERPRINT}" != "${EXPECTED_FINGERPRINT}" ]]; then
+            echo "::error::the fingerprint the gate ran under (${FINGERPRINT}) is not the one the cache was keyed on (${EXPECTED_FINGERPRINT})"
+            exit 1
+          fi
+          case "${STATUS}" in
+            QUALIFIED)
+              echo "regression-qualified against a compatible baseline" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            BASELINE_CREATED)
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "This run recorded a baseline; it is **not** a regression-qualified pass. The next run with the same fingerprint qualifies against it." >> "$GITHUB_STEP_SUMMARY"
+              if [[ "${EVENT}" == "pull_request" ]]; then
+                inputs="$(python3 tools/bench/iai_gate.py config fingerprint_inputs)"
+                # shellcheck disable=SC2086
+                if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+                  echo "::warning::could not resolve the PR base ${BASE_SHA}; cannot tell whether the instruction-count inputs changed"
+                elif git diff --quiet "${BASE_SHA}" -- ${inputs}; then
+                  echo "::warning::this pull request does not change the instruction-count inputs, yet no baseline from the base branch was available (evicted or never recorded). The gate could not compare against main."
+                fi
+              fi
+              ;;
+            *)
+              echo "::error::instruction-count gate reported status '${STATUS}'"
+              exit 1
+              ;;
+          esac
 
   trend:
     name: wall-clock trend dashboard + flamegraph-on-regress (ADR 9000 / P8)
@@ -91,25 +129,41 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      # Fresh repos/forks may not have the benchmark history branch yet. Detect
-      # that upfront so PRs skip the compare step instead of hard-failing on
-      # `git fetch origin gh-pages:gh-pages`.
+      # Fresh repos/forks may not have the benchmark history branch yet. Only
+      # "the ref does not exist" (ls-remote exit 2) is a reason to skip. Any other
+      # failure — network, authentication, a bad remote — is an infrastructure
+      # error and fails the job, because "skip the compare" on an auth failure is
+      # how a regression sails through with a green check.
       - name: Detect benchmark history branch
         id: gh_pages
         run: |
-          if git ls-remote --exit-code origin refs/heads/gh-pages >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          set +e
+          git ls-remote --exit-code origin refs/heads/gh-pages >/dev/null 2>ls-remote.err
+          code=$?
+          set -e
+          case "${code}" in
+            0) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::git ls-remote failed with exit ${code} (not 'missing ref'):"
+              cat ls-remote.err
+              exit "${code}"
+              ;;
+          esac
 
       # Emit the libtest "bench" format github-action-benchmark understands.
+      # `pipefail` (bash default here) means a failing `cargo bench` fails the
+      # step even though `tee` succeeds; the output file is then validated so a
+      # partial run cannot be stored as a data point.
       - name: Run criterion hot-path benches
         run: |
+          set -o pipefail
           cargo bench -p taskmesh-bench --bench admit_release -- --output-format bencher \
             | tee bench-output.txt
           cargo bench -p taskmesh-bench --bench governance_tax -- --output-format bencher \
             | tee -a bench-output.txt
+          python3 tools/bench/validate_bencher_output.py bench-output.txt \
+            --expect admit_release --expect governance_tax
 
       # Timeseries dashboard (gh-pages) + regression alert. On main it pushes the
       # data point; on PRs it only compares and comments. fail-on-alert trips the
@@ -129,10 +183,25 @@ jobs:
           comment-on-alert: true
           fail-on-alert: true
 
-      - name: Skip trend compare until gh-pages exists
-        if: steps.gh_pages.outputs.exists != 'true'
+      # Bootstrap: on main with no history branch, publish the first data point
+      # so the trend has an origin instead of skipping forever.
+      - name: Bootstrap benchmark history (main only, first run)
+        if: steps.gh_pages.outputs.exists != 'true' && github.ref == 'refs/heads/main'
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: taskmesh wall-clock
+          tool: cargo
+          output-file-path: bench-output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench
+          auto-push: true
+          fail-on-alert: false
+
+      - name: Skip trend compare (no history yet, not on main)
+        if: steps.gh_pages.outputs.exists != 'true' && github.ref != 'refs/heads/main'
         run: |
-          echo "Skipping trend compare: origin/gh-pages does not exist yet."
+          echo "::notice::origin/gh-pages does not exist yet; the trend compare is skipped on this PR. The first push to main bootstraps it."
 
       # On a detected regression, capture a flamegraph + hardware counters for
       # EVERY bench that feeds the alert (admit_release AND governance_tax), so the

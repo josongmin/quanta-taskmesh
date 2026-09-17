@@ -99,7 +99,9 @@ async fn blocking_threads_caps_substrate_concurrency() {
         rt_h.run_blocking(
             TaskSpec::blocking(TaskClass::new("c")).operation("hold"),
             move || {
-                let _ = hold.blocking_recv();
+                // A signal or a dropped sender both release the holder: a test that fails
+                // before signalling never hangs on its own fixture.
+                let _released = hold.blocking_recv();
                 Ok::<_, ()>(())
             },
         )
@@ -107,8 +109,11 @@ async fn blocking_threads_caps_substrate_concurrency() {
     });
     tokio::time::sleep(Duration::from_millis(80)).await;
 
-    // Second blocking submission must fail to acquire the substrate slot in time,
-    // even though the governor would admit it (cap 8).
+    // The second blocking submission cannot have a worker. The class here does
+    // not queue (`OverflowPolicy::Reject`), and capability occupancy is decided
+    // by the same admission transition as class capacity — so it is shed now,
+    // with the cause named, instead of parking in an unbounded holding area the
+    // class's own overflow policy never governed.
     let opts = SubmitOptions::unbounded().with_acquire_timeout(Duration::from_millis(60));
     let err = rt
         .run_blocking_with(
@@ -117,13 +122,22 @@ async fn blocking_threads_caps_substrate_concurrency() {
             || Ok::<i32, ()>(2),
         )
         .await
-        .expect_err("blocking pool is full -> bounded acquire times out");
-    assert!(matches!(
-        err,
-        RunError::Governor(GovernorError::Rejected(
-            AdmissionVerdict::SubstratePoolTimedOut { .. }
-        ))
-    ));
+        .expect_err("blocking pool is full -> non-queueing class sheds");
+    assert!(
+        matches!(
+            err,
+            RunError::Governor(GovernorError::Rejected(
+                AdmissionVerdict::SubstrateSaturated { .. }
+            ))
+        ),
+        "expected a capability-pool shed, got {err:?}"
+    );
+    // The rejection is visible in the same snapshot the class is governed by:
+    // the shed request is not hiding in a queue the class did not opt into.
+    let observed = rt.snapshot();
+    assert_eq!(observed.classes[&TaskClass::new("c")].queued, 0);
+    assert_eq!(observed.capabilities["blocking"].in_use, 1);
+    assert_eq!(observed.capabilities["blocking"].limit, 1);
 
     release.send(()).unwrap();
     holder.await.unwrap().unwrap();

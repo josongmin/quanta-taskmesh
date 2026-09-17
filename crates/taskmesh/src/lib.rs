@@ -32,6 +32,7 @@
 
 mod adapters;
 mod builder;
+mod execution_plan;
 mod executor;
 mod runtime;
 
@@ -51,6 +52,7 @@ pub use taskmesh_contract::{
     AdmissionVerdict,
     // semantic policy
     CancellationPolicy,
+    CapabilityUsage,
     CheckpointPolicy,
     ClassPolicy,
     ClassSnapshot,
@@ -62,6 +64,7 @@ pub use taskmesh_contract::{
     DeterministicReducePolicy,
     DuplicateMergePolicy,
     ErrorAggregationPolicy,
+    ExecutionPhase,
     FairnessPolicy,
     GovernorError,
     MemoryOvercommitPolicy,
@@ -86,8 +89,10 @@ pub use taskmesh_contract::{
     TaskScope,
     TaskSpec,
     TaskStage,
+    TerminalReason,
     TieBreakPolicy,
     TopologyConfig,
+    TopologyError,
 };
 
 // ---- ext: advanced integrator surface -------------------------------------
@@ -99,7 +104,9 @@ pub use taskmesh_contract::{
 /// the governance engine.
 pub mod ext {
     /// Driven ports: implement these to plug in a custom substrate or clock.
-    pub use taskmesh_contract::{Clock, CpuExecutor, ManualClock, PermitWaker, SystemClock};
+    pub use taskmesh_contract::{
+        Clock, CpuExecutor, ExecutorCapabilities, ManualClock, PermitWaker, SystemClock,
+    };
 
     /// The default host CPU executor adapter (Tokio blocking pool).
     pub use crate::executor::BlockingPoolCpuExecutor;
@@ -107,7 +114,9 @@ pub mod ext {
     /// The governance engine and its admission primitives, for embedding in a
     /// non-Tokio host or driving admission directly.
     pub use taskmesh_engine::{
-        builtin_records, AdmissionDecision, Governor, LeakSweepReport, PermitId, PolicySet,
-        Provenance, RootAttribution, Ticket, BUILTIN_SUBSTRATES, DEFAULT_LEAK_STALE_MS,
+        builtin_records, AdmissionDecision, CapabilityName, CapacityBlock, ClaimOutcome, Governor,
+        LeakSweepReport, PendingView, PermitId, PermitLedgerView, PolicySet, Provenance,
+        ReconcileOutcome, ReleaseOutcome, RootAttribution, StageReleaseOutcome, Ticket,
+        BUILTIN_SUBSTRATES, DEFAULT_LEAK_STALE_MS, MAX_TERMINAL_TICKETS, PROMOTION_BUDGET,
     };
 }

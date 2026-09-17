@@ -6,11 +6,32 @@ all-features = true
 
 [advisories]
 version = 2
+# Every entry here is an *exception*, not a silence. Each one names the graph
+# it applies to, why no fix exists, and what would retire it. An exception whose
+# advisory stops being detected is reported by cargo-deny as unused and must be
+# removed — that is the expiry mechanism.
+#
+# Scope, stated plainly: `[advisories].ignore` is graph-global. cargo-deny has no
+# per-crate scoping, so "publish=false bench only" below describes where the
+# advisory is *currently reachable from* — verified with `cargo tree -i <crate>`
+# and re-verified by tools/arch/tests (the bench harness is the only workspace
+# member allowed the `iai-callgrind` edge). It is not a mechanism that would
+# stop the same crate from being pulled into a shipped artifact; the boundary
+# checker is.
 ignore = [
     # bincode 1.3.3 "unmaintained" (not a vulnerability; no safe upgrade exists).
     # Transitive dev-only dependency: iai-callgrind -> bincode, used solely by the
     # publish=false taskmesh-bench harness. Never in any shipped artifact.
-    "RUSTSEC-2025-0141",
+    { id = "RUSTSEC-2025-0141", reason = "unmaintained, not a vulnerability; reachable only through publish=false taskmesh-bench behind the optional `iai` feature; retire when iai-callgrind drops bincode" },
+    # proc-macro-error2 2.0.1 "unmaintained" (RUSTSEC-2026-0173). Path:
+    # taskmesh-bench (publish=false, optional `iai` feature) -> iai-callgrind
+    # -> iai-callgrind-macros -> proc-macro-error2. A compile-time proc-macro
+    # helper in the benchmark harness only; never linked into a shipped crate.
+    # Verified 2026-09-16: the latest iai-callgrind (0.16.1) still depends on it,
+    # so there is no upgrade path short of dropping the instruction-count gate.
+    # Owner: dependency lane (H16-019). Review at every iai-callgrind version
+    # bump (tools/bench/perf-gate.json is the fingerprint input).
+    { id = "RUSTSEC-2026-0173", reason = "unmaintained proc-macro helper reachable only via publish=false taskmesh-bench behind the optional `iai` feature; no upstream fix as of iai-callgrind 0.16.1; re-evaluate at each iai-callgrind bump" },
 ]
 
 [licenses]

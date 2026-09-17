@@ -10,6 +10,38 @@ use std::time::Duration;
 use taskmesh::ext::*;
 use taskmesh::*;
 
+/// Wait (bounded) for a class to drain, then assert it did.
+///
+/// A caller's answer and the work's custody are separate events: a deadline
+/// reply can arrive while the worker is still tearing down its owned runtime,
+/// and during that window the work is still charged — deliberately, because the
+/// capacity is still in use. So "did it drain?" is a question about the end
+/// state, not about the instant the caller returned. An unbounded wait would
+/// turn a leak into a hung test, hence the deadline.
+async fn assert_drains(rt: &TokioRuntime, class: &str, what: &str) {
+    let class = TaskClass::new(class.to_string());
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshot = rt.snapshot();
+        let observed = &snapshot.classes[&class];
+        if observed.inflight == 0 && observed.queued == 0 {
+            assert_eq!(
+                snapshot.conservation_violation(),
+                None,
+                "{what}: drained snapshot must still satisfy conservation"
+            );
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{what}: never drained (inflight {}, queued {})",
+            observed.inflight,
+            observed.queued
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+}
+
 fn rt(policy: CancellationPolicy) -> TokioRuntime {
     Builder::new()
         .resources(ResourceBudget::new().cpu_units(64).memory_units(64))
@@ -60,20 +92,45 @@ async fn deadline_cancels_cooperative_with_deadline() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn deadline_ignored_for_plain_cooperative() {
-    // A plain Cooperative class ignores `deadline` (only CooperativeWithDeadline
-    // honors it) — the work runs to completion.
-    let rt = rt(CancellationPolicy::Cooperative);
-    let spec = TaskSpec::io(TaskClass::new("c")).operation("op");
-    let opts = SubmitOptions::unbounded().with_deadline(Duration::from_millis(20));
-    let out: i32 = rt
-        .run_io_with(spec, opts, async {
-            tokio::time::sleep(Duration::from_millis(60)).await;
-            Ok::<_, ()>(7)
-        })
-        .await
-        .expect("plain cooperative ignores deadline");
-    assert_eq!(out, 7);
+async fn deadline_on_a_class_that_cannot_enforce_it_is_refused_not_ignored() {
+    // Only `CooperativeWithDeadline` can honor `deadline`. A plain `Cooperative`
+    // (or `PreSubmitOnly`) class used to *drop* the deadline and run the work to
+    // completion, returning `Ok` for a bound it never applied. That is refused
+    // at submit now: the caller asked for a bound, and the class cannot give one.
+    for policy in [
+        CancellationPolicy::Cooperative,
+        CancellationPolicy::PreSubmitOnly,
+    ] {
+        let rt = rt(policy);
+        let spec = TaskSpec::io(TaskClass::new("c")).operation("op");
+        let opts = SubmitOptions::unbounded().with_deadline(Duration::from_millis(20));
+        let ran = Arc::new(AtomicBool::new(false));
+        let ran_in_work = Arc::clone(&ran);
+        let error = rt
+            .run_io_with(spec, opts, async move {
+                ran_in_work.store(true, Ordering::SeqCst);
+                Ok::<i32, ()>(7)
+            })
+            .await
+            .expect_err("a deadline the class cannot enforce must be refused");
+        assert_eq!(
+            error,
+            RunError::Governor(GovernorError::DeadlineUnsupported {
+                class: TaskClass::new("c"),
+                policy,
+            }),
+            "policy {policy:?}"
+        );
+        assert!(
+            !ran.load(Ordering::SeqCst),
+            "refused work must not start ({policy:?})"
+        );
+        assert_eq!(
+            rt.snapshot().classes[&TaskClass::new("c")].inflight,
+            0,
+            "nothing was admitted ({policy:?})"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -95,7 +152,10 @@ async fn requested_stack_async_runtime_honors_cooperative_deadline_v1() {
         error,
         RunError::Governor(GovernorError::DeadlineExceeded)
     ));
-    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+    // The deadline answer is not a claim that the worker is gone: the owned
+    // runtime is still being torn down under this lease. What must hold is that
+    // the lease is released once — and only once — when that finishes.
+    assert_drains(&rt, "c", "requested-stack async deadline").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -110,7 +170,7 @@ async fn absolute_deadline_is_one_budget_across_queue_and_execution_v1() {
         let rt = rt.clone();
         async move {
             tokio::time::sleep(Duration::from_millis(100)).await;
-            rt.governor().release(occupied);
+            assert_eq!(rt.governor().release(occupied), ReleaseOutcome::Released);
         }
     });
     let started = Arc::new(AtomicBool::new(false));
@@ -179,7 +239,9 @@ async fn requested_stack_absolute_deadline_drops_owned_root_v1() {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     assert!(dropped.load(Ordering::SeqCst));
-    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+    // Same separation as the relative case: the caller has its answer; the
+    // worker releases custody when its owned runtime has finished tearing down.
+    assert_drains(&rt, "c", "requested-stack absolute deadline").await;
 }
 
 #[tokio::test]
@@ -190,8 +252,11 @@ async fn elapsed_absolute_deadline_rejects_before_factory_v1() {
         .stack_size_bytes(2 * 1024 * 1024);
     let invoked = Arc::new(AtomicBool::new(false));
     let factory_invoked = Arc::clone(&invoked);
-    let options = SubmitOptions::unbounded()
-        .with_absolute_deadline(std::time::Instant::now() - Duration::from_millis(1));
+    let options = SubmitOptions::unbounded().with_absolute_deadline(
+        std::time::Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .expect("the process started more than a millisecond ago"),
+    );
 
     let error = rt
         .run_async_with_requested_stack_with(spec, options, move || {
@@ -235,6 +300,35 @@ async fn absolute_deadline_rejects_non_cancellable_blocking_work_v1() {
             if message.contains("cooperative async work")
     ));
     assert!(!invoked.load(Ordering::SeqCst));
+
+    // The same job with a stack request runs on a dedicated thread instead of
+    // the pool — still a synchronous job that cannot be stopped, so the
+    // absolute deadline is refused the same way. (It used to be accepted:
+    // the dedicated-thread dispatch was shared with the *async* requested-stack
+    // path, which genuinely can honor one.)
+    let invoked = Arc::new(AtomicBool::new(false));
+    let job_invoked = Arc::clone(&invoked);
+    let error = rt
+        .run_blocking_with(
+            TaskSpec::blocking(TaskClass::new("c"))
+                .operation("stack-absolute-deadline")
+                .stack_size_bytes(2 * 1024 * 1024),
+            SubmitOptions::unbounded()
+                .with_absolute_deadline(std::time::Instant::now() + Duration::from_secs(1)),
+            move || {
+                job_invoked.store(true, Ordering::SeqCst);
+                Ok::<(), ()>(())
+            },
+        )
+        .await
+        .expect_err("a blocking job on a dedicated thread cannot promise cancellation either");
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::PolicyViolation(message))
+            if message.contains("cooperative async work")
+    ));
+    assert!(!invoked.load(Ordering::SeqCst));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
 }
 
 #[tokio::test]
@@ -281,6 +375,7 @@ async fn requested_stack_absolute_deadline_holds_permit_during_long_poll_v1() {
             rt.run_async_with_requested_stack_with(spec, options, move || {
                 std::future::poll_fn(move |_| {
                     worker_poll_started.store(true, Ordering::SeqCst);
+                    // nosemgrep: taskmesh-test-thread-sleep -- reason: the poll must overrun the absolute deadline by wall-clock time; that overrun is the property under test.
                     std::thread::sleep(Duration::from_millis(120));
                     std::task::Poll::Ready(Ok::<(), ()>(()))
                 })

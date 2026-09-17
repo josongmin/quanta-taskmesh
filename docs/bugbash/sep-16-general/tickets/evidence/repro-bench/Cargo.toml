@@ -1,0 +1,10 @@
+[package]
+name = "taskmesh-sep16-bench-audit"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+taskmesh-bench = { path = "../../../../../../crates/taskmesh-bench" }
+taskmesh = { path = "../../../../../../crates/taskmesh" }

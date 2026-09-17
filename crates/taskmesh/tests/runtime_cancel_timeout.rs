@@ -90,6 +90,7 @@ async fn cancel_before_submit_beats_substrate_pool_contention() {
                     .expect("holder sends started once")
                     .send(())
                     .expect("receiver alive");
+                // nosemgrep: taskmesh-test-thread-sleep -- reason: the holder must occupy the slot for longer than the acquire timeout under test; wall-clock is the dimension being tested.
                 std::thread::sleep(Duration::from_millis(120));
                 Ok::<(), ()>(())
             })
@@ -209,7 +210,7 @@ async fn cancel_while_queued_for_governor_abandons_ticket_promptly_v1() {
     ));
     assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].queued, 0);
 
-    rt.governor().release(occupied);
+    assert_eq!(rt.governor().release(occupied), ReleaseOutcome::Released);
 }
 
 #[tokio::test]
@@ -235,7 +236,7 @@ async fn timed_acquire_yields_typed_governor_error() {
         ))
     ));
 
-    rt.governor().release(occupied);
+    assert_eq!(rt.governor().release(occupied), ReleaseOutcome::Released);
 }
 
 #[tokio::test]
@@ -288,7 +289,7 @@ async fn acquire_timeout_is_one_budget_across_substrate_and_queue_wait() {
         ))
     ));
 
-    rt.governor().release(occupied);
+    assert_eq!(rt.governor().release(occupied), ReleaseOutcome::Released);
 }
 
 #[tokio::test]

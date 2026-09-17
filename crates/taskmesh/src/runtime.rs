@@ -1,31 +1,58 @@
 //! `TokioRuntime` — the host adapter implementing the [`Runtime`] driving port.
 //!
-//! Every path acquires one execution lease: a governor permit plus the physical
-//! substrate slot. Async work owns the lease in its caller future; detached
-//! synchronous workers own it in their worker closure until actual termination.
-//! Governor rejection and task failure stay distinct via [`RunError`]; a
-//! `spawn_blocking`/worker join failure is a governor/runtime-side error, never a
-//! task error.
+//! # One authority, one queue
+//!
+//! A submission needs two things to run: semantic permission from its class
+//! policy, and a slot in the capability pool it will physically occupy. Those
+//! used to be two separate gates, taken in sequence, and that arrangement had
+//! three consequences that no amount of tuning fixes:
+//!
+//! * the physical gate had **no depth limit**, so `OverflowPolicy::Reject` and
+//!   `max_queue_depth` applied to a queue that requests reached second;
+//! * a request could **hold a worker slot while waiting** for class capacity,
+//!   idling a worker that another class was runnable on; and
+//! * the physical gate is **FIFO**, so arrival order arbitrated before class
+//!   fairness ever saw the request.
+//!
+//! Both capacities are now decided by the same admission transition in the
+//! engine. There is no host-side semaphore, so `queued` counts everything that
+//! is waiting, `Reject` rejects immediately, and fairness is not pre-empted by a
+//! queue in front of it.
+//!
+//! # Response is not custody
+//!
+//! A caller's answer and the work's lifetime are separate events. A deadline
+//! reply, a cancel, or a dropped caller future ends the *caller's* wait; the
+//! worker keeps the execution lease until it has actually terminated — including
+//! any owned runtime it must tear down. Capacity is therefore never reported
+//! free while something is still using it, and a completed result is never
+//! delivered before its capacity is released.
 
-use std::collections::BTreeMap;
 use std::future::{ready, Future};
 use std::panic::{self, AssertUnwindSafe};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
 use taskmesh_contract::{
-    AdmissionVerdict, CancellationPolicy, CpuExecutor, GovernorError, RunError, Runtime, Snapshot,
-    SubstrateHint, SubstrateRecord, TaskClass, TaskSpec, TopologyConfig,
+    AdmissionVerdict, CpuExecutor, ExecutionPhase, GovernorError, RunError, Runtime, Snapshot,
+    SubstrateHint, TaskSpec,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PermitId};
-use tokio::sync::{oneshot, OwnedSemaphorePermit, Semaphore};
+use taskmesh_engine::{
+    AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId, ReleaseOutcome,
+};
+use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 use crate::adapters::TokioPermitWaker;
+use crate::execution_plan::{DispatchKind, ResolvedExecutionPlan};
 use crate::executor::{SubmissionDeadline, SubmitOptions};
 use crate::RuntimeConfig;
+
+#[cfg(test)]
+mod claim_acquisition_tests;
 
 type BlockingJobV1<T, E> = Box<dyn FnOnce() -> Result<T, E> + Send + 'static>;
 type RequestedStackAsyncFutureV1<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + 'static>>;
@@ -34,161 +61,27 @@ type RequestedStackAsyncFutureFactoryV1<T, E> =
 type RuntimeBoxFutureV1<'a, T, E> =
     Pin<Box<dyn Future<Output = Result<T, RunError<E>>> + Send + 'a>>;
 
-#[derive(Clone, Copy)]
-enum AbsoluteDeadlineCapabilityV1 {
-    CooperativeAsync,
-    Unsupported,
-}
+/// Longest OS thread label the host will construct.
+const MAX_THREAD_NAME_BYTES: usize = 48;
 
 /// A governed, Tokio-hosted runtime. Cheap to clone (shared `Arc` internals).
 #[derive(Clone)]
 pub struct TokioRuntime {
-    config: RuntimeConfig,
-    governor: Arc<Governor>,
+    pub(crate) config: RuntimeConfig,
+    pub(crate) governor: Arc<Governor>,
     cpu: Arc<dyn CpuExecutor>,
-    substrates: Arc<SubstrateGates>,
 }
 
 impl TokioRuntime {
-    async fn run_async_with_requested_stack_v1<T, E>(
-        &self,
-        spec: &TaskSpec,
-        make_future: RequestedStackAsyncFutureFactoryV1<T, E>,
-        cancel: Option<CancellationToken>,
-        deadline: Option<SubmissionDeadline>,
-        lease: ExecutionLease,
-    ) -> Result<T, RunError<E>>
-    where
-        E: Send + 'static,
-        T: Send + 'static,
-    {
-        enum AsyncThreadOutcome<T, E> {
-            Completed(Result<T, RunError<E>>),
-            RuntimeInitializationFailed(String),
-            Panicked,
-        }
-
-        let stack_size_bytes = requested_stack_size_bytes_v1(spec)?;
-        let thread_name = requested_stack_thread_name_v1(spec);
-        let (tx, rx) = oneshot::channel::<AsyncThreadOutcome<T, E>>();
-        std::thread::Builder::new()
-            .name(thread_name)
-            .stack_size(stack_size_bytes)
-            .spawn(move || {
-                // The dedicated worker, not the caller future, owns governance
-                // until the worker-local runtime and root future have terminated.
-                let _lease = lease;
-                let mut tx = tx;
-                let outcome = match panic::catch_unwind(AssertUnwindSafe(|| {
-                    let runtime = match tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                    {
-                        Ok(runtime) => runtime,
-                        Err(error) => {
-                            return AsyncThreadOutcome::RuntimeInitializationFailed(
-                                error.to_string(),
-                            );
-                        }
-                    };
-                    AsyncThreadOutcome::Completed(runtime.block_on(async {
-                        tokio::select! {
-                            biased;
-                            () = tx.closed() => {
-                                Err(RunError::Governor(GovernorError::Cancelled))
-                            }
-                            result = async move {
-                                run_cancellable(
-                                    cancel,
-                                    deadline,
-                                    async move { make_future().await.map_err(RunError::Task) },
-                                )
-                                .await
-                            } => result,
-                        }
-                    }))
-                })) {
-                    Ok(outcome) => outcome,
-                    Err(_) => AsyncThreadOutcome::Panicked,
-                };
-                let _ = tx.send(outcome);
-            })
-            .map_err(|error| requested_stack_spawn_error_v1(error.to_string()))?;
-        match rx.await {
-            Ok(AsyncThreadOutcome::Completed(result)) => result,
-            Ok(AsyncThreadOutcome::RuntimeInitializationFailed(message)) => {
-                Err(RunError::Governor(GovernorError::PolicyViolation(
-                    format!("requested-stack async runtime initialization failed: {message}")
-                        .into(),
-                )))
-            }
-            Ok(AsyncThreadOutcome::Panicked) => Err(RunError::Governor(
-                GovernorError::PolicyViolation("requested-stack async worker panicked".into()),
-            )),
-            Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
-                "requested-stack async worker dropped result".into(),
-            ))),
-        }
-    }
-
-    async fn run_blocking_with_requested_stack_v1<T, E>(
-        &self,
-        spec: &TaskSpec,
-        job: BlockingJobV1<T, E>,
-        lease: ExecutionLease,
-    ) -> Result<T, RunError<E>>
-    where
-        E: Send + 'static,
-        T: Send + 'static,
-    {
-        enum BlockingThreadOutcome<T, E> {
-            Completed(Result<T, E>),
-            Panicked,
-        }
-
-        let stack_size_bytes = requested_stack_size_bytes_v1(spec)?;
-        let thread_name = requested_stack_thread_name_v1(spec);
-        let tokio_handle = tokio::runtime::Handle::try_current().ok();
-        let (tx, rx) = oneshot::channel::<BlockingThreadOutcome<T, E>>();
-        std::thread::Builder::new()
-            .name(thread_name)
-            .stack_size(stack_size_bytes)
-            .spawn(move || {
-                let _lease = lease;
-                let _tokio_runtime_context = tokio_handle.as_ref().map(|handle| handle.enter());
-                let outcome = match panic::catch_unwind(AssertUnwindSafe(job)) {
-                    Ok(result) => BlockingThreadOutcome::Completed(result),
-                    Err(_) => BlockingThreadOutcome::Panicked,
-                };
-                let _ = tx.send(outcome);
-            })
-            .map_err(|error| requested_stack_spawn_error_v1(error.to_string()))?;
-        match rx.await {
-            Ok(BlockingThreadOutcome::Completed(Ok(value))) => Ok(value),
-            Ok(BlockingThreadOutcome::Completed(Err(error))) => Err(RunError::Task(error)),
-            Ok(BlockingThreadOutcome::Panicked) => Err(RunError::Governor(
-                GovernorError::PolicyViolation("large-stack worker panicked".into()),
-            )),
-            Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
-                "large-stack worker dropped result".into(),
-            ))),
-        }
-    }
-
     pub(crate) fn new(
         config: RuntimeConfig,
         governor: Arc<Governor>,
         cpu: Arc<dyn CpuExecutor>,
     ) -> Self {
-        let substrates = Arc::new(SubstrateGates::from_inventory(
-            &config.topology,
-            &config.substrates,
-        ));
         Self {
             config,
             governor,
             cpu,
-            substrates,
         }
     }
 
@@ -203,14 +96,28 @@ impl TokioRuntime {
         &self.governor
     }
 
+    /// What the installed CPU executor declared about itself (D05). The builder
+    /// already refused a `cpu` gate wider than `declared_workers`; the rest is
+    /// surfaced so an operator can see whether the pool is exclusive and whether
+    /// submission is non-blocking, instead of assuming either.
+    pub fn executor_capabilities(&self) -> taskmesh_contract::ExecutorCapabilities {
+        self.cpu.capabilities()
+    }
+
     // ---- acquire/release core --------------------------------------------
 
-    /// Acquire a permit for `spec`, honoring pre-submit cancel and a bounded
-    /// acquire wait. Queued requests park on a [`TokioPermitWaker`] and are woken
-    /// on promotion — no polling.
+    /// Acquire a governor permit that reserves `capability`.
+    ///
+    /// The capability is an explicit argument rather than something re-derived
+    /// here: the pool a submission *reserves* must be the pool it will *occupy*,
+    /// and only the resolved execution plan knows which that is.
+    ///
+    /// Honors pre-submit cancel and a bounded acquire wait. Queued requests park
+    /// on a [`TokioPermitWaker`] and are woken on promotion — no polling.
     async fn acquire(
         &self,
         spec: &TaskSpec,
+        capability: Option<&str>,
         opts: &SubmitOptions,
         acquire_deadline: Option<Instant>,
     ) -> Result<PermitId, GovernorError> {
@@ -228,8 +135,26 @@ impl TokioRuntime {
             reason = "Arc::clone cannot unsize concrete Arc<T> to Arc<dyn _>"
         )]
         let waker_port: Arc<dyn taskmesh_contract::PermitWaker> = waker.clone();
-        match self.governor.admit_waitable(spec, waker_port) {
-            AdmissionDecision::Admitted { permit_id } => Ok(permit_id),
+        match self
+            .governor
+            .admit_resolved(spec, capability, Some(waker_port))
+        {
+            AdmissionDecision::Admitted { permit_id } => {
+                // The acquisition budget covers *every* wait on the way in,
+                // including the time this thread spent blocked on the admission
+                // mutex. An immediate `Admitted` that arrives after the budget
+                // expired is still a budget overrun, and starting the caller's
+                // work anyway is a side effect they asked not to have.
+                if acquisition_budget_expired(opts, acquire_deadline) {
+                    self.return_unstarted(permit_id);
+                    return Err(GovernorError::Rejected(
+                        AdmissionVerdict::PermitAcquireTimedOut {
+                            retry_after_ms: None,
+                        },
+                    ));
+                }
+                Ok(permit_id)
+            }
             AdmissionDecision::Rejected(verdict) => Err(GovernorError::Rejected(verdict)),
             AdmissionDecision::Queued { ticket } => {
                 // While parked on the queue this future owns the ticket. If it is
@@ -242,7 +167,7 @@ impl TokioRuntime {
                     ticket: Some(ticket),
                 };
                 let result = self
-                    .await_promotion(ticket, &waker, opts.cancel.as_ref(), acquire_deadline)
+                    .await_promotion(ticket, &waker, opts, acquire_deadline)
                     .await;
                 if result.is_ok() {
                     guard.disarm();
@@ -252,21 +177,45 @@ impl TokioRuntime {
         }
     }
 
+    /// Wait for a queued ticket to be promoted, under the same acquisition
+    /// budget the immediate path enforces (D09).
+    ///
+    /// A promotion that lands after the budget expired — including one that
+    /// races the timeout itself — is unwound, not started: the caller asked for
+    /// work to begin within a bound, and a permit that arrives outside it is a
+    /// side effect they declined. The last look at the ticket on timeout exists
+    /// to report *why* the wait ended when the engine already knows (reclaimed,
+    /// invalid), never to sneak a late permit through.
     async fn await_promotion(
         &self,
         ticket: u64,
         waker: &TokioPermitWaker,
-        cancel: Option<&CancellationToken>,
+        opts: &SubmitOptions,
         acquire_deadline: Option<Instant>,
     ) -> Result<PermitId, GovernorError> {
+        let cancel = opts.cancel.as_ref();
         loop {
             if cancel.is_some_and(CancellationToken::is_cancelled) {
                 return Err(GovernorError::Rejected(
                     AdmissionVerdict::CancelledBeforeSubmit,
                 ));
             }
-            if let Some(permit_id) = self.governor.claim(ticket) {
-                return Ok(permit_id);
+            // Read *before* claiming: a timeout must be able to say what the
+            // request was waiting on, and once it is dequeued that is gone.
+            let blocked_on = self.governor.pending_block_reason(ticket);
+            match self.governor.claim(ticket) {
+                ClaimOutcome::Ready(permit_id) => {
+                    if acquisition_budget_expired(opts, acquire_deadline) {
+                        self.return_unstarted(permit_id);
+                        return Err(GovernorError::Rejected(acquire_timeout_verdict(blocked_on)));
+                    }
+                    return Ok(permit_id);
+                }
+                ClaimOutcome::Pending => {}
+                ClaimOutcome::Terminal(reason) => {
+                    return Err(GovernorError::TicketClaimTerminated { ticket, reason });
+                }
+                ClaimOutcome::Invalid => return Err(GovernorError::InvalidTicketClaim { ticket }),
             }
             tokio::select! {
                 biased;
@@ -282,39 +231,52 @@ impl TokioRuntime {
                             AdmissionVerdict::CancelledBeforeSubmit,
                         ));
                     }
-                    // Last-chance claim in case promotion raced the timeout;
-                    // otherwise the caller's `TicketGuard` abandons the ticket.
-                    if let Some(permit_id) = self.governor.claim(ticket) {
-                        return Ok(permit_id);
+                    // The budget is spent. A promotion that raced the timer is
+                    // returned unstarted (D09); a ticket the engine already
+                    // ended reports the engine's reason instead of a generic
+                    // timeout, because that reason is the more useful truth.
+                    match self.governor.claim(ticket) {
+                        ClaimOutcome::Ready(permit_id) => self.return_unstarted(permit_id),
+                        ClaimOutcome::Pending => {}
+                        ClaimOutcome::Terminal(reason) => {
+                            return Err(GovernorError::TicketClaimTerminated { ticket, reason });
+                        }
+                        ClaimOutcome::Invalid => {
+                            return Err(GovernorError::InvalidTicketClaim { ticket });
+                        }
                     }
-                    return Err(GovernorError::Rejected(
-                        AdmissionVerdict::PermitAcquireTimedOut {
-                            retry_after_ms: None,
-                        },
-                    ));
+                    return Err(GovernorError::Rejected(acquire_timeout_verdict(blocked_on)));
                 }
             }
         }
     }
 
+    /// Return a permit whose work will not start (budget expired after grant).
+    ///
+    /// Both outcomes are terminal for the caller and neither is a fault: the
+    /// leak sweep may reclaim an unstarted (`DispatchReserved`) lease at any
+    /// moment, and if it reached this permit first there is simply nothing left
+    /// to return.
+    fn return_unstarted(&self, permit_id: PermitId) {
+        match self.governor.release(permit_id) {
+            ReleaseOutcome::Released | ReleaseOutcome::UnknownPermit => {}
+        }
+    }
+
+    /// Acquire the execution lease for a resolved plan.
     async fn acquire_execution_lease<E>(
         &self,
         spec: &TaskSpec,
         opts: &SubmitOptions,
-        absolute_deadline_capability: AbsoluteDeadlineCapabilityV1,
+        plan: &ResolvedExecutionPlan,
     ) -> Result<ExecutionLease, RunError<E>> {
         if opts.is_cancelled() {
             return Err(RunError::Governor(GovernorError::Rejected(
                 AdmissionVerdict::CancelledBeforeSubmit,
             )));
         }
-        let absolute_deadline = self.absolute_deadline(&spec.class, opts);
-        if absolute_deadline.is_some()
-            && matches!(
-                absolute_deadline_capability,
-                AbsoluteDeadlineCapabilityV1::Unsupported
-            )
-        {
+        let absolute_deadline = plan.absolute_deadline();
+        if absolute_deadline.is_some() && !plan_supports_absolute_deadline(plan) {
             return Err(RunError::Governor(GovernorError::PolicyViolation(
                 "absolute completion deadline requires cooperative async work".into(),
             )));
@@ -337,107 +299,33 @@ impl TokioRuntime {
             (None, Some(absolute)) => Some(absolute),
             (None, None) => None,
         };
-        // Worker governance BEFORE semantic policy (AGENTS rule 1: the two are
-        // separate concerns). The substrate capability-pool slot is the physical
-        // worker gate (topology-sized; unlimited pools return immediately). We
-        // take it FIRST so a task waiting for a worker is NOT counted as a live
-        // governor permit — inflight/cpu/memory/root attribution then reflect
-        // tasks that are *actually executing*, and substrate backlog (its own
-        // `SubstratePoolTimedOut`) never pollutes the semantic queue / retry-after
-        // / resource-saturation signals.
-        let gate = self
-            .substrates
-            .acquire(
-                spec.primary_substrate_hint(),
-                opts.cancel.as_ref(),
-                acquire_deadline,
-            )
-            .await
-            .map_err(|error| absolute_acquire_error_v1(absolute_deadline, error))?;
-        // Now seek semantic admission. The permit's inflight count begins only
-        // once a worker slot is already held.
         let permit = self
-            .acquire(spec, opts, acquire_deadline)
+            .acquire(spec, plan.capability, opts, acquire_deadline)
             .await
             .map_err(|error| absolute_acquire_error_v1(absolute_deadline, error))?;
         Ok(ExecutionLease {
-            _permit: PermitGuard {
-                governor: Arc::clone(&self.governor),
-                permit,
-            },
-            _gate: gate,
+            governor: Arc::clone(&self.governor),
+            permit_id: permit,
+            permit: Some(permit),
+            dispatched: false,
         })
     }
 
-    /// The single admit→run→release path shared by every substrate whose work
-    /// lifetime is identical to the caller future's lifetime.
-    async fn with_permit<T, E, Fut, F>(
+    /// Resolve the plan for one submission against its class policy.
+    fn plan(
         &self,
-        spec: TaskSpec,
-        opts: SubmitOptions,
-        absolute_deadline_capability: AbsoluteDeadlineCapabilityV1,
-        run: F,
-    ) -> Result<T, RunError<E>>
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<T, RunError<E>>>,
-    {
-        let _lease = self
-            .acquire_execution_lease(&spec, &opts, absolute_deadline_capability)
-            .await?;
-        run().await
-    }
-
-    /// Reject a spec whose declared substrate is incompatible with this run path
-    /// (substrate classification is authoritative, not advisory metadata).
-    fn require_hint(spec: &TaskSpec, allowed: &[SubstrateHint]) -> Result<(), GovernorError> {
-        if allowed.contains(&spec.primary_substrate_hint()) {
-            Ok(())
-        } else {
-            Err(GovernorError::Rejected(AdmissionVerdict::SubstrateMismatch))
-        }
-    }
-
-    /// Mid-run cancellation controls for `class` given the submission `opts`:
-    /// a cancel token (for `Cooperative`/`CooperativeWithDeadline`) and a run
-    /// deadline (for `CooperativeWithDeadline` only). `PreSubmitOnly` returns
-    /// `(None, None)` — its token is honored pre-submit only.
-    fn cancel_controls(
-        &self,
-        class: &TaskClass,
+        spec: &TaskSpec,
         opts: &SubmitOptions,
-    ) -> (Option<CancellationToken>, Option<SubmissionDeadline>) {
-        let policy = self
-            .config
-            .classes
-            .get(class)
-            .map(|p| p.cancellation_policy);
-        let mid_run = matches!(
-            policy,
-            Some(CancellationPolicy::Cooperative | CancellationPolicy::CooperativeWithDeadline)
-        );
-        let with_deadline = matches!(policy, Some(CancellationPolicy::CooperativeWithDeadline));
-        (
-            mid_run.then(|| opts.cancel.clone()).flatten(),
-            with_deadline.then_some(opts.deadline).flatten(),
+        allowed: &[SubstrateHint],
+        dispatch: DispatchKind,
+    ) -> Result<ResolvedExecutionPlan, GovernorError> {
+        ResolvedExecutionPlan::resolve(
+            spec,
+            opts,
+            self.config.classes.get(&spec.class),
+            allowed,
+            dispatch,
         )
-    }
-
-    fn absolute_deadline(
-        &self,
-        class: &TaskClass,
-        opts: &SubmitOptions,
-    ) -> Option<std::time::Instant> {
-        let with_deadline = self.config.classes.get(class).is_some_and(|policy| {
-            policy.cancellation_policy == CancellationPolicy::CooperativeWithDeadline
-        });
-        with_deadline
-            .then_some(opts.deadline)
-            .flatten()
-            .and_then(|deadline| match deadline {
-                SubmissionDeadline::CompleteBy(instant) => Some(instant),
-                SubmissionDeadline::RunFor(_) => None,
-            })
     }
 
     // ---- substrate entry points (with options) ----------------------------
@@ -451,18 +339,20 @@ impl TokioRuntime {
     where
         Fut: Future<Output = Result<T, E>> + Send,
     {
-        if let Err(e) = Self::require_hint(&spec, &[SubstrateHint::AsyncIo]) {
-            return Err(RunError::Governor(e));
-        }
-        let (token, deadline) = self.cancel_controls(&spec.class, &opts);
-        self.with_permit(
-            spec,
-            opts,
-            AbsoluteDeadlineCapabilityV1::CooperativeAsync,
-            move || async move {
-                run_cancellable(token, deadline, async { fut.await.map_err(RunError::Task) }).await
-            },
-        )
+        let plan = match self.plan(
+            &spec,
+            &opts,
+            &[SubstrateHint::AsyncIo],
+            DispatchKind::CallerFuture,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => return Err(RunError::Governor(error)),
+        };
+        let mut lease = self.acquire_execution_lease(&spec, &opts, &plan).await?;
+        lease.advance(ExecutionPhase::Running)?;
+        run_cancellable(plan.cancel.clone(), plan.deadline, async {
+            fut.await.map_err(RunError::Task)
+        })
         .await
     }
 
@@ -477,47 +367,106 @@ impl TokioRuntime {
         E: Send + 'static,
         T: Send + 'static,
     {
-        if let Err(e) = Self::require_hint(
+        let plan = match self.plan(
             &spec,
+            &opts,
             &[
                 SubstrateHint::BlockingPool,
                 SubstrateHint::LargeStackCapability,
                 SubstrateHint::BackgroundOnly,
             ],
+            DispatchKind::BlockingPool,
         ) {
-            return Box::pin(ready(Err(RunError::Governor(e))));
-        }
-        if spec.requested_stack_size_bytes().is_some() {
-            let boxed_job: BlockingJobV1<T, E> = Box::new(job);
-            return Box::pin(async move {
-                let lease = self
-                    .acquire_execution_lease(
-                        &spec,
-                        &opts,
-                        AbsoluteDeadlineCapabilityV1::Unsupported,
-                    )
-                    .await?;
-                self.run_blocking_with_requested_stack_v1(&spec, boxed_job, lease)
-                    .await
-            });
-        }
+            Ok(plan) => plan,
+            Err(error) => return Box::pin(ready(Err(RunError::Governor(error)))),
+        };
+        let boxed_job: BlockingJobV1<T, E> = Box::new(job);
         Box::pin(async move {
-            let lease = self
-                .acquire_execution_lease(&spec, &opts, AbsoluteDeadlineCapabilityV1::Unsupported)
-                .await?;
-            match tokio::task::spawn_blocking(move || {
-                let _lease = lease;
-                job()
-            })
-            .await
-            {
-                Ok(Ok(value)) => Ok(value),
-                Ok(Err(err)) => Err(RunError::Task(err)),
-                Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
-                    "spawn_blocking join failure".into(),
-                ))),
+            let lease = self.acquire_execution_lease(&spec, &opts, &plan).await?;
+            match plan.dispatch {
+                DispatchKind::DedicatedStackThread => {
+                    self.run_blocking_on_dedicated_thread(&spec, boxed_job, lease, &plan)
+                        .await
+                }
+                _ => self.run_blocking_on_pool(boxed_job, lease, &plan).await,
             }
         })
+    }
+
+    /// Blocking work on Tokio's blocking pool.
+    ///
+    /// A started `spawn_blocking` task cannot be aborted, so a run deadline here
+    /// bounds the **caller's wait**, not the work. The worker keeps the lease
+    /// until it actually returns: telling the caller "deadline exceeded" while
+    /// silently freeing capacity a live thread still occupies would be a lie the
+    /// next admission pays for.
+    async fn run_blocking_on_pool<T, E>(
+        &self,
+        job: BlockingJobV1<T, E>,
+        lease: ExecutionLease,
+        plan: &ResolvedExecutionPlan,
+    ) -> Result<T, RunError<E>>
+    where
+        E: Send + 'static,
+        T: Send + 'static,
+    {
+        let (started_tx, started_rx) = oneshot::channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let mut lease = lease;
+        lease.advance(ExecutionPhase::Accepted)?;
+        tokio::task::spawn_blocking(move || {
+            run_detached_job(job, lease, started_tx, done_tx, "blocking worker");
+        });
+        await_detached(
+            started_rx,
+            done_rx,
+            plan.cancel.clone(),
+            plan.deadline,
+            "blocking worker",
+        )
+        .await
+    }
+
+    /// Blocking work on a dedicated OS thread sized by the spec's stack request.
+    async fn run_blocking_on_dedicated_thread<T, E>(
+        &self,
+        spec: &TaskSpec,
+        job: BlockingJobV1<T, E>,
+        lease: ExecutionLease,
+        plan: &ResolvedExecutionPlan,
+    ) -> Result<T, RunError<E>>
+    where
+        E: Send + 'static,
+        T: Send + 'static,
+    {
+        let stack_size_bytes = requested_stack_size_bytes_v1(spec)?;
+        let thread_name = requested_stack_thread_name_v1(spec);
+        let tokio_handle = tokio::runtime::Handle::try_current().ok();
+        let (started_tx, started_rx) = oneshot::channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let mut lease = lease;
+        lease.advance(ExecutionPhase::Accepted)?;
+        let spawned = std::thread::Builder::new()
+            .name(thread_name)
+            .stack_size(stack_size_bytes)
+            .spawn(move || {
+                let _tokio_runtime_context = tokio_handle.as_ref().map(|handle| handle.enter());
+                run_detached_job(job, lease, started_tx, done_tx, "large-stack worker");
+            });
+        // Setup failed before the worker existed, so the lease inside the
+        // closure was never handed over: it is dropped with the closure and the
+        // permit returns. Nothing started, nothing to reconcile.
+        if let Err(error) = spawned {
+            return Err(worker_unavailable_v1("large-stack worker", &error));
+        }
+        await_detached(
+            started_rx,
+            done_rx,
+            plan.cancel.clone(),
+            plan.deadline,
+            "large-stack worker",
+        )
+        .await
     }
 
     /// Run an async future on an owned current-thread Tokio runtime hosted by
@@ -552,21 +501,196 @@ impl TokioRuntime {
         E: Send + 'static,
         T: Send + 'static,
     {
-        Self::require_hint(&spec, &[SubstrateHint::LargeStackCapability])
+        let plan = self
+            .plan(
+                &spec,
+                &opts,
+                &[SubstrateHint::LargeStackCapability],
+                DispatchKind::DedicatedStackRuntime,
+            )
             .map_err(RunError::Governor)?;
         if spec.requested_stack_size_bytes().is_none() {
             return Err(RunError::Governor(GovernorError::PolicyViolation(
                 "requested stack size missing on async large-stack path".into(),
             )));
         }
-        let (cancel, deadline) = self.cancel_controls(&spec.class, &opts);
         let make_future: RequestedStackAsyncFutureFactoryV1<T, E> =
             Box::new(move || Box::pin(make_future()));
-        let lease = self
-            .acquire_execution_lease(&spec, &opts, AbsoluteDeadlineCapabilityV1::CooperativeAsync)
-            .await?;
-        self.run_async_with_requested_stack_v1(&spec, make_future, cancel, deadline, lease)
+        let lease = self.acquire_execution_lease(&spec, &opts, &plan).await?;
+        self.run_async_with_requested_stack_v1(&spec, make_future, &plan, lease)
             .await
+    }
+
+    async fn run_async_with_requested_stack_v1<T, E>(
+        &self,
+        spec: &TaskSpec,
+        make_future: RequestedStackAsyncFutureFactoryV1<T, E>,
+        plan: &ResolvedExecutionPlan,
+        lease: ExecutionLease,
+    ) -> Result<T, RunError<E>>
+    where
+        E: Send + 'static,
+        T: Send + 'static,
+    {
+        /// What the worker sends back.
+        ///
+        /// The two variants exist because the success path and the terminal path
+        /// want opposite orderings, and collapsing them breaks one of them:
+        ///
+        /// * `Completed` is sent **after** the owned runtime is torn down, and
+        ///   carries the lease, so a caller that sees `Ok` sees capacity already
+        ///   released.
+        /// * `Terminated` is sent **before** teardown and carries no lease, so a
+        ///   deadline reply — or a panic report, or a worker that could not be
+        ///   set up — is not held hostage by a blocking child the owned runtime
+        ///   must wait for, while that child keeps the work charged.
+        enum AsyncThreadOutcome<T, E> {
+            Completed(Result<T, RunError<E>>, ExecutionLease),
+            Terminated(RunError<E>),
+        }
+
+        let stack_size_bytes = requested_stack_size_bytes_v1(spec)?;
+        let thread_name = requested_stack_thread_name_v1(spec);
+        let cancel = plan.cancel.clone();
+        let deadline = plan.deadline;
+        let (tx, rx) = oneshot::channel::<AsyncThreadOutcome<T, E>>();
+        let mut lease = lease;
+        lease.advance(ExecutionPhase::Accepted)?;
+        let spawned = std::thread::Builder::new()
+            .name(thread_name)
+            .stack_size(stack_size_bytes)
+            .spawn(move || {
+                // The dedicated worker, not the caller future, owns governance
+                // until the worker-local runtime and root future have terminated.
+                let mut lease = lease;
+                let mut tx = Some(tx);
+
+                // The runtime is built *outside* the panic boundary and owned by
+                // this frame. Were it a local of the guarded closure, a panic in
+                // the root future would tear it down during the unwind — and
+                // that teardown blocks on any child the runtime cannot abort —
+                // before the caller heard `Panicked`. Every terminal reply below
+                // is sent first and teardown happens after, under the lease.
+                let runtime = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        // A failed send here means the caller already gave up,
+                        // which is an expected delivery outcome, not a loss.
+                        let _undelivered = tx.take().map(|tx| {
+                            tx.send(AsyncThreadOutcome::Terminated(RunError::Governor(
+                                GovernorError::WorkerUnavailable {
+                                    context: "requested-stack async worker".into(),
+                                    detail: error.to_string(),
+                                },
+                            )))
+                        });
+                        return;
+                    }
+                };
+                if let Err(error) = lease.advance(ExecutionPhase::Running) {
+                    let _undelivered = tx.take().map(|tx| {
+                        tx.send(AsyncThreadOutcome::Terminated(RunError::Governor(error)))
+                    });
+                    drop(runtime);
+                    return;
+                }
+
+                let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+                    runtime.block_on(async {
+                        tokio::select! {
+                            biased;
+                            () = closed(tx.as_mut()) => {
+                                Err(RunError::Governor(GovernorError::Cancelled))
+                            }
+                            result = async move {
+                                run_cancellable(
+                                    cancel,
+                                    deadline,
+                                    async move { make_future().await.map_err(RunError::Task) },
+                                )
+                                .await
+                            } => result,
+                        }
+                    })
+                }));
+
+                let result = match outcome {
+                    Ok(result) => result,
+                    Err(_panic) => {
+                        // Reply first; the teardown below may block on children
+                        // the runtime cannot abort, and the caller's answer must
+                        // not wait for them. The work stays charged meanwhile.
+                        let _undelivered = tx.take().map(|tx| {
+                            tx.send(AsyncThreadOutcome::Terminated(RunError::Governor(
+                                GovernorError::WorkerPanicked {
+                                    context: "requested-stack async worker".into(),
+                                },
+                            )))
+                        });
+                        drop(runtime);
+                        drop(lease);
+                        return;
+                    }
+                };
+
+                if let Err(error) = lease.advance(ExecutionPhase::CleanupPending) {
+                    let _undelivered = tx.take().map(|tx| {
+                        tx.send(AsyncThreadOutcome::Terminated(RunError::Governor(error)))
+                    });
+                    drop(runtime);
+                    drop(lease);
+                    return;
+                }
+
+                // A terminal governor outcome (deadline, cancel) is the caller's
+                // answer, and it must not wait for teardown: dropping the owned
+                // runtime blocks on any child it cannot abort. Teardown still
+                // happens, still under this lease, so the capacity stays charged
+                // for exactly as long as the work really occupies it.
+                match result {
+                    Err(
+                        error @ RunError::Governor(
+                            GovernorError::Cancelled | GovernorError::DeadlineExceeded,
+                        ),
+                    ) => {
+                        let _undelivered = tx
+                            .take()
+                            .map(|tx| tx.send(AsyncThreadOutcome::Terminated(error)));
+                        drop(runtime);
+                        drop(lease);
+                    }
+                    completed => {
+                        // Normal completion: tear down first, then hand the
+                        // result and the lease over together, so a caller that
+                        // can see the value sees released capacity.
+                        drop(runtime);
+                        let _undelivered = tx
+                            .take()
+                            .map(|tx| tx.send(AsyncThreadOutcome::Completed(completed, lease)));
+                    }
+                }
+            });
+        if let Err(error) = spawned {
+            return Err(worker_unavailable_v1(
+                "requested-stack async worker",
+                &error,
+            ));
+        }
+        match rx.await {
+            Ok(AsyncThreadOutcome::Completed(result, lease)) => {
+                // Release before returning: a result the caller can see is a
+                // result whose capacity is already back in the pool.
+                drop(lease);
+                result
+            }
+            Ok(AsyncThreadOutcome::Terminated(error)) => Err(error),
+            Err(_) => Err(RunError::Governor(GovernorError::JobAbandoned {
+                context: "requested-stack async worker".into(),
+            })),
+        }
     }
 
     pub async fn run_cpu_with<T, E, F>(
@@ -580,54 +704,43 @@ impl TokioRuntime {
         E: Send + 'static,
         T: Send + 'static,
     {
-        enum CpuWorkOutcome<T, E> {
-            Completed(Result<T, E>),
-            Panicked,
-        }
-
-        if let Err(e) = Self::require_hint(&spec, &[SubstrateHint::SharedCpuExecutor]) {
-            return Err(RunError::Governor(e));
-        }
-        let (token, deadline) = self.cancel_controls(&spec.class, &opts);
+        let plan = match self.plan(
+            &spec,
+            &opts,
+            &[SubstrateHint::SharedCpuExecutor],
+            DispatchKind::CpuExecutor,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => return Err(RunError::Governor(error)),
+        };
         let cpu = Arc::clone(&self.cpu);
-        let lease = self
-            .acquire_execution_lease(&spec, &opts, AbsoluteDeadlineCapabilityV1::Unsupported)
-            .await?;
-        let (tx, rx) = oneshot::channel::<(CpuWorkOutcome<T, E>, ExecutionLease)>();
+        let lease = self.acquire_execution_lease(&spec, &opts, &plan).await?;
+        let (started_tx, started_rx) = oneshot::channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let boxed_job: BlockingJobV1<T, E> = Box::new(job);
+        let mut lease = lease;
+        lease.advance(ExecutionPhase::Accepted)?;
         let work = Box::new(move || {
-            // The host contract requires worker panic to surface as a
-            // governor/runtime error instead of aborting the process.
-            let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)) {
-                Ok(result) => CpuWorkOutcome::Completed(result),
-                Err(_) => CpuWorkOutcome::Panicked,
-            };
-            // The receiver is gone only if the caller already cancelled; the
-            // failed send then drops the lease on this worker. On success,
-            // custody transfers with the result so `run_cpu` cannot report
-            // completion before governed capacity is released.
-            let _delivered = tx.send((outcome, lease));
+            run_detached_job(boxed_job, lease, started_tx, done_tx, "cpu worker");
         });
         if panic::catch_unwind(AssertUnwindSafe(|| cpu.spawn(work))).is_err() {
-            return Err(RunError::Governor(GovernorError::PolicyViolation(
-                "cpu executor spawn panicked".into(),
-            )));
+            // The adapter took ownership of the closure before unwinding, so the
+            // lease went with it: either the closure is dropped by the unwind
+            // (permit returns) or it is still queued and will run under its
+            // lease. Re-submitting could execute the caller's job twice, so this
+            // path reports and stops.
+            return Err(RunError::Governor(GovernorError::WorkerPanicked {
+                context: "cpu executor spawn".into(),
+            }));
         }
-        // The caller can stop awaiting a stalled executor, but the queued or
-        // running closure retains its lease through job completion. A completed
-        // result carries custody back so the caller drops it before returning.
-        let work = async move {
-            match rx.await {
-                Ok((CpuWorkOutcome::Completed(Ok(value)), _lease)) => Ok(value),
-                Ok((CpuWorkOutcome::Completed(Err(err)), _lease)) => Err(RunError::Task(err)),
-                Ok((CpuWorkOutcome::Panicked, _lease)) => Err(RunError::Governor(
-                    GovernorError::PolicyViolation("cpu worker panicked".into()),
-                )),
-                Err(_) => Err(RunError::Governor(GovernorError::PolicyViolation(
-                    "cpu worker dropped result".into(),
-                ))),
-            }
-        };
-        run_cancellable(token, deadline, work).await
+        await_detached(
+            started_rx,
+            done_rx,
+            plan.cancel.clone(),
+            plan.deadline,
+            "cpu worker",
+        )
+        .await
     }
 
     pub async fn run_local_with<T, E, Fut>(
@@ -641,27 +754,212 @@ impl TokioRuntime {
         T: 'static,
     {
         // `run_local` is the local-runtime exception, not a general async path.
-        if let Err(e) = Self::require_hint(&spec, &[SubstrateHint::LocalRuntime]) {
-            return Err(RunError::Governor(e));
+        let plan = match self.plan(
+            &spec,
+            &opts,
+            &[SubstrateHint::LocalRuntime],
+            DispatchKind::CallerFuture,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => return Err(RunError::Governor(error)),
+        };
+        // The non-`Send` future never leaves this task: only the permit metadata
+        // is governed centrally, so a local payload keeps its caller affinity.
+        let mut lease = self.acquire_execution_lease(&spec, &opts, &plan).await?;
+        lease.advance(ExecutionPhase::Running)?;
+        let work = async move {
+            tokio::task::LocalSet::new()
+                .run_until(fut)
+                .await
+                .map_err(RunError::Task)
+        };
+        run_cancellable(plan.cancel.clone(), plan.deadline, work).await
+    }
+}
+
+/// Whether a plan's dispatch can honor an absolute completion deadline.
+///
+/// Only cooperatively-polled async work can be stopped mid-run. Accepting a
+/// `CompleteBy` on a synchronous path would promise an abort that cannot happen.
+fn plan_supports_absolute_deadline(plan: &ResolvedExecutionPlan) -> bool {
+    match plan.dispatch {
+        // The requested-stack *async* path runs a cooperative future on its own
+        // runtime, so it can be stopped mid-run exactly like a caller future.
+        // Every synchronous dispatch — the blocking pool, the CPU executor, and
+        // a dedicated thread running a blocking job — cannot, and must not
+        // accept a promise to.
+        DispatchKind::CallerFuture | DispatchKind::DedicatedStackRuntime => true,
+        DispatchKind::BlockingPool
+        | DispatchKind::CpuExecutor
+        | DispatchKind::DedicatedStackThread => false,
+    }
+}
+
+/// Whether the acquisition budget is already spent.
+///
+/// `Some(Duration::ZERO)` keeps its published meaning — *try, do not wait* — so
+/// an uncontended immediate acquisition still succeeds. Any positive budget is
+/// enforced against the clock, which is what makes it cover a blocking wait on
+/// the admission mutex rather than only the asynchronous queue wait.
+fn acquisition_budget_expired(opts: &SubmitOptions, acquire_deadline: Option<Instant>) -> bool {
+    if opts.acquire_timeout == Some(Duration::ZERO) {
+        return false;
+    }
+    acquire_deadline.is_some_and(|deadline| Instant::now() >= deadline)
+}
+
+/// The timeout verdict matching what the request was actually waiting on.
+fn acquire_timeout_verdict(blocked_on: Option<CapacityBlock>) -> AdmissionVerdict {
+    match blocked_on {
+        Some(CapacityBlock::Capability) => AdmissionVerdict::SubstratePoolTimedOut {
+            retry_after_ms: None,
+        },
+        _ => AdmissionVerdict::PermitAcquireTimedOut {
+            retry_after_ms: None,
+        },
+    }
+}
+
+/// What a detached worker sends back when it finishes.
+struct DetachedOutcome<T, E> {
+    result: Result<T, RunError<E>>,
+    started_at: std::time::Instant,
+    completed_at: std::time::Instant,
+    /// Custody travels with the result, so a caller that observes completion has
+    /// already released the capacity.
+    lease: ExecutionLease,
+}
+
+/// The shared worker body for every detached synchronous dispatch.
+///
+/// One wrapper so the start timestamp, the phase transitions, the panic
+/// boundary, and the lease handoff are identical on the blocking pool, the CPU
+/// executor port, and a dedicated stack thread. The differences between those
+/// three are *where* the closure runs, not what governance it owes.
+fn run_detached_job<T, E>(
+    job: BlockingJobV1<T, E>,
+    lease: ExecutionLease,
+    started_tx: oneshot::Sender<std::time::Instant>,
+    done_tx: oneshot::Sender<DetachedOutcome<T, E>>,
+    context: &'static str,
+) {
+    // The worker's own clock is the authority for a relative run budget. Timing
+    // from submission instead would charge the job for queue time it did not
+    // spend running — and would miss the case where the adapter runs it inline,
+    // where "submitted" and "finished" are the same instant.
+    let started_at = std::time::Instant::now();
+    let mut lease = lease;
+    // A lease the engine no longer backs must not run: the sweep reclaimed it
+    // while the job sat in the executor's queue. Report, do not execute.
+    let result = if let Err(error) = lease.advance(ExecutionPhase::Running) {
+        Err(RunError::Governor(error))
+    } else {
+        // The caller may already have stopped waiting; that is expected, and
+        // the completion message below is what actually carries custody back.
+        let _undelivered = started_tx.send(started_at);
+        let outcome = panic::catch_unwind(AssertUnwindSafe(job));
+        match (outcome, lease.advance(ExecutionPhase::CleanupPending)) {
+            (Ok(Ok(value)), Ok(())) => Ok(value),
+            (Ok(Err(error)), Ok(())) => Err(RunError::Task(error)),
+            (Err(_panic), Ok(())) => Err(RunError::Governor(GovernorError::WorkerPanicked {
+                context: context.into(),
+            })),
+            // Unreachable once `Running` was accepted (nothing but this lease
+            // can end the permit), reported anyway rather than pretending the
+            // gauges are right.
+            (_, Err(error)) => Err(RunError::Governor(error)),
         }
-        // run_local is async, so (like run_io) it honors mid-run cooperative
-        // cancel/deadline for cancellable classes.
-        let (token, deadline) = self.cancel_controls(&spec.class, &opts);
-        self.with_permit(
-            spec,
-            opts,
-            AbsoluteDeadlineCapabilityV1::CooperativeAsync,
-            move || async move {
-                let work = async move {
-                    tokio::task::LocalSet::new()
-                        .run_until(fut)
-                        .await
-                        .map_err(RunError::Task)
-                };
-                run_cancellable(token, deadline, work).await
+    };
+    let completed_at = std::time::Instant::now();
+    // A failed send means the caller stopped waiting (timeout, cancel, drop).
+    // That is a normal, expected delivery outcome — not a lost message — and
+    // this worker is then the owner that releases the lease, which happens when
+    // the returned payload is dropped here.
+    let _undelivered = done_tx.send(DetachedOutcome {
+        result,
+        started_at,
+        completed_at,
+        lease,
+    });
+}
+
+/// Await a detached worker, racing its completion against cancellation and the
+/// run deadline.
+///
+/// The deadline for `RunFor` is anchored to the worker's **own** start, reported
+/// by the worker itself. A completion that lands past that anchor is a deadline
+/// miss even if the timer has not fired yet, so an inline executor cannot return
+/// a late success as `Ok`. Ties go to the deadline.
+async fn await_detached<T, E>(
+    started_rx: oneshot::Receiver<std::time::Instant>,
+    done_rx: oneshot::Receiver<DetachedOutcome<T, E>>,
+    cancel: Option<CancellationToken>,
+    deadline: Option<SubmissionDeadline>,
+    context: &'static str,
+) -> Result<T, RunError<E>> {
+    let cancelled = async {
+        match &cancel {
+            Some(token) => token.cancelled().await,
+            None => std::future::pending::<()>().await,
+        }
+    };
+    let expiry = async {
+        match deadline {
+            None => std::future::pending::<()>().await,
+            Some(SubmissionDeadline::CompleteBy(instant)) => {
+                tokio::time::sleep_until(Instant::from_std(instant)).await;
+            }
+            Some(SubmissionDeadline::RunFor(budget)) => match started_rx.await {
+                // The budget starts when the work does.
+                Ok(started_at) => match started_at.checked_add(budget) {
+                    Some(expires_at) => {
+                        tokio::time::sleep_until(Instant::from_std(expires_at)).await;
+                    }
+                    None => std::future::pending::<()>().await,
+                },
+                // The worker never started and never will; completion decides.
+                Err(_) => std::future::pending::<()>().await,
             },
-        )
-        .await
+        }
+    };
+    let mut done_rx = done_rx;
+    tokio::select! {
+        biased;
+        () = cancelled, if cancel.is_some() => Err(RunError::Governor(GovernorError::Cancelled)),
+        () = expiry, if deadline.is_some() => Err(RunError::Governor(GovernorError::DeadlineExceeded)),
+        received = &mut done_rx => match received {
+            Ok(outcome) => {
+                let expired = match deadline {
+                    Some(SubmissionDeadline::RunFor(budget)) => outcome
+                        .started_at
+                        .checked_add(budget)
+                        .is_some_and(|expires_at| outcome.completed_at >= expires_at),
+                    Some(SubmissionDeadline::CompleteBy(instant)) => {
+                        outcome.completed_at >= instant
+                    }
+                    None => false,
+                };
+                let DetachedOutcome { result, lease, .. } = outcome;
+                // Release fence: drop custody before the caller is answered.
+                drop(lease);
+                if expired {
+                    Err(RunError::Governor(GovernorError::DeadlineExceeded))
+                } else {
+                    result
+                }
+            }
+            Err(_) => Err(RunError::Governor(GovernorError::JobAbandoned {
+                context: context.into(),
+            })),
+        },
+    }
+}
+
+/// Resolve when the result receiver is gone (the caller stopped waiting).
+async fn closed<T>(tx: Option<&mut oneshot::Sender<T>>) {
+    match tx {
+        Some(tx) => tx.closed().await,
+        None => std::future::pending::<()>().await,
     }
 }
 
@@ -693,21 +991,45 @@ fn requested_stack_size_bytes_v1<E>(spec: &TaskSpec) -> Result<usize, RunError<E
             ))
         })?
         .try_into()
-        .map_err(|_| {
+        .map_err(|_too_large| {
             RunError::Governor(GovernorError::PolicyViolation(
                 "requested stack size does not fit usize".into(),
             ))
         })
 }
 
+/// Build the OS thread label for a dedicated worker.
+///
+/// A class name is a *semantic* identifier chosen by the caller; an OS thread
+/// name is a constrained C string. Interpolating one into the other unchecked
+/// turns an accepted class like `"a\0b"` into a panic inside `thread::Builder`
+/// — outside the worker's own unwind boundary, so it surfaces as a caller-task
+/// panic rather than a typed error. The label is derived, bounded, and lossy on
+/// purpose; class identity itself is never modified.
 fn requested_stack_thread_name_v1(spec: &TaskSpec) -> String {
-    format!("taskmesh.large_stack:{}", spec.class.as_str())
+    const PREFIX: &str = "taskmesh.large_stack:";
+    let mut name = String::with_capacity(MAX_THREAD_NAME_BYTES);
+    name.push_str(PREFIX);
+    for ch in spec.class.as_str().chars() {
+        if name.len() >= MAX_THREAD_NAME_BYTES {
+            break;
+        }
+        // Keep the label ASCII-safe and NUL-free: everything else becomes '_',
+        // so a label is always constructible from any accepted class.
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+            name.push(ch);
+        } else {
+            name.push('_');
+        }
+    }
+    name
 }
 
-fn requested_stack_spawn_error_v1<E>(message: String) -> RunError<E> {
-    RunError::Governor(GovernorError::PolicyViolation(
-        format!("large-stack thread spawn failed: {message}").into(),
-    ))
+fn worker_unavailable_v1<E>(context: &'static str, error: &std::io::Error) -> RunError<E> {
+    RunError::Governor(GovernorError::WorkerUnavailable {
+        context: context.into(),
+        detail: error.to_string(),
+    })
 }
 
 impl Runtime for TokioRuntime {
@@ -755,9 +1077,8 @@ impl Runtime for TokioRuntime {
 
 /// Run `work`, racing it against an optional cooperative cancel token and an
 /// optional run deadline. Shared by every async run path (`run_io`, `run_local`,
-/// and the `run_cpu` result-await), so cancellation/deadline semantics are
-/// identical everywhere. Sync blocking work has no awaitable cancel point and is
-/// handled separately (pre-submit cancel only).
+/// and the requested-stack async worker), so cancellation/deadline semantics are
+/// identical everywhere.
 async fn run_cancellable<T, E>(
     token: Option<CancellationToken>,
     deadline: Option<SubmissionDeadline>,
@@ -824,31 +1145,84 @@ async fn acquisition_deadline_reached_v1(deadline: Option<Instant>) {
     }
 }
 
-/// Releases a held permit on drop. Held across the work future so a cancelled
-/// (dropped) submission still returns its permit and promotes queued work.
-struct PermitGuard {
-    governor: Arc<Governor>,
-    permit: PermitId,
-}
-
-/// Owns the semantic permit and physical substrate slot for one execution.
-/// Detached workers take this value so caller cancellation cannot report
-/// capacity as free before the worker has actually terminated.
+/// Owns one execution's governed capacity: the semantic permit and, through it,
+/// the capability-pool slot the engine reserved in the same transition.
+///
+/// Whoever holds this value is the execution's owner. Detached workers take it
+/// so caller cancellation cannot report capacity as free before the worker has
+/// actually terminated.
 struct ExecutionLease {
-    _permit: PermitGuard,
-    _gate: Option<OwnedSemaphorePermit>,
+    governor: Arc<Governor>,
+    permit_id: PermitId,
+    /// `None` once the permit has been returned — or once the engine reported
+    /// it gone, so a later drop does not release it a second time.
+    permit: Option<PermitId>,
+    /// Set once the engine accepted a phase past `DispatchReserved`. From then
+    /// on the leak sweep leaves the permit alone, so the only way its release
+    /// can find nothing is a double release.
+    dispatched: bool,
 }
 
-impl Drop for PermitGuard {
+impl ExecutionLease {
+    /// Declare the execution's next ownership phase.
+    ///
+    /// Fails, and disarms the lease, when the engine no longer holds a live
+    /// permit for it: the leak sweep reclaimed the lease before dispatch. The
+    /// work must not start on capacity the engine has already reassigned, and
+    /// the failure says so instead of letting the phase gauges quietly diverge
+    /// from a worker that ran anyway.
+    fn advance(&mut self, phase: ExecutionPhase) -> Result<(), GovernorError> {
+        let Some(permit) = self.permit else {
+            return Err(GovernorError::LeaseReclaimed {
+                permit_id: self.permit_id,
+            });
+        };
+        if self.governor.advance_phase(permit, phase) {
+            self.dispatched |= phase != ExecutionPhase::DispatchReserved;
+            return Ok(());
+        }
+        if self.governor.phase(permit).is_none() {
+            self.permit = None;
+            return Err(GovernorError::LeaseReclaimed { permit_id: permit });
+        }
+        // The permit is live and refused the move: the host declared a phase
+        // that is not later than the current one. The host's sequence is fixed
+        // (`Accepted` → `Running` → `CleanupPending`), so this is a programming
+        // error, reported rather than ignored.
+        Err(GovernorError::PolicyViolation(
+            format!("execution phase {phase:?} does not advance permit {permit}").into(),
+        ))
+    }
+}
+
+impl Drop for ExecutionLease {
     fn drop(&mut self) {
-        self.governor.release(self.permit);
+        if let Some(permit) = self.permit.take() {
+            match self.governor.release(permit) {
+                ReleaseOutcome::Released => {}
+                ReleaseOutcome::UnknownPermit => {
+                    // Legitimate only before dispatch, where the leak sweep can
+                    // reclaim a stale `DispatchReserved` lease under us. After
+                    // dispatch nothing but this lease can end the permit, so a
+                    // miss here is a double release — an invariant the test
+                    // suite must see. (Not asserted while unwinding: a panic in
+                    // a destructor during a panic aborts the process.)
+                    if !std::thread::panicking() {
+                        debug_assert!(
+                            !self.dispatched,
+                            "permit {permit} released twice: a dispatched lease found no permit"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
 /// Owns a queued ticket while the caller waits for promotion. On drop (caller
 /// cancelled / timed out) it abandons the ticket: removing it from the engine
 /// queue, or releasing it if it was already promoted. Disarmed once the permit
-/// is successfully claimed (ownership then passes to a [`PermitGuard`]).
+/// is successfully claimed (ownership then passes to an [`ExecutionLease`]).
 struct TicketGuard {
     governor: Arc<Governor>,
     ticket: Option<u64>,
@@ -864,94 +1238,6 @@ impl Drop for TicketGuard {
     fn drop(&mut self) {
         if let Some(ticket) = self.ticket {
             self.governor.abandon(ticket);
-        }
-    }
-}
-
-/// Per-substrate capability pools sized from [`TopologyConfig`]. Each pool caps
-/// concurrent work on a substrate; a slot count of `0` means *unlimited* (no
-/// gate), consistent with the `0 == no limit` convention used by resource
-/// budgets. `AsyncIo` is intentionally ungated (async is unbounded by design).
-///
-/// `SharedCpuExecutor` is **always** gated to the resolved CPU worker count, so
-/// CPU topology is authoritative on *both* host paths (Tokio blocking-pool and
-/// Rayon): a `run_cpu` submission must hold a CPU slot before it reaches the
-/// executor, so work cannot pile up unbounded behind held permits in an
-/// executor's internal queue. This enforces the "no unbounded competing queue"
-/// rule for the CPU substrate.
-struct SubstrateGates {
-    /// Worker gates keyed by capability-pool name, derived from the registered
-    /// substrate inventory (which pools exist) × topology (how many slots each).
-    pools: BTreeMap<String, Arc<Semaphore>>,
-}
-
-impl SubstrateGates {
-    /// Build the worker gates from the inventory ∩ topology: a gate exists for a
-    /// capability pool iff that substrate is **registered** (inventory is
-    /// authoritative for which pools exist) and topology sizes it `> 0`. The
-    /// `cpu` pool is always gated to the resolved CPU worker count. This makes the
-    /// substrate inventory back the runtime, not just snapshot metadata.
-    fn from_inventory(topology: &TopologyConfig, substrates: &[SubstrateRecord]) -> Self {
-        let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-        let cpu_workers = topology.resolved_cpu_workers(available);
-        let slots_for = |pool: &str| match pool {
-            "cpu" => cpu_workers,
-            "blocking" => topology.blocking_threads,
-            "large_stack" => topology.large_stack_slots,
-            "local_runtime" => topology.local_runtime_slots,
-            "maintenance" => topology.maintenance_workers,
-            _ => 0,
-        };
-        let mut pools = BTreeMap::new();
-        for record in substrates {
-            let Some(pool) = record.capability_pool.as_deref() else {
-                continue;
-            };
-            let slots = slots_for(pool);
-            if slots > 0 {
-                pools.insert(pool.to_owned(), Arc::new(Semaphore::new(slots)));
-            }
-        }
-        Self { pools }
-    }
-
-    fn gate_for(&self, hint: SubstrateHint) -> Option<&Arc<Semaphore>> {
-        // Authoritative hint→pool mapping lives in the contract; a gate exists
-        // only for a registered, topology-sized pool.
-        self.pools.get(hint.capability_pool()?)
-    }
-
-    /// Acquire a slot for `hint`, held for the work's duration. `None` when the
-    /// substrate is unlimited. Honors the bounded acquire wait in `opts`.
-    async fn acquire(
-        &self,
-        hint: SubstrateHint,
-        cancel: Option<&CancellationToken>,
-        acquire_deadline: Option<Instant>,
-    ) -> Result<Option<OwnedSemaphorePermit>, GovernorError> {
-        let Some(sem) = self.gate_for(hint) else {
-            return Ok(None);
-        };
-        let sem = Arc::clone(sem);
-        tokio::select! {
-            biased;
-            () = cancellation_requested_v1(cancel), if cancel.is_some() => {
-                Err(GovernorError::Rejected(
-                    AdmissionVerdict::CancelledBeforeSubmit,
-                ))
-            }
-            permit = sem.acquire_owned() => {
-                Ok(Some(permit.expect("substrate semaphore open")))
-            }
-            () = acquisition_deadline_reached_v1(acquire_deadline), if acquire_deadline.is_some() => {
-                // Distinct from the governor queue-wait timeout so the two
-                // backpressure causes stay separable.
-                Err(GovernorError::Rejected(
-                    AdmissionVerdict::SubstratePoolTimedOut {
-                        retry_after_ms: None,
-                    },
-                ))
-            }
         }
     }
 }

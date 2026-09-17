@@ -1,237 +1,314 @@
-//! Exhaustive concurrency model-check of the governance design (ADR 9000 / P6).
+//! Exhaustive concurrency model-check of the **real** governor (ADR 9000 / P6,
+//! ADR 0003 D-loom).
 //!
-//! The real `Governor` uses `parking_lot::Mutex` + `std` atomics, which loom
-//! cannot intercept. So this faithfully models the *same* concurrency design
-//! (ADR 0001 §4): one global mutex over the granted-permit state, plus a Relaxed
-//! atomic permit-id generator taken OUTSIDE the lock — exactly the shape of
-//! `Governor::fresh_ids()` (Relaxed `fetch_add` before locking) feeding
-//! `GovernedState::grant`/`unwind` under the lock.
+//! Under `--cfg loom` the engine's `sync` seam builds `Governor` on
+//! `loom::sync::Mutex` and loom atomics, so every model below drives the
+//! production `admit` / `claim` / `abandon` / `release` / `reap_leaks` /
+//! `reconcile_memory` transitions — including the effects the governor drains
+//! *outside* its lock — and loom explores every interleaving of the lock
+//! acquisitions those transitions make. There is no hand-written replica of the
+//! locking design here; a replica only proves the replica.
 //!
-//! loom explores every thread interleaving and checks the safety invariants the
-//! `concurrency_stress.rs` OS-thread test can only sample: permit ids are unique
-//! (no double-grant), inflight returns to zero, and no permit is lost.
+//! State is kept tiny on purpose (two or three threads, one or two lock
+//! acquisitions each) so the search is exhaustive rather than bounded.
 //!
-//! Run with: `RUSTFLAGS="--cfg loom" cargo test -p taskmesh-engine --test loom_governance`.
+//! Run with: `just loom` (`RUSTFLAGS="--cfg loom" cargo test -p taskmesh-engine --features loom --test loom_governance --release`).
 
 #![cfg(loom)]
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
-use loom::sync::atomic::{AtomicU64, Ordering};
-use loom::sync::{Arc, Mutex};
 use loom::thread;
+use taskmesh_contract::{
+    ClassPolicy, ManualClock, MemoryPermitMode, MemoryReleasePolicy, OverflowPolicy, PermitWaker,
+    ResourceBudget, TaskClass, TaskSpec,
+};
+use taskmesh_engine::{
+    AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome, TerminalReason,
+};
 
-/// The state the real governor keeps behind its single mutex (subset that the
-/// concurrency invariant depends on): how many permits are inflight and which
-/// ids are currently granted.
-#[derive(Default)]
-struct State {
-    inflight: i64,
-    granted: BTreeSet<u64>,
+const CLASS: &str = "c";
+
+fn class() -> TaskClass {
+    TaskClass::new(CLASS)
 }
 
-/// Mirrors `Governor::fresh_ids()` + `grant()`: take a unique id with a Relaxed
-/// atomic BEFORE acquiring the lock, then commit under the lock.
-fn admit(next_id: &AtomicU64, state: &Mutex<State>) -> u64 {
-    let id = next_id.fetch_add(1, Ordering::Relaxed);
-    let mut s = state.lock().unwrap();
-    assert!(s.granted.insert(id), "permit id {id} double-granted");
-    s.inflight += 1;
-    id
+fn spec(op: &str) -> TaskSpec {
+    TaskSpec::io(class()).operation(op.to_string())
 }
 
-/// Mirrors `release` → `GovernedState::unwind`: drop the permit under the lock.
-fn release(state: &Mutex<State>, id: u64) {
-    let mut s = state.lock().unwrap();
-    assert!(s.granted.remove(&id), "release of unknown permit {id}");
-    s.inflight -= 1;
+/// A governor with one class: `max_inflight` slots, queue depth 4, leak
+/// detection on, measured memory so `reconcile_memory` has an effect.
+fn governor(max_inflight: u32, clock: Arc<ManualClock>) -> Arc<Governor> {
+    let mut classes = BTreeMap::new();
+    classes.insert(
+        class(),
+        ClassPolicy::new()
+            .max_inflight(max_inflight)
+            .max_queue_depth(4)
+            .cpu_units(1)
+            .memory_units(4)
+            .memory_permit_mode(MemoryPermitMode::Measured)
+            .memory_release_policy(MemoryReleasePolicy::LeakDetecting)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth),
+    );
+    let policy = PolicySet::new(
+        ResourceBudget::new()
+            .cpu_units(64)
+            .memory_units(64)
+            .memory_unit_scale(1),
+        classes,
+    );
+    Arc::new(Governor::new(policy, clock).expect("valid policy"))
+}
+
+fn admit(g: &Governor, op: &str) -> PermitId {
+    match g.admit(&spec(op)) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("expected admission, got {other:?}"),
+    }
+}
+
+/// A waker that only counts. Whether it fired is the observable the lost-wakeup
+/// model needs; it must not touch the governor (the real host waker does not).
+struct CountingWaker(AtomicUsize);
+
+impl PermitWaker for CountingWaker {
+    fn wake(&self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+fn queue_with_waker(g: &Governor, op: &str) -> (u64, Arc<CountingWaker>) {
+    let waker = Arc::new(CountingWaker(AtomicUsize::new(0)));
+    let port: Arc<dyn PermitWaker> = waker.clone();
+    match g.admit_waitable(&spec(op), port) {
+        AdmissionDecision::Queued { ticket } => (ticket, waker),
+        other => panic!("expected a queued ticket, got {other:?}"),
+    }
+}
+
+/// Every model ends here: nothing inflight, nothing queued, the incremental
+/// gauges agree with the totals, and every admission was terminated exactly
+/// once (`admitted_total == terminated_total`).
+fn assert_quiescent(g: &Governor) {
+    let snapshot = g.snapshot();
+    let c = &snapshot.classes[&class()];
+    assert_eq!(c.inflight, 0, "inflight must return to zero");
+    assert_eq!(c.queued, 0, "nothing may remain queued");
+    assert_eq!(c.cpu_units_held, 0);
+    assert_eq!(c.memory_units_held, 0);
+    assert_eq!(
+        c.admitted_total, c.terminated_total,
+        "every admission is terminated exactly once"
+    );
+    assert_eq!(snapshot.conservation_violation(), None);
+    assert!(g.permit_ledgers().is_empty(), "no permit may leak");
+    assert_eq!(g.accounting_fault(), None);
 }
 
 #[test]
-fn concurrent_admit_release_preserves_safety() {
+fn concurrent_admits_and_releases_conserve_capacity() {
     loom::model(|| {
-        let next_id = Arc::new(AtomicU64::new(1));
-        let state = Arc::new(Mutex::new(State::default()));
-
+        let g = governor(2, Arc::new(ManualClock::new(1_000)));
         let handles: Vec<_> = (0..2)
-            .map(|_| {
-                let next_id = next_id.clone();
-                let state = state.clone();
+            .map(|i| {
+                let g = Arc::clone(&g);
                 thread::spawn(move || {
-                    let id = admit(&next_id, &state);
-                    release(&state, id);
+                    let permit = admit(&g, &format!("op{i}"));
+                    assert_eq!(g.release(permit), ReleaseOutcome::Released);
+                    permit
                 })
             })
             .collect();
-        for h in handles {
-            h.join().unwrap();
-        }
-
-        let s = state.lock().unwrap();
-        assert_eq!(s.inflight, 0, "inflight must return to zero");
-        assert!(s.granted.is_empty(), "no permit may leak");
+        let ids: Vec<PermitId> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_ne!(ids[0], ids[1], "permit ids are unique across threads");
+        assert_quiescent(&g);
     });
 }
 
-/// Models the promote-vs-abandon race the host `TicketGuard` protects: one
-/// thread releases a permit (which *promotes* the single queued ticket → grants
-/// it, unclaimed), while the waiting thread *abandons* the ticket (cancel /
-/// acquire-timeout). However they interleave, the promoted permit must be
-/// released exactly once — never leaked (stuck inflight) and never double-freed.
-fn promote_on_release(state: &Mutex<QState>) {
-    let mut s = state.lock().unwrap();
-    if s.queued {
-        s.queued = false;
-        s.granted = true; // promoted, awaiting claim
-        s.inflight += 1;
-    }
-}
-
-fn abandon(state: &Mutex<QState>) {
-    let mut s = state.lock().unwrap();
-    if s.granted {
-        // Promoted-but-unclaimed: abandoning releases it.
-        s.granted = false;
-        s.inflight -= 1;
-    } else if s.queued {
-        // Still queued: just drop it from the queue.
-        s.queued = false;
-    }
-}
-
-#[derive(Default)]
-struct QState {
-    inflight: i64,
-    queued: bool,
-    granted: bool,
-}
-
-#[test]
-fn promote_and_abandon_never_leak_or_double_free() {
-    loom::model(|| {
-        let state = Arc::new(Mutex::new(QState {
-            inflight: 0,
-            queued: true,
-            granted: false,
-        }));
-
-        let s1 = state.clone();
-        let promoter = thread::spawn(move || promote_on_release(&s1));
-        let s2 = state.clone();
-        let abandoner = thread::spawn(move || abandon(&s2));
-        promoter.join().unwrap();
-        abandoner.join().unwrap();
-
-        let s = state.lock().unwrap();
-        assert_eq!(
-            s.inflight, 0,
-            "promoted permit must not leak or double-free"
-        );
-        assert!(!s.queued, "ticket must not remain queued");
-        assert!(!s.granted, "no unclaimed promoted permit may remain");
-    });
-}
-
-#[test]
-fn admit_then_concurrent_release_is_consistent() {
-    // One thread holds a permit while another admits+releases — checks the
-    // grant/unwind bookkeeping under overlap.
-    loom::model(|| {
-        let next_id = Arc::new(AtomicU64::new(1));
-        let state = Arc::new(Mutex::new(State::default()));
-
-        let id0 = admit(&next_id, &state);
-
-        let other = {
-            let next_id = next_id.clone();
-            let state = state.clone();
-            thread::spawn(move || {
-                let id = admit(&next_id, &state);
-                release(&state, id);
-            })
-        };
-        release(&state, id0);
-        other.join().unwrap();
-
-        let s = state.lock().unwrap();
-        assert_eq!(s.inflight, 0);
-        assert!(s.granted.is_empty());
-    });
-}
-
-/// The full three-way race the host's `TicketGuard` must survive: a queued
-/// ticket is, concurrently, (1) promoted by a releasing thread, (2) claimed by
-/// the waiting thread, and (3) abandoned (cancel / acquire-timeout). Models the
-/// exact ownership handoff in `Governor::{release→promote, claim, abandon}` plus
-/// the host's "claimer owns it and releases" rule. Across every interleaving the
-/// promoted permit is accounted exactly once: never leaked (stuck inflight),
-/// never double-freed, and never stranded promoted-but-unclaimed.
-#[derive(Default)]
-struct ThreeWay {
-    queued: bool,
-    granted: bool,
-    claimed: bool,
-    inflight: i64,
-}
-
+/// The three-way race the host `TicketGuard` must survive, on the real engine:
+/// a queued ticket is concurrently promoted (by the releasing holder), claimed
+/// (by its waiter), and abandoned (cancel / acquire-timeout). Whatever the
+/// interleaving, the permit is accounted exactly once — never leaked, never
+/// double-freed, never stranded promoted-but-unclaimed — and the two racers
+/// never both believe they own it.
 #[test]
 fn promote_claim_abandon_three_way_is_exactly_once() {
     loom::model(|| {
-        let st = Arc::new(Mutex::new(ThreeWay {
-            queued: true,
-            ..Default::default()
-        }));
+        let g = governor(1, Arc::new(ManualClock::new(1_000)));
+        let holder = admit(&g, "holder");
+        let (ticket, _waker) = queue_with_waker(&g, "queued");
 
-        // (1) releasing thread promotes the queued head into a granted permit.
-        let promoter = {
-            let st = st.clone();
-            thread::spawn(move || {
-                let mut s = st.lock().unwrap();
-                if s.queued {
-                    s.queued = false;
-                    s.granted = true;
-                    s.inflight += 1;
-                }
-            })
+        let releaser = {
+            let g = Arc::clone(&g);
+            thread::spawn(move || assert_eq!(g.release(holder), ReleaseOutcome::Released))
         };
-        // (2) waiter claims the promoted permit (takes ownership).
         let claimer = {
-            let st = st.clone();
-            thread::spawn(move || {
-                let mut s = st.lock().unwrap();
-                if s.granted && !s.claimed {
-                    s.claimed = true;
+            let g = Arc::clone(&g);
+            thread::spawn(move || match g.claim(ticket) {
+                ClaimOutcome::Ready(permit) => {
+                    // Ownership transferred to this thread: it releases, and
+                    // that release must find the permit (abandon may not have
+                    // taken it from under a claimer).
+                    assert_eq!(g.release(permit), ReleaseOutcome::Released);
+                    true
                 }
+                ClaimOutcome::Pending
+                | ClaimOutcome::Terminal(TerminalReason::Abandoned)
+                | ClaimOutcome::Invalid => false,
+                other => panic!("unexpected claim outcome {other:?}"),
             })
         };
-        // (3) TicketGuard abandons: release if promoted-unclaimed, else dequeue.
         let abandoner = {
-            let st = st.clone();
-            thread::spawn(move || {
-                let mut s = st.lock().unwrap();
-                if s.claimed {
-                    // already owned by the claimer — abandon must not touch it
-                } else if s.granted {
-                    s.granted = false;
-                    s.inflight -= 1;
-                } else if s.queued {
-                    s.queued = false;
-                }
-            })
+            let g = Arc::clone(&g);
+            thread::spawn(move || g.abandon(ticket))
         };
-        promoter.join().unwrap();
-        claimer.join().unwrap();
+        releaser.join().unwrap();
+        let claimed = claimer.join().unwrap();
         abandoner.join().unwrap();
 
-        let mut s = st.lock().unwrap();
-        // A claimer that won ownership releases its permit when done.
-        if s.claimed {
-            s.inflight -= 1;
-        }
-        assert_eq!(s.inflight, 0, "permit must be released exactly once");
+        // Whoever ended the ticket, it is over: a late look never says "wait".
         assert!(
-            !(s.granted && !s.claimed),
-            "no promoted-but-unclaimed permit may be stranded"
+            matches!(
+                g.ticket_status(ticket),
+                ClaimOutcome::Invalid | ClaimOutcome::Terminal(_)
+            ),
+            "ticket must be terminal after the race (claimed = {claimed})"
         );
+        // If the claimer never got it, the abandon (or the claim seeing a
+        // terminal record) must have unwound the promotion.
+        assert_quiescent(&g);
+    });
+}
+
+/// Lost-wakeup freedom on the real engine. The waiter's protocol is
+/// `claim → Pending → park`; the promoter's is `promote (under lock) → wake
+/// (after lock)`. If the waiter observed `Pending`, the promotion had not
+/// committed, so the promoter's wake is still ahead of it and must arrive:
+/// there is no interleaving in which `Pending` is followed by silence.
+#[test]
+fn a_pending_claim_is_always_followed_by_a_wake() {
+    loom::model(|| {
+        let g = governor(1, Arc::new(ManualClock::new(1_000)));
+        let holder = admit(&g, "holder");
+        let (ticket, waker) = queue_with_waker(&g, "queued");
+
+        let promoter = {
+            let g = Arc::clone(&g);
+            thread::spawn(move || assert_eq!(g.release(holder), ReleaseOutcome::Released))
+        };
+        let waiter = {
+            let g = Arc::clone(&g);
+            thread::spawn(move || g.claim(ticket))
+        };
+        promoter.join().unwrap();
+        let first_look = waiter.join().unwrap();
+
+        match first_look {
+            ClaimOutcome::Pending => {
+                assert_eq!(
+                    waker.0.load(Ordering::SeqCst),
+                    1,
+                    "a waiter that saw Pending was promoted afterwards and must be woken"
+                );
+                // The wake means "look again": now it is ready.
+                let ClaimOutcome::Ready(permit) = g.claim(ticket) else {
+                    panic!("woken waiter must find its permit");
+                };
+                assert_eq!(g.release(permit), ReleaseOutcome::Released);
+            }
+            ClaimOutcome::Ready(permit) => {
+                // The claim beat the wake or followed it; either way the waker is
+                // spent (at most one fire) and the claimer owns the permit.
+                assert!(waker.0.load(Ordering::SeqCst) <= 1);
+                assert_eq!(g.release(permit), ReleaseOutcome::Released);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_quiescent(&g);
+    });
+}
+
+/// The stale-lease race: a claimer takes ownership and moves to `Accepted`
+/// while the leak sweep, on another thread, reclaims every `DispatchReserved`
+/// lease older than zero. Exactly one of them wins the permit, both learn the
+/// truth through typed outcomes, and the accounting closes either way.
+#[test]
+fn claim_and_reap_of_a_stale_promotion_fail_closed_both_ways() {
+    loom::model(|| {
+        let clock = Arc::new(ManualClock::new(1_000));
+        let g = governor(1, clock.clone());
+        let holder = admit(&g, "holder");
+        let (ticket, _waker) = queue_with_waker(&g, "queued");
+        assert_eq!(g.release(holder), ReleaseOutcome::Released); // promoted at 1000
+        clock.set(1_002); // the promotion is now stale for a 1ms window
+
+        let claimer = {
+            let g = Arc::clone(&g);
+            thread::spawn(move || match g.claim(ticket) {
+                ClaimOutcome::Ready(permit) => {
+                    // The claim touched the lease (t=1002), so a sweep that runs
+                    // after it sees a fresh lease and must leave it alone.
+                    let advanced =
+                        g.advance_phase(permit, taskmesh_contract::ExecutionPhase::Accepted);
+                    assert!(advanced, "a claimed, touched lease is live");
+                    assert_eq!(g.release(permit), ReleaseOutcome::Released);
+                    Some(permit)
+                }
+                ClaimOutcome::Terminal(TerminalReason::Reclaimed) => None,
+                other => panic!("unexpected {other:?}"),
+            })
+        };
+        let reaper = {
+            let g = Arc::clone(&g);
+            thread::spawn(move || g.reap_leaks_with(1))
+        };
+        let claimed = claimer.join().unwrap();
+        let report = reaper.join().unwrap();
+
+        match claimed {
+            Some(_) => assert_eq!(
+                report.reclaimed_permits, 0,
+                "the claim won: the sweep saw a touched lease"
+            ),
+            None => assert_eq!(
+                report.reclaimed_permits, 1,
+                "the sweep won: the claimer was told Reclaimed"
+            ),
+        }
+        assert_quiescent(&g);
+    });
+}
+
+/// Two reporters reconcile the same permit without agreeing on an order. Each
+/// reading is assigned its epoch inside the transition that applies it, so
+/// both land: neither is rejected as stale for having read a "next" epoch
+/// under an earlier lock.
+#[test]
+fn unordered_concurrent_reconciles_both_apply() {
+    loom::model(|| {
+        let g = governor(2, Arc::new(ManualClock::new(1_000)));
+        let permit = admit(&g, "measured");
+        let reporters: Vec<_> = [2u64, 3]
+            .into_iter()
+            .map(|bytes| {
+                let g = Arc::clone(&g);
+                thread::spawn(move || g.reconcile_memory(permit, bytes))
+            })
+            .collect();
+        for reporter in reporters {
+            assert!(reporter.join().unwrap(), "every reading is applied");
+        }
+        let ledger = g.permit_ledger(permit).expect("live");
+        assert_eq!(ledger.measurement_epoch, 2, "two readings, two epochs");
+        assert!(
+            ledger.effective_units == 2 || ledger.effective_units == 3,
+            "the last reading applied is one of the two"
+        );
+        assert_eq!(g.release(permit), ReleaseOutcome::Released);
+        assert_quiescent(&g);
     });
 }

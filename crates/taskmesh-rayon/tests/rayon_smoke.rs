@@ -12,7 +12,9 @@ fn executor_runs_cpu_work() {
 
     let (tx, rx) = mpsc::channel();
     executor.spawn(Box::new(move || {
-        let _ = tx.send(6 * 7);
+        // The receiver is alive for the whole test; a failed send would mean the
+        // harness itself broke, so it is worth asserting rather than discarding.
+        tx.send(6 * 7).expect("the test still holds the receiver");
     }));
     assert_eq!(rx.recv().unwrap(), 42);
 }
@@ -35,4 +37,36 @@ fn worker_count_respects_topology_clamp() {
             .min_workers(2),
     );
     assert_eq!(raised.worker_count(), 2);
+}
+
+#[test]
+fn the_adapter_declares_what_it_can_honestly_promise() {
+    // D05: a pool this adapter built is exclusive and its declared worker
+    // count is the pool's real thread count.
+    let owned = RayonCpuExecutor::new(3);
+    let declared = owned.capabilities();
+    assert_eq!(declared.declared_workers, Some(3));
+    assert!(
+        declared.exclusive_pool,
+        "a pool the adapter built is its own"
+    );
+    assert!(
+        declared.nonblocking_submit,
+        "ThreadPool::spawn never runs inline"
+    );
+
+    // A pool handed in from outside may have other users: the adapter says
+    // *shared*, so the host never claims to bound work it cannot see. The
+    // worker count is still the pool's real count, not a guess.
+    let pool = std::sync::Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .expect("pool builds"),
+    );
+    let shared = RayonCpuExecutor::with_pool(pool);
+    let declared = shared.capabilities();
+    assert_eq!(declared.declared_workers, Some(2));
+    assert!(!declared.exclusive_pool);
+    assert!(declared.nonblocking_submit);
 }

@@ -2,6 +2,7 @@
 
 mod harness;
 use harness::*;
+use taskmesh_engine::ReleaseOutcome;
 
 #[test]
 fn drr_rotates_across_classes_deterministically() {
@@ -21,7 +22,7 @@ fn drr_rotates_across_classes_deterministically() {
         queue(&g, "c", "c2"),
     ];
 
-    g.release(filler);
+    assert_eq!(g.release(filler), ReleaseOutcome::Released);
     let order = drain(&g, &tickets);
     assert_eq!(order, vec!["a", "b", "c", "a", "b", "c"]);
 }
@@ -44,7 +45,7 @@ fn drr_serves_proportional_to_quantum_not_priority() {
         tickets.push(queue(&g, "b", &format!("b{i}")));
     }
 
-    g.release(filler);
+    assert_eq!(g.release(filler), ReleaseOutcome::Released);
     let order = drain(&g, &tickets);
 
     let expected: Vec<String> = std::iter::repeat_n(["a", "b", "b", "b"], 4)
@@ -73,7 +74,7 @@ fn deadline_aware_prioritizes_tighter_slack() {
         queue(&g, "tight", "t2"),
     ];
 
-    g.release(filler);
+    assert_eq!(g.release(filler), ReleaseOutcome::Released);
     let order = drain(&g, &tickets);
     assert_eq!(order, vec!["tight", "tight", "loose", "loose"]);
 }
@@ -92,7 +93,7 @@ fn deadline_ties_break_by_arrival_order() {
         queue(&g, "y", "y2"),
     ];
 
-    g.release(filler);
+    assert_eq!(g.release(filler), ReleaseOutcome::Released);
     let order = drain(&g, &tickets);
     assert_eq!(
         order,

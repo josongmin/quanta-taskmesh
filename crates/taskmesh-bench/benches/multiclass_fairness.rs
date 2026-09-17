@@ -16,7 +16,7 @@ use taskmesh_bench::metrics::jain_fairness_index;
 use taskmesh_contract::{
     ClassPolicy, FairnessPolicy, ManualClock, OverflowPolicy, ResourceBudget, TaskClass, TaskSpec,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
+use taskmesh_engine::{AdmissionDecision, ClaimOutcome, Governor, PolicySet, ReleaseOutcome};
 
 /// Drive a contended governor (single inflight slot) and return the realized
 /// promotion order — one class name per dispatch, in dispatch sequence.
@@ -80,21 +80,25 @@ fn promotion_order(weights: &[(&'static str, u32)], rounds: usize) -> Vec<&'stat
         }
     }
 
-    g.release(fill);
+    assert_eq!(g.release(fill), ReleaseOutcome::Released);
 
     let mut order = Vec::with_capacity(tickets.len());
     loop {
         let mut found = None;
         for (idx, (ticket, _)) in tickets.iter().enumerate() {
-            if let Some(permit) = g.claim(*ticket) {
-                found = Some((idx, permit));
-                break;
+            match g.claim(*ticket) {
+                ClaimOutcome::Ready(permit) => {
+                    found = Some((idx, permit));
+                    break;
+                }
+                ClaimOutcome::Pending => {}
+                other => panic!("fairness benchmark ticket must not terminate: {other:?}"),
             }
         }
         let Some((idx, permit)) = found else { break };
         let (_, name) = tickets.remove(idx);
         order.push(name);
-        g.release(permit);
+        assert_eq!(g.release(permit), ReleaseOutcome::Released);
     }
     order
 }

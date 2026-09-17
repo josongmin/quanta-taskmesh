@@ -68,9 +68,9 @@ fn child_of_inherits_root_id_and_sets_scope() {
 
 #[test]
 fn builder_defaults_smoke() {
-    let _ = ClassPolicy::new();
-    let _ = ResourceBudget::new();
-    let _ = TopologyConfig::new();
+    assert_eq!(ClassPolicy::new(), ClassPolicy::default());
+    assert_eq!(ResourceBudget::new(), ResourceBudget::default());
+    assert_eq!(TopologyConfig::new(), TopologyConfig::default());
     assert!(ClassPolicy::new().max_inflight(0).is_disabled());
     assert!(!ClassPolicy::new().is_disabled());
 }
@@ -95,8 +95,32 @@ fn memory_unit_scale_rounds_up() {
     let scale = MemoryUnitScale {
         bytes_per_unit: 4096,
     };
-    assert_eq!(scale.units_for(0), 0);
-    assert_eq!(scale.units_for(1), 1);
-    assert_eq!(scale.units_for(4096), 1);
-    assert_eq!(scale.units_for(4097), 2);
+    assert_eq!(scale.units_for(0), Ok(0));
+    assert_eq!(scale.units_for(1), Ok(1));
+    assert_eq!(scale.units_for(4096), Ok(1));
+    assert_eq!(scale.units_for(4097), Ok(2));
+}
+
+#[test]
+fn memory_unit_scale_reports_unconvertible_readings() {
+    use taskmesh_contract::ResourceConversionError;
+
+    // Saturating either of these would report *less* memory than is really
+    // held, which is how an over-budget reservation passes a capacity check.
+    let unscaled = MemoryUnitScale { bytes_per_unit: 0 };
+    assert_eq!(
+        unscaled.units_for(4096),
+        Err(ResourceConversionError::UnscaledMemoryUnits)
+    );
+
+    let fine_grained = MemoryUnitScale { bytes_per_unit: 1 };
+    assert_eq!(
+        fine_grained.units_for(u64::from(u32::MAX) + 1),
+        Err(ResourceConversionError::MemoryUnitsOverflow {
+            bytes: u64::from(u32::MAX) + 1,
+            bytes_per_unit: 1,
+        })
+    );
+    // The boundary itself still converts.
+    assert_eq!(fine_grained.units_for(u64::from(u32::MAX)), Ok(u32::MAX));
 }

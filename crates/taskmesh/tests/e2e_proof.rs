@@ -55,7 +55,9 @@ async fn queued_request_is_promoted_and_completed_end_to_end() {
     let a = tokio::spawn(async move {
         rt_a.run_blocking(spec("op-a"), move || {
             // Block the worker thread until the test releases it.
-            let _ = hold.blocking_recv();
+            // A signal or a dropped sender both release the holder: a test that fails
+            // before signalling never hangs on its own fixture.
+            let _released = hold.blocking_recv();
             Ok::<_, ()>("a")
         })
         .await
@@ -149,7 +151,7 @@ fn saturation_and_retry_after_via_governor() {
         }
         other => panic!("expected QueueFull, got {other:?}"),
     }
-    g.release(held);
+    assert_eq!(g.release(held), ReleaseOutcome::Released);
 }
 
 /// Proof scenarios 5, 6, 7, 8: memory overcommit, child→root attribution,

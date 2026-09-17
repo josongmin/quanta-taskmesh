@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use taskmesh_contract::{ClassPolicy, ManualClock, ResourceBudget, TaskClass, TaskSpec};
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
+use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, ReleaseOutcome};
 
 fn build_governor() -> Governor {
     let mut classes = BTreeMap::new();
@@ -36,7 +36,7 @@ fn bench_admit_release(c: &mut Criterion) {
                 AdmissionDecision::Admitted { permit_id } => permit_id,
                 other => panic!("expected admit, got {other:?}"),
             };
-            governor.release(permit);
+            assert_eq!(governor.release(permit), ReleaseOutcome::Released);
         });
     });
 

@@ -3,6 +3,7 @@
 
 mod harness;
 use harness::*;
+use taskmesh_engine::ReleaseOutcome;
 
 #[test]
 fn best_effort_does_not_starve_interactive() {
@@ -19,7 +20,7 @@ fn best_effort_does_not_starve_interactive() {
         queue(&g, "interactive", "i1"),
     ];
 
-    g.release(filler);
+    assert_eq!(g.release(filler), ReleaseOutcome::Released);
     let order = drain(&g, &tickets);
     assert_eq!(order, vec!["interactive", "batch", "batch"]);
 }
@@ -44,7 +45,7 @@ fn the_whole_primary_tier_precedes_the_whole_best_effort_tier() {
         queue(&g, "p2", "p2a"),
     ];
 
-    g.release(filler);
+    assert_eq!(g.release(filler), ReleaseOutcome::Released);
     let order = drain(&g, &tickets);
 
     let last_primary = order

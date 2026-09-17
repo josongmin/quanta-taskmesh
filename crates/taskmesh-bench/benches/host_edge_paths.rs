@@ -45,13 +45,19 @@ fn assert_deadline(err: RunError<Infallible>) {
     ));
 }
 
-fn assert_substrate_timeout(err: RunError<Infallible>) {
-    assert!(matches!(
-        err,
-        RunError::Governor(GovernorError::Rejected(
-            AdmissionVerdict::SubstratePoolTimedOut { .. }
-        ))
-    ));
+/// A saturated capability pool sheds a non-queueing class at admission. The
+/// class here uses the default `OverflowPolicy::Reject`, so there is no queue
+/// to wait in and no timeout to expire: the verdict is the immediate shed.
+fn assert_substrate_saturated(err: RunError<Infallible>) {
+    assert!(
+        matches!(
+            err,
+            RunError::Governor(GovernorError::Rejected(
+                AdmissionVerdict::SubstrateSaturated { .. }
+            ))
+        ),
+        "expected SubstrateSaturated, got {err:?}"
+    );
 }
 
 fn host_edge_paths(c: &mut Criterion) {
@@ -268,9 +274,9 @@ fn host_edge_paths(c: &mut Criterion) {
         .recv()
         .expect("local holder must acquire its slot");
 
-    let mut gate_group = c.benchmark_group("host_substrate_gate_zero_wait");
+    let mut gate_group = c.benchmark_group("host_substrate_saturated_shed");
 
-    gate_group.bench_function("large_stack_timeout_zero_wait", |b| {
+    gate_group.bench_function("large_stack_saturated_shed", |b| {
         b.to_async(&rt).iter(|| {
             let runtime = large_stack_runtime.clone();
             async move {
@@ -285,13 +291,13 @@ fn host_edge_paths(c: &mut Criterion) {
                         || Ok::<(), Infallible>(()),
                     )
                     .await
-                    .expect_err("full large-stack pool must reject immediately");
-                assert_substrate_timeout(err);
+                    .expect_err("full large-stack pool must shed immediately");
+                assert_substrate_saturated(err);
             }
         });
     });
 
-    gate_group.bench_function("background_timeout_zero_wait", |b| {
+    gate_group.bench_function("background_saturated_shed", |b| {
         b.to_async(&rt).iter(|| {
             let runtime = background_runtime.clone();
             async move {
@@ -304,12 +310,12 @@ fn host_edge_paths(c: &mut Criterion) {
                     )
                     .await
                     .expect_err("full maintenance pool must reject immediately");
-                assert_substrate_timeout(err);
+                assert_substrate_saturated(err);
             }
         });
     });
 
-    gate_group.bench_function("cpu_timeout_zero_wait", |b| {
+    gate_group.bench_function("cpu_saturated_shed", |b| {
         b.to_async(&rt).iter(|| {
             let runtime = cpu_runtime.clone();
             async move {
@@ -321,12 +327,12 @@ fn host_edge_paths(c: &mut Criterion) {
                     )
                     .await
                     .expect_err("full cpu pool must reject immediately");
-                assert_substrate_timeout(err);
+                assert_substrate_saturated(err);
             }
         });
     });
 
-    gate_group.bench_function("local_runtime_timeout_zero_wait", |b| {
+    gate_group.bench_function("local_runtime_saturated_shed", |b| {
         b.to_async(&rt).iter(|| {
             let runtime = local_runtime.clone();
             async move {
@@ -338,7 +344,7 @@ fn host_edge_paths(c: &mut Criterion) {
                     )
                     .await
                     .expect_err("full local-runtime pool must reject immediately");
-                assert_substrate_timeout(err);
+                assert_substrate_saturated(err);
             }
         });
     });

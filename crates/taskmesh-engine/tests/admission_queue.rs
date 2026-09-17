@@ -146,13 +146,13 @@ fn release_promotes_queued_work() {
     assert_eq!(snap.inflight, 1);
     assert_eq!(snap.queued, 1);
 
-    g.release(permit);
+    assert_eq!(g.release(permit), ReleaseOutcome::Released);
 
     // After release: queued work promoted to inflight; claimable by ticket.
     let snap = g.snapshot().classes[&TaskClass::new("c")].clone();
     assert_eq!(snap.inflight, 1);
     assert_eq!(snap.queued, 0);
-    assert!(g.claim(ticket).is_some());
+    assert!(matches!(g.claim(ticket), ClaimOutcome::Ready(_)));
 }
 
 #[test]
@@ -167,7 +167,12 @@ fn queued_tickets_are_stably_ordered() {
                 .overflow_policy(OverflowPolicy::QueueWithinDepth),
         )],
     );
-    let _ = g.admit(&spec("c"));
+    // Occupy the single inflight slot so the next two admissions queue.
+    let occupied = g.admit(&spec("c"));
+    assert!(
+        matches!(occupied, AdmissionDecision::Admitted { .. }),
+        "the first admission takes the only slot, got {occupied:?}"
+    );
     let t1 = match g.admit(&spec("c")) {
         AdmissionDecision::Queued { ticket } => ticket,
         o => panic!("{o:?}"),

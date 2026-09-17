@@ -1,0 +1,26 @@
+# Semgrep target selection for this repository.
+#
+# Semgrep's built-in defaults exclude `tests/` and `test/` directories. That is
+# wrong here: the test-quality rule pack exists precisely to scan tests, and with
+# the defaults in place those rules fired only on fixtures while every real
+# integration test in `crates/*/tests/` was silently skipped. A rule that cannot
+# reach the code it is written for is not enforcement.
+#
+# This file REPLACES the defaults, so anything that should be skipped must be
+# listed here explicitly.
+
+# Build and tool artifacts.
+target/
+.venv/
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Vendored or generated evidence from past audits: preserved as historical
+# record, not maintained as current source.
+docs/bugbash/*/tickets/evidence/
+
+# Crash dumps.
+*rustc-ice-*.txt

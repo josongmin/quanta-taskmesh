@@ -62,7 +62,7 @@ proptest! {
             } else if !live.is_empty() {
                 let idx = rel_sel as usize % live.len();
                 let (permit, _) = live.remove(idx);
-                g.release(permit);
+                assert_eq!(g.release(permit), ReleaseOutcome::Released);
             }
 
             // Invariant: snapshot inflight matches the live model, every step.
@@ -79,7 +79,7 @@ proptest! {
 
         // Drain everything; the system must return to exactly zero.
         for (permit, _) in live {
-            g.release(permit);
+            assert_eq!(g.release(permit), ReleaseOutcome::Released);
         }
         let snap = g.snapshot();
         for cname in CLASSES {
@@ -137,21 +137,25 @@ fn weighted_drain(classes_seq: &[usize], weights: [u32; 3]) -> Vec<usize> {
             tickets.push((ticket, ci));
         }
     }
-    g.release(fill);
+    assert_eq!(g.release(fill), ReleaseOutcome::Released);
 
     let mut order = Vec::new();
     while !tickets.is_empty() {
         let mut found = None;
         for (idx, (ticket, _)) in tickets.iter().enumerate() {
-            if let Some(permit) = g.claim(*ticket) {
-                found = Some((idx, permit));
-                break;
+            match g.claim(*ticket) {
+                ClaimOutcome::Ready(permit) => {
+                    found = Some((idx, permit));
+                    break;
+                }
+                ClaimOutcome::Pending => {}
+                other => panic!("property queue ticket must not terminate: {other:?}"),
             }
         }
         let Some((idx, permit)) = found else { break };
         let (_, ci) = tickets.remove(idx);
         order.push(ci);
-        g.release(permit);
+        assert_eq!(g.release(permit), ReleaseOutcome::Released);
     }
     order
 }

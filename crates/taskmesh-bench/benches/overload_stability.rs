@@ -15,7 +15,7 @@ fn bench(c: &mut Criterion) {
         count: 5_000,
         ..Default::default()
     };
-    let arrivals = generate(&cfg);
+    let arrivals = generate(&cfg).expect("valid workload config");
     let interval = mean_interval_ns(cfg.lambda);
     // Service much slower than arrivals -> sustained overload.
     let service_ns = interval * 20;
@@ -28,7 +28,7 @@ fn bench(c: &mut Criterion) {
                 0,
                 0,
             );
-            let (_lat, res) = simulate(&fx, &arrivals, service_ns, interval);
+            let (_lat, res) = simulate(&fx, &arrivals, service_ns).expect("valid schedule");
             // Invariant the bench documents: the queue never exceeds its bound,
             // and overload is shed via rejection (fail-closed), not unbounded growth.
             assert!(res.max_queue_observed <= max_queue_depth as usize);

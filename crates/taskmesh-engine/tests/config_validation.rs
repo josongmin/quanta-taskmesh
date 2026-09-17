@@ -118,6 +118,33 @@ fn degrade_to_present_fallback_passes() {
 }
 
 #[test]
+fn degrade_to_a_disabled_fallback_is_rejected() {
+    // A degrade promises *some* service under memory pressure. A fallback with
+    // `max_inflight = 0` can never dispatch, so every degraded request would be
+    // shed as `ClassDisabled` — a verdict that names the wrong class and hides
+    // the real cause (memory). Contradictory configuration is refused at boot.
+    let p = policy(
+        ResourceBudget::new().memory_units(8),
+        vec![
+            (
+                "heavy",
+                ClassPolicy::new().memory_units(2).memory_overcommit_policy(
+                    MemoryOvercommitPolicy::DegradeToLight {
+                        fallback_class: TaskClass::new("light"),
+                    },
+                ),
+            ),
+            ("light", ClassPolicy::new().max_inflight(0).memory_units(1)),
+        ],
+    );
+    let error = Governor::validate_policy(&p).expect_err("disabled fallback must be rejected");
+    assert!(
+        matches!(&error, GovernorError::PolicyViolation(message) if message.contains("disabled fallback light")),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn scavenger_fairness_requires_best_effort() {
     let p = policy(
         ResourceBudget::new(),

@@ -13,7 +13,7 @@ use rand::{Rng, SeedableRng};
 
 use taskmesh_bench::workload::{fixture, root_spec, Fixture};
 use taskmesh_contract::{ClassPolicy, FairnessPolicy, OverflowPolicy};
-use taskmesh_engine::AdmissionDecision;
+use taskmesh_engine::{AdmissionDecision, ClaimOutcome, ReleaseOutcome};
 
 fn rand_fairness(rng: &mut StdRng) -> FairnessPolicy {
     match rng.gen_range(0..5) {
@@ -63,12 +63,16 @@ fn drain_indices(fx: &Fixture, names: &[String], queue: &[usize]) -> Vec<usize> 
     let mut order = Vec::with_capacity(queue.len());
     let mut current = filler;
     loop {
-        g.release(current);
+        assert_eq!(g.release(current), ReleaseOutcome::Released);
         let mut found = None;
         for (ticket, idx) in &tickets {
-            if let Some(permit) = g.claim(*ticket) {
-                found = Some((permit, *idx, *ticket));
-                break;
+            match g.claim(*ticket) {
+                ClaimOutcome::Ready(permit) => {
+                    found = Some((permit, *idx, *ticket));
+                    break;
+                }
+                ClaimOutcome::Pending => {}
+                other => panic!("property benchmark ticket must not terminate: {other:?}"),
             }
         }
         match found {
@@ -80,7 +84,8 @@ fn drain_indices(fx: &Fixture, names: &[String], queue: &[usize]) -> Vec<usize> 
             None => break,
         }
     }
-    g.release(current);
+    // The loop released `current` before finding nothing further to promote.
+    assert_eq!(g.release(current), ReleaseOutcome::UnknownPermit);
     order
 }
 

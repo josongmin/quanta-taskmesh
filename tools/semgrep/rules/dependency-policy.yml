@@ -11,6 +11,10 @@ rules:
         - "**/crates/**"
     patterns:
       - pattern-either:
+          # Deep paths (`tokio::runtime::Handle::current()`) are more than one
+          # segment, which `$CRATE::$X` does not bind; the regex catches every
+          # fully-qualified use outside a comment line.
+          - pattern-regex: '(?m)^(?!\s*//).*\basync_std::'
           - pattern: use async_std;
           - pattern: use async_std::$X;
           - pattern: async_std::$X
@@ -27,6 +31,10 @@ rules:
         - "**/crates/taskmesh-rayon/**"
     patterns:
       - pattern-either:
+          # Deep paths (`tokio::runtime::Handle::current()`) are more than one
+          # segment, which `$CRATE::$X` does not bind; the regex catches every
+          # fully-qualified use outside a comment line.
+          - pattern-regex: '(?m)^(?!\s*//).*\b(?:tokio|tokio_util)::'
           - pattern: use tokio;
           - pattern: use tokio::$X;
           - pattern: tokio::$X
@@ -45,6 +53,10 @@ rules:
         - "**/crates/taskmesh-contract/**"
     patterns:
       - pattern-either:
+          # Deep paths (`tokio::runtime::Handle::current()`) are more than one
+          # segment, which `$CRATE::$X` does not bind; the regex catches every
+          # fully-qualified use outside a comment line.
+          - pattern-regex: '(?m)^(?!\s*//).*\bparking_lot::'
           - pattern: use parking_lot;
           - pattern: use parking_lot::$X;
           - pattern: parking_lot::$X

@@ -1,0 +1,9 @@
+targets:
+  demo:
+    output: MISSING.md
+    template: templates/demo.j2
+    sections: [sources/body.md]
+  demo:
+    output: KEEP.md
+    template: templates/demo.j2
+    sections: [sources/body.md]

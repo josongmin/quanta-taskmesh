@@ -18,6 +18,13 @@ parking_lot = { workspace = true }
 # policy. Enabled for this crate's own tests/benches via the self dev-dependency
 # below, and by `taskmesh-bench`.
 test-util = []
+# Model-check builds (`just loom` / `just shuttle`): the checker's primitives
+# replace the production mutex and atomics inside `src/sync.rs`. Each feature
+# must be paired with the matching `--cfg`; the seam refuses one without the
+# other. Optional so a downstream consumer's lockfile never resolves the
+# checkers' dependency trees (the consumer-MSRV check builds on Rust 1.81).
+loom = ["dep:loom"]
+shuttle = ["dep:shuttle"]
 
 [lints.rust]
 # `loom`/`shuttle` are deliberate model-check cfgs, set via RUSTFLAGS.
@@ -32,11 +39,14 @@ proptest = { workspace = true }
 # the default public surface seen by downstream embedders.
 taskmesh-engine = { path = ".", features = ["test-util"] }
 
-# Concurrency model-checking (ADR 9000 / P6). Only compiled under the matching
-# `--cfg`; normal builds/tests never pull these in. loom = exhaustive (small
-# state); shuttle = randomized (larger state / more threads).
-[target.'cfg(loom)'.dev-dependencies]
-loom = "0.7"
+# Concurrency model-checking (ADR 9000 / P6, ADR 0003 D-loom). Compiled only
+# under the matching `--cfg` *and* feature; normal builds never pull these in.
+# They are *regular* (not dev-) dependencies because `src/sync.rs` builds the
+# governor itself on the checker's mutex and atomics — the model tests in
+# `tests/` exercise the real `Governor`, not a replica of its locking design.
+# loom = exhaustive (small state); shuttle = randomized (larger state).
+[target.'cfg(loom)'.dependencies]
+loom = { version = "0.7", optional = true }
 
-[target.'cfg(shuttle)'.dev-dependencies]
-shuttle = "0.7"
+[target.'cfg(shuttle)'.dependencies]
+shuttle = { version = "0.7", optional = true }

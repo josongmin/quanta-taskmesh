@@ -1,0 +1,10 @@
+[package]
+name = "taskmesh-sep16-audit"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+taskmesh = { path = "../../../../../../crates/taskmesh" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

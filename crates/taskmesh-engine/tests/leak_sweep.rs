@@ -66,7 +66,7 @@ fn stage_boundary_release_returns_units_but_keeps_permit() {
     assert_eq!(g.snapshot().classes[&c].memory_units_held, 10);
 
     let freed = g.release_stage_memory(p, 4);
-    assert_eq!(freed, 4);
+    assert_eq!(freed, StageReleaseOutcome::Released { freed_units: 4 });
 
     let snap = g.snapshot();
     assert_eq!(snap.classes[&c].memory_units_held, 6);

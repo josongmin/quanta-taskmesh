@@ -12,14 +12,22 @@ rules:
       include:
         - "**/crates/taskmesh-contract/**"
         - "**/crates/taskmesh-engine/**"
-        - "**/crates/taskmesh-core/**"
         - "**/crates/taskmesh-rayon/**"
       exclude:
-        - "**/tests/**"
+        # A crate's own integration tests may use its dev-dependencies (the
+        # rayon adapter's tests drive it from tokio). Everything under `src/`
+        # is scanned, including `*_tests.rs` and `src/tests/` modules: a
+        # boundary violation in a test module compiled into the crate is still
+        # a violation, and tools/arch verifies those modules are `#[cfg(test)]`.
+        - "**/crates/*/tests/**"
         - "**/benches/**"
         - "**/crates/taskmesh-bench/**"
     patterns:
       - pattern-either:
+          # Deep paths (`tokio::runtime::Handle::current()`) are more than one
+          # segment, which `$CRATE::$X` does not bind; the regex catches every
+          # fully-qualified use outside a comment line.
+          - pattern-regex: '(?m)^(?!\s*//).*\btokio::'
           - pattern: use tokio;
           - pattern: use tokio::$X;
           - pattern: tokio::$X
@@ -36,13 +44,21 @@ rules:
       include:
         - "**/crates/taskmesh-contract/**"
         - "**/crates/taskmesh-engine/**"
-        - "**/crates/taskmesh-core/**"
       exclude:
-        - "**/tests/**"
+        # A crate's own integration tests may use its dev-dependencies (the
+        # rayon adapter's tests drive it from tokio). Everything under `src/`
+        # is scanned, including `*_tests.rs` and `src/tests/` modules: a
+        # boundary violation in a test module compiled into the crate is still
+        # a violation, and tools/arch verifies those modules are `#[cfg(test)]`.
+        - "**/crates/*/tests/**"
         - "**/benches/**"
         - "**/crates/taskmesh-bench/**"
     patterns:
       - pattern-either:
+          # Deep paths (`tokio::runtime::Handle::current()`) are more than one
+          # segment, which `$CRATE::$X` does not bind; the regex catches every
+          # fully-qualified use outside a comment line.
+          - pattern-regex: '(?m)^(?!\s*//).*\brayon::'
           - pattern: use rayon;
           - pattern: use rayon::$X;
           - pattern: rayon::$X
@@ -59,6 +75,10 @@ rules:
         - "**/crates/taskmesh-rayon/**"
     patterns:
       - pattern-either:
+          # Deep paths (`tokio::runtime::Handle::current()`) are more than one
+          # segment, which `$CRATE::$X` does not bind; the regex catches every
+          # fully-qualified use outside a comment line.
+          - pattern-regex: '(?m)^(?!\s*//).*\b(?:taskmesh|taskmesh_engine)::'
           - pattern: use taskmesh;
           - pattern: use taskmesh::$X;
           - pattern: use taskmesh_engine;
@@ -78,11 +98,16 @@ rules:
     paths:
       include:
         - "**/crates/taskmesh-engine/**"
-        - "**/crates/taskmesh-core/**"
       exclude:
-        - "**/tests/**"
+        # Only the crate's integration-test directory; `src/**` is scanned in
+        # full (see the first rule in this file for why).
+        - "**/crates/*/tests/**"
     patterns:
       - pattern-either:
+          # Deep paths (`tokio::runtime::Handle::current()`) are more than one
+          # segment, which `$CRATE::$X` does not bind; the regex catches every
+          # fully-qualified use outside a comment line.
+          - pattern-regex: '(?m)^(?!\s*//).*\btaskmesh::'
           - pattern: use taskmesh;
           - pattern: use taskmesh::$X;
           - pattern: taskmesh::$X
@@ -99,7 +124,9 @@ rules:
         - "**/crates/taskmesh-engine/src/features/**/domain.rs"
         - "**/crates/taskmesh-engine/src/**/domain/**"
       exclude:
-        - "**/tests/**"
+        # Only the crate's integration-test directory; `src/**` is scanned in
+        # full (see the first rule in this file for why).
+        - "**/crates/*/tests/**"
     patterns:
       - pattern-either:
           - pattern: use crate::adapters;
@@ -117,13 +144,21 @@ rules:
       include:
         - "**/crates/taskmesh-contract/**"
         - "**/crates/taskmesh-engine/**"
-        - "**/crates/taskmesh-core/**"
       exclude:
-        - "**/tests/**"
+        # A crate's own integration tests may use its dev-dependencies (the
+        # rayon adapter's tests drive it from tokio). Everything under `src/`
+        # is scanned, including `*_tests.rs` and `src/tests/` modules: a
+        # boundary violation in a test module compiled into the crate is still
+        # a violation, and tools/arch verifies those modules are `#[cfg(test)]`.
+        - "**/crates/*/tests/**"
         - "**/benches/**"
         - "**/crates/taskmesh-bench/**"
     patterns:
       - pattern-either:
+          # Deep paths (`tokio::runtime::Handle::current()`) are more than one
+          # segment, which `$CRATE::$X` does not bind; the regex catches every
+          # fully-qualified use outside a comment line.
+          - pattern-regex: '(?m)^(?!\s*//).*\bstd::fs::'
           - pattern: use std::fs;
           - pattern: use std::fs::$X;
           - pattern: std::fs::$F(...)
@@ -139,12 +174,15 @@ rules:
       include:
         - "**/crates/taskmesh-contract/**"
         - "**/crates/taskmesh-engine/**"
-        - "**/crates/taskmesh-core/**"
         - "**/crates/taskmesh-rayon/**"
         - "**/crates/taskmesh/**"
-        - "**/crates/taskmesh-tokio/**"
       exclude:
-        - "**/tests/**"
+        # A crate's own integration tests may use its dev-dependencies (the
+        # rayon adapter's tests drive it from tokio). Everything under `src/`
+        # is scanned, including `*_tests.rs` and `src/tests/` modules: a
+        # boundary violation in a test module compiled into the crate is still
+        # a violation, and tools/arch verifies those modules are `#[cfg(test)]`.
+        - "**/crates/*/tests/**"
         - "**/benches/**"
         - "**/crates/taskmesh-bench/**"
     patterns:

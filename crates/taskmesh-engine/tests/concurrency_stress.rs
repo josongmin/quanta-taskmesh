@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::thread;
 
 use taskmesh_contract::{ClassPolicy, ManualClock, ResourceBudget, TaskClass, TaskSpec};
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
+use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, ReleaseOutcome};
 
 fn governor(class: &str, policy: ClassPolicy, cpu_budget: u32) -> Arc<Governor> {
     let mut classes = BTreeMap::new();
@@ -52,7 +52,7 @@ fn concurrent_admit_release_grants_globally_unique_permits() {
                         match g.admit(&spec) {
                             AdmissionDecision::Admitted { permit_id } => {
                                 ids.push(permit_id);
-                                g.release(permit_id);
+                                assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
                             }
                             other => panic!("admit must succeed, got {other:?}"),
                         }
@@ -116,7 +116,7 @@ fn inflight_cap_is_never_exceeded_under_contention() {
                                 "concurrent permits {now} exceeded cap {CAP}"
                             );
                             held.fetch_sub(1, Ordering::SeqCst);
-                            g.release(permit_id);
+                            assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
                         }
                         AdmissionDecision::Rejected(_) => {
                             rejected.fetch_add(1, Ordering::SeqCst);

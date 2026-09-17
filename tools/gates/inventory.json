@@ -1,0 +1,325 @@
+{
+  "schema_version": 1,
+  "description": "Every verification gate this repository runs, keyed by a stable id. The Justfile is the single definition of each command; this file records where each gate runs and what it needs. Required-ness lives in required.json, on purpose a separate file.",
+  "gates": [
+    {
+      "id": "fmt-check",
+      "recipe": "fmt-check",
+      "tier": "fast",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "rustfmt"
+      ],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "clippy",
+      "recipe": "clippy",
+      "tier": "fast",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "clippy",
+        "config/clippy-*.txt"
+      ],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "test",
+      "recipe": "test",
+      "tier": "fast",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "deny",
+      "recipe": "deny",
+      "tier": "fast",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "cargo-deny",
+        "network for advisory db"
+      ],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "semgrep",
+      "recipe": "semgrep",
+      "tier": "fast",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "semgrep"
+      ],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "test-architecture",
+      "recipe": "test-architecture",
+      "tier": "fast",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "uv",
+        "cargo metadata"
+      ],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "py-lint",
+      "recipe": "py-lint",
+      "tier": "fast",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "uv"
+      ],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "py-test",
+      "recipe": "py-test",
+      "tier": "fast",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "uv",
+        "semgrep",
+        "just"
+      ],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "pm-lint",
+      "recipe": "pm-lint",
+      "tier": "fast",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "uv"
+      ],
+      "workflow": "ci.yml",
+      "note": "Vacuous by design: tools/pm/targets.yaml declares no targets. The gate proves manifest validity and that the tool runs; it cannot prove generated-file drift because nothing is generated. See tools/pm/README.md."
+    },
+    {
+      "id": "bench-gate",
+      "recipe": "bench-gate",
+      "tier": "fast",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "python3"
+      ],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "gates-inventory",
+      "recipe": "gates-inventory",
+      "tier": "fast",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "uv (PyYAML)",
+        "just"
+      ],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "test-rayon",
+      "recipe": "test-rayon",
+      "tier": "matrix",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "doctest",
+      "recipe": "doctest",
+      "tier": "matrix",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "rustdoc",
+      "recipe": "rustdoc",
+      "tier": "matrix",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "bench-smoke",
+      "recipe": "bench-smoke",
+      "tier": "matrix",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "mutants-critical",
+      "recipe": "mutants-critical",
+      "tier": "proof",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "uv (pytest for runner: pytest entries)",
+        "just",
+        "cargo",
+        "clean git tree in CI (--require-clean); locally the runner restores every mutated file and records dirtiness"
+      ],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "loom",
+      "recipe": "loom",
+      "tier": "proof",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "shuttle",
+      "recipe": "shuttle",
+      "tier": "proof",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [],
+      "workflow": "ci.yml"
+    },
+    {
+      "id": "consumer-msrv",
+      "recipe": "consumer-msrv",
+      "tier": "matrix",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "rustup toolchain = declared rust-version"
+      ],
+      "workflow": "ci.yml",
+      "conditional": "reports NOT_RUN (exit 2) when the declared toolchain is not installed; CI installs it"
+    },
+    {
+      "id": "bench-iai",
+      "recipe": "bench-iai",
+      "tier": "proof",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "linux"
+      ],
+      "prerequisites": [
+        "valgrind",
+        "iai-callgrind-runner (version from tools/bench/perf-gate.json)"
+      ],
+      "workflow": "bench.yml",
+      "conditional": "Linux only; a run without a compatible baseline reports BASELINE_CREATED and is not regression-qualified"
+    }
+  ]
+}

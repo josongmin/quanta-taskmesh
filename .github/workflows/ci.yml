@@ -1,13 +1,27 @@
 name: ci
 
+# Every job runs the SAME recipes a developer runs locally (`just <recipe>`).
+# There is one definition of each gate — the Justfile — and this file only
+# decides which of them run where. A gate that exists only here, or only there,
+# is a gate the other side cannot see (TM16-006). tools/gates/inventory.json
+# lists every gate with its required-ness; tools/gates/validate_inventory.py
+# checks that this workflow, the Justfile, and the inventory agree.
+
 on:
   push:
     branches: [main]
   pull_request:
 
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  proof:
-    name: check / test / doctest
+  gate:
+    name: fast gate (just gate)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,33 +29,86 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - uses: astral-sh/setup-uv@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: Install semgrep
+        run: uv tool install semgrep
 
-      # Drift detectors: formatting and lint gates.
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The canonical fast gate, exactly as `just gate` defines it. Each recipe
+      # is invoked on its own line so a failure names the gate that failed.
+      - run: just fmt-check
+      - run: just clippy
+      - run: just test
+      - run: just deny
+      - run: just semgrep
+      - run: just test-architecture
+      - run: just py-lint
+      - run: just py-test
+      - run: just pm-lint
+      - run: just bench-gate
+      - run: just gates-inventory
 
-      # Proof matrix.
-      - run: cargo check --workspace
-      - run: cargo test --workspace
-      - run: cargo test --doc -p taskmesh
-
-      # Feature-matrix drift: the `rayon` feature auto-wires the default CPU
-      # executor on a cfg-gated path that default-feature CI never compiles.
-      - run: cargo test -p taskmesh --features rayon
-      - run: cargo test -p taskmesh-rayon
-
-      # rustdoc must stay link-clean (private-intra-doc-link drift detector).
-      - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
-
-      # Benches must keep compiling and smoke-running.
-      - run: cargo bench -p taskmesh-bench -- --test
-
-  loom:
-    name: concurrency model-check
+  proof-matrix:
+    name: feature / doc / bench-smoke matrix
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # Exhaustive interleaving check of the admit/release concurrency design.
-      - run: RUSTFLAGS="--cfg loom" cargo test -p taskmesh-engine --test loom_governance --release
+      - uses: extractions/setup-just@v2
+
+      # Feature-matrix drift: the `rayon` feature auto-wires the default CPU
+      # executor on a cfg-gated path that default-feature CI never compiles.
+      - run: just test-rayon
+      - run: just doctest
+      - run: just rustdoc
+      # Benches must keep compiling and smoke-running.
+      - run: just bench-smoke
+
+  mutation-gate:
+    name: mutation gate (just mutants-critical)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - uses: astral-sh/setup-uv@v5
+      # Reintroduce each fixed defect and require its named regression to fail.
+      # A dirty checkout would make the score meaningless; CI refuses one.
+      - run: just mutants-critical --require-clean
+
+  loom:
+    name: concurrency model-check (loom)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - run: just loom
+
+  shuttle:
+    name: concurrency model-check (shuttle)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - run: just shuttle
+
+  consumer-msrv:
+    name: consumer MSRV (declared rust-version, outside the workspace)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.81.0"
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - run: just consumer-msrv

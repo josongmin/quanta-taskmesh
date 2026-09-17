@@ -142,7 +142,7 @@ fn downward_reconcile_memory_promotes_queued_work() {
     // Downward reconcile: measured 2 bytes -> 2 units; held 8 -> 2, frees 6.
     assert!(g.reconcile_memory(p1, 2));
     assert!(
-        g.claim(ticket).is_some(),
+        matches!(g.claim(ticket), ClaimOutcome::Ready(_)),
         "downward reconcile must promote queued work"
     );
 }

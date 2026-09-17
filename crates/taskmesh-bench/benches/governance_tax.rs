@@ -154,7 +154,10 @@ fn governance_tax(c: &mut Criterion) {
     });
     rt.block_on(async { tokio::time::sleep(Duration::from_millis(50)).await });
 
-    group.bench_function("governed_substrate_gate_timeout_zero_wait", |b| {
+    // A saturated capability pool sheds a non-queueing class at admission —
+    // there is no gate queue to time out of, so this measures the immediate
+    // rejection path, not a zero-length wait.
+    group.bench_function("governed_substrate_saturated_shed", |b| {
         b.to_async(&rt).iter(|| {
             let runtime = gated_runtime.clone();
             async move {
@@ -166,13 +169,16 @@ fn governance_tax(c: &mut Criterion) {
                         || Ok::<(), Infallible>(()),
                     )
                     .await
-                    .expect_err("a full substrate gate must reject immediately");
-                assert!(matches!(
-                    err,
-                    RunError::Governor(GovernorError::Rejected(
-                        AdmissionVerdict::SubstratePoolTimedOut { .. }
-                    ))
-                ));
+                    .expect_err("a full capability pool must shed immediately");
+                assert!(
+                    matches!(
+                        err,
+                        RunError::Governor(GovernorError::Rejected(
+                            AdmissionVerdict::SubstrateSaturated { .. }
+                        ))
+                    ),
+                    "expected SubstrateSaturated, got {err:?}"
+                );
             }
         });
     });

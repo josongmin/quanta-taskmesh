@@ -35,7 +35,7 @@ fn admit(g: &Governor) -> PermitId {
     }
 }
 
-fn held(g: &Governor, c: &TaskClass) -> u32 {
+fn held(g: &Governor, c: &TaskClass) -> u128 {
     g.snapshot().classes[c].memory_units_held
 }
 

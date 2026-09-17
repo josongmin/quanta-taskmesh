@@ -1,7 +1,10 @@
 # Test-quality rules — flag tests that look like they assert something but don't.
 #
-# Layered with cargo-mutants (just mutants-critical) and coverage gate (just cov-gate)
-# under the L1-L5 "cheese detector" model — see Justfile § cheese detector.
+# These are *structural* smells only. What they cannot see — an assertion that
+# is present but too weak to fail — is covered by the mutation gate
+# (`just mutants-critical`, tools/verification/run_mutations.py), which reruns
+# named regressions against single reintroduced defects. There is no coverage
+# gate in this repository; nothing here should be read as claiming one.
 
 rules:
   # ----- L1.1 Pure tautologies (always pass / always fail) ---------------
@@ -77,9 +80,19 @@ rules:
   - id: taskmesh-test-is-ok-without-value-check
     patterns:
       - pattern: assert!($X.is_ok())
-      - pattern-inside: |
-          #[test]
-          fn $F() { ... }
+      # Every shape a test body takes in this repository: sync, tokio, and
+      # tokio with a runtime flavor. A rule that knows only `#[test]` is blind
+      # to 120 of the integration tests.
+      - pattern-either:
+          - pattern-inside: |
+              #[test]
+              fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test]
+              async fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test(...)]
+              async fn $F() { ... }
     message: |
       `assert!(x.is_ok())` discards the inner value. Unwrap and assert the value, or use
       `assert_eq!(x, Ok(expected))`. If you genuinely don't care about the Ok payload,
@@ -94,9 +107,19 @@ rules:
       - pattern: let _ = $X;
       - pattern-not: let _ = drop(...);
       - pattern-not: let _ = ();
-      - pattern-inside: |
-          #[test]
-          fn $F() { ... }
+      # Every shape a test body takes in this repository: sync, tokio, and
+      # tokio with a runtime flavor. A rule that knows only `#[test]` is blind
+      # to 120 of the integration tests.
+      - pattern-either:
+          - pattern-inside: |
+              #[test]
+              fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test]
+              async fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test(...)]
+              async fn $F() { ... }
     message: |
       `let _ = expr;` inside a `#[test]` discards a value. Either bind a name and assert
       against it, drop it explicitly with `drop(...)`, or annotate the throwaway with
@@ -127,9 +150,19 @@ rules:
   - id: taskmesh-test-self-fn-equality
     patterns:
       - pattern: assert_eq!($F(...), $F(...))
-      - pattern-inside: |
-          #[test]
-          fn $T() { ... }
+      # Every shape a test body takes in this repository: sync, tokio, and
+      # tokio with a runtime flavor. A rule that knows only `#[test]` is blind
+      # to 120 of the integration tests.
+      - pattern-either:
+          - pattern-inside: |
+              #[test]
+              fn $T() { ... }
+          - pattern-inside: |
+              #[tokio::test]
+              async fn $T() { ... }
+          - pattern-inside: |
+              #[tokio::test(...)]
+              async fn $T() { ... }
     message: |
       `assert_eq!(f(x), f(x))` only proves f is deterministic on a single input — not
       that f is correct. Assert against an independent oracle or a known constant.
@@ -154,10 +187,12 @@ rules:
   # NOTE: "proptest block with no assertion" is intentionally NOT a semgrep
   # rule. Both the macro-AST form (doesn't bind in semgrep Rust) and the
   # regex form (can't balance braces, so it false-fires on blocks whose
-  # prop_assert sits past a nested closure's `}`) are unreliable. This class of
-  # cheese is caught structurally by L3 mutation testing (`just mutants-critical`)
-  # — an assertion-free proptest cannot kill any mutant, so cargo-mutants flags
-  # the surviving mutations. See Justfile § cheese detector.
+  # prop_assert sits past a nested closure's `}`) are unreliable. An
+  # assertion-free property test is only detectable by whether it can reject a
+  # broken implementation, which is what `just mutants-critical` checks for the
+  # regressions enrolled in tools/verification/mutations.json. Property tests
+  # outside that inventory are NOT covered by any gate — say so rather than
+  # imply otherwise.
 
   # ----- L1.6 Ignored without reason (existing, retained) ---------------
 
@@ -177,12 +212,22 @@ rules:
       - pattern-either:
           - pattern: std::time::SystemTime::now()
           - pattern: SystemTime::now()
-      - pattern-inside: |
-          #[test]
-          fn $F() { ... }
+      # Every shape a test body takes in this repository: sync, tokio, and
+      # tokio with a runtime flavor. A rule that knows only `#[test]` is blind
+      # to 120 of the integration tests.
+      - pattern-either:
+          - pattern-inside: |
+              #[test]
+              fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test]
+              async fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test(...)]
+              async fn $F() { ... }
     message: |
-      `SystemTime::now()` inside `#[test]` makes the test wall-clock-dependent.
-      Inject the `Clock` port (use `FixedClock` from taskmesh-test-support). If a
+      `SystemTime::now()` inside a test makes the test wall-clock-dependent.
+      Inject the `Clock` port (`taskmesh_contract::ManualClock`). If a
       now-relative anchor is genuinely required (e.g. testing `--since`),
       annotate with `#[allow(...)] -- reason: <why now() is essential>`.
     severity: WARNING
@@ -195,13 +240,24 @@ rules:
       - pattern-either:
           - pattern: std::thread::sleep($X)
           - pattern: thread::sleep($X)
-      - pattern-inside: |
-          #[test]
-          fn $F() { ... }
+      # Every shape a test body takes in this repository: sync, tokio, and
+      # tokio with a runtime flavor. A rule that knows only `#[test]` is blind
+      # to 120 of the integration tests.
+      - pattern-either:
+          - pattern-inside: |
+              #[test]
+              fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test]
+              async fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test(...)]
+              async fn $F() { ... }
     message: |
       `thread::sleep` in tests is a flake amplifier. Use deterministic
-      synchronization (channels, barriers, `FixedClock`) or `#[allow(...)] --
-      reason: <race window being deliberately forced>`.
+      synchronization (channels, barriers, `ManualClock`) or, when the job
+      under test must overrun a wall-clock budget by design, a same-line
+      `// nosemgrep: taskmesh-test-thread-sleep -- reason: <why wall-clock is the property>`.
     severity: WARNING
     languages: [rust]
     paths:
@@ -210,11 +266,21 @@ rules:
   - id: taskmesh-test-eprintln-debug-leftover
     patterns:
       - pattern-either:
-          - pattern: eprintln!($...)
-          - pattern: println!($...)
-      - pattern-inside: |
-          #[test]
-          fn $F() { ... }
+          - pattern: eprintln!(...)
+          - pattern: println!(...)
+      # Every shape a test body takes in this repository: sync, tokio, and
+      # tokio with a runtime flavor. A rule that knows only `#[test]` is blind
+      # to 120 of the integration tests.
+      - pattern-either:
+          - pattern-inside: |
+              #[test]
+              fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test]
+              async fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test(...)]
+              async fn $F() { ... }
     message: |
       `println!`/`eprintln!` inside `#[test]` is almost always a debug leftover.
       Cargo silences stdout on pass; on fail the panic message is the surface.
@@ -230,13 +296,23 @@ rules:
           - pattern: rand::random()
           - pattern: rand::thread_rng()
           - pattern: rand::rngs::ThreadRng::default()
-      - pattern-inside: |
-          #[test]
-          fn $F() { ... }
+      # Every shape a test body takes in this repository: sync, tokio, and
+      # tokio with a runtime flavor. A rule that knows only `#[test]` is blind
+      # to 120 of the integration tests.
+      - pattern-either:
+          - pattern-inside: |
+              #[test]
+              fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test]
+              async fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test(...)]
+              async fn $F() { ... }
     message: |
       Unseeded RNG in test → non-reproducible failures. Use a fixed-seed
-      `SmallRng::seed_from_u64(SEED)` or the deterministic `Lcg` from
-      taskmesh-test-support.
+      `SmallRng::seed_from_u64(SEED)` (the bench workload fixtures show the
+      pattern) so a failure can be replayed.
     severity: ERROR
     languages: [rust]
     paths:
@@ -251,9 +327,19 @@ rules:
           - pattern: assert!($X.contains("Error"))
           - pattern: assert!($X.contains("fail"))
           - pattern: assert!($X.contains("failed"))
-      - pattern-inside: |
-          #[test]
-          fn $F() { ... }
+      # Every shape a test body takes in this repository: sync, tokio, and
+      # tokio with a runtime flavor. A rule that knows only `#[test]` is blind
+      # to 120 of the integration tests.
+      - pattern-either:
+          - pattern-inside: |
+              #[test]
+              fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test]
+              async fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test(...)]
+              async fn $F() { ... }
     message: |
       Asserting `stderr.contains("error")` is too broad — every error path emits
       "error". Lock the specific message ("invalid --from timestamp", "index

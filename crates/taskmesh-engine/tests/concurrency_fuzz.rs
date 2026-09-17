@@ -20,7 +20,7 @@ use std::thread;
 use taskmesh_contract::{
     ClassPolicy, ManualClock, MemoryPermitMode, ResourceBudget, TaskClass, TaskSpec,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
+use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, ReleaseOutcome};
 
 struct Lcg(u64);
 impl Lcg {
@@ -109,7 +109,7 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
                                 if !held.is_empty() {
                                     let i = (lcg.next() as usize) % held.len();
                                     let (id, _) = held.swap_remove(i);
-                                    g.release(id);
+                                    assert_eq!(g.release(id), ReleaseOutcome::Released);
                                 }
                             }
                             // reconcile measured memory on a held permit
@@ -145,7 +145,7 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
 
                     // Drain everything this thread still holds.
                     for (id, _) in held {
-                        g.release(id);
+                        assert_eq!(g.release(id), ReleaseOutcome::Released);
                     }
                     granted_ids
                 })

@@ -1,5 +1,7 @@
 # Rust build artifacts
 /target/
+# The out-of-workspace MSRV consumer fixture builds into its own target dir.
+/tools/consumer-msrv/target/
 
 # Lockfile is committed for reproducible CI/bench (workspace root).
 # Do not add: Cargo.lock
@@ -32,3 +34,6 @@ llvm-cov/
 
 # Optional local semgrep cache
 .semgrep/
+
+# Compiler crash dumps are never source.
+rustc-ice-*.txt

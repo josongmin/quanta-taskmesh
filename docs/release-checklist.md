@@ -2,24 +2,52 @@
 
 ## Proof gate (must be green)
 
-- [ ] `cargo fmt --all --check`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo check --workspace`
-- [ ] `cargo test --workspace` (incl. proptest invariants + OS-thread stress)
-- [ ] `cargo test -p taskmesh --features rayon` (feature-wire path)
-- [ ] `cargo test --doc -p taskmesh`
-- [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace`
-- [ ] `cargo bench -p taskmesh-bench -- --test` (benches smoke-run)
-- [ ] `RUSTFLAGS="--cfg loom" cargo test -p taskmesh-engine --test loom_governance` (concurrency model-check)
+The gate set is `tools/gates/inventory.json`; the required subset is
+`tools/gates/required.json`. Run them through `just` — the same recipes CI runs:
+
+- [ ] `just gate` — fmt-check, strict clippy (3 passes), test, deny, semgrep
+      (real integration tests enrolled), architecture checker, py-lint, py-test,
+      pm-lint, allocation gate, gates-inventory parity
+- [ ] `just test-rayon` / `just doctest` / `just rustdoc` / `just bench-smoke`
+- [ ] `just mutants-critical` — every mutation in
+      `tools/verification/mutations.json` KILLED (and the control CONTROL_GREEN)
+- [ ] `just loom` / `just shuttle`
+- [ ] `just consumer-msrv` — PASS on the declared `rust-version` (NOT_RUN is
+      not a pass)
+- [ ] `just bench-iai` on Linux — `status=QUALIFIED`. The first run for a given
+      fingerprint (bench definition, deps, toolchain, valgrind, runner) records a
+      baseline and reports `BASELINE_CREATED`; the *next* run with the same
+      fingerprint qualifies. CI keys its baseline cache on
+      `tools/bench-iai.sh fingerprint`, so a PR that does not change those inputs
+      is compared against main's baseline.
+- [ ] `uv run python tools/qualification/receipt.py collect --out <receipt>` on
+      an **immutable checkout** (under `uv run`, so the pytest-runner mutations
+      have their environment), and `validate` reports `QUALIFIED`. `validate`
+      re-derives the source identity (digest, HEAD, dirtiness) and the receipt's
+      internal consistency; it does not re-run gates. The receipt of record is
+      the one `collect` produced on that checkout — never a file handed over
+      for `validate` alone.
 - [ ] hell-gate e2e: `crates/taskmesh/tests/e2e_proof.rs`, `e2e_scenarios.rs`
 
 ## Invariant proofs
 
-- Resource accounting `Σpermit == held` and per-class==global enforced by
-  `GovernedState::assert_consistent` (debug) on every grant/unwind/reconcile.
+- Resource accounting `Σpermit == held` (exact `u128`), per-class==global,
+  phase gauges partition `inflight`, `admitted == inflight + terminated`, and
+  capability occupancy == live permits per pool, all enforced by
+  `GovernedState::assert_consistent` (debug) on every transition — and
+  recomputed by an *independent* oracle over `Governor::permit_ledgers()` in
+  `hardening_exact_accounting.rs` / `hardening_snapshot_projection.rs`.
 - `prop_invariants.rs`: drains-to-zero + cap-respect (200 cases) and fairness
   determinism (120 cases).
-- `loom_governance.rs`: exhaustive interleaving — unique ids, no leak, inflight→0.
+- `hardening_fairness_reference.rs`: DRR order equals an independent
+  visit-by-visit reference; WFQ order is scale-invariant.
+- `loom_governance.rs` / `shuttle_governance.rs`: interleavings — unique ids,
+  no leak, inflight→0.
+- Mutation gate: 43 entries — 42 single-edit reintroductions of fixed defects
+  (37 cargo, 5 pytest against the Python tooling), each killed by its named
+  regression for its named reason found in that test's own output, plus one
+  behaviour-preserving control that must stay green
+  (`receipts/local-2026-09-16.mutations.json`).
 
 ## Required proof scenarios
 
@@ -35,6 +63,15 @@
 10. snapshot class/resource/substrate state — `substrate_inventory`, `e2e_proof`
 11. config validation on impossible budgets — `config_validation`, `e2e_proof`
 12. docs example compile — `taskmesh` lib doctest
+13. bounded intake / no gate queue — `hardening_intake_bounds`
+14. ticket lifecycle terminal outcomes — `hardening_lifecycle`,
+    `runtime/claim_acquisition_tests`
+15. deadline custody (blocking RunFor, inline executor, acquire budget, release
+    fence, cleanup-before-response) — `hardening_deadline_custody`
+16. stack request consumes `large_stack` — `hardening_dispatch_resolution`
+17. worker setup / awkward class names — `hardening_executor_protocol`
+18. topology validation — `contract/topology_validation`; registry validation —
+    `hardening_policy_inventory`
 
 ## API & docs sync
 
@@ -59,5 +96,14 @@
   claim (ADR 9000 / T09).
 - Same-key admission dedupe is out of scope for the startup set; the recursion
   guard is keyed on `(root_operation_id, stage)` and assumes unique root ids.
-- `admit` success path allocates (root-id `to_string`, permit record). 0-alloc
-  would require a storage redesign (interning / `Arc<str>`) — a separate ADR.
+- `admit` success path allocates (root-id `to_string`, permit record): 3
+  allocations per admit→release at the current baseline (`just bench-gate`).
+  Capability names are interned so the unified authority added none. 0-alloc
+  would require a storage redesign (root-id interning) — a separate ADR.
+- `run_blocking` + `RunFor` bounds the caller's wait only; a started blocking
+  job is not aborted (documented, tested).
+- Declared nested wait cycles (parent awaiting a child on the capability it
+  holds) are unsupported and not detected (ADR 0003, D12).
+- No coverage gate exists. `just mutants-critical` covers the enrolled
+  regressions only; property tests outside `tools/verification/mutations.json`
+  are not mutation-checked.

@@ -16,3 +16,4 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tools"]
+markers = ["slow: runs a real cargo producer (seconds, not milliseconds)"]

@@ -191,7 +191,9 @@ match runtime.run_blocking(spec, job).await {
         AdmissionVerdict::QueueFull { retry_after_ms }
         | AdmissionVerdict::CpuSaturated { retry_after_ms }
         | AdmissionVerdict::MemorySaturated { retry_after_ms }
-        | AdmissionVerdict::SubstratePoolTimedOut { retry_after_ms } => {
+        | AdmissionVerdict::SubstrateSaturated { retry_after_ms }   // 즉시 shed (비-queueing 클래스)
+        | AdmissionVerdict::SubstratePoolTimedOut { retry_after_ms } // bounded 대기 후 만료
+        | AdmissionVerdict::PermitAcquireTimedOut { retry_after_ms } => {
             // retry_after_ms 만큼 backoff 후 재시도
             let _ = retry_after_ms;
         }
@@ -199,6 +201,10 @@ match runtime.run_blocking(spec, job).await {
         AdmissionVerdict::MalformedTask => { /* 0-stage / stage class 불일치 / reduce 누락 */ }
         other => { /* ClassDisabled, RuntimeUnavailable 등 */ let _ = other; }
     },
+
+    // 작업 자체가 실패
+    // 큐에서 대기하던 ticket이 claim 전에 끝났다 (leak sweep 회수 등). 사유가 보존된다.
+    Err(RunError::Governor(GovernorError::TicketClaimTerminated { reason, .. })) => { let _ = reason; }
 
     // 작업 자체가 실패
     Err(RunError::Task(e)) => { /* 사용자 에러 e */ let _ = e; }
@@ -211,17 +217,30 @@ match runtime.run_blocking(spec, job).await {
 
 ### 5. 관측 (inventory-first)
 
-`snapshot()`은 클래스별 inflight/queue/held 자원과 substrate 인벤토리를 결정적으로 반환한다.
+`snapshot()`은 클래스별 inflight/queue/held 자원, ownership phase gauge, 누적 counter,
+capability-pool 점유, substrate 인벤토리를 결정적으로 반환한다 (`schema_version = 2`).
 
 ```rust
 let snap = runtime.snapshot();
+assert_eq!(snap.conservation_violation(), None); // inflight == phase 합, admitted == inflight + terminated
 for (class, c) in &snap.classes {
-    println!("{class}: inflight={} queued={} cpu_held={}", c.inflight, c.queued, c.cpu_units_held);
+    println!(
+        "{class}: inflight={} (reserved={} accepted={} running={} cleanup={}) queued={} cpu_held={}",
+        c.inflight, c.dispatch_reserved, c.accepted, c.running, c.cleanup_pending, c.queued, c.cpu_units_held,
+    );
+}
+for (pool, usage) in &snap.capabilities {
+    println!("pool {pool}: {}/{}", usage.in_use, usage.limit); // limit 0 = 무제한
 }
 for s in &snap.substrates {
     println!("substrate {} kind={:?} pool={:?}", s.name, s.kind, s.capability_pool);
 }
 ```
+
+**`queued`와 outstanding의 구분.** `queued`는 클래스 admission queue에서 기다리는 요청 수다.
+admission 앞에 별도의 무제한 대기 공간은 없으므로, runtime이 보유한 outstanding 요청은 정확히
+`queued + inflight`다. held 자원(`cpu_units_held`/`memory_units_held`)은 `u128`이며 JSON에서는
+정수 정확도를 잃지 않도록 decimal string으로 직렬화된다.
 
 ### 6. 취소 · 타임아웃 · 데드라인 (`SubmitOptions`)
 
@@ -255,9 +274,29 @@ match out {
 ```
 
 규칙: pre-submit 취소(`CancelledBeforeSubmit`)는 모든 클래스에서 발효된다. **mid-run
-협조 취소**(`Cancelled`)와 **데드라인**(`DeadlineExceeded`)은 클래스의
-`cancellation_policy`가 `Cooperative`/`CooperativeWithDeadline`일 때만 동작한다.
-취소/타임아웃으로 future가 drop돼도 permit과 substrate slot은 항상 반납된다(누수 없음).
+협조 취소**(`Cancelled`)는 `Cooperative`/`CooperativeWithDeadline` 클래스에서, **데드라인**
+(`DeadlineExceeded`)은 `CooperativeWithDeadline` 클래스에서만 동작한다. 데드라인을 집행할 수
+없는 클래스에 `deadline`을 주면 조용히 버려지는 대신 제출 시점에
+`GovernorError::DeadlineUnsupported { class, policy }`로 거절된다 — 요청한 상한 없이 끝까지
+실행하고 `Ok`를 돌려주는 것은 이 host가 만들지 않는 종류의 실패다.
+취소/타임아웃으로 future가 drop돼도 permit과 capability slot은 항상 반납된다(누수 없음).
+
+worker 쪽 실패는 각각의 이름으로 온다: `WorkerPanicked { context }`(작업 또는 adapter의
+`spawn`이 panic; 부작용 미상), `WorkerUnavailable { context, detail }`(thread/runtime을 만들지
+못함; 작업은 시작되지 않았다), `JobAbandoned { context }`(adapter가 closure를 실행하지 않고
+버렸거나 worker가 사라짐). `LeaseReclaimed { permit_id }`는 dispatch 전에 leak sweep이 lease를
+회수한 경우로, 작업은 시작되지 않는다.
+
+**응답과 custody는 다른 사건이다.** deadline/취소 응답은 caller의 대기를 끝내지만, 동기 worker
+(blocking·CPU·requested-stack)는 실제로 종료할 때까지 lease를 계속 보유한다 — 그동안 snapshot의
+해당 요청은 `running`/`cleanup_pending`으로 남고 용량은 반환되지 않는다. 정상 완료 시에는 custody가
+결과와 함께 이동하므로 caller가 값을 볼 수 있는 시점에 용량은 이미 반환되어 있다. blocking 경로의
+`RunFor`는 **caller의 대기**를 제한할 뿐 시작된 동기 작업을 중단하지 않는다.
+
+`acquire_timeout`은 admission lock 대기를 포함한 모든 획득 대기를 포함한다. 만료 후 도착한
+permit은 — 즉시 승인이든, 큐 대기 중 timeout과 경합한 promotion이든 — 시작되지 않고 unwind되며
+`PermitAcquireTimedOut`(capability pool 대기였다면 `SubstratePoolTimedOut`)이 반환된다.
+`Duration::ZERO`는 "대기하지 말고 시도" 의미를 유지한다.
 
 ### 7. 고급 통합 (`taskmesh::ext`)
 
@@ -268,8 +307,11 @@ use taskmesh::ext::{Governor, Provenance};
 
 // (a) 거버너 직접 접근 — 메모리 reconcile / leak sweep / substrate 인벤토리
 let gov: &Governor = runtime.governor();
-let report = gov.reap_leaks();                       // LeakDetecting 클래스의 stale permit 회수
+let report = gov.reap_leaks();                       // LeakDetecting 클래스의 stale·미시작 permit 회수
+// report.retained_active: stale이지만 실행 중이라 회수하지 않은 permit 수 (stale ≠ dead)
 // gov.reconcile_memory(permit_id, measured_bytes);  // measured/hybrid 메모리 정산
+// gov.release_stage_memory(permit_id, units) -> StageReleaseOutcome (OnTaskCompletion 클래스는 PolicyForbids)
+// gov.claim(ticket) -> ClaimOutcome::{Ready, Pending, Terminal(reason), Invalid}
 
 // (b) classification provenance — "왜 이 클래스였나"가 submit 이후에도 audit 가능
 // let prov: Option<Provenance> = gov.permit_provenance(permit_id); // source/reason
@@ -296,8 +338,12 @@ let runtime = taskmesh::Builder::new()
 > `ext`에는 `Governor`, `PolicySet`, `AdmissionDecision`, `Provenance`,
 > `RootAttribution`, `Clock`/`SystemClock`/`ManualClock`, `CpuExecutor`,
 > `PermitWaker`, `BlockingPoolCpuExecutor`, `builtin_records`,
-> `BUILTIN_SUBSTRATES`, `DEFAULT_LEAK_STALE_MS` 등이 있다. `RequestKey`는 더 이상
+> `BUILTIN_SUBSTRATES`, `DEFAULT_LEAK_STALE_MS`, `ClaimOutcome`, `ReleaseOutcome`,
+> `StageReleaseOutcome`, `ReconcileOutcome`, `PermitLedgerView`, `CapacityBlock` 등이 있다.
+> `Governor::release`는 `ReleaseOutcome`(`#[must_use]`)을 돌려준다 — `UnknownPermit`은 double
+> release이거나 sweep에 회수된 lease이며 조용한 no-op이 아니다. `RequestKey`는 더 이상
 > 공개 입력이 아니다 — admission key는 `root_operation_id`에서 권위적으로 파생된다.
+> 계약의 근거는 [ADR 0003](docs/adr/0003-sep-16-hardening-contracts.md)에 있다.
 
 ### 클래스 정책 옵션 요약
 
@@ -309,7 +355,7 @@ let runtime = taskmesh::Builder::new()
 | `retry_after_policy` | `None` / `FixedMs(ms)` / `Adaptive` — 거부 시 backoff 힌트 |
 | `overflow_policy` | `Reject` / `QueueWithinDepth` / `DropBestEffort`(현재 `Reject`와 동치) |
 | `memory_overcommit_policy` | `Reject` / `Queue` / `DegradeToLight { fallback_class }` |
-| `memory_release_policy` | `OnTaskCompletion` / `OnStageBoundary` / `LeakDetecting`(leak sweep 대상) |
+| `memory_release_policy` | `OnTaskCompletion` / `OnStageBoundary` / `LeakDetecting`(leak sweep 대상). **강제 계약**: `OnTaskCompletion`은 stage release를 `PolicyForbids`로 거절 |
 | `cancellation_policy` | `PreSubmitOnly` / `Cooperative` / `CooperativeWithDeadline` |
 
 ## 집행 의미 (enforcement semantics)
@@ -319,24 +365,44 @@ let runtime = taskmesh::Builder::new()
 1. **substrate 분류는 권위적이다.** 각 `run_*`는 spec의 substrate hint와 일치해야 한다.
    `run_io`=`AsyncIo`, `run_blocking`=`BlockingPool`/`LargeStackCapability`/`BackgroundOnly`,
    `run_cpu`=`SharedCpuExecutor`, `run_local`=`LocalRuntime`. 불일치는 `SubstrateMismatch`로 reject.
-2. **topology slot은 실제 capability-pool 상한이다.** `blocking_threads`/`large_stack_slots`/
-   `local_runtime_slots`/`maintenance_workers` 및 topology-sized CPU 풀은 해당 substrate 동시성을
-   제한한다. `0 = 무제한`. 풀이 가득 차면 `SubstratePoolTimedOut`로 backpressure(거버너 입장 큐 대기
-   `PermitAcquireTimedOut`와 구분). `Blocking`/`LargeStack`/`Background`는 blocking executor를 공유하되
-   capability pool은 별도다.
+2. **topology slot은 실제 capability-pool 상한이며, admission과 같은 결정이다.** `blocking_threads`/
+   `large_stack_slots`/`local_runtime_slots`/`maintenance_workers` 및 topology-sized CPU 풀은 해당
+   substrate 동시성을 제한한다. `0 = 무제한`. capability 점유는 class inflight·resource budget과
+   **하나의** admission transition에서 결정되므로 admission 앞에 별도 대기 큐가 없다: 풀이 가득 차면
+   비-queueing 클래스는 즉시 `SubstrateSaturated`로 shed되고, queueing 클래스는 자기 `max_queue_depth`
+   안에서 기다리다 만료 시 `SubstratePoolTimedOut`(거버너 큐 대기 `PermitAcquireTimedOut`와 구분).
+   `stack_size_bytes`가 있는 blocking-family 제출은 hint와 무관하게 `large_stack` pool을 소비한다.
+   `Blocking`/`LargeStack`/`Background`는 blocking executor를 공유하되 capability pool은 별도다.
 3. **fan-out reduce는 admission에서 강제된다.** reduce policy 없는 fan-out stage는 `MalformedTask`.
    0-stage spec과 stage별 class 불일치도 `MalformedTask`로 reject.
 4. **fairness는 tier 단위 discipline이다.** 한 tier(best-effort 여부) 안의 클래스는 같은 discipline을
    써야 하며, 혼합 시 `build()`가 거부한다. (weight/quantum/slack 등 파라미터는 클래스별로 달라도 됨.)
-   `DeficitRoundRobin`은 deficit 커서로 quantum에 비례해 라운드로빈한다.
+   `DeficitRoundRobin`은 deficit 커서로 quantum에 비례해 라운드로빈한다 (ring은 산술적으로 순회하며
+   queue가 drain되면 credit을 reset한다). `WeightedFairQueue`는 `1..=u32::MAX` 전 범위에서 비례를
+   유지하며 weight 0은 `build()`가 거부한다. 취소된 요청은 service debt를 남기지 않는다.
+   클래스 내부는 도착 순서다: 같은 클래스의 runnable한 head가 promotion pass를 기다리는 동안 새
+   도착은 그 앞의 capacity를 가져가지 못하고 뒤에 선다(`CapacityBlock::QueuedBehind`); head가
+   *다른* capability pool에 막혀 있을 때만 추월한다. 한 번의 promotion pass는 `PROMOTION_BUDGET`(64)
+   개까지 grant하고 lock을 놓은 뒤 이어가며, 그 경계에서 fairness 비용이 어긋나지 않는다.
 5. **cancellation은 정책을 따른다.** `Cooperative`/`CooperativeWithDeadline` 클래스는
    `run_io`/`run_local`/`run_cpu` 모두에서 토큰으로 mid-run 취소(→`GovernorError::Cancelled`)된다
    (`run_cpu`는 stalled `CpuExecutor`에서도 탈출). `CooperativeWithDeadline`는 추가로
-   `SubmitOptions::deadline`을 발효(→`GovernorError::DeadlineExceeded`); plain `Cooperative`는 무시.
-6. **`LeakDetecting` 클래스만 leak sweep으로 회수**되며, downward `reconcile_memory`는 예산을 풀고
-   대기 작업을 promote한다.
-7. **정책 검증은 fail-closed다.** 불가능한 budget·mixed-tier fairness·잘못된 memory scaling 등은
-   `Builder::build`/`Governor::new`에서 거부되며 런타임 admit로 미루지 않는다.
+   `SubmitOptions::deadline`을 발효(→`GovernorError::DeadlineExceeded`); 다른 정책의 클래스에 deadline을
+   주면 `DeadlineUnsupported`로 거절된다(무시하지 않는다).
+   `RunFor`는 worker 자신의 시작 시각을 기준으로 하며(inline executor 포함) 완료 시각이 budget을
+   넘긴 결과는 `Ok`로 보고되지 않는다. `run_blocking`의 `RunFor`는 caller의 대기만 제한한다.
+   worker 실패는 `WorkerPanicked`/`WorkerUnavailable`/`JobAbandoned`로 구분된다.
+6. **`LeakDetecting` 클래스만 leak sweep으로 회수**되며, 그중에서도 executor에 도달하지 않은
+   (`DispatchReserved`) permit만 회수한다 — stale은 dead가 아니다. 실행 중인 stale permit은
+   `retained_active`로 보고되고 charged 상태로 남는다. stage release·reconcile은 lease를 touch한다.
+   downward `reconcile_memory`는 예산을 풀고 대기 작업을 promote한다. lease timestamp는 monotonic
+   commit watermark로 clamp되므로 늦게 도착한 clock 샘플이 lease를 과거로 되돌리지 못한다.
+7. **정책 검증은 fail-closed다.** 불가능한 budget·mixed-tier fairness·잘못된 memory scaling·disabled
+   클래스로의 `DegradeToLight` 등은 `Builder::build`/`Governor::new`에서 거부되며 런타임 admit로
+   미루지 않는다. `CpuExecutor`가 `declared_workers`를 선언하면 topology가 resolve한 `cpu` gate보다
+   작을 수 없다(`TopologyError::ExecutorDeclaresFewerWorkers`) — gate와 pool은 한 답에서 나온다.
+   `runtime.executor_capabilities()`가 adapter의 선언(worker 수·exclusive 여부·non-blocking submit)을
+   노출한다.
 8. **child→root 귀속:** `child_of(root, parent_stage)`는 root를 유지하고 `parent_stage`가
    재귀 가드·attribution의 권위적 lineage 키다 (substrate가 아님). 같은 `(root, parent_stage)`
    재진입은 `RecursiveAdmission`. `operation(name)`은 root를 재설정하지 않는다.

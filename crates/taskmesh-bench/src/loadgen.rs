@@ -1,49 +1,97 @@
-//! Open-loop, coordinated-omission-free latency recording (ADR 9000 / P1).
+//! Open-loop latency recording and the discrete-event admission simulator
+//! (ADR 9000 / P1).
 //!
-//! When a measured latency exceeds the expected inter-arrival interval, the
-//! requests that *should* have been sent during the stall are synthesized by
-//! `hdrhistogram::record_correct` so the tail is not understated. Averages are
-//! intentionally never exposed.
+//! # Two recorders, two populations
+//!
+//! Coordinated-omission correction (`hdrhistogram::record_correct`) exists for
+//! *closed-loop* measurement: when the measuring loop itself stalls, the requests
+//! it should have issued during the stall never happen, and back-filling them
+//! keeps the tail honest. The open-loop simulator below has no such gap — every
+//! arrival in the schedule is offered at its scheduled time whether or not the
+//! previous one has finished. Applying the correction there does not recover
+//! missing requests; it invents samples, weighted towards the requests that
+//! waited longest, and the reported quantile stops describing the population of
+//! requests that were actually admitted.
+//!
+//! So the simulator records **one raw sample per started request**, and the
+//! corrected recorder is a distinct mode for callers that really do have
+//! omission. The two are never mixed in one histogram.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
+use std::sync::Barrier;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use hdrhistogram::Histogram;
 use taskmesh_contract::ClassPolicy;
-use taskmesh_engine::{AdmissionDecision, PermitId};
+use taskmesh_engine::{AdmissionDecision, ClaimOutcome, PermitId, ReleaseOutcome};
 
-use crate::workload::{fixture, root_spec, Arrival, Fixture};
+use crate::workload::{fixture, root_spec, Fixture, ValidatedArrivals, WorkloadError};
 
-/// Records latencies with coordinated-omission correction against a fixed
-/// expected interval (the open-loop send cadence).
+/// How a [`LatencyRecorder`] treats each sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecorderMode {
+    /// One histogram sample per `record` call. For open-loop populations where
+    /// every request was actually offered.
+    Raw,
+    /// Coordinated-omission correction against a fixed send cadence. For
+    /// closed-loop measurement where a stalled measuring loop *omitted*
+    /// requests it should have sent.
+    OmissionCorrected { expected_interval_ns: u64 },
+}
+
+/// Records latencies under an explicit [`RecorderMode`].
 pub struct LatencyRecorder {
     hist: Histogram<u64>,
-    expected_interval_ns: u64,
+    mode: RecorderMode,
+    /// `record` calls, regardless of how many histogram entries they produced.
+    recorded_calls: u64,
     /// Samples the histogram refused (would understate the tail if ignored).
     dropped: u64,
 }
 
 impl LatencyRecorder {
-    pub fn new(expected_interval_ns: u64) -> Self {
+    fn with_mode(mode: RecorderMode) -> Self {
         Self {
             // 3 significant figures, auto-resizing so large tails still record.
             hist: Histogram::new(3).expect("histogram"),
-            expected_interval_ns: expected_interval_ns.max(1),
+            mode,
+            recorded_calls: 0,
             dropped: 0,
         }
     }
 
-    /// Record a measured latency (ns), back-filling omitted samples. A refused
-    /// sample is counted, never silently dropped — `dropped()` must stay 0 for a
-    /// trustworthy tail (asserted by callers/tests).
+    /// A raw recorder: exactly one histogram sample per recorded latency.
+    pub fn raw() -> Self {
+        Self::with_mode(RecorderMode::Raw)
+    }
+
+    /// A coordinated-omission-corrected recorder for closed-loop measurement.
+    pub fn corrected(expected_interval_ns: u64) -> Self {
+        Self::with_mode(RecorderMode::OmissionCorrected {
+            expected_interval_ns: expected_interval_ns.max(1),
+        })
+    }
+
+    pub fn mode(&self) -> RecorderMode {
+        self.mode
+    }
+
+    /// Record a measured latency (ns). A refused sample is counted, never
+    /// silently dropped — `dropped()` must stay 0 for a trustworthy tail.
     pub fn record(&mut self, latency_ns: u64) {
-        if self
-            .hist
-            .record_correct(latency_ns, self.expected_interval_ns)
-            .is_err()
-        {
+        self.recorded_calls += 1;
+        let outcome = match self.mode {
+            RecorderMode::Raw => self.hist.record(latency_ns).map_err(|_| ()),
+            RecorderMode::OmissionCorrected {
+                expected_interval_ns,
+            } => self
+                .hist
+                .record_correct(latency_ns, expected_interval_ns)
+                .map_err(|_| ()),
+        };
+        if outcome.is_err() {
             self.dropped += 1;
         }
     }
@@ -52,6 +100,21 @@ impl LatencyRecorder {
     /// the reported quantiles understate the true tail.
     pub fn dropped(&self) -> u64 {
         self.dropped
+    }
+
+    /// Number of latencies handed to `record`. In `Raw` mode this equals
+    /// `len()` minus `dropped()`; in corrected mode `len()` may be larger,
+    /// and the difference is the synthetic population.
+    pub fn recorded_calls(&self) -> u64 {
+        self.recorded_calls
+    }
+
+    /// Histogram entries that were synthesized by omission correction. Always
+    /// zero in `Raw` mode.
+    pub fn synthetic_samples(&self) -> u64 {
+        self.hist
+            .len()
+            .saturating_sub(self.recorded_calls - self.dropped)
     }
 
     pub fn quantile(&self, q: f64) -> u64 {
@@ -67,6 +130,7 @@ impl LatencyRecorder {
     pub fn p999(&self) -> u64 {
         self.quantile(0.999)
     }
+    /// Histogram entries, including any synthesized by correction.
     pub fn len(&self) -> u64 {
         self.hist.len()
     }
@@ -113,18 +177,17 @@ type Completion = (u64, PermitId); // (completion_time_ns, permit)
 /// latency is the *governance-induced admission wait* (start − arrival), not the
 /// service time — that isolates the control-plane's contribution.
 ///
-/// Latencies are recorded with coordinated-omission correction against
-/// `mean_interval_ns`. Time is virtual and deterministic; the governor's
+/// Latencies are recorded **raw**: one sample per started request (see the
+/// module docs). Time is virtual and deterministic; the governor's
 /// `ManualClock` is advanced to each event so retry/lease timestamps stay
-/// consistent.
+/// consistent. All time arithmetic is checked.
 pub fn simulate(
     fx: &Fixture,
-    arrivals: &[Arrival],
+    arrivals: &ValidatedArrivals,
     service_ns: u64,
-    mean_interval_ns: u64,
-) -> (LatencyRecorder, SimResult) {
+) -> Result<(LatencyRecorder, SimResult), WorkloadError> {
     let g = &*fx.governor;
-    let mut latency = LatencyRecorder::new(mean_interval_ns);
+    let mut latency = LatencyRecorder::raw();
     let mut heap: BinaryHeap<Reverse<Completion>> = BinaryHeap::new();
     let mut pending: BTreeMap<u64, u64> = BTreeMap::new(); // ticket -> arrival_ns
     let mut res = SimResult {
@@ -132,9 +195,21 @@ pub fn simulate(
         ..Default::default()
     };
 
-    for (idx, arrival) in arrivals.iter().enumerate() {
-        let t = (arrival.send_time_secs * 1.0e9) as u64;
+    let completion_at = |arrival_ns: u64| -> Result<u64, WorkloadError> {
+        arrival_ns
+            .checked_add(service_ns)
+            .ok_or(WorkloadError::CompletionTimeOverflow {
+                arrival_ns,
+                service_ns,
+            })
+    };
 
+    for (idx, (arrival, &t)) in arrivals
+        .as_slice()
+        .iter()
+        .zip(arrivals.send_times_ns())
+        .enumerate()
+    {
         // Drain every completion that is due no later than this arrival, freeing
         // capacity and promoting queued work as we go.
         while let Some(&Reverse((ct, _))) = heap.peek() {
@@ -143,17 +218,17 @@ pub fn simulate(
             }
             let Reverse((ct, permit)) = heap.pop().expect("peeked");
             fx.clock.set(ct / 1_000_000);
-            g.release(permit);
+            assert_eq!(g.release(permit), ReleaseOutcome::Released);
             res.completed += 1;
             claim_promoted(
                 fx,
                 ct,
-                service_ns,
+                &completion_at,
                 &mut pending,
                 &mut heap,
                 &mut latency,
                 &mut res,
-            );
+            )?;
         }
 
         fx.clock.set(t / 1_000_000);
@@ -163,7 +238,7 @@ pub fn simulate(
             AdmissionDecision::Admitted { permit_id } => {
                 res.admitted_immediately += 1;
                 latency.record(0);
-                heap.push(Reverse((t + service_ns, permit_id)));
+                heap.push(Reverse((completion_at(t)?, permit_id)));
             }
             AdmissionDecision::Queued { ticket } => {
                 pending.insert(ticket, t);
@@ -178,24 +253,24 @@ pub fn simulate(
     // Drain the tail: complete all remaining inflight work, promoting as we go.
     while let Some(Reverse((ct, permit))) = heap.pop() {
         fx.clock.set(ct / 1_000_000);
-        g.release(permit);
+        assert_eq!(g.release(permit), ReleaseOutcome::Released);
         res.completed += 1;
         claim_promoted(
             fx,
             ct,
-            service_ns,
+            &completion_at,
             &mut pending,
             &mut heap,
             &mut latency,
             &mut res,
-        );
+        )?;
     }
 
     // Anything still queued was never promotable (e.g. a binding global budget):
     // account it explicitly so conservation holds and nothing vanishes silently.
     res.leftover_queued = pending.len();
 
-    (latency, res)
+    Ok((latency, res))
 }
 
 /// After a release at `now_ns`, claim every ticket the governor just promoted,
@@ -203,18 +278,22 @@ pub fn simulate(
 fn claim_promoted(
     fx: &Fixture,
     now_ns: u64,
-    service_ns: u64,
+    completion_at: &dyn Fn(u64) -> Result<u64, WorkloadError>,
     pending: &mut BTreeMap<u64, u64>,
     heap: &mut BinaryHeap<Reverse<Completion>>,
     latency: &mut LatencyRecorder,
     res: &mut SimResult,
-) {
+) -> Result<(), WorkloadError> {
     loop {
         let mut promoted = None;
         for (&ticket, &arrival_ns) in pending.iter() {
-            if let Some(permit) = fx.governor.claim(ticket) {
-                promoted = Some((ticket, arrival_ns, permit));
-                break;
+            match fx.governor.claim(ticket) {
+                ClaimOutcome::Ready(permit) => {
+                    promoted = Some((ticket, arrival_ns, permit));
+                    break;
+                }
+                ClaimOutcome::Pending => {}
+                other => panic!("simulation ticket ended without service: {other:?}"),
             }
         }
         let Some((ticket, arrival_ns, permit)) = promoted else {
@@ -223,14 +302,15 @@ fn claim_promoted(
         pending.remove(&ticket);
         res.queued_then_promoted += 1;
         latency.record(now_ns.saturating_sub(arrival_ns));
-        heap.push(Reverse((now_ns + service_ns, permit)));
+        heap.push(Reverse((completion_at(now_ns)?, permit)));
     }
+    Ok(())
 }
 
 /// Process-global pool of per-worker key strings. Interned once and reused
-/// across every `contention_throughput` call, so repeated sweeps (e.g. the USL
-/// probe) do not leak a fresh string per call — total leak is bounded by the
-/// highest worker id ever used.
+/// across every contention run, so repeated sweeps (e.g. the USL probe) do not
+/// leak a fresh string per call — total leak is bounded by the highest worker id
+/// ever used.
 fn worker_key(tid: usize) -> &'static str {
     use std::sync::Mutex;
     use std::sync::OnceLock;
@@ -244,42 +324,111 @@ fn worker_key(tid: usize) -> &'static str {
     pool[tid]
 }
 
-/// Aggregate admit→release throughput (ops/sec) with `threads` workers hammering
-/// one shared governor (ADR 9000 / P3 contention input for USL fitting).
+/// One contention run: `threads` workers hammering one shared governor for
+/// exactly `completed_ops` admit→release cycles in total.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContentionRun {
+    pub threads: usize,
+    /// Cycles actually completed across all workers. Equal to the requested
+    /// total by construction — the request is distributed exactly, remainder
+    /// included.
+    pub completed_ops: usize,
+    /// Wall time of the op loop only. Thread creation and key preparation
+    /// happen before a start barrier and are excluded.
+    pub elapsed: Duration,
+}
+
+impl ContentionRun {
+    pub fn throughput_per_sec(&self) -> f64 {
+        let secs = self.elapsed.as_secs_f64();
+        if secs <= 0.0 {
+            return 0.0;
+        }
+        self.completed_ops as f64 / secs
+    }
+}
+
+/// Split `total` ops across `threads` workers exactly: quotient each, remainder
+/// distributed one per worker from the front. `Σ = total` always.
+pub fn distribute_ops(total: usize, threads: usize) -> Vec<usize> {
+    assert!(threads >= 1, "at least one worker");
+    let base = total / threads;
+    let extra = total % threads;
+    (0..threads)
+        .map(|tid| base + usize::from(tid < extra))
+        .collect()
+}
+
+/// Run exactly `total_ops` admit→release cycles across `threads` workers on one
+/// shared governor (ADR 9000 / P3 contention input for USL fitting).
 ///
-/// Each thread reuses one interned `&'static str` key, so the per-op `RequestKey`
-/// clone is allocation-free and the op loop measures pure lock + grant contention
-/// (no key allocation). Keys are root-scoped, so the recursion guard is bypassed
-/// entirely — uniqueness only keeps the request keys distinct, not the guard.
-pub fn contention_throughput(threads: usize, ops_per_thread: usize) -> f64 {
-    assert!(threads >= 1 && ops_per_thread >= 1);
+/// The count is *exact*: a caller that asks for `iters` cycles gets a duration
+/// for `iters` cycles, so a `Criterion::iter_custom` denominator matches the
+/// work that was timed. Rounding `iters / threads` up or down silently changes
+/// the per-op figure by up to `threads×` at small batch sizes.
+///
+/// Each thread reuses one interned `&'static str` key, so the per-op
+/// `RequestKey` clone is allocation-free and the op loop measures pure lock +
+/// grant contention. Workers rendezvous on a barrier before the clock starts,
+/// so thread spawn latency is not inside the measured region.
+pub fn contention_run(threads: usize, total_ops: usize) -> ContentionRun {
+    assert!(threads >= 1, "at least one worker");
     // Unbounded class: cost 0 and budgets 0 (disabled checks) → admit always Ok.
     let fx = fixture(vec![("bench", ClassPolicy::new())], 0, 0);
     let g = fx.governor.clone();
+    let shares = distribute_ops(total_ops, threads);
+    let ready = Barrier::new(threads + 1);
 
-    let start = Instant::now();
-    thread::scope(|scope| {
-        for tid in 0..threads {
-            let g = g.clone();
-            scope.spawn(move || {
-                let op = worker_key(tid);
-                let spec = root_spec("bench", op);
-                let mut admitted = 0u64;
-                for _ in 0..ops_per_thread {
-                    match g.admit(&spec) {
-                        AdmissionDecision::Admitted { permit_id } => {
-                            admitted += 1;
-                            g.release(permit_id);
+    let (elapsed, completed) = thread::scope(|scope| {
+        let handles: Vec<_> = shares
+            .iter()
+            .enumerate()
+            .map(|(tid, &share)| {
+                let g = g.clone();
+                let ready = &ready;
+                scope.spawn(move || {
+                    let op = worker_key(tid);
+                    let spec = root_spec("bench", op);
+                    ready.wait();
+                    let mut admitted = 0usize;
+                    for _ in 0..share {
+                        match g.admit(&spec) {
+                            AdmissionDecision::Admitted { permit_id } => {
+                                admitted += 1;
+                                assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
+                            }
+                            other => panic!("contention admit must succeed, got {other:?}"),
                         }
-                        other => panic!("contention admit must succeed, got {other:?}"),
                     }
-                }
-                debug_assert_eq!(admitted as usize, ops_per_thread);
-            });
-        }
+                    admitted
+                })
+            })
+            .collect();
+        // Every worker is spawned and parked; now the clock starts.
+        ready.wait();
+        let start = Instant::now();
+        let completed: usize = handles
+            .into_iter()
+            .map(|h| h.join().expect("contention worker panicked"))
+            .sum();
+        (start.elapsed(), completed)
     });
-    let elapsed = start.elapsed().as_secs_f64();
-    (threads * ops_per_thread) as f64 / elapsed
+    assert_eq!(
+        completed, total_ops,
+        "every requested op must run exactly once"
+    );
+    ContentionRun {
+        threads,
+        completed_ops: completed,
+        elapsed,
+    }
+}
+
+/// Aggregate admit→release throughput (ops/sec) for `threads` workers each
+/// running `ops_per_thread` cycles. Convenience over [`contention_run`].
+pub fn contention_throughput(threads: usize, ops_per_thread: usize) -> f64 {
+    assert!(threads >= 1 && ops_per_thread >= 1);
+    contention_run(threads, threads * ops_per_thread).throughput_per_sec()
 }
 
 #[cfg(test)]
@@ -290,19 +439,33 @@ mod tests {
     fn correction_backfills_a_long_stall() {
         // expected one sample per 100ns; a single 10_000ns stall should inflate
         // the recorded count well beyond one via omission correction.
-        let mut rec = LatencyRecorder::new(100);
+        let mut rec = LatencyRecorder::corrected(100);
         rec.record(10_000);
         assert!(
             rec.len() > 1,
             "omitted samples must be back-filled: {}",
             rec.len()
         );
+        assert_eq!(rec.recorded_calls(), 1);
+        assert!(rec.synthetic_samples() > 0);
         assert!(rec.p99() > 0);
     }
 
     #[test]
+    fn raw_mode_records_exactly_one_sample_per_call() {
+        let mut rec = LatencyRecorder::raw();
+        for latency in [0u64, 9_999, 10_000, 1_000_000] {
+            rec.record(latency);
+        }
+        assert_eq!(rec.len(), 4);
+        assert_eq!(rec.recorded_calls(), 4);
+        assert_eq!(rec.synthetic_samples(), 0);
+        assert_eq!(rec.dropped(), 0);
+    }
+
+    #[test]
     fn quantiles_are_ordered() {
-        let mut rec = LatencyRecorder::new(1_000);
+        let mut rec = LatencyRecorder::corrected(1_000);
         for v in 1..=1000u64 {
             rec.record(v * 10);
         }
@@ -313,14 +476,72 @@ mod tests {
     use crate::workload::{fixture, retrieval_policy, Arrival};
 
     /// A constant-rate open-loop schedule of `n` arrivals at `rate` req/sec.
-    fn cadence(n: usize, rate: f64) -> Vec<Arrival> {
+    fn cadence(n: usize, rate: f64) -> ValidatedArrivals {
         let step = 1.0 / rate;
-        (0..n)
-            .map(|i| Arrival {
-                send_time_secs: i as f64 * step,
-                class: "retrieval".to_string(),
-            })
-            .collect()
+        ValidatedArrivals::new(
+            (0..n)
+                .map(|i| Arrival {
+                    send_time_secs: i as f64 * step,
+                    class: "retrieval".to_string(),
+                })
+                .collect(),
+        )
+        .expect("a cadence is a valid schedule")
+    }
+
+    // ---- TM16-029: the open-loop histogram is the admitted population ------
+
+    #[test]
+    fn open_loop_waits_are_recorded_exactly_once() {
+        // Two arrivals 1ns apart, one inflight slot, 10µs service: the first
+        // waits 0, the second waits 9_999ns. Two requests, two samples. The
+        // corrected recorder produced ten here and reported a p50 of ~5µs that
+        // described neither request.
+        let fx = fixture(vec![("retrieval", retrieval_policy(1, 8))], 0, 0);
+        let arrivals = ValidatedArrivals::new(vec![
+            Arrival {
+                send_time_secs: 0.0,
+                class: "retrieval".into(),
+            },
+            Arrival {
+                send_time_secs: 1.0e-9,
+                class: "retrieval".into(),
+            },
+        ])
+        .unwrap();
+        let (lat, res) = simulate(&fx, &arrivals, 10_000).unwrap();
+        assert_eq!(res.offered, 2);
+        assert_eq!(res.completed, 2);
+        assert_eq!(lat.mode(), RecorderMode::Raw);
+        assert_eq!(lat.len(), 2, "one sample per admitted request");
+        assert_eq!(lat.recorded_calls(), 2);
+        assert_eq!(lat.synthetic_samples(), 0);
+        assert_eq!(lat.dropped(), 0);
+        // An independently recorded histogram agrees exactly.
+        let mut independent = LatencyRecorder::raw();
+        independent.record(0);
+        independent.record(9_999);
+        assert_eq!(lat.p50(), independent.p50());
+        assert_eq!(lat.p99(), independent.p99());
+    }
+
+    #[test]
+    fn histogram_population_equals_started_requests_under_overload() {
+        let depth = 16;
+        let fx = fixture(
+            vec![("retrieval", retrieval_policy(1, depth))],
+            1_000,
+            1_000,
+        );
+        let arrivals = cadence(2_000, 100_000.0);
+        let (lat, res) = simulate(&fx, &arrivals, 1_000_000).unwrap();
+        assert!(res.rejected > 0, "overload rejects");
+        assert_eq!(
+            lat.len() as usize,
+            res.started(),
+            "the histogram is exactly the started population; rejected requests are counted apart"
+        );
+        assert_eq!(lat.synthetic_samples(), 0);
     }
 
     #[test]
@@ -329,7 +550,7 @@ mod tests {
         let fx = fixture(vec![("retrieval", retrieval_policy(32, 128))], 1_000, 1_000);
         let arrivals = cadence(500, 1_000.0); // 1ms apart
         let service_ns = 100_000; // 0.1ms < interarrival → never backs up
-        let (lat, res) = simulate(&fx, &arrivals, service_ns, 1_000_000);
+        let (lat, res) = simulate(&fx, &arrivals, service_ns).unwrap();
 
         assert_eq!(res.offered, 500);
         assert_eq!(res.rejected, 0, "no rejects when undersaturated");
@@ -338,6 +559,7 @@ mod tests {
         assert_eq!(res.leftover_queued, 0);
         assert!(res.is_conserved(), "{res:?}");
         assert_eq!(lat.dropped(), 0, "no latency samples dropped");
+        assert_eq!(lat.len(), 500);
     }
 
     #[test]
@@ -352,7 +574,7 @@ mod tests {
         );
         let arrivals = cadence(2_000, 100_000.0); // 10µs apart: far above service rate
         let service_ns = 1_000_000; // 1ms service
-        let (lat, res) = simulate(&fx, &arrivals, service_ns, 10_000);
+        let (lat, res) = simulate(&fx, &arrivals, service_ns).unwrap();
 
         assert_eq!(res.offered, 2_000);
         assert!(res.rejected > 0, "overload must reject (fail-closed)");
@@ -361,9 +583,6 @@ mod tests {
             "queue must stay bounded: {} > {depth}",
             res.max_queue_observed
         );
-        // Conservation: every offered request either rejects, completes, or is
-        // still queued at the (drained) end — none vanish silently. A single
-        // class with a free budget fully drains, so leftover is 0 here.
         assert!(res.is_conserved(), "conservation violated: {res:?}");
         assert_eq!(res.leftover_queued, 0, "single-class run must fully drain");
         assert_eq!(
@@ -374,8 +593,63 @@ mod tests {
     }
 
     #[test]
+    fn completion_time_overflow_is_a_typed_error_not_a_wrap() {
+        let fx = fixture(vec![("retrieval", retrieval_policy(1, 8))], 0, 0);
+        // An arrival at t = 1s: `1e9 + u64::MAX` does not fit, and a wrapping
+        // add would schedule the completion in the past.
+        let arrivals = ValidatedArrivals::new(vec![Arrival {
+            send_time_secs: 1.0,
+            class: "retrieval".into(),
+        }])
+        .unwrap();
+        let result = simulate(&fx, &arrivals, u64::MAX);
+        assert!(
+            matches!(result, Err(WorkloadError::CompletionTimeOverflow { .. })),
+            "got {:?}",
+            result.map(|(_, r)| r)
+        );
+    }
+
+    // ---- TM16-036: the batch count is the denominator -----------------------
+
+    #[test]
+    fn ops_are_distributed_exactly() {
+        for threads in [1usize, 2, 4, 8] {
+            for total in [1usize, threads - 1, threads, threads + 1, 1_000, 1_001] {
+                let shares = distribute_ops(total, threads);
+                assert_eq!(shares.len(), threads);
+                assert_eq!(
+                    shares.iter().sum::<usize>(),
+                    total,
+                    "t={threads} total={total}"
+                );
+                let (min, max) = (
+                    shares.iter().min().copied().unwrap(),
+                    shares.iter().max().copied().unwrap(),
+                );
+                assert!(max - min <= 1, "balanced within one: {shares:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_contention_run_completes_exactly_the_requested_count() {
+        for threads in [1usize, 2, 4, 8] {
+            for total in [1usize, threads - 1, threads, threads + 1, 257] {
+                if total == 0 {
+                    continue;
+                }
+                let run = contention_run(threads, total);
+                assert_eq!(run.completed_ops, total, "t={threads} total={total}");
+                assert_eq!(run.threads, threads);
+            }
+        }
+    }
+
+    #[test]
     fn contention_runner_reports_positive_throughput() {
-        let tput = contention_throughput(2, 2_000);
-        assert!(tput > 0.0, "throughput must be positive: {tput}");
+        let run = contention_run(2, 4_000);
+        assert!(run.throughput_per_sec() > 0.0, "{run:?}");
+        assert!(contention_throughput(2, 2_000) > 0.0);
     }
 }

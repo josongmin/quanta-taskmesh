@@ -44,7 +44,7 @@ fn permit_and_inflight_move_together() {
     assert_eq!(snap.cpu_units_held, 2);
     assert_eq!(snap.memory_units_held, 3);
 
-    g.release(p1);
+    assert_eq!(g.release(p1), ReleaseOutcome::Released);
     let snap = &g.snapshot().classes[&c];
     assert_eq!(snap.inflight, 0);
     assert_eq!(snap.cpu_units_held, 0);
@@ -52,9 +52,10 @@ fn permit_and_inflight_move_together() {
 }
 
 #[test]
-fn release_of_unknown_permit_is_noop() {
+fn release_of_unknown_permit_is_reported_not_swallowed() {
     let g = gov(vec![("c", ClassPolicy::new())]);
-    g.release(99_999); // must not panic or underflow
+    // Must not panic or underflow — and must not pretend it released anything.
+    assert_eq!(g.release(99_999), ReleaseOutcome::UnknownPermit);
     assert_eq!(g.snapshot().classes[&TaskClass::new("c")].inflight, 0);
 }
 
@@ -65,7 +66,7 @@ fn double_release_does_not_underflow() {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
     };
-    g.release(p);
-    g.release(p);
+    assert_eq!(g.release(p), ReleaseOutcome::Released);
+    assert_eq!(g.release(p), ReleaseOutcome::UnknownPermit);
     assert_eq!(g.snapshot().classes[&TaskClass::new("c")].inflight, 0);
 }

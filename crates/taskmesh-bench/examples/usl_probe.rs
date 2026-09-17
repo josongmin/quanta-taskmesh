@@ -7,7 +7,7 @@
 
 use std::thread::available_parallelism;
 
-use taskmesh_bench::loadgen::contention_throughput;
+use taskmesh_bench::loadgen::contention_run;
 use taskmesh_bench::metrics::{argmax_throughput, fit_usl};
 
 fn main() {
@@ -30,7 +30,7 @@ fn main() {
     let mut samples = Vec::new();
     for &t in &levels {
         let tput = (0..runs)
-            .map(|_| contention_throughput(t, ops))
+            .map(|_| contention_run(t, t * ops).throughput_per_sec())
             .sum::<f64>()
             / runs as f64;
         println!("{t:>8}  {tput:>16.0}");
@@ -53,7 +53,14 @@ fn main() {
                     (Some(nmax), Some(peak)) => {
                         println!("predicted peak:  N_max≈{nmax:.1} threads  @  {peak:.0} ops/s")
                     }
-                    _ => println!("near-linear scaling within range (α≈0, β≈0)"),
+                    // β ≤ 0 inside the domain means the model has no finite
+                    // peak. That is a statement about the *model*, not a claim
+                    // that scaling is linear: α may still be large.
+                    _ => println!(
+                        "no finite USL peak (β≤0): saturation without a peak in the measured \
+                         range; α={:.5} is the contention share, not 'near-linear'",
+                        fit.alpha
+                    ),
                 }
             } else {
                 // α≥1 or β<0: throughput degrades as workers are added. Reporting

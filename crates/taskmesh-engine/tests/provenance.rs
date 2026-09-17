@@ -48,7 +48,7 @@ fn provenance_is_auditable_for_an_admitted_permit() {
     assert_eq!(prov.reason, ClassificationRationale::DerivedFromRequestKind);
 
     // Gone after release (no longer a live permit).
-    g.release(permit);
+    assert_eq!(g.release(permit), ReleaseOutcome::Released);
     assert!(g.permit_provenance(permit).is_none());
 }
 
@@ -83,8 +83,10 @@ fn provenance_survives_the_queue_promotion_path() {
         o => panic!("{o:?}"),
     };
 
-    g.release(occupy); // promotes the queued request
-    let permit = g.claim(ticket).expect("promoted");
+    assert_eq!(g.release(occupy), ReleaseOutcome::Released); // promotes the queued request
+    let ClaimOutcome::Ready(permit) = g.claim(ticket) else {
+        panic!("expected promoted provenance ticket");
+    };
     let prov = g
         .permit_provenance(permit)
         .expect("provenance preserved through promotion");

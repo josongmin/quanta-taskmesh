@@ -80,6 +80,6 @@ fn root_attribution_clears_on_release() {
         o => panic!("{o:?}"),
     };
     assert!(g.root_attribution("root-3").is_some());
-    g.release(permit);
+    assert_eq!(g.release(permit), ReleaseOutcome::Released);
     assert!(g.root_attribution("root-3").is_none());
 }

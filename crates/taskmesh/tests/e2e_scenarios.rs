@@ -275,7 +275,9 @@ async fn backpressure_retry_makes_forward_progress() {
     let rt_h = rt.clone();
     let holder = tokio::spawn(async move {
         rt_h.run_blocking(TaskSpec::blocking(cls("c")).operation("hold"), move || {
-            let _ = hold.blocking_recv();
+            // A signal or a dropped sender both release the holder: a test that fails
+            // before signalling never hangs on its own fixture.
+            let _released = hold.blocking_recv();
             Ok::<_, ()>(())
         })
         .await
@@ -396,7 +398,7 @@ fn accounting_conservation_under_randomized_ops() {
             }
         } else {
             let idx = (lcg.next() as usize) % held.len();
-            g.release(held.swap_remove(idx));
+            assert_eq!(g.release(held.swap_remove(idx)), ReleaseOutcome::Released);
         }
 
         let snap = rt.snapshot();
@@ -404,18 +406,18 @@ fn accounting_conservation_under_randomized_ops() {
         assert_eq!(cs.inflight as usize, held.len(), "inflight at step {step}");
         assert_eq!(
             cs.cpu_units_held,
-            held.len() as u32 * 2,
+            held.len() as u128 * 2,
             "cpu at step {step}"
         );
         assert_eq!(
             cs.memory_units_held,
-            held.len() as u32 * 3,
+            held.len() as u128 * 3,
             "mem at step {step}"
         );
     }
 
     for p in held {
-        g.release(p);
+        assert_eq!(g.release(p), ReleaseOutcome::Released);
     }
     assert_drained(&rt, &["c"]);
 }
@@ -479,7 +481,7 @@ fn composite_pipeline_attribution_recursion_and_reduce() {
 
     // Releasing all children clears the root attribution.
     for p in permits {
-        g.release(p);
+        assert_eq!(g.release(p), ReleaseOutcome::Released);
     }
     assert!(g.root_attribution("root-1").is_none());
 }
@@ -503,7 +505,8 @@ fn memory_reconcile_lifecycle_is_consistent() {
             ClassPolicy::new()
                 .max_inflight(8)
                 .memory_units(5)
-                .memory_permit_mode(MemoryPermitMode::Hybrid),
+                .memory_permit_mode(MemoryPermitMode::Hybrid)
+                .memory_release_policy(MemoryReleasePolicy::OnStageBoundary),
         )
         .build()
         .unwrap();
@@ -524,7 +527,7 @@ fn memory_reconcile_lifecycle_is_consistent() {
     assert_eq!(mem(&rt), 5, "hybrid never drops below estimate");
 
     let freed = g.release_stage_memory(p, 2);
-    assert_eq!(freed, 2);
+    assert_eq!(freed, StageReleaseOutcome::Released { freed_units: 2 });
     assert_eq!(mem(&rt), 3);
     assert_eq!(
         rt.snapshot().classes[&h].inflight,
@@ -532,7 +535,7 @@ fn memory_reconcile_lifecycle_is_consistent() {
         "stage release keeps the permit alive"
     );
 
-    g.release(p);
+    assert_eq!(g.release(p), ReleaseOutcome::Released);
     assert_drained(&rt, &["h"]);
 }
 

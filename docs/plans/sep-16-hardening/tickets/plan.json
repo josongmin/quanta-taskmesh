@@ -1,0 +1,1428 @@
+{
+  "schema_version": 1,
+  "status": "PLANNED",
+  "created_at": "2026-09-16",
+  "source_head": "9ae9547216c70458f54f37368a67661321060886",
+  "baseline_state": "main; tracked clean; docs/bugbash untracked",
+  "scope": "documentation plan only; no implementation or runtime qualification",
+  "source_bugs": [
+    {
+      "id": "TM16-001",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-001-substrate-waiters-bypass-bounded-admission.md",
+      "sha256": "87c749d821eeac40897372242275e7aa14e23406d6c5fa7c088c7a4ba5f32a90"
+    },
+    {
+      "id": "TM16-002",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-002-blocking-runfor-deadline-is-inert.md",
+      "sha256": "3a4d79b3c39b17eedc1be86f4252a41533e7e242b38460528a5a65686625548f"
+    },
+    {
+      "id": "TM16-003",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-003-invalid-topology-panics.md",
+      "sha256": "49cf0f3679bcda6cae118eaefad81302afed57faa401b02f535e9b581788bbe6"
+    },
+    {
+      "id": "TM16-004",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-004-policyset-default-inventory-bypass.md",
+      "sha256": "2948a360d4172ca76a8599ff9b4e2d616bb0e52011d556c8fcc993e34dc481c3"
+    },
+    {
+      "id": "TM16-005",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-005-memory-release-policy-not-enforced.md",
+      "sha256": "ca35f05e1fa3658ad18c03a6d5a9e05dd91b8c992fd189fe31d3165c92ee6bf2"
+    },
+    {
+      "id": "TM16-006",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-006-local-gates-not-enforced-by-ci.md",
+      "sha256": "ff87f439af11c66517ad821423f7c2de3c9cef70293d433813dc82f96ae77900"
+    },
+    {
+      "id": "TM16-007",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-007-dependency-advisories.md",
+      "sha256": "9cf47401fbff1f09b1857547cf7162ccec8043112bdbf63bce5e559391e762fa"
+    },
+    {
+      "id": "TM16-008",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-008-resource-counter-saturation.md",
+      "sha256": "1265a99f1caca19aabba1d40471728d267a7badb07f5c098524f26cd3c9223d3"
+    },
+    {
+      "id": "TM16-009",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-009-stage-activity-does-not-touch-leak-lease.md",
+      "sha256": "482ad69bbd49bd9d4c5c5833c55ca5666758cd912268e97a823423185d261216"
+    },
+    {
+      "id": "TM16-010",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-010-leak-sweep-leaves-dead-claim.md",
+      "sha256": "3bb417dee72f514c806827d6a27eed32454e79a0096ec9b64822d91cdeb84164"
+    },
+    {
+      "id": "TM16-011",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-011-estimated-reconcile-undoes-stage-release.md",
+      "sha256": "558083e4ef0e2027db9f80b1f8185d0254b9f3b3fbd9ce7d94ca46eb7bb7b7fa"
+    },
+    {
+      "id": "TM16-012",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-012-drr-unbounded-work-under-lock.md",
+      "sha256": "0f1873ad50934a26f05bc698c2a81fb526fee503ccdedb6065f1597427b8cc5d"
+    },
+    {
+      "id": "TM16-013",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-013-wfq-zero-increment.md",
+      "sha256": "09bc7209a19fe55b5e7e3d29d88821337cbba9052c35cc694670c6780a32c9ee"
+    },
+    {
+      "id": "TM16-014",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-014-wfq-cancelled-service-debt.md",
+      "sha256": "8e3997aa72a3f3db5571965a6816df8f17ad133675b584d23bd2de8dc8c49c54"
+    },
+    {
+      "id": "TM16-015",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-015-requested-stack-completion-before-release.md",
+      "sha256": "8e79f1764ad4eb6eae5af2c94b2ff55676129bf58547c495ad51fc7bdd528516"
+    },
+    {
+      "id": "TM16-016",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-016-architecture-checker-false-green.md",
+      "sha256": "2bfb836fd655c0d10b224c7b3003d45d1ae180d3f7061664ccf611281d5ad370"
+    },
+    {
+      "id": "TM16-017",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-017-semgrep-test-enrollment-gap.md",
+      "sha256": "214961b0f1b991e983dae053fe4f8f7221e1d91c0e968e75517c9b8d9e1fa28e"
+    },
+    {
+      "id": "TM16-018",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-018-benchmarks-skip-intended-work.md",
+      "sha256": "bb20e35b54d32a3cc92d08473a20dee1a6e5c5433bb504cfa30c6eb5cf810ec6"
+    },
+    {
+      "id": "TM16-019",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-019-benchmark-workflow-swallowed-failures.md",
+      "sha256": "cd0ba41af7b91f6789321ade101039019c5436bb5340a38cf4af1f23b5297c08"
+    },
+    {
+      "id": "TM16-020",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-020-iai-proof-config-and-baseline-mismatch.md",
+      "sha256": "ade86aa6dcfe63ae50b264499b3db6cb07b1b8f249090d3aa5902281d3a1c7fd"
+    },
+    {
+      "id": "TM16-021",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-021-developer-toolchain-floor.md",
+      "sha256": "3b07079028a6821ca51b1536af67cb51dd655e198d0b72f9a6dfb4e481f81a35"
+    },
+    {
+      "id": "TM16-022",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-022-cpu-relative-deadline-starts-after-spawn.md",
+      "sha256": "78a8fc0dd5a28cfc24a93869ecb197f5b6b12580ab0a7d0f30c512e555e72cea"
+    },
+    {
+      "id": "TM16-023",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-023-stack-dispatch-bypasses-capability.md",
+      "sha256": "9ef97f5a4a28ca206d05cd7fff2b8ca13f33d92ecea572958f89eae35178563e"
+    },
+    {
+      "id": "TM16-024",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-024-requested-stack-shutdown-delays-deadline.md",
+      "sha256": "d5a5759f3fdc0fd4f1ef1aaff374533af2d2f531add5836872ad08ee87ce4658"
+    },
+    {
+      "id": "TM16-025",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-025-prompt-manager-real-target-drift.md",
+      "sha256": "cfbe72151934fbd9df8da70bfa49624fe5d5b24251bf409a557d256891d13e0a"
+    },
+    {
+      "id": "TM16-026",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-026-lease-timestamp-before-state-commit.md",
+      "sha256": "59d41ec6ae67cdd962d9f510d9325bace3421317d665cce396242076ff368a3e"
+    },
+    {
+      "id": "TM16-027",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-027-invalid-trace-times-not-rejected.md",
+      "sha256": "13dd5c17a07356be37c38a0aa5426a0f8a03dbc43beaaa1b413c41f81bd2fd85"
+    },
+    {
+      "id": "TM16-028",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-028-mmpp-crosses-phases-with-old-rate.md",
+      "sha256": "4050005c0cc6e3d2167a1b3b176c2b8c2fa8088d5ae0ef597a54823ab97b2d23"
+    },
+    {
+      "id": "TM16-029",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-029-open-loop-double-corrects-latency.md",
+      "sha256": "32d3d63a41fa5543a53e3c3ac3fdd2ae308f692cd17dbcf9cc6bcef83b2d45d4"
+    },
+    {
+      "id": "TM16-030",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-030-waker-destructor-under-governor-lock.md",
+      "sha256": "9069273609aca6ab15d2519cfa0c6a6adbfecf5a7ca754866560bea67eae329c"
+    },
+    {
+      "id": "TM16-031",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-031-class-nul-panics-thread-construction.md",
+      "sha256": "30d8775fb691f4675d4d1d4e98b7b46a147b4e951a0416c4f88e2ebf912a157c"
+    },
+    {
+      "id": "TM16-032",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-032-acquire-timeout-ignores-admission-lock-wait.md",
+      "sha256": "bdfb71a63f253b0415c19ec4b967928cce1db154ca21b2130616cddecb6db897"
+    },
+    {
+      "id": "TM16-033",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-033-test-quality-refers-to-missing-gates.md",
+      "sha256": "2e009609c264f3e0f7ba0563e438c5c397018c4438b55d450a9853141afa11f9"
+    },
+    {
+      "id": "TM16-034",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-034-iai-input-teardown-in-measurement.md",
+      "sha256": "3e996da071d94427fc148a643986dac344ebfc36c555de81bb0714f6fcecce4f"
+    },
+    {
+      "id": "TM16-035",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-035-pm-template-path-collapses-to-basename.md",
+      "sha256": "4fc6b71be7d75a847ac6f82bf81367b35bae69f1c5a36bc2123f4921210b56df"
+    },
+    {
+      "id": "TM16-036",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-036-contention-bench-iteration-denominator.md",
+      "sha256": "88567a7290c234643004d96edd17c94c56dedf75409171edd94a350133323a30"
+    },
+    {
+      "id": "TM16-037",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-037-drr-idle-credit-accumulation.md",
+      "sha256": "e97f5525b8cded096b8bb2ecf7444f89fdb65d44f96693e6066fd20d345f0856"
+    },
+    {
+      "id": "TM16-038",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-038-allocation-gate-malformed-number-passes.md",
+      "sha256": "ce599de91e0f7d56609935a3b5af6f39f4e8ba4d08036e07470b050636e659a1"
+    },
+    {
+      "id": "TM16-039",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-039-pm-duplicate-target-key-hides-output.md",
+      "sha256": "53a69acfd2a6e8ca4fc99481154126070f70e08a5efd9481b678e0b8f624754a"
+    },
+    {
+      "id": "TM16-040",
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-040-mixed-soak-discards-all-run-errors.md",
+      "sha256": "8b94d28c1c9c93d166a146be5f68ca8f6c37662653390111098ae28d5075c21c"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "D01",
+      "status": "PROPOSED",
+      "owner": "I/E",
+      "tickets": [
+        "H16-002",
+        "H16-003",
+        "H16-009"
+      ]
+    },
+    {
+      "id": "D02",
+      "status": "PROPOSED",
+      "owner": "E",
+      "tickets": [
+        "H16-004",
+        "H16-005"
+      ]
+    },
+    {
+      "id": "D03",
+      "status": "PROPOSED",
+      "owner": "I/R",
+      "tickets": [
+        "H16-008",
+        "H16-010"
+      ]
+    },
+    {
+      "id": "D04",
+      "status": "PROPOSED",
+      "owner": "I/R",
+      "tickets": [
+        "H16-008",
+        "H16-011"
+      ]
+    },
+    {
+      "id": "D05",
+      "status": "PROPOSED",
+      "owner": "R/I",
+      "tickets": [
+        "H16-009",
+        "H16-010",
+        "H16-011"
+      ]
+    },
+    {
+      "id": "D06",
+      "status": "PROPOSED",
+      "owner": "E/I",
+      "tickets": [
+        "H16-004",
+        "H16-013"
+      ]
+    },
+    {
+      "id": "D07",
+      "status": "PROPOSED",
+      "owner": "E",
+      "tickets": [
+        "H16-005",
+        "H16-012"
+      ]
+    },
+    {
+      "id": "D08",
+      "status": "PROPOSED",
+      "owner": "F/I",
+      "tickets": [
+        "H16-007",
+        "H16-010"
+      ]
+    },
+    {
+      "id": "D09",
+      "status": "PROPOSED",
+      "owner": "I/R",
+      "tickets": [
+        "H16-002",
+        "H16-012"
+      ]
+    },
+    {
+      "id": "D10",
+      "status": "PROPOSED",
+      "owner": "R/I",
+      "tickets": [
+        "H16-011",
+        "H16-012"
+      ]
+    },
+    {
+      "id": "D11",
+      "status": "PROPOSED",
+      "owner": "Q/I",
+      "tickets": [
+        "H16-020"
+      ]
+    },
+    {
+      "id": "D12",
+      "status": "PROPOSED",
+      "owner": "I/R",
+      "tickets": [
+        "H16-009",
+        "H16-010",
+        "H16-012"
+      ]
+    }
+  ],
+  "quality_items": [
+    {
+      "id": "Q01",
+      "topic": "진단 error context",
+      "tickets": [
+        "H16-011",
+        "H16-013"
+      ],
+      "planned_disposition": "FIX"
+    },
+    {
+      "id": "Q02",
+      "topic": "expected receiver drop/send failure",
+      "tickets": [
+        "H16-006",
+        "H16-018"
+      ],
+      "planned_disposition": "CLASSIFY"
+    },
+    {
+      "id": "Q03",
+      "topic": "optional ambient runtime lookup",
+      "tickets": [
+        "H16-021"
+      ],
+      "planned_disposition": "RETAIN"
+    },
+    {
+      "id": "Q04",
+      "topic": "control lookup 중복",
+      "tickets": [
+        "H16-008"
+      ],
+      "planned_disposition": "CONSOLIDATE"
+    },
+    {
+      "id": "Q05",
+      "topic": "worker handoff 중복",
+      "tickets": [
+        "H16-011",
+        "H16-012"
+      ],
+      "planned_disposition": "CONSOLIDATE"
+    },
+    {
+      "id": "Q06",
+      "topic": "RequestKey/죽은 pending fields",
+      "tickets": [
+        "H16-021"
+      ],
+      "planned_disposition": "AUDIT_REMOVE"
+    },
+    {
+      "id": "Q07",
+      "topic": "built-in definition 중복",
+      "tickets": [
+        "H16-002"
+      ],
+      "planned_disposition": "CONSOLIDATE"
+    },
+    {
+      "id": "Q08",
+      "topic": "중복 local/CI rail",
+      "tickets": [
+        "H16-018"
+      ],
+      "planned_disposition": "CONSOLIDATE"
+    },
+    {
+      "id": "Q09",
+      "topic": "scanner rule/metadata 권위",
+      "tickets": [
+        "H16-018"
+      ],
+      "planned_disposition": "FIX"
+    },
+    {
+      "id": "Q10",
+      "topic": "PM branding/template drift",
+      "tickets": [
+        "H16-020",
+        "H16-021"
+      ],
+      "planned_disposition": "FIX"
+    },
+    {
+      "id": "Q11",
+      "topic": "reserved burst/DropBestEffort",
+      "tickets": [
+        "H16-021"
+      ],
+      "planned_disposition": "RETAIN_OR_DEFER"
+    },
+    {
+      "id": "Q12",
+      "topic": "DAG/reduce/checkpoint 선언면",
+      "tickets": [
+        "H16-001",
+        "H16-021"
+      ],
+      "planned_disposition": "RETAIN"
+    },
+    {
+      "id": "Q13",
+      "topic": "recursion/root dedupe",
+      "tickets": [
+        "H16-001",
+        "H16-021"
+      ],
+      "planned_disposition": "RETAIN"
+    },
+    {
+      "id": "Q14",
+      "topic": "빈/Unicode class identity",
+      "tickets": [
+        "H16-001",
+        "H16-002",
+        "H16-021"
+      ],
+      "planned_disposition": "DECIDE"
+    },
+    {
+      "id": "Q15",
+      "topic": "fallback policy identity",
+      "tickets": [
+        "H16-008"
+      ],
+      "planned_disposition": "DECIDE"
+    },
+    {
+      "id": "Q16",
+      "topic": "running stale reclaim",
+      "tickets": [
+        "H16-005",
+        "H16-012"
+      ],
+      "planned_disposition": "FIX"
+    },
+    {
+      "id": "Q17",
+      "topic": "per-request measured soft accounting",
+      "tickets": [
+        "H16-005",
+        "H16-021"
+      ],
+      "planned_disposition": "CLARIFY"
+    },
+    {
+      "id": "Q18",
+      "topic": "shared external executor capacity",
+      "tickets": [
+        "H16-011"
+      ],
+      "planned_disposition": "FIX_OR_REJECT"
+    },
+    {
+      "id": "Q19",
+      "topic": "retry hint zero",
+      "tickets": [
+        "H16-007",
+        "H16-021"
+      ],
+      "planned_disposition": "CLARIFY"
+    },
+    {
+      "id": "Q20",
+      "topic": "monotonic clock",
+      "tickets": [
+        "H16-005"
+      ],
+      "planned_disposition": "FIX"
+    },
+    {
+      "id": "Q21",
+      "topic": "README queue 의미",
+      "tickets": [
+        "H16-021"
+      ],
+      "planned_disposition": "FIX"
+    },
+    {
+      "id": "Q22",
+      "topic": "root/queued exact invariants",
+      "tickets": [
+        "H16-003",
+        "H16-004",
+        "H16-013"
+      ],
+      "planned_disposition": "FIX"
+    },
+    {
+      "id": "Q23",
+      "topic": "PM path containment",
+      "tickets": [
+        "H16-020"
+      ],
+      "planned_disposition": "DECIDE"
+    },
+    {
+      "id": "Q24",
+      "topic": "fixed sleep fixture",
+      "tickets": [
+        "H16-014",
+        "H16-015"
+      ],
+      "planned_disposition": "HARDEN"
+    },
+    {
+      "id": "Q25",
+      "topic": "USL no peak/undefined tail",
+      "tickets": [
+        "H16-016",
+        "H16-021"
+      ],
+      "planned_disposition": "FIX"
+    },
+    {
+      "id": "Q26",
+      "topic": "abandon-without-promote 후보",
+      "tickets": [
+        "H16-007"
+      ],
+      "planned_disposition": "VERIFY_RETAIN"
+    },
+    {
+      "id": "Q27",
+      "topic": "custom waker panic",
+      "tickets": [
+        "H16-006"
+      ],
+      "planned_disposition": "HARDEN"
+    },
+    {
+      "id": "Q28",
+      "topic": "O(Q²) cancellation/batch scale",
+      "tickets": [
+        "H16-006",
+        "H16-007"
+      ],
+      "planned_disposition": "MEASURE_BOUND"
+    },
+    {
+      "id": "Q29",
+      "topic": "Loom/Shuttle model realism",
+      "tickets": [
+        "H16-014"
+      ],
+      "planned_disposition": "FIX_PROOF"
+    },
+    {
+      "id": "Q30",
+      "topic": "unknown serde fields",
+      "tickets": [
+        "H16-001",
+        "H16-021"
+      ],
+      "planned_disposition": "RETAIN_OR_DECIDE"
+    },
+    {
+      "id": "Q31",
+      "topic": "LocalSet affinity/non-Send",
+      "tickets": [
+        "H16-014",
+        "H16-021"
+      ],
+      "planned_disposition": "RETAIN_TEST"
+    },
+    {
+      "id": "Q32",
+      "topic": "measurement qualification gaps",
+      "tickets": [
+        "H16-017",
+        "H16-022"
+      ],
+      "planned_disposition": "QUALIFY"
+    },
+    {
+      "id": "Q33",
+      "topic": "external activation evidence",
+      "tickets": [
+        "H16-022"
+      ],
+      "planned_disposition": "EXTERNAL"
+    }
+  ],
+  "tickets": [
+    {
+      "id": "H16-001",
+      "file": "H16-001-contracts-and-compatibility.md",
+      "title": "계약·호환성 결정과 migration 경계",
+      "owner": "I",
+      "priority": "P0",
+      "status": "PLANNED",
+      "depends_on": [],
+      "source_bugs": [],
+      "locks": [
+        "contract",
+        "host",
+        "engine"
+      ],
+      "existing_paths": [
+        "crates/taskmesh-contract/src/policy.rs",
+        "crates/taskmesh-contract/src/ports.rs",
+        "crates/taskmesh-contract/src/runtime.rs",
+        "crates/taskmesh-engine/src/shared/mod.rs"
+      ],
+      "proposed_paths": [
+        "docs/adr/hardening-contracts.md"
+      ],
+      "acceptance_ids": [
+        "H16-001-A01",
+        "H16-001-A02",
+        "H16-001-A03",
+        "H16-001-A04"
+      ]
+    },
+    {
+      "id": "H16-002",
+      "file": "H16-002-validated-policy-topology.md",
+      "title": "Validated policy·canonical inventory·topology 검증",
+      "owner": "E",
+      "priority": "P0",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-001"
+      ],
+      "source_bugs": [
+        "TM16-003",
+        "TM16-004"
+      ],
+      "locks": [
+        "contract",
+        "engine",
+        "host",
+        "rayon"
+      ],
+      "existing_paths": [
+        "crates/taskmesh-engine/src/shared/mod.rs",
+        "crates/taskmesh-engine/src/features/inventory/mod.rs",
+        "crates/taskmesh-engine/src/engine/governor.rs",
+        "crates/taskmesh-contract/src/topology.rs",
+        "crates/taskmesh/src/builder.rs",
+        "crates/taskmesh-rayon/src/lib.rs",
+        "crates/taskmesh-engine/tests/config_validation.rs",
+        "crates/taskmesh-engine/tests/substrate_inventory.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh-engine/src/shared/validated_policy.rs"
+      ],
+      "acceptance_ids": [
+        "H16-002-A01",
+        "H16-002-A02",
+        "H16-002-A03",
+        "H16-002-A04",
+        "H16-002-A05"
+      ]
+    },
+    {
+      "id": "H16-003",
+      "file": "H16-003-terminal-ticket-lifecycle.md",
+      "title": "단일 ticket lifecycle과 terminal claim",
+      "owner": "E",
+      "priority": "P0",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-002"
+      ],
+      "source_bugs": [
+        "TM16-010"
+      ],
+      "locks": [
+        "contract",
+        "engine",
+        "host"
+      ],
+      "existing_paths": [
+        "crates/taskmesh-engine/src/engine/state.rs",
+        "crates/taskmesh-engine/src/engine/governor.rs",
+        "crates/taskmesh-engine/src/shared/mod.rs",
+        "crates/taskmesh-engine/src/features/admission/mod.rs",
+        "crates/taskmesh-engine/src/features/memory/mod.rs",
+        "crates/taskmesh/src/runtime.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh-engine/src/engine/lifecycle.rs",
+        "crates/taskmesh-engine/tests/hardening_lifecycle.rs"
+      ],
+      "acceptance_ids": [
+        "H16-003-A01",
+        "H16-003-A02",
+        "H16-003-A03",
+        "H16-003-A04",
+        "H16-003-A05",
+        "H16-003-A06",
+        "H16-003-A07"
+      ]
+    },
+    {
+      "id": "H16-004",
+      "file": "H16-004-exact-resource-accounting.md",
+      "title": "정확한 resource accounting과 snapshot 폭",
+      "owner": "E",
+      "priority": "P0",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-003"
+      ],
+      "source_bugs": [
+        "TM16-008"
+      ],
+      "locks": [
+        "contract",
+        "engine"
+      ],
+      "existing_paths": [
+        "crates/taskmesh-contract/src/resource.rs",
+        "crates/taskmesh-contract/src/snapshot.rs",
+        "crates/taskmesh-engine/src/engine/state.rs",
+        "crates/taskmesh-engine/src/shared/mod.rs",
+        "crates/taskmesh-engine/src/features/memory/mod.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh-engine/tests/hardening_exact_accounting.rs"
+      ],
+      "acceptance_ids": [
+        "H16-004-A01",
+        "H16-004-A02",
+        "H16-004-A03",
+        "H16-004-A04",
+        "H16-004-A05"
+      ]
+    },
+    {
+      "id": "H16-005",
+      "file": "H16-005-memory-epochs-and-lease-clock.md",
+      "title": "Memory reservation·measurement epoch·lease clock",
+      "owner": "E",
+      "priority": "P1",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-004"
+      ],
+      "source_bugs": [
+        "TM16-005",
+        "TM16-009",
+        "TM16-011",
+        "TM16-026"
+      ],
+      "locks": [
+        "contract",
+        "engine"
+      ],
+      "existing_paths": [
+        "crates/taskmesh-engine/src/features/memory/mod.rs",
+        "crates/taskmesh-engine/src/engine/governor.rs",
+        "crates/taskmesh-engine/src/engine/state.rs",
+        "crates/taskmesh-contract/src/ports.rs",
+        "crates/taskmesh-contract/src/policy.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh-engine/tests/hardening_memory_epochs.rs"
+      ],
+      "acceptance_ids": [
+        "H16-005-A01",
+        "H16-005-A02",
+        "H16-005-A03",
+        "H16-005-A04",
+        "H16-005-A05",
+        "H16-005-A06"
+      ]
+    },
+    {
+      "id": "H16-006",
+      "file": "H16-006-effects-and-bounded-promotion.md",
+      "title": "Lock 밖 effect retirement와 bounded promotion",
+      "owner": "E",
+      "priority": "P0",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-005"
+      ],
+      "source_bugs": [
+        "TM16-030"
+      ],
+      "locks": [
+        "engine",
+        "host"
+      ],
+      "existing_paths": [
+        "crates/taskmesh-engine/src/engine/governor.rs",
+        "crates/taskmesh-engine/src/engine/state.rs",
+        "crates/taskmesh-engine/src/features/admission/mod.rs",
+        "crates/taskmesh/src/adapters/permit_waker.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh-engine/src/engine/effects.rs",
+        "crates/taskmesh-engine/tests/hardening_effect_retirement.rs"
+      ],
+      "acceptance_ids": [
+        "H16-006-A01",
+        "H16-006-A02",
+        "H16-006-A03",
+        "H16-006-A04",
+        "H16-006-A05",
+        "H16-006-A06"
+      ]
+    },
+    {
+      "id": "H16-007",
+      "file": "H16-007-fairness-reference-and-credit.md",
+      "title": "Fairness reference·bounded cost·credit 정합성",
+      "owner": "F",
+      "priority": "P1",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-006"
+      ],
+      "source_bugs": [
+        "TM16-012",
+        "TM16-013",
+        "TM16-014",
+        "TM16-037"
+      ],
+      "locks": [
+        "engine"
+      ],
+      "existing_paths": [
+        "crates/taskmesh-engine/src/features/fairness/scheduler.rs",
+        "crates/taskmesh-engine/src/features/fairness/retry_after.rs",
+        "crates/taskmesh-engine/tests/fairness_drr_deadline.rs",
+        "crates/taskmesh-engine/tests/fairness_weighted.rs",
+        "crates/taskmesh-bench/tests/fairness_property.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh-engine/tests/hardening_fairness_reference.rs"
+      ],
+      "acceptance_ids": [
+        "H16-007-A01",
+        "H16-007-A02",
+        "H16-007-A03",
+        "H16-007-A04",
+        "H16-007-A05",
+        "H16-007-A06"
+      ]
+    },
+    {
+      "id": "H16-008",
+      "file": "H16-008-resolved-execution-plan.md",
+      "title": "Resolved execution plan과 실제 capability 일치",
+      "owner": "R",
+      "priority": "P0",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-002"
+      ],
+      "source_bugs": [
+        "TM16-023"
+      ],
+      "locks": [
+        "contract",
+        "host"
+      ],
+      "existing_paths": [
+        "crates/taskmesh/src/runtime.rs",
+        "crates/taskmesh/src/builder.rs",
+        "crates/taskmesh-contract/src/task.rs",
+        "crates/taskmesh-engine/src/features/admission/mod.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh/src/execution_plan.rs",
+        "crates/taskmesh/tests/hardening_dispatch_resolution.rs"
+      ],
+      "acceptance_ids": [
+        "H16-008-A01",
+        "H16-008-A02",
+        "H16-008-A03",
+        "H16-008-A04",
+        "H16-008-A05"
+      ]
+    },
+    {
+      "id": "H16-009",
+      "file": "H16-009-bounded-intake.md",
+      "title": "대기 이전 bounded intake와 pending accounting",
+      "owner": "R",
+      "priority": "P0",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-006",
+        "H16-008"
+      ],
+      "source_bugs": [
+        "TM16-001"
+      ],
+      "locks": [
+        "engine",
+        "host",
+        "contract"
+      ],
+      "existing_paths": [
+        "crates/taskmesh/src/runtime.rs",
+        "crates/taskmesh/src/executor/cancel.rs",
+        "crates/taskmesh-engine/src/features/admission/mod.rs",
+        "crates/taskmesh-engine/src/engine/state.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh/src/intake.rs",
+        "crates/taskmesh/tests/hardening_intake_bounds.rs"
+      ],
+      "acceptance_ids": [
+        "H16-009-A01",
+        "H16-009-A02",
+        "H16-009-A03",
+        "H16-009-A04",
+        "H16-009-A05",
+        "H16-009-A06"
+      ]
+    },
+    {
+      "id": "H16-010",
+      "file": "H16-010-dispatch-integration.md",
+      "title": "단일 dispatch authority 통합",
+      "owner": "I",
+      "priority": "P0",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-007",
+        "H16-009",
+        "H16-012"
+      ],
+      "source_bugs": [],
+      "locks": [
+        "engine",
+        "host",
+        "contract",
+        "rayon"
+      ],
+      "existing_paths": [
+        "crates/taskmesh/src/runtime.rs",
+        "crates/taskmesh-engine/src/engine/governor.rs",
+        "crates/taskmesh-engine/src/engine/state.rs",
+        "crates/taskmesh-engine/src/features/fairness/scheduler.rs",
+        "crates/taskmesh-engine/src/features/admission/mod.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh/src/dispatch.rs",
+        "crates/taskmesh/tests/hardening_dispatch_interleavings.rs"
+      ],
+      "acceptance_ids": [
+        "H16-010-A01",
+        "H16-010-A02",
+        "H16-010-A03",
+        "H16-010-A04",
+        "H16-010-A05",
+        "H16-010-A06",
+        "H16-010-A07"
+      ]
+    },
+    {
+      "id": "H16-011",
+      "file": "H16-011-executor-protocol-and-setup.md",
+      "title": "Executor ownership protocol·worker setup 오류",
+      "owner": "R",
+      "priority": "P1",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-009"
+      ],
+      "source_bugs": [
+        "TM16-031"
+      ],
+      "locks": [
+        "contract",
+        "host",
+        "rayon"
+      ],
+      "existing_paths": [
+        "crates/taskmesh-contract/src/ports.rs",
+        "crates/taskmesh/src/executor/mod.rs",
+        "crates/taskmesh/src/executor/tokio_exec.rs",
+        "crates/taskmesh/src/runtime.rs",
+        "crates/taskmesh-rayon/src/lib.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh/src/executor/dispatch_protocol.rs",
+        "crates/taskmesh/tests/hardening_executor_protocol.rs"
+      ],
+      "acceptance_ids": [
+        "H16-011-A01",
+        "H16-011-A02",
+        "H16-011-A03",
+        "H16-011-A04",
+        "H16-011-A05",
+        "H16-011-A06"
+      ]
+    },
+    {
+      "id": "H16-012",
+      "file": "H16-012-deadlines-and-cleanup.md",
+      "title": "Deadline·completion fence·cleanup custody",
+      "owner": "R",
+      "priority": "P0",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-011"
+      ],
+      "source_bugs": [
+        "TM16-002",
+        "TM16-015",
+        "TM16-022",
+        "TM16-024",
+        "TM16-032"
+      ],
+      "locks": [
+        "host",
+        "engine",
+        "contract"
+      ],
+      "existing_paths": [
+        "crates/taskmesh/src/runtime.rs",
+        "crates/taskmesh/src/executor/cancel.rs",
+        "crates/taskmesh-engine/src/engine/governor.rs",
+        "crates/taskmesh/tests/deadline_cancel.rs",
+        "crates/taskmesh/tests/cancellation_policy.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh/tests/hardening_deadline_custody.rs"
+      ],
+      "acceptance_ids": [
+        "H16-012-A01",
+        "H16-012-A02",
+        "H16-012-A03",
+        "H16-012-A04",
+        "H16-012-A05",
+        "H16-012-A06",
+        "H16-012-A07"
+      ]
+    },
+    {
+      "id": "H16-013",
+      "file": "H16-013-observability-and-invariants.md",
+      "title": "Authoritative snapshot·진단·보존식",
+      "owner": "E",
+      "priority": "P1",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-010"
+      ],
+      "source_bugs": [],
+      "locks": [
+        "engine",
+        "host",
+        "contract"
+      ],
+      "existing_paths": [
+        "crates/taskmesh-contract/src/snapshot.rs",
+        "crates/taskmesh-engine/src/engine/governor.rs",
+        "crates/taskmesh-engine/src/engine/state.rs",
+        "crates/taskmesh/src/runtime.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh-engine/tests/hardening_snapshot_projection.rs"
+      ],
+      "acceptance_ids": [
+        "H16-013-A01",
+        "H16-013-A02",
+        "H16-013-A03",
+        "H16-013-A04",
+        "H16-013-A05",
+        "H16-013-A06"
+      ]
+    },
+    {
+      "id": "H16-014",
+      "file": "H16-014-production-regression-proof.md",
+      "title": "Production regression·mutation·concurrency proof",
+      "owner": "V",
+      "priority": "P1",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-013"
+      ],
+      "source_bugs": [
+        "TM16-040"
+      ],
+      "locks": [
+        "engine-tests",
+        "host-tests"
+      ],
+      "existing_paths": [
+        "crates/taskmesh/tests/e2e_chaos.rs",
+        "crates/taskmesh/tests/runtime_cancel_leak.rs",
+        "crates/taskmesh-engine/tests/loom_governance.rs",
+        "crates/taskmesh-engine/tests/shuttle_governance.rs",
+        "crates/taskmesh-engine/tests/prop_invariants.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh-engine/tests/hardening_model.rs",
+        "tools/verification/run_mutations.py"
+      ],
+      "acceptance_ids": [
+        "H16-014-A01",
+        "H16-014-A02",
+        "H16-014-A03",
+        "H16-014-A04",
+        "H16-014-A05"
+      ]
+    },
+    {
+      "id": "H16-015",
+      "file": "H16-015-benchmark-measurement.md",
+      "title": "Benchmark 실제 작업량·측정 경계·분모",
+      "owner": "B",
+      "priority": "P1",
+      "status": "PLANNED",
+      "depends_on": [],
+      "source_bugs": [
+        "TM16-018",
+        "TM16-034",
+        "TM16-036"
+      ],
+      "locks": [
+        "bench"
+      ],
+      "existing_paths": [
+        "crates/taskmesh-bench/examples/alloc_probe.rs",
+        "crates/taskmesh-bench/benches/iai_governance.rs",
+        "crates/taskmesh-bench/benches/composite_reduce.rs",
+        "crates/taskmesh-bench/benches/contention.rs",
+        "crates/taskmesh-bench/src/loadgen.rs",
+        "crates/taskmesh-bench/benches/host_edge_paths.rs",
+        "crates/taskmesh-bench/benches/governance_tax.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh-bench/tests/measurement_contract.rs"
+      ],
+      "acceptance_ids": [
+        "H16-015-A01",
+        "H16-015-A02",
+        "H16-015-A03",
+        "H16-015-A04",
+        "H16-015-A05"
+      ]
+    },
+    {
+      "id": "H16-016",
+      "file": "H16-016-workload-and-latency-model.md",
+      "title": "Validated workload·MMPP·raw latency",
+      "owner": "B",
+      "priority": "P1",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-015"
+      ],
+      "source_bugs": [
+        "TM16-027",
+        "TM16-028",
+        "TM16-029"
+      ],
+      "locks": [
+        "bench"
+      ],
+      "existing_paths": [
+        "crates/taskmesh-bench/src/workload.rs",
+        "crates/taskmesh-bench/src/loadgen.rs",
+        "crates/taskmesh-bench/src/metrics.rs",
+        "crates/taskmesh-bench/examples/loadgen_probe.rs",
+        "crates/taskmesh-bench/examples/usl_probe.rs"
+      ],
+      "proposed_paths": [
+        "crates/taskmesh-bench/tests/workload_reference.rs"
+      ],
+      "acceptance_ids": [
+        "H16-016-A01",
+        "H16-016-A02",
+        "H16-016-A03",
+        "H16-016-A04",
+        "H16-016-A05",
+        "H16-016-A06"
+      ]
+    },
+    {
+      "id": "H16-017",
+      "file": "H16-017-performance-gates.md",
+      "title": "Metric schema·실패 전파·baseline qualification",
+      "owner": "B",
+      "priority": "P1",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-016",
+        "H16-019"
+      ],
+      "source_bugs": [
+        "TM16-019",
+        "TM16-020",
+        "TM16-038"
+      ],
+      "locks": [
+        "bench",
+        "gate-tools",
+        "ci"
+      ],
+      "existing_paths": [
+        "tools/bench-gate.sh",
+        "tools/bench-iai.sh",
+        ".github/workflows/bench.yml",
+        "Justfile"
+      ],
+      "proposed_paths": [
+        "tools/tests/test_bench_gates.py",
+        "tools/bench/baseline-schema.json"
+      ],
+      "acceptance_ids": [
+        "H16-017-A01",
+        "H16-017-A02",
+        "H16-017-A03",
+        "H16-017-A04",
+        "H16-017-A05"
+      ]
+    },
+    {
+      "id": "H16-018",
+      "file": "H16-018-gate-inventory-and-ci.md",
+      "title": "검증 inventory·scanner enrollment·local/CI parity",
+      "owner": "C",
+      "priority": "P1",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-014",
+        "H16-017",
+        "H16-019",
+        "H16-020"
+      ],
+      "source_bugs": [
+        "TM16-006",
+        "TM16-016",
+        "TM16-017",
+        "TM16-033"
+      ],
+      "locks": [
+        "ci",
+        "gate-tools",
+        "engine-tests",
+        "host-tests"
+      ],
+      "existing_paths": [
+        "Justfile",
+        ".github/workflows/ci.yml",
+        ".github/workflows/bench.yml",
+        "tools/arch/check_crate_boundaries.py",
+        "tools/semgrep/tests/test_rules_fire.py",
+        "tools/semgrep/README.md"
+      ],
+      "proposed_paths": [
+        "tools/gates/inventory.json",
+        "tools/gates/run.py",
+        "tools/gates/validate_inventory.py",
+        "tools/gates/tests/test_inventory.py"
+      ],
+      "acceptance_ids": [
+        "H16-018-A01",
+        "H16-018-A02",
+        "H16-018-A03",
+        "H16-018-A04",
+        "H16-018-A05"
+      ]
+    },
+    {
+      "id": "H16-019",
+      "file": "H16-019-dependency-and-toolchain.md",
+      "title": "Dependency advisory·consumer/dev toolchain 분리",
+      "owner": "D",
+      "priority": "P1",
+      "status": "PLANNED",
+      "depends_on": [],
+      "source_bugs": [
+        "TM16-007",
+        "TM16-021"
+      ],
+      "locks": [
+        "manifests"
+      ],
+      "existing_paths": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "crates/taskmesh/Cargo.toml",
+        "crates/taskmesh-engine/Cargo.toml",
+        "config/deny.toml"
+      ],
+      "proposed_paths": [
+        "tools/consumer-msrv/Cargo.toml",
+        "tools/consumer-msrv/src/main.rs",
+        "rust-toolchain.toml"
+      ],
+      "acceptance_ids": [
+        "H16-019-A01",
+        "H16-019-A02",
+        "H16-019-A03",
+        "H16-019-A04"
+      ]
+    },
+    {
+      "id": "H16-020",
+      "file": "H16-020-pm-validated-render-plan.md",
+      "title": "PM validated render plan·safe apply",
+      "owner": "Q",
+      "priority": "P2",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-001"
+      ],
+      "source_bugs": [
+        "TM16-025",
+        "TM16-035",
+        "TM16-039"
+      ],
+      "locks": [
+        "pm"
+      ],
+      "existing_paths": [
+        "tools/pm/pm.py",
+        "tools/pm/targets.yaml",
+        "tools/pm/tests/test_pm.py",
+        "tools/pm/README.md"
+      ],
+      "proposed_paths": [
+        "tools/pm/tests/test_render_plan.py"
+      ],
+      "acceptance_ids": [
+        "H16-020-A01",
+        "H16-020-A02",
+        "H16-020-A03",
+        "H16-020-A04",
+        "H16-020-A05"
+      ]
+    },
+    {
+      "id": "H16-021",
+      "file": "H16-021-quality-and-doc-migration.md",
+      "title": "중복·dead data·계약 문서 정리",
+      "owner": "Q",
+      "priority": "P2",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-007",
+        "H16-012",
+        "H16-015",
+        "H16-016",
+        "H16-018",
+        "H16-020"
+      ],
+      "source_bugs": [],
+      "locks": [
+        "engine",
+        "host",
+        "docs"
+      ],
+      "existing_paths": [
+        "README.md",
+        "docs/taskmesh-library-spec.md",
+        "docs/taskmesh-external-interface.md",
+        "docs/runtime-inventory-baseline.md",
+        "docs/release-checklist.md"
+      ],
+      "proposed_paths": [],
+      "acceptance_ids": [
+        "H16-021-A01",
+        "H16-021-A02",
+        "H16-021-A03",
+        "H16-021-A04",
+        "H16-021-A05"
+      ]
+    },
+    {
+      "id": "H16-022",
+      "file": "H16-022-qualification-and-rollout.md",
+      "title": "Exact-head qualification·rollout·rollback",
+      "owner": "I",
+      "priority": "P1",
+      "status": "PLANNED",
+      "depends_on": [
+        "H16-021"
+      ],
+      "source_bugs": [],
+      "locks": [
+        "qualification"
+      ],
+      "existing_paths": [
+        "docs/release-checklist.md",
+        ".github/workflows/ci.yml",
+        ".github/workflows/bench.yml"
+      ],
+      "proposed_paths": [
+        "tools/qualification/validate_receipt.py",
+        "docs/plans/sep-16-hardening/receipts/"
+      ],
+      "acceptance_ids": [
+        "H16-022-A01",
+        "H16-022-A02",
+        "H16-022-A03",
+        "H16-022-A04",
+        "H16-022-A05",
+        "H16-022-A06"
+      ]
+    }
+  ]
+}

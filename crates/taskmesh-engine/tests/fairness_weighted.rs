@@ -5,7 +5,7 @@ mod harness;
 use harness::*;
 
 use taskmesh_contract::{ClassPolicy, FairnessPolicy, OverflowPolicy};
-use taskmesh_engine::Governor;
+use taskmesh_engine::{ClaimOutcome, Governor, ReleaseOutcome};
 
 /// Release the current holder, claim whoever the governor just promoted, record
 /// its class, and return the new permit. Returns `None` when nothing promotes.
@@ -15,12 +15,16 @@ fn step(
     pool: &mut Vec<(u64, String)>,
     order: &mut Vec<String>,
 ) -> Option<u64> {
-    g.release(current);
+    assert_eq!(g.release(current), ReleaseOutcome::Released);
     for i in 0..pool.len() {
-        if let Some(permit) = g.claim(pool[i].0) {
-            order.push(pool[i].1.clone());
-            pool.remove(i);
-            return Some(permit);
+        match g.claim(pool[i].0) {
+            ClaimOutcome::Ready(permit) => {
+                order.push(pool[i].1.clone());
+                pool.remove(i);
+                return Some(permit);
+            }
+            ClaimOutcome::Pending => {}
+            other => panic!("weighted queue ticket must not terminate: {other:?}"),
         }
     }
     None
@@ -40,7 +44,7 @@ fn weighted_favors_heavy_without_starving_light() {
         tickets.push(queue(&g, "light", &format!("l{i}")));
     }
 
-    g.release(filler);
+    assert_eq!(g.release(filler), ReleaseOutcome::Released);
     let order = drain(&g, &tickets);
 
     // Over the first six promotions the 4:1 weighting should give heavy the
@@ -69,7 +73,7 @@ fn weighted_dispatch_order_is_exact_virtual_finish_time() {
         tickets.push(queue(&g, "hi", &format!("hi{i}")));
     }
 
-    g.release(filler);
+    assert_eq!(g.release(filler), ReleaseOutcome::Released);
     let order = drain(&g, &tickets);
     assert_eq!(
         order,
@@ -100,7 +104,7 @@ fn wfq_burst_is_a_documented_no_op() {
         for i in 0..3 {
             tickets.push(queue(&g, "hi", &format!("hi{i}")));
         }
-        g.release(filler);
+        assert_eq!(g.release(filler), ReleaseOutcome::Released);
         drain(&g, &tickets)
     };
     assert_eq!(
@@ -132,11 +136,12 @@ fn wfq_idle_reset_prevents_a_returning_class_from_jumping_the_queue() {
     // `b` arrives only now, after virtual time has moved on.
     pool.push(queue(&g, "b", "b0"));
 
-    // Drain the rest.
+    // Drain the rest. `step` releases the permit it is handed before looking
+    // for the next promotion, so once it returns `None` nothing is held.
     while let Some(next) = step(&g, current, &mut pool, &mut order) {
         current = next;
     }
-    g.release(current);
+    assert_eq!(g.release(current), ReleaseOutcome::UnknownPermit);
 
     // b lands between a2 and a3 — its fair slot — not at the front.
     assert_eq!(

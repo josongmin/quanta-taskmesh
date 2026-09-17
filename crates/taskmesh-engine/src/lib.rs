@@ -5,6 +5,10 @@
 //! surface) and `parking_lot` (state mutex). It contains no Tokio primitives, no
 //! I/O, and no product-local taxonomy.
 //!
+//! Under `--cfg loom` / `--cfg shuttle` the mutex and atomics come from the
+//! model checker instead (see `sync`), so the concurrency proofs in `tests/`
+//! run against this crate's real transitions.
+//!
 //! ## Layout
 //!
 //! - `shared` — cross-slice kernel: ids, [`PolicySet`], value types.
@@ -20,14 +24,22 @@
 mod engine;
 mod features;
 mod shared;
+mod sync;
 
+pub use engine::governor::{PendingView, PermitLedgerView, PROMOTION_BUDGET};
+pub use engine::state::{
+    CapacityBlock, ClaimOutcome, ReleaseOutcome, TerminalReason, MAX_TERMINAL_TICKETS,
+};
 pub use engine::Governor;
 #[cfg(feature = "test-util")]
 pub use shared::{request_key_derive_count, reset_request_key_derive_count};
 pub use shared::{
-    AdmissionDecision, LeakSweepReport, PermitId, PolicySet, Provenance, ResolvedCost,
-    RootAttribution, Seq, Ticket,
+    AdmissionDecision, CapabilityName, LeakSweepReport, PermitId, PolicySet, Provenance,
+    RequestKey, ResolvedCost, RootAttribution, Seq, StageReleaseOutcome, Ticket,
 };
+
+/// Outcome of a memory reconcile (T05).
+pub use features::memory::ReconcileOutcome;
 
 /// Default staleness window used by [`Governor::reap_leaks`].
 pub use features::memory::DEFAULT_LEAK_STALE_MS;
@@ -36,4 +48,4 @@ pub use features::memory::DEFAULT_LEAK_STALE_MS;
 pub use features::inventory::{builtin_records, BUILTIN_SUBSTRATES};
 
 // Re-export the driven clock ports for convenience at the engine boundary.
-pub use taskmesh_contract::{Clock, ManualClock, SystemClock};
+pub use taskmesh_contract::{Clock, ExecutionPhase, ManualClock, SystemClock};

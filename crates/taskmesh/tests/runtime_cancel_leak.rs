@@ -61,10 +61,16 @@ async fn cancellation_frees_capacity_for_the_next_request() {
     // Saturate both slots with hanging submissions, then cancel them.
     let h1 = rt.run_io(spec("h1"), std::future::pending::<Result<(), ()>>());
     let h2 = rt.run_io(spec("h2"), std::future::pending::<Result<(), ()>>());
-    let both = async {
-        let _ = tokio::join!(h1, h2);
-    };
-    let _ = tokio::time::timeout(Duration::from_millis(50), both).await;
+    let both = async { tokio::join!(h1, h2) };
+    // Dropping the timed-out future is the cancellation under test; the
+    // submissions themselves never complete (they are `pending`), so the
+    // timeout must be what ends the wait.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), both)
+            .await
+            .is_err(),
+        "pending submissions must not complete on their own"
+    );
 
     tokio::task::yield_now().await;
     assert_eq!(rt.snapshot().classes[&c].inflight, 0, "both permits freed");

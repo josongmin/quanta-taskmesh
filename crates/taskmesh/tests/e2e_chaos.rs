@@ -8,6 +8,7 @@
 //! deadlock), fail-closed bounds, and drain-to-exactly-zero. No cross-thread
 //! ordering is asserted; randomized timing is LCG-seeded for reproducibility.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -141,58 +142,158 @@ async fn mixed_substrate_soak_with_concurrent_sweeper() {
 
     // Background sweeper: read + reap concurrently with the storm. With the
     // default staleness window it reclaims nothing live, but it must not corrupt.
+    //
+    // Overlap is *observed*, not assumed: the sweeper records the largest
+    // `inflight` it saw during a sweep, and the soak requires that number to be
+    // positive. A sweeper that only ever ran against an empty ledger proved
+    // nothing about concurrent reaping.
     let stop = Arc::new(AtomicBool::new(false));
     let sweeper = {
         let rt = rt.clone();
         let stop = stop.clone();
         tokio::spawn(async move {
             let mut sweeps = 0u64;
+            let mut max_live_seen = 0u32;
             while !stop.load(Ordering::Relaxed) {
-                let _ = rt.governor().reap_leaks();
-                let _ = rt.snapshot();
+                let report = rt.governor().reap_leaks();
+                assert_eq!(
+                    report.reclaimed_permits, 0,
+                    "nothing in this soak is stale under the default window"
+                );
+                let snapshot = rt.snapshot();
+                assert_eq!(snapshot.conservation_violation(), None);
+                let live: u32 = snapshot.classes.values().map(|c| c.inflight).sum();
+                max_live_seen = max_live_seen.max(live);
                 sweeps += 1;
                 tokio::task::yield_now().await;
             }
-            sweeps
+            (sweeps, max_live_seen)
         })
     };
+
+    // Every submission's verdict is recorded and classified. A `JoinHandle`
+    // that resolves is not a job that ran: a soak in which all 360 submissions
+    // were rejected before execution used to pass the assertions below.
+    #[derive(Default, Debug)]
+    struct SubstrateTally {
+        attempted: usize,
+        completed: usize,
+        started: Arc<AtomicUsize>,
+    }
+    let tallies: Arc<std::sync::Mutex<BTreeMap<&'static str, SubstrateTally>>> =
+        Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+    let started_io = Arc::new(AtomicUsize::new(0));
+    let started_cpu = Arc::new(AtomicUsize::new(0));
+    let started_blocking = Arc::new(AtomicUsize::new(0));
+    for (name, started) in [
+        ("io", &started_io),
+        ("heavy", &started_cpu),
+        ("batch", &started_blocking),
+    ] {
+        tallies.lock().expect("tally lock").insert(
+            name,
+            SubstrateTally {
+                started: Arc::clone(started),
+                ..SubstrateTally::default()
+            },
+        );
+    }
 
     let names = ["io", "heavy", "batch"];
     let mut handles = Vec::new();
     for i in 0..360usize {
         let rt = rt.clone();
         let mut lcg = Lcg(0xA5A5_0000_0000_0000 ^ i as u64);
+        let started_io = Arc::clone(&started_io);
+        let started_cpu = Arc::clone(&started_cpu);
+        let started_blocking = Arc::clone(&started_blocking);
         handles.push(tokio::spawn(async move {
             let name = names[(lcg.below(3)) as usize];
             let work = lcg.below(8);
-            // Vary substrate by class for realism.
-            match name {
+            // Vary substrate by class for realism. Each closure marks that it
+            // actually began executing, so "completed" below is backed by a
+            // side effect and not just by an `Ok` value.
+            let outcome: Result<usize, RunError<()>> = match name {
                 "io" => {
                     let spec = TaskSpec::io(cls(name)).operation(format!("{name}-{i}"));
-                    let _ = rt
-                        .run_io(spec, async move {
-                            tokio::time::sleep(Duration::from_millis(work)).await;
-                            Ok::<_, ()>(i)
-                        })
-                        .await;
+                    rt.run_io(spec, async move {
+                        started_io.fetch_add(1, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(work)).await;
+                        Ok::<_, ()>(i)
+                    })
+                    .await
                 }
                 "heavy" => {
                     let spec = TaskSpec::cpu(cls(name)).operation(format!("{name}-{i}"));
-                    let _ = rt.run_cpu(spec, move || Ok::<_, ()>(i)).await;
+                    rt.run_cpu(spec, move || {
+                        started_cpu.fetch_add(1, Ordering::SeqCst);
+                        Ok::<_, ()>(i)
+                    })
+                    .await
                 }
                 _ => {
                     let spec = TaskSpec::blocking(cls(name)).operation(format!("{name}-{i}"));
-                    let _ = rt.run_blocking(spec, move || Ok::<_, ()>(i)).await;
+                    rt.run_blocking(spec, move || {
+                        started_blocking.fetch_add(1, Ordering::SeqCst);
+                        Ok::<_, ()>(i)
+                    })
+                    .await
                 }
-            }
+            };
+            (name, i, outcome)
         }));
     }
     for h in handles {
-        h.await.unwrap();
+        let (name, i, outcome) = h.await.unwrap();
+        let mut tallies = tallies.lock().expect("tally lock");
+        let tally = tallies.get_mut(name).expect("known substrate");
+        tally.attempted += 1;
+        match outcome {
+            Ok(value) => {
+                assert_eq!(value, i, "{name}-{i}: the closure's own value comes back");
+                tally.completed += 1;
+            }
+            // This soak is sized so nothing is shed: every class queues within
+            // a depth larger than the whole storm. Any other verdict is a
+            // regression, and it is named, not discarded.
+            Err(error) => panic!("{name}-{i} did not complete: {error:?}"),
+        }
     }
     stop.store(true, Ordering::Relaxed);
-    let sweeps = sweeper.await.unwrap();
+    let (sweeps, max_live_seen) = sweeper.await.unwrap();
     assert!(sweeps > 0, "sweeper must have run concurrently");
+    assert!(
+        max_live_seen > 0,
+        "the sweeper never observed live work: no concurrent overlap was exercised"
+    );
+
+    // Conservation per substrate: attempted == completed == started.
+    let tallies = tallies.lock().expect("tally lock");
+    let mut total_attempted = 0;
+    for (name, tally) in tallies.iter() {
+        let started = tally.started.load(Ordering::SeqCst);
+        assert!(
+            tally.attempted > 0,
+            "{name}: the storm must exercise every substrate"
+        );
+        assert_eq!(
+            tally.completed, tally.attempted,
+            "{name}: every attempted submission completed"
+        );
+        assert_eq!(
+            started, tally.completed,
+            "{name}: every completed submission actually executed its closure"
+        );
+        total_attempted += tally.attempted;
+    }
+    assert_eq!(total_attempted, 360, "every submission was accounted for");
+
+    // And the cumulative counters agree with the tallies.
+    let snapshot = rt.snapshot();
+    let admitted: u128 = snapshot.classes.values().map(|c| c.admitted_total).sum();
+    let terminated: u128 = snapshot.classes.values().map(|c| c.terminated_total).sum();
+    assert_eq!(admitted, 360, "admitted_total across classes");
+    assert_eq!(terminated, 360, "terminated_total across classes");
 
     assert_drained(&rt, &names);
 }

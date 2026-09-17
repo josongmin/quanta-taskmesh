@@ -45,14 +45,17 @@ pub use policy::{
     MemoryPermitMode, MemoryReleasePolicy, OverflowPolicy, PartialResultOrdering, RetryAfterPolicy,
     TieBreakPolicy,
 };
-pub use ports::{Clock, CpuExecutor, ManualClock, PermitWaker, SystemClock};
-pub use resource::{MemoryUnitScale, PermitCost, ResourceBudget};
+pub use ports::{Clock, CpuExecutor, ExecutorCapabilities, ManualClock, PermitWaker, SystemClock};
+pub use resource::{MemoryUnitScale, PermitCost, ResourceBudget, ResourceConversionError};
 pub use runtime::Runtime;
-pub use snapshot::{ClassSnapshot, Snapshot};
+pub use snapshot::{
+    CapabilityUsage, ClassSnapshot, ExecutionPhase, Snapshot, SNAPSHOT_SCHEMA_VERSION,
+};
 pub use task::{
     ClassificationRationale, PlanSource, StageDescriptor, TaskClass, TaskScope, TaskSpec, TaskStage,
 };
 pub use topology::{
     CpuMode, CpuPoolConfig, SubstrateHint, SubstrateKind, SubstrateRecord, TopologyConfig,
+    TopologyError, MAX_CAPABILITY_SLOTS,
 };
-pub use verdict::{AdmissionVerdict, GovernorError, RunError};
+pub use verdict::{AdmissionVerdict, GovernorError, RunError, TerminalReason};

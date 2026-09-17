@@ -1,0 +1,6 @@
+targets:
+  nested:
+    output: WRONG.md
+    template: templates/nested/demo.j2
+    sections:
+      - sources/body.md

@@ -11,7 +11,9 @@ use taskmesh_contract::{
     ClassPolicy, ClassificationRationale, ManualClock, OverflowPolicy, PlanSource, ResourceBudget,
     TaskClass, TaskSpec,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, Provenance};
+use taskmesh_engine::{
+    AdmissionDecision, ClaimOutcome, Governor, PolicySet, Provenance, ReleaseOutcome,
+};
 
 fn spec_with(op: &str, source: PlanSource, reason: ClassificationRationale) -> TaskSpec {
     let mut s = TaskSpec::blocking(TaskClass::new("c")).operation(op.to_string());
@@ -56,7 +58,7 @@ fn direct_admit_preserves_provenance_and_clears_on_release() {
         Some(Provenance::of(&spec)),
         "admitted permit must carry the spec's provenance"
     );
-    g.release(permit);
+    assert_eq!(g.release(permit), ReleaseOutcome::Released);
     assert_eq!(
         g.permit_provenance(permit),
         None,
@@ -110,12 +112,16 @@ fn promotion_preserves_each_requests_own_provenance() {
     let mut current = filler;
     let mut checked = 0;
     loop {
-        g.release(current);
+        assert_eq!(g.release(current), ReleaseOutcome::Released);
         let mut found = None;
         for (idx, (ticket, prov)) in queued.iter().enumerate() {
-            if let Some(permit) = g.claim(*ticket) {
-                found = Some((idx, permit, *prov));
-                break;
+            match g.claim(*ticket) {
+                ClaimOutcome::Ready(permit) => {
+                    found = Some((idx, permit, *prov));
+                    break;
+                }
+                ClaimOutcome::Pending => {}
+                other => panic!("queued provenance ticket must not terminate: {other:?}"),
             }
         }
         let Some((idx, permit, expected)) = found else {
@@ -130,7 +136,8 @@ fn promotion_preserves_each_requests_own_provenance() {
         current = permit;
         checked += 1;
     }
-    g.release(current);
+    // The loop released `current` before finding nothing further to promote.
+    assert_eq!(g.release(current), ReleaseOutcome::UnknownPermit);
 
     assert_eq!(
         checked, 3,

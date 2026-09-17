@@ -18,6 +18,10 @@ rules:
         # Host adapter: tokio monotonic-timer deadlines for bounded acquire waits.
         - "**/crates/taskmesh/src/runtime.rs"
         - "**/tests/**"
+        # Test-only modules that live in `src/` by necessity (they need
+        # crate-private access). Named `*_tests.rs` by convention and gated
+        # behind `#[cfg(test)]`; they are not production code.
+        - "**/*_tests.rs"
         - "**/benches/**"
         - "**/crates/taskmesh-bench/**"
     patterns:
@@ -42,9 +46,12 @@ rules:
       include:
         - "**/crates/taskmesh-contract/**"
         - "**/crates/taskmesh-engine/**"
-        - "**/crates/taskmesh-core/**"
       exclude:
         - "**/tests/**"
+        # Test-only modules that live in `src/` by necessity (they need
+        # crate-private access). Named `*_tests.rs` by convention and gated
+        # behind `#[cfg(test)]`; they are not production code.
+        - "**/*_tests.rs"
         - "**/benches/**"
         - "**/crates/taskmesh-bench/**"
     patterns:
@@ -69,9 +76,12 @@ rules:
       include:
         - "**/crates/taskmesh-contract/**"
         - "**/crates/taskmesh-engine/**"
-        - "**/crates/taskmesh-core/**"
       exclude:
         - "**/tests/**"
+        # Test-only modules that live in `src/` by necessity (they need
+        # crate-private access). Named `*_tests.rs` by convention and gated
+        # behind `#[cfg(test)]`; they are not production code.
+        - "**/*_tests.rs"
         - "**/benches/**"
         - "**/crates/taskmesh-bench/**"
     patterns:

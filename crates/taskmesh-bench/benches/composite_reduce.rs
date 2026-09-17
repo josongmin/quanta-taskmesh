@@ -10,7 +10,7 @@ use taskmesh_contract::{
     ClassPolicy, DeterministicReducePolicy, ManualClock, ResourceBudget, SubstrateHint, TaskClass,
     TaskSpec, TaskStage,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
+use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, ReleaseOutcome};
 
 fn governor() -> Governor {
     let mut classes = BTreeMap::new();
@@ -37,8 +37,13 @@ fn bench(c: &mut Criterion) {
             n += 1;
             let stage = TaskStage::new(format!("s{}", n % 4096));
             let child = TaskSpec::blocking(TaskClass::new("worker")).child_of("root", stage);
-            if let AdmissionDecision::Admitted { permit_id } = g.admit(&child) {
-                g.release(permit_id);
+            // The op is admit→release. A queued or rejected child is a different
+            // operation and must not be timed as a cheaper cycle.
+            match g.admit(&child) {
+                AdmissionDecision::Admitted { permit_id } => {
+                    assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
+                }
+                other => panic!("composite benchmark requires Admitted, got {other:?}"),
             }
         });
     });
@@ -51,8 +56,14 @@ fn bench(c: &mut Criterion) {
     );
     c.bench_function("reduce_policy_validation", |b| {
         // black_box the input each iteration so the loop-invariant validation of
-        // an immutable spec cannot be hoisted out and measured as ~nothing.
-        b.iter(|| black_box(Governor::validate_reduce(black_box(&spec)).is_ok()));
+        // an immutable spec cannot be hoisted out and measured as ~nothing. The
+        // spec is valid by construction; a validation that starts failing is a
+        // behavioral regression, not a faster benchmark.
+        b.iter(|| {
+            let verdict = Governor::validate_reduce(black_box(&spec));
+            assert!(verdict.is_ok(), "fixture spec must validate: {verdict:?}");
+            black_box(verdict.is_ok())
+        });
     });
 }
 

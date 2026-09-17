@@ -18,14 +18,17 @@ use taskmesh_contract::{
     MemoryReleasePolicy, OverflowPolicy, RetryAfterPolicy, Snapshot, SubstrateHint, TaskClass,
     TaskSpec, TaskStage,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PermitId, Ticket};
+use taskmesh_engine::{
+    AdmissionDecision, ClaimOutcome, Governor, PermitId, ReleaseOutcome, StageReleaseOutcome,
+    Ticket,
+};
 
 // ---- shared invariant helpers ---------------------------------------------
 
-fn cpu_held(snap: &Snapshot) -> u32 {
+fn cpu_held(snap: &Snapshot) -> u128 {
     snap.classes.values().map(|c| c.cpu_units_held).sum()
 }
-fn mem_held(snap: &Snapshot) -> u32 {
+fn mem_held(snap: &Snapshot) -> u128 {
     snap.classes.values().map(|c| c.memory_units_held).sum()
 }
 fn inflight(snap: &Snapshot, class: &str) -> u32 {
@@ -40,11 +43,13 @@ fn inflight(snap: &Snapshot, class: &str) -> u32 {
 fn drain_promotions(g: &Governor, pending: &mut Vec<Ticket>, held: &mut Vec<PermitId>) {
     let mut i = 0;
     while i < pending.len() {
-        if let Some(permit) = g.claim(pending[i]) {
-            held.push(permit);
-            pending.swap_remove(i);
-        } else {
-            i += 1;
+        match g.claim(pending[i]) {
+            ClaimOutcome::Ready(permit) => {
+                held.push(permit);
+                pending.swap_remove(i);
+            }
+            ClaimOutcome::Pending => i += 1,
+            other => panic!("tracked fuzz ticket must not terminate: {other:?}"),
         }
     }
 }
@@ -111,7 +116,7 @@ fn fuzz_conservation_and_caps_under_adversarial_churn() {
                 1 => {
                     if !held.is_empty() {
                         let p = held.swap_remove(rng.gen_range(0..held.len()));
-                        g.release(p);
+                        assert_eq!(g.release(p), ReleaseOutcome::Released);
                         drain_promotions(g, &mut pending, &mut held);
                     }
                 }
@@ -140,7 +145,7 @@ fn fuzz_conservation_and_caps_under_adversarial_churn() {
             // --- hard caps must hold after every single op ---
             let snap = g.snapshot();
             assert!(
-                cpu_held(&snap) <= CPU_BUDGET,
+                cpu_held(&snap) <= u128::from(CPU_BUDGET),
                 "seed={seed}: cpu budget breached: {} > {CPU_BUDGET}",
                 cpu_held(&snap)
             );
@@ -171,7 +176,7 @@ fn fuzz_conservation_and_caps_under_adversarial_churn() {
             if let Some(t) = pending.pop() {
                 g.abandon(t);
             } else if let Some(p) = held.pop() {
-                g.release(p);
+                assert_eq!(g.release(p), ReleaseOutcome::Released);
             }
             guard += 1;
             assert!(guard < 1_000_000, "seed={seed}: drain did not converge");
@@ -231,7 +236,7 @@ fn inflight_cap_is_exact_and_fails_closed() {
     );
 
     // Free exactly one slot → exactly one more admits.
-    g.release(permits.pop().unwrap());
+    assert_eq!(g.release(permits.pop().unwrap()), ReleaseOutcome::Released);
     assert_eq!(inflight(&g.snapshot(), "c"), n - 1);
     match g.admit(&root_spec("c", "refill")) {
         AdmissionDecision::Admitted { .. } => {}
@@ -268,15 +273,15 @@ fn global_cpu_budget_is_a_hard_ceiling_across_classes() {
             o => panic!("expected admit-or-cpu-saturated, got {o:?}"),
         }
         assert!(
-            cpu_held(&g.snapshot()) <= k,
+            cpu_held(&g.snapshot()) <= u128::from(k),
             "global cpu budget breached mid-stream"
         );
     }
     assert_eq!(admitted, k, "exactly the budget worth of permits may live");
-    assert_eq!(cpu_held(&g.snapshot()), k);
+    assert_eq!(cpu_held(&g.snapshot()), u128::from(k));
 
     for p in held {
-        g.release(p);
+        assert_eq!(g.release(p), ReleaseOutcome::Released);
     }
     assert_eq!(
         cpu_held(&g.snapshot()),
@@ -321,12 +326,14 @@ fn recursion_guard_rejects_reentry_to_an_active_root_stage() {
     }
 
     // Releasing the first child frees (R, "blocking") → a fresh child admits again.
-    g.release(c1);
+    assert_eq!(g.release(c1), ReleaseOutcome::Released);
     match g.admit(&child("c3")) {
-        AdmissionDecision::Admitted { permit_id } => g.release(permit_id),
+        AdmissionDecision::Admitted { permit_id } => {
+            assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
+        }
         o => panic!("after release the stage must reopen, got {o:?}"),
     }
-    g.release(rp);
+    assert_eq!(g.release(rp), ReleaseOutcome::Released);
     assert_eq!(inflight(&g.snapshot(), "worker"), 0);
 }
 
@@ -512,13 +519,14 @@ fn leak_sweep_is_precise_and_idempotent() {
         "a stale non-LeakDetecting permit must survive the sweep"
     );
 
-    // Releasing an already-reaped permit is a safe no-op (no underflow).
-    g.release(ids[0]);
+    // Releasing an already-reaped permit refunds nothing and is reported as
+    // such (no underflow, no silent success).
+    assert_eq!(g.release(ids[0]), ReleaseOutcome::UnknownPermit);
     assert_eq!(inflight(&g.snapshot(), "retrieval"), 1);
 
     // Everything releases cleanly to zero.
-    g.release(ids[2]);
-    g.release(managed);
+    assert_eq!(g.release(ids[2]), ReleaseOutcome::Released);
+    assert_eq!(g.release(managed), ReleaseOutcome::Released);
     assert_eq!(inflight(&g.snapshot(), "retrieval"), 0);
     assert_eq!(inflight(&g.snapshot(), "managed"), 0);
 }
@@ -553,7 +561,9 @@ fn malformed_fanout_rejects_well_formed_admits() {
         );
     assert!(Governor::validate_reduce(&good).is_ok());
     match g.admit(&good) {
-        AdmissionDecision::Admitted { permit_id } => g.release(permit_id),
+        AdmissionDecision::Admitted { permit_id } => {
+            assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
+        }
         o => panic!("well-formed fan-out must admit, got {o:?}"),
     }
 }
@@ -572,13 +582,14 @@ fn lifecycle_ops_are_idempotent_and_safe() {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("admit must succeed, got {o:?}"),
     };
-    g.release(p);
-    g.release(p); // double release: must be a no-op, never underflow
+    assert_eq!(g.release(p), ReleaseOutcome::Released);
+    // Double release: reported as unknown, never a silent no-op, never underflow.
+    assert_eq!(g.release(p), ReleaseOutcome::UnknownPermit);
     assert_eq!(inflight(&g.snapshot(), "c"), 0);
     assert_eq!(g.snapshot().classes[&c].cpu_units_held, 0);
 
     // Unknown handles are all safe.
-    assert!(g.claim(999_999).is_none(), "claim of unknown ticket → None");
+    assert_eq!(g.claim(999_999), ClaimOutcome::Invalid);
     g.abandon(999_999); // unknown ticket: no-op
     assert!(
         !g.reconcile_memory(999_999, 100),
@@ -586,8 +597,8 @@ fn lifecycle_ops_are_idempotent_and_safe() {
     );
     assert_eq!(
         g.release_stage_memory(999_999, 5),
-        0,
-        "stage-release unknown → 0"
+        StageReleaseOutcome::UnknownPermit,
+        "stage-release unknown → typed rejection"
     );
     assert_eq!(g.reap_leaks_with(0).reclaimed_permits, 0, "nothing to reap");
 }

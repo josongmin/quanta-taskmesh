@@ -74,11 +74,15 @@ pub fn target_stage(spec: &TaskSpec) -> TaskStage {
 /// separation would require per-permit ancestry tracking (out of scope for the
 /// startup set).
 pub fn is_recursive(state: &GovernedState, spec: &TaskSpec) -> bool {
-    if !matches!(spec.scope, TaskScope::Child { .. }) {
+    // A child's target stage *is* its parent stage (see `target_stage`), so the
+    // guard is consulted on borrowed spec data: no allocation under the mutex.
+    let TaskScope::Child { parent_stage } = &spec.scope else {
         return false;
-    }
-    let key = (spec.root_operation_id.clone(), target_stage(spec));
-    state.active_recursion.contains(&key)
+    };
+    state
+        .active_recursion
+        .get(spec.root_operation_id.as_str())
+        .is_some_and(|stages| stages.contains(parent_stage))
 }
 
 /// Checkpoint metadata is preserved verbatim from the class policy so hook points

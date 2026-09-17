@@ -15,9 +15,10 @@ struct PanicOnceCpuExecutor {
 
 impl CpuExecutor for PanicOnceCpuExecutor {
     fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
-        if !self.panicked.swap(true, Ordering::SeqCst) {
-            panic!("executor rejected submission");
-        }
+        assert!(
+            self.panicked.swap(true, Ordering::SeqCst),
+            "executor rejected submission"
+        );
         work();
     }
 }
@@ -47,6 +48,50 @@ fn runtime_with_rayon(workers: usize) -> (TokioRuntime, usize) {
         .build()
         .unwrap();
     (rt, count)
+}
+
+#[test]
+fn the_cpu_gate_and_the_rayon_pool_are_sized_from_one_answer() {
+    // H16-002: the gate the engine enforces for `cpu` and the workers the
+    // adapter actually has must agree. The adapter declares its real thread
+    // count (read from the pool, not re-derived from the machine), the builder
+    // checks the gate against it, and here both are compared directly.
+    for workers in [1usize, 2, 3] {
+        let (rt, count) = runtime_with_rayon(workers);
+        let gate = rt.snapshot().capabilities["cpu"].limit;
+        let declared = rt.executor_capabilities();
+        assert_eq!(usize::try_from(gate).expect("small"), count, "gate == pool");
+        assert_eq!(declared.declared_workers, Some(gate), "declaration == gate");
+        assert!(
+            declared.exclusive_pool,
+            "a pool this adapter built is its own"
+        );
+        assert!(declared.nonblocking_submit);
+    }
+
+    // (A pool handed in through `with_pool` is declared *shared*; that is
+    // pinned in the adapter crate's own tests, next to the pool it wraps.)
+
+    // A pool narrower than the topology is refused, not silently
+    // over-subscribed: two Rayon threads cannot back a four-slot gate.
+    let error = Builder::new()
+        .topology(TopologyConfig::new().cpu_fixed(4))
+        .resources(ResourceBudget::new().cpu_units(100).memory_units(100))
+        .class_policy(
+            TaskClass::new("c"),
+            ClassPolicy::new().max_inflight(8).cpu_units(1),
+        )
+        .cpu_executor(Arc::new(RayonCpuExecutor::new(2)))
+        .build()
+        .err()
+        .expect("a narrower pool is refused");
+    assert_eq!(
+        error,
+        GovernorError::InvalidTopology(TopologyError::ExecutorDeclaresFewerWorkers {
+            declared: 2,
+            resolved: 4,
+        })
+    );
 }
 
 #[tokio::test]
@@ -223,11 +268,14 @@ async fn requested_stack_async_path_projects_factory_panic_as_governor_error_v1(
         .await
         .expect_err("requested-stack async factory panic must fail closed");
 
-    assert!(matches!(
-        error,
-        RunError::Governor(GovernorError::PolicyViolation(message))
-            if message.contains("requested-stack async worker panicked")
-    ));
+    assert!(
+        matches!(
+            &error,
+            RunError::Governor(GovernorError::WorkerPanicked { context })
+                if context == "requested-stack async worker"
+        ),
+        "got {error:?}"
+    );
 }
 
 #[tokio::test]
@@ -296,7 +344,9 @@ async fn requested_stack_async_caller_abort_drops_worker_future_v1() {
         let rt = rt.clone();
         async move {
             rt.run_async_with_requested_stack(spec, move || {
-                let _ = started_tx.send(());
+                started_tx
+                    .send(())
+                    .expect("the test is awaiting the start signal");
                 let drop_signal = AsyncFutureDropSignalV1(Some(dropped_tx));
                 async move {
                     let _drop_signal = drop_signal;
@@ -309,7 +359,10 @@ async fn requested_stack_async_caller_abort_drops_worker_future_v1() {
 
     started_rx.await.expect("worker future must start");
     worker.abort();
-    let _ = worker.await;
+    assert!(
+        worker.await.expect_err("aborted").is_cancelled(),
+        "the caller task ended by abort, not by a panic"
+    );
     tokio::time::timeout(std::time::Duration::from_secs(1), dropped_rx)
         .await
         .expect("worker future must be dropped after caller abort")
@@ -338,7 +391,9 @@ async fn requested_stack_async_caller_abort_retains_permit_until_sync_poll_termi
                 let mut poll_started_tx = Some(poll_started_tx);
                 std::future::poll_fn(move |_| {
                     if let Some(started) = poll_started_tx.take() {
-                        let _ = started.send(());
+                        started
+                            .send(())
+                            .expect("the test is awaiting the first poll");
                     }
                     release_poll_rx
                         .recv()
@@ -386,7 +441,9 @@ async fn blocking_caller_abort_retains_permit_until_worker_terminates_v1() {
         let rt = rt.clone();
         async move {
             rt.run_blocking(spec, move || {
-                let _ = started_tx.send(());
+                started_tx
+                    .send(())
+                    .expect("the test is awaiting the start signal");
                 release_rx
                     .recv()
                     .expect("test controls blocking worker termination");
@@ -432,7 +489,9 @@ async fn requested_stack_blocking_caller_abort_retains_permit_until_worker_termi
         let rt = rt.clone();
         async move {
             rt.run_blocking(spec, move || {
-                let _ = started_tx.send(());
+                started_tx
+                    .send(())
+                    .expect("the test is awaiting the start signal");
                 release_rx
                     .recv()
                     .expect("test controls requested-stack worker termination");
@@ -505,11 +564,14 @@ async fn cpu_executor_spawn_panic_is_typed_and_releases_lease_v1() {
         )
         .await
         .expect_err("executor submission panic must fail closed");
-    assert!(matches!(
-        error,
-        RunError::Governor(GovernorError::PolicyViolation(message))
-            if message.contains("cpu executor spawn panicked")
-    ));
+    assert!(
+        matches!(
+            &error,
+            RunError::Governor(GovernorError::WorkerPanicked { context })
+                if context == "cpu executor spawn"
+        ),
+        "got {error:?}"
+    );
     assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
 
     let recovery = rt

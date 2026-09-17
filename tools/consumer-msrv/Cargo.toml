@@ -1,0 +1,27 @@
+# A minimal *external* consumer of the taskmesh library.
+#
+# This package is deliberately its own workspace (the empty `[workspace]` table
+# below), so it resolves against the library crates the way a downstream user
+# would: none of the root workspace's dev-dependencies, benchmark harness, or
+# proof toolchain floor leak into its graph. That separation is the point —
+# the root workspace's *development* graph needs a newer toolchain than the
+# *consumer* contract promises, and this is where the consumer promise is
+# actually checked (H16-019 / TM16-021).
+[package]
+name = "taskmesh-consumer-msrv"
+version = "0.0.0"
+edition = "2021"
+publish = false
+# Must equal the `rust-version` the library declares; tools/consumer-msrv/check.py
+# asserts that they agree.
+rust-version = "1.81"
+
+[workspace]
+
+[dependencies]
+taskmesh = { path = "../../crates/taskmesh", default-features = false }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+[features]
+default = []
+rayon = ["taskmesh/rayon"]

@@ -87,9 +87,13 @@ pub fn drain(g: &Governor, tickets: &[(u64, String)]) -> Vec<String> {
     while !remaining.is_empty() {
         let mut found = None;
         for (idx, (ticket, _)) in remaining.iter().enumerate() {
-            if let Some(permit_id) = g.claim(*ticket) {
-                found = Some((idx, permit_id));
-                break;
+            match g.claim(*ticket) {
+                ClaimOutcome::Ready(permit_id) => {
+                    found = Some((idx, permit_id));
+                    break;
+                }
+                ClaimOutcome::Pending => {}
+                other => panic!("fairness queue ticket must not terminate: {other:?}"),
             }
         }
         let Some((idx, permit_id)) = found else {
@@ -97,7 +101,7 @@ pub fn drain(g: &Governor, tickets: &[(u64, String)]) -> Vec<String> {
         };
         let (_, class) = remaining.remove(idx);
         order.push(class);
-        g.release(permit_id);
+        assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
     }
     order
 }

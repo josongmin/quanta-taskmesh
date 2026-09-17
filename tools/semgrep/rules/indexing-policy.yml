@@ -11,6 +11,9 @@ rules:
         - "**/crates/**"
       exclude:
         - "**/tests/**"
+        # Test-only modules that live in `src/` by necessity (they need
+        # crate-private access). Named `*_tests.rs` by convention and gated
+        # behind `#[cfg(test)]`; they are not production code.
         - "**/*_tests.rs"
         - "**/build.rs"
         - "**/benches/**"

@@ -112,10 +112,12 @@ fn queued_child_promotes_then_guard_clears_on_release() {
         o => panic!("{o:?}"),
     };
     // Promote the queued child by releasing the occupant.
-    g.release(occ_permit);
-    let child_permit = g.claim(ticket).expect("child promoted");
+    assert_eq!(g.release(occ_permit), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(child_permit) = g.claim(ticket) else {
+        panic!("expected promoted child ticket");
+    };
     // Releasing the child clears the recursion guard, so a fresh child admits.
-    g.release(child_permit);
+    assert_eq!(g.release(child_permit), ReleaseOutcome::Released);
     assert!(matches!(
         g.admit(&child("root")),
         AdmissionDecision::Admitted { .. }

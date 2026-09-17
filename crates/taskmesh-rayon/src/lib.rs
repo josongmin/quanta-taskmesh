@@ -11,12 +11,16 @@ use std::sync::Arc;
 use std::thread::available_parallelism;
 
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use taskmesh_contract::{CpuExecutor, TopologyConfig};
+use taskmesh_contract::{CpuExecutor, ExecutorCapabilities, TopologyConfig};
 
 /// A `CpuExecutor` backed by one shared Rayon thread pool.
 #[derive(Clone)]
 pub struct RayonCpuExecutor {
     pool: Arc<ThreadPool>,
+    /// Whether this adapter built the pool for taskmesh alone. A pool handed in
+    /// through [`RayonCpuExecutor::with_pool`] may have other users, and the
+    /// adapter will not claim exclusivity it cannot see.
+    exclusive: bool,
 }
 
 impl RayonCpuExecutor {
@@ -30,6 +34,7 @@ impl RayonCpuExecutor {
             .build()?;
         Ok(Self {
             pool: Arc::new(pool),
+            exclusive: true,
         })
     }
 
@@ -55,9 +60,14 @@ impl RayonCpuExecutor {
         Self::try_from_topology(topology).expect("rayon pool must build")
     }
 
-    /// Wrap an already-built shared pool.
+    /// Wrap an already-built shared pool. The adapter declares the pool as
+    /// *shared* (D05): it cannot know who else submits to it, so the host will
+    /// govern only taskmesh's own submissions and say so.
     pub fn with_pool(pool: Arc<ThreadPool>) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            exclusive: false,
+        }
     }
 
     /// The number of worker threads in the shared pool.
@@ -69,5 +79,18 @@ impl RayonCpuExecutor {
 impl CpuExecutor for RayonCpuExecutor {
     fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
         self.pool.spawn(work);
+    }
+
+    /// The declaration the host checks its `cpu` gate against (D05):
+    /// `ThreadPool::spawn` never runs the job inline, and the worker count is
+    /// the pool's real thread count — read from the pool, not re-derived from
+    /// the machine, so the gate and the executor cannot be sized from two
+    /// different answers.
+    fn capabilities(&self) -> ExecutorCapabilities {
+        let workers = u32::try_from(self.worker_count()).unwrap_or(u32::MAX);
+        ExecutorCapabilities::legacy()
+            .nonblocking_submit(true)
+            .declared_workers(workers)
+            .exclusive_pool(self.exclusive)
     }
 }

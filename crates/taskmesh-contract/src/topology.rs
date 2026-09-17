@@ -1,8 +1,77 @@
 //! Worker topology and substrate (capability-pool) vocabulary.
 
 use std::borrow::Cow;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
+
+/// The largest capability-pool slot count taskmesh governs.
+///
+/// Capability occupancy is accounted in `u32` by the governance engine, so a
+/// declared slot count above this cannot be represented and is rejected at
+/// construction instead of being silently clamped. On 64-bit hosts this is also
+/// comfortably below `tokio::sync::Semaphore::MAX_PERMITS`, so a topology that
+/// validates here can never trip a host semaphore construction panic either.
+#[allow(
+    clippy::as_conversions,
+    reason = "u32::MAX -> usize is exact on every supported target; const context has no fallible alternative"
+)]
+// `u32::MAX` always fits `usize` on every target taskmesh supports (32-bit and
+// wider), so this widening is exact.
+pub const MAX_CAPABILITY_SLOTS: usize = u32::MAX as usize;
+
+/// Why a [`TopologyConfig`] is not constructible.
+///
+/// Topology is public, deserializable input, so every impossible shape is a
+/// typed rejection at validation time — never a panic inside a resolver.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TopologyError {
+    /// `cpu.min_workers > cpu.max_workers`: the clamp window is empty.
+    InvertedCpuWorkerBounds {
+        min_workers: usize,
+        max_workers: usize,
+    },
+    /// A declared slot count exceeds [`MAX_CAPABILITY_SLOTS`].
+    SlotCountTooLarge {
+        pool: &'static str,
+        slots: usize,
+        max: usize,
+    },
+    /// `CpuMode::Fixed(0)` requests a pool that can never run anything.
+    ZeroFixedCpuWorkers,
+    /// The supplied [`crate::CpuExecutor`] declares fewer workers than the
+    /// resolved CPU topology, so the `cpu` gate would admit more concurrent
+    /// work than the executor can run. The two must be sized from one answer.
+    ExecutorDeclaresFewerWorkers { declared: u32, resolved: usize },
+}
+
+impl fmt::Display for TopologyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvertedCpuWorkerBounds {
+                min_workers,
+                max_workers,
+            } => write!(
+                f,
+                "topology cpu.min_workers ({min_workers}) exceeds cpu.max_workers ({max_workers})"
+            ),
+            Self::SlotCountTooLarge { pool, slots, max } => write!(
+                f,
+                "topology pool {pool} declares {slots} slots, above the governed maximum {max}"
+            ),
+            Self::ExecutorDeclaresFewerWorkers { declared, resolved } => write!(
+                f,
+                "cpu executor declares {declared} worker(s) but the topology resolved {resolved}; the cpu gate cannot exceed the executor"
+            ),
+            Self::ZeroFixedCpuWorkers => {
+                f.write_str("topology cpu.mode = Fixed(0) cannot execute any work")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TopologyError {}
 
 /// Governance disposition of a substrate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,14 +233,76 @@ impl TopologyConfig {
         self
     }
 
+    /// Fail-closed structural validation. Every constructor that turns a topology
+    /// into real worker capacity calls this **before** resolving anything, so an
+    /// impossible topology is a typed `Err`, never a panic in a clamp.
+    pub fn validate(&self) -> Result<(), TopologyError> {
+        let min = self.cpu.min_workers.max(1);
+        let max = self.cpu.max_workers.max(1);
+        if min > max {
+            return Err(TopologyError::InvertedCpuWorkerBounds {
+                min_workers: self.cpu.min_workers,
+                max_workers: self.cpu.max_workers,
+            });
+        }
+        if self.cpu.mode == CpuMode::Fixed(0) {
+            return Err(TopologyError::ZeroFixedCpuWorkers);
+        }
+        for (pool, slots) in self.declared_slots() {
+            if slots > MAX_CAPABILITY_SLOTS {
+                return Err(TopologyError::SlotCountTooLarge {
+                    pool,
+                    slots,
+                    max: MAX_CAPABILITY_SLOTS,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// The explicitly-declared slot counts, by capability-pool name. The `cpu`
+    /// pool is resolved separately (it depends on detected parallelism).
+    ///
+    /// `0` keeps its published meaning: *no limit for this pool*.
+    pub fn declared_slots(&self) -> [(&'static str, usize); 4] {
+        [
+            ("blocking", self.blocking_threads),
+            ("large_stack", self.large_stack_slots),
+            ("maintenance", self.maintenance_workers),
+            ("local_runtime", self.local_runtime_slots),
+        ]
+    }
+
     /// Resolve the worker count for the shared CPU pool, honoring reserve cores
     /// and the `[min_workers, max_workers]` clamp. `available` is the detected
-    /// parallelism (callers pass `available_parallelism()`).
+    /// parallelism (callers pass `available_parallelism()` **once** and share the
+    /// result, so every gate and executor agrees on one number).
+    ///
+    /// Returns the validation error rather than clamping an impossible window.
+    pub fn try_resolved_cpu_workers(&self, available: usize) -> Result<usize, TopologyError> {
+        self.validate()?;
+        Ok(self.resolve_cpu_workers_unchecked(available))
+    }
+
+    /// Resolve the worker count for the shared CPU pool.
+    ///
+    /// Total by construction: an inverted `[min, max]` window resolves to the
+    /// minimum rather than panicking. Prefer [`TopologyConfig::try_resolved_cpu_workers`]
+    /// on any construction path — it reports the inverted window instead of
+    /// silently picking a value for it.
     pub fn resolved_cpu_workers(&self, available: usize) -> usize {
+        self.resolve_cpu_workers_unchecked(available)
+    }
+
+    fn resolve_cpu_workers_unchecked(&self, available: usize) -> usize {
         let base = match self.cpu.mode {
             CpuMode::Fixed(n) => n,
             CpuMode::Auto => available.saturating_sub(self.cpu.reserve_cores),
         };
-        base.clamp(self.cpu.min_workers.max(1), self.cpu.max_workers.max(1))
+        let lo = self.cpu.min_workers.max(1);
+        let hi = self.cpu.max_workers.max(1);
+        // `clamp` panics when lo > hi; ordering the two operations explicitly
+        // keeps this total for every input, including an inverted window.
+        base.max(lo).min(hi.max(lo))
     }
 }

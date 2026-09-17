@@ -3,7 +3,7 @@
 //! hardcoded into `run_cpu` (T09). Swapping in `taskmesh-rayon` replaces only
 //! this object.
 
-use taskmesh_contract::CpuExecutor;
+use taskmesh_contract::{CpuExecutor, ExecutorCapabilities};
 
 /// Runs CPU work on Tokio's blocking pool. Always available without extra crates.
 #[derive(Debug, Default, Clone, Copy)]
@@ -13,5 +13,16 @@ impl CpuExecutor for BlockingPoolCpuExecutor {
     fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
         // The work closure owns its own result channel; we discard the handle.
         tokio::task::spawn_blocking(work);
+    }
+
+    /// What this adapter can honestly say (D05): `spawn_blocking` returns
+    /// without running the job inline; the pool is Tokio's, shared with every
+    /// other `spawn_blocking` user on the runtime, and its thread cap is a
+    /// property of that runtime this adapter cannot see — so the worker count
+    /// stays *unknown* rather than guessed.
+    fn capabilities(&self) -> ExecutorCapabilities {
+        ExecutorCapabilities::legacy()
+            .nonblocking_submit(true)
+            .exclusive_pool(false)
     }
 }

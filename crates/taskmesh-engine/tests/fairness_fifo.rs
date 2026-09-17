@@ -2,6 +2,7 @@
 
 mod harness;
 use harness::*;
+use taskmesh_engine::ReleaseOutcome;
 
 #[test]
 fn fifo_preserves_arrival_order() {
@@ -22,7 +23,7 @@ fn fifo_preserves_arrival_order() {
         queue(&g, "y", "y2"),
     ];
 
-    g.release(filler);
+    assert_eq!(g.release(filler), ReleaseOutcome::Released);
     let order = drain(&g, &tickets);
     assert_eq!(order, vec!["y", "z", "x", "y"]);
 }
@@ -33,8 +34,11 @@ fn within_class_is_fifo() {
     let filler = admit_filler_on(&g, "x");
     let (t1, _) = queue(&g, "x", "a");
     let (t2, _) = queue(&g, "x", "b");
-    g.release(filler);
+    assert_eq!(g.release(filler), ReleaseOutcome::Released);
     // first enqueued promotes first; second stays queued until t1 releases
-    assert!(g.claim(t1).is_some());
-    assert!(g.claim(t2).is_none());
+    assert!(matches!(
+        g.claim(t1),
+        taskmesh_engine::ClaimOutcome::Ready(_)
+    ));
+    assert_eq!(g.claim(t2), taskmesh_engine::ClaimOutcome::Pending);
 }

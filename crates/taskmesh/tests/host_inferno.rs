@@ -60,10 +60,11 @@ async fn panicking_blocking_task_is_governor_error_and_releases_permit() {
     let res: Result<i32, RunError<()>> = rt.run_blocking(blk("c", "boom"), || panic!("boom")).await;
     assert!(
         matches!(
-            res,
-            Err(RunError::Governor(GovernorError::PolicyViolation(_)))
+            &res,
+            Err(RunError::Governor(GovernorError::WorkerPanicked { context }))
+                if context == "blocking worker"
         ),
-        "a panicking blocking task is a join failure (governor-side), not a task error"
+        "a panicking blocking task is a typed worker panic (governor-side), not a task error: {res:?}"
     );
     assert_eq!(inflight(&rt, "c"), 0, "panic must not leak the permit");
     // The runtime is still fully usable afterwards.
@@ -81,10 +82,11 @@ async fn panicking_cpu_task_is_governor_error_and_releases_permit() {
     let res: Result<i32, RunError<()>> = rt.run_cpu(spec, || panic!("boom")).await;
     assert!(
         matches!(
-            res,
-            Err(RunError::Governor(GovernorError::PolicyViolation(_)))
+            &res,
+            Err(RunError::Governor(GovernorError::WorkerPanicked { context }))
+                if context == "cpu worker"
         ),
-        "a panicking cpu task must surface as a governor-side error"
+        "a panicking cpu task must surface as a typed worker panic: {res:?}"
     );
     assert_eq!(inflight(&rt, "c"), 0, "panic must not leak the permit");
 }
@@ -240,7 +242,7 @@ async fn queue_full_is_a_typed_rejection() {
             AdmissionVerdict::QueueFull { .. }
         )))
     ));
-    g.release(occupy);
+    assert_eq!(g.release(occupy), ReleaseOutcome::Released);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -263,7 +265,7 @@ async fn dropping_a_queued_submission_abandons_it_without_leak() {
         0,
         "a cancelled queued request must not leak"
     );
-    g.release(occupy);
+    assert_eq!(g.release(occupy), ReleaseOutcome::Released);
     assert_eq!(inflight(&rt, "c"), 0);
 }
 
@@ -295,8 +297,13 @@ async fn concurrent_submissions_promote_and_all_complete() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn substrate_gate_caps_blocking_concurrency_and_times_out() {
-    // One blocking slot in the topology. A holder occupies it; a second
-    // submission with a bounded acquire wait must time out on the gate.
+    // One blocking slot in the topology, and a class that does NOT queue.
+    //
+    // Capability occupancy and class capacity are one admission decision, so the
+    // class's own overflow policy governs both. `Reject` therefore rejects:
+    // there is no unbounded holding area in front of admission for the request
+    // to wait in, which is the whole point — a `Reject` class that silently
+    // parks behind a busy worker is not rejecting.
     let rt = Builder::new()
         .topology(TopologyConfig::new().blocking_threads(1))
         .resources(ResourceBudget::new().cpu_units(100).memory_units(100))
@@ -311,12 +318,86 @@ async fn substrate_gate_caps_blocking_concurrency_and_times_out() {
     let rt2 = rt.clone();
     let holder = tokio::spawn(async move {
         rt2.run_blocking(blk("c", "hold"), move || {
-            let _ = rx.recv(); // hold the single blocking gate until signalled
+            // A signal or a dropped sender both release the holder: a test that fails
+            // before signalling never hangs on its own fixture.
+            let _released = rx.recv();
             Ok::<i32, ()>(0)
         })
         .await
     });
-    sleep(Duration::from_millis(50)).await; // let the holder seize the gate
+    sleep(Duration::from_millis(50)).await; // let the holder seize the slot
+
+    let started = std::time::Instant::now();
+    let r: Result<i32, RunError<()>> = rt
+        .run_blocking_with(
+            blk("c", "blocked"),
+            SubmitOptions::unbounded().with_acquire_timeout(Duration::from_secs(30)),
+            || Ok(1),
+        )
+        .await;
+    assert!(
+        matches!(
+            r,
+            Err(RunError::Governor(GovernorError::Rejected(
+                AdmissionVerdict::SubstrateSaturated { .. }
+            )))
+        ),
+        "a saturated capability pool sheds a non-queueing class, got {r:?}"
+    );
+    // The generous acquire budget is the control: the rejection is immediate
+    // because nothing waited, not because a timer expired.
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "rejection must not wait for the holder"
+    );
+    assert_eq!(
+        queued(&rt, "c"),
+        0,
+        "a shed request never enters the queue it was rejected from"
+    );
+
+    tx.send(())
+        .expect("the holder is still waiting for its release");
+    holder.await.unwrap().unwrap();
+    assert_eq!(
+        inflight(&rt, "c"),
+        0,
+        "no permit leaked through the gated path"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn queueing_class_waits_for_a_capability_slot_then_reports_the_pool_timeout() {
+    // The queueing counterpart: the same saturated pool, but a class that opted
+    // into waiting. It waits inside the *bounded* class queue, and the timeout
+    // names the capability pool rather than the generic admission wait, so the
+    // two backpressure causes stay distinguishable to an operator.
+    let rt = Builder::new()
+        .topology(TopologyConfig::new().blocking_threads(1))
+        .resources(ResourceBudget::new().cpu_units(100).memory_units(100))
+        .class_policy(
+            TaskClass::new("c"),
+            ClassPolicy::new()
+                .max_inflight(8)
+                .max_queue_depth(4)
+                .cpu_units(1)
+                .overflow_policy(OverflowPolicy::QueueWithinDepth),
+        )
+        .build()
+        .unwrap();
+
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let rt2 = rt.clone();
+    let holder = tokio::spawn(async move {
+        rt2.run_blocking(blk("c", "hold"), move || {
+            // A signal or a dropped sender both release the holder: a test that fails
+            // before signalling never hangs on its own fixture.
+            let _released = rx.recv();
+            Ok::<i32, ()>(0)
+        })
+        .await
+    });
+    sleep(Duration::from_millis(50)).await;
 
     let r: Result<i32, RunError<()>> = rt
         .run_blocking_with(
@@ -332,14 +413,12 @@ async fn substrate_gate_caps_blocking_concurrency_and_times_out() {
                 AdmissionVerdict::SubstratePoolTimedOut { .. }
             )))
         ),
-        "a full substrate gate must yield a bounded-acquire timeout"
+        "a bounded wait on a full capability pool reports the pool, got {r:?}"
     );
+    assert_eq!(queued(&rt, "c"), 0, "the timed-out ticket left the queue");
 
-    let _ = tx.send(()); // release the holder
+    tx.send(())
+        .expect("the holder is still waiting for its release");
     holder.await.unwrap().unwrap();
-    assert_eq!(
-        inflight(&rt, "c"),
-        0,
-        "no permit leaked through the gated path"
-    );
+    assert_eq!(inflight(&rt, "c"), 0, "no permit leaked");
 }

@@ -1,16 +1,14 @@
 //! Hell-gate: deterministic end-to-end invariants for the benchmark harness.
 //!
 //! These are not timings — they assert that the open-loop simulator, the
-//! coordinated-omission latency recorder, the control-plane metrics, and the USL
+//! raw latency recorder, the control-plane metrics, and the USL
 //! contention path all behave correctly and *fail closed* across seeds and load
 //! regimes. If any of these break, the headline benchmark numbers are not
 //! trustworthy, so they gate.
 
 use taskmesh_bench::loadgen::{contention_throughput, simulate, SimResult};
 use taskmesh_bench::metrics::{argmax_throughput, fit_usl, reject_ratio};
-use taskmesh_bench::workload::{
-    fixture, generate, mean_interval_ns, retrieval_policy, WorkloadConfig,
-};
+use taskmesh_bench::workload::{fixture, generate, retrieval_policy, WorkloadConfig};
 
 /// One open-loop run of a single retrieval class at a given offered load and
 /// aggregate capacity. Returns (p50, p99, p999, dropped, result).
@@ -28,12 +26,11 @@ fn scenario(
         seed,
         ..Default::default()
     };
-    let arrivals = generate(&cfg);
-    let interval = mean_interval_ns(lambda);
+    let arrivals = generate(&cfg).expect("valid workload config");
     // Aggregate capacity = inflight / service_time.
     let service_ns = (inflight as f64 * 1.0e9 / capacity) as u64;
     let fx = fixture(vec![("retrieval", retrieval_policy(inflight, depth))], 0, 0);
-    let (lat, res) = simulate(&fx, &arrivals, service_ns, interval);
+    let (lat, res) = simulate(&fx, &arrivals, service_ns).expect("valid schedule");
     (lat.p50(), lat.p99(), lat.p999(), lat.dropped(), res)
 }
 

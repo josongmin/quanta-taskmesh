@@ -1,6 +1,20 @@
 //! The runtime builder (T02): a convenience layer that assembles a validated
 //! [`RuntimeConfig`], registers substrate inventory, runs fail-closed validation,
 //! and wires the default CPU executor.
+//!
+//! # One resolution of the machine
+//!
+//! Detected parallelism is read **once** here and shared. Reading it per
+//! consumer invites two components to size themselves from two different
+//! answers — a CPU pool built for one worker count and a capacity gate built for
+//! another — and the disagreement only shows up as unexplained queueing under
+//! load.
+//!
+//! # Topology is validated before it is resolved
+//!
+//! `TopologyConfig` is public, deserializable input. An inverted worker window
+//! or an unrepresentable slot count is a typed `Err` from [`Builder::build`],
+//! never a panic inside a clamp or a semaphore constructor.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -82,13 +96,20 @@ impl Builder {
     }
 
     /// Validate and build. Returns a [`GovernorError`] for any impossible budget,
-    /// invalid memory scaling, misused degrade policy, or duplicate substrate.
+    /// invalid topology, invalid memory scaling, misused degrade policy, or
+    /// duplicate substrate.
     pub fn build(self) -> Result<TokioRuntime, GovernorError> {
+        // Before anything is sized from it.
+        self.topology.validate()?;
+        let available = detected_parallelism();
+        let cpu_workers = self.topology.try_resolved_cpu_workers(available)?;
+
         // `PolicySet::new` already seeds the canonical built-in inventory; here we
         // only layer caller additions on top. The registry rejects duplicates
         // (including any attempt to shadow a built-in) and invalid records.
         let policy = PolicySet::new(self.resources.clone(), self.classes.clone())
-            .with_substrates(self.substrates)?;
+            .with_substrates(self.substrates)?
+            .with_capability_limits(capability_limits(&self.topology, cpu_workers)?)?;
 
         // The config captures the *resolved* substrate inventory, so `config()`
         // is a faithful, serializable description of the built runtime.
@@ -96,29 +117,98 @@ impl Builder {
             topology: self.topology.clone(),
             resources: self.resources,
             classes: self.classes,
-            substrates: policy.substrates.values().cloned().collect(),
+            substrates: policy.substrates().values().cloned().collect(),
         };
 
         // `Governor::new` validates the policy fail-closed (impossible budgets,
-        // mixed-tier fairness, invalid memory scaling, misused degrade/queue).
+        // mixed-tier fairness, invalid memory scaling, misused degrade/queue,
+        // and the completeness of the substrate registry itself).
         let governor = Arc::new(Governor::new(policy, Arc::new(SystemClock))?);
         let cpu: Arc<dyn CpuExecutor> = match self.cpu_executor {
             Some(cpu) => cpu,
-            None => default_cpu_executor(&self.topology)?,
+            None => default_cpu_executor(cpu_workers)?,
         };
+        // D05: the adapter's declaration is checked against the gate built from
+        // topology. A `cpu` gate wider than the workers the adapter says it has
+        // would admit work the pool cannot run concurrently — the exact
+        // disagreement this builder exists to prevent — so it is rejected here,
+        // typed, rather than discovered as unexplained queueing under load.
+        let declared = cpu.capabilities();
+        if let Some(declared_workers) = declared.declared_workers {
+            // Compared in `u64` so neither side is truncated: a declaration that
+            // does not fit `usize` is *more* workers, not fewer.
+            let resolved = u64::try_from(cpu_workers).unwrap_or(u64::MAX);
+            if u64::from(declared_workers) < resolved {
+                return Err(GovernorError::InvalidTopology(
+                    taskmesh_contract::TopologyError::ExecutorDeclaresFewerWorkers {
+                        declared: declared_workers,
+                        resolved: cpu_workers,
+                    },
+                ));
+            }
+        }
 
         Ok(TokioRuntime::new(config, governor, cpu))
     }
 }
 
+/// Detected parallelism, read once per built runtime.
+fn detected_parallelism() -> usize {
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+}
+
+/// The capability-pool slot limits the engine enforces, derived from topology.
+///
+/// `0` keeps its published meaning — *no limit* — for every pool except `cpu`,
+/// which is always gated to the resolved worker count so CPU topology is
+/// authoritative on both host paths (Tokio blocking pool and Rayon).
+fn capability_limits(
+    topology: &TopologyConfig,
+    cpu_workers: usize,
+) -> Result<BTreeMap<String, u32>, GovernorError> {
+    let mut limits = BTreeMap::new();
+    let mut insert = |pool: &str, slots: usize| -> Result<(), GovernorError> {
+        if slots == 0 {
+            return Ok(());
+        }
+        let slots = u32::try_from(slots).map_err(|_too_large| {
+            GovernorError::InvalidTopology(taskmesh_contract::TopologyError::SlotCountTooLarge {
+                // `pool` is one of the fixed built-in names below.
+                pool: builtin_pool_name(pool),
+                slots,
+                max: taskmesh_contract::MAX_CAPABILITY_SLOTS,
+            })
+        })?;
+        limits.insert(pool.to_owned(), slots);
+        Ok(())
+    };
+    insert("cpu", cpu_workers.max(1))?;
+    for (pool, slots) in topology.declared_slots() {
+        insert(pool, slots)?;
+    }
+    Ok(limits)
+}
+
+/// Map a pool name back to its `'static` built-in spelling for error reporting.
+fn builtin_pool_name(pool: &str) -> &'static str {
+    match pool {
+        "cpu" => "cpu",
+        "blocking" => "blocking",
+        "large_stack" => "large_stack",
+        "maintenance" => "maintenance",
+        "local_runtime" => "local_runtime",
+        _ => "unknown",
+    }
+}
+
 /// The default CPU executor when the caller does not supply one. With the
-/// `rayon` feature this is the shared Rayon pool sized from the topology;
-/// otherwise it is the Tokio blocking pool. Either way `run_cpu` rides the
-/// `CpuExecutor` port — never a hardcoded `spawn_blocking`. Fallible so a pool
-/// build failure surfaces as a `build()` error, never a panic (fail-closed).
+/// `rayon` feature this is the shared Rayon pool sized from the *already
+/// resolved* worker count; otherwise it is the Tokio blocking pool. Either way
+/// `run_cpu` rides the `CpuExecutor` port — never a hardcoded `spawn_blocking`.
+/// Fallible so a pool build failure surfaces as a `build()` error, never a panic.
 #[cfg(feature = "rayon")]
-fn default_cpu_executor(topology: &TopologyConfig) -> Result<Arc<dyn CpuExecutor>, GovernorError> {
-    let pool = taskmesh_rayon::RayonCpuExecutor::try_from_topology(topology).map_err(|e| {
+fn default_cpu_executor(cpu_workers: usize) -> Result<Arc<dyn CpuExecutor>, GovernorError> {
+    let pool = taskmesh_rayon::RayonCpuExecutor::try_new(cpu_workers).map_err(|e| {
         GovernorError::PolicyViolation(format!("failed to build shared CPU pool: {e}").into())
     })?;
     Ok(Arc::new(pool))
@@ -129,6 +219,6 @@ fn default_cpu_executor(topology: &TopologyConfig) -> Result<Arc<dyn CpuExecutor
     clippy::unnecessary_wraps,
     reason = "signature mirrors the fallible rayon variant so build() is uniform"
 )]
-fn default_cpu_executor(_topology: &TopologyConfig) -> Result<Arc<dyn CpuExecutor>, GovernorError> {
+fn default_cpu_executor(_cpu_workers: usize) -> Result<Arc<dyn CpuExecutor>, GovernorError> {
     Ok(Arc::new(BlockingPoolCpuExecutor))
 }

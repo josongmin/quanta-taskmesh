@@ -1,271 +1,9 @@
 {
   "schema_version": 1,
   "inventory": "tools/verification/mutations.json",
-  "dirty_tree": true,
-  "dirty_paths": [
-    ".github/workflows/bench.yml",
-    ".github/workflows/ci.yml",
-    ".gitignore",
-    "Cargo.lock",
-    "Justfile",
-    "README.md",
-    "config/deny.toml",
-    "crates/taskmesh-bench/benches/admit_release.rs",
-    "crates/taskmesh-bench/benches/composite_reduce.rs",
-    "crates/taskmesh-bench/benches/contention.rs",
-    "crates/taskmesh-bench/benches/governance_tax.rs",
-    "crates/taskmesh-bench/benches/host_edge_paths.rs",
-    "crates/taskmesh-bench/benches/iai_governance.rs",
-    "crates/taskmesh-bench/benches/multiclass_fairness.rs",
-    "crates/taskmesh-bench/benches/overload_stability.rs",
-    "crates/taskmesh-bench/benches/retrieval_saturation.rs",
-    "crates/taskmesh-bench/examples/alloc_probe.rs",
-    "crates/taskmesh-bench/examples/loadgen_probe.rs",
-    "crates/taskmesh-bench/examples/usl_probe.rs",
-    "crates/taskmesh-bench/src/loadgen.rs",
-    "crates/taskmesh-bench/src/workload.rs",
-    "crates/taskmesh-bench/tests/fairness_property.rs",
-    "crates/taskmesh-bench/tests/hellgate.rs",
-    "crates/taskmesh-bench/tests/inferno.rs",
-    "crates/taskmesh-contract/src/lib.rs",
-    "crates/taskmesh-contract/src/ports.rs",
-    "crates/taskmesh-contract/src/resource.rs",
-    "crates/taskmesh-contract/src/snapshot.rs",
-    "crates/taskmesh-contract/src/topology.rs",
-    "crates/taskmesh-contract/src/verdict.rs",
-    "crates/taskmesh-contract/tests/contract_builders.rs",
-    "crates/taskmesh-contract/tests/contract_roundtrip.rs",
-    "crates/taskmesh-engine/Cargo.toml",
-    "crates/taskmesh-engine/src/engine/governor.rs",
-    "crates/taskmesh-engine/src/engine/state.rs",
-    "crates/taskmesh-engine/src/features/admission/mod.rs",
-    "crates/taskmesh-engine/src/features/composite/mod.rs",
-    "crates/taskmesh-engine/src/features/fairness/mod.rs",
-    "crates/taskmesh-engine/src/features/fairness/scheduler.rs",
-    "crates/taskmesh-engine/src/features/memory/mod.rs",
-    "crates/taskmesh-engine/src/lib.rs",
-    "crates/taskmesh-engine/src/shared/mod.rs",
-    "crates/taskmesh-engine/tests/admission_queue.rs",
-    "crates/taskmesh-engine/tests/audit_hardening.rs",
-    "crates/taskmesh-engine/tests/composite_root_attribution.rs",
-    "crates/taskmesh-engine/tests/concurrency_fuzz.rs",
-    "crates/taskmesh-engine/tests/concurrency_stress.rs",
-    "crates/taskmesh-engine/tests/config_validation.rs",
-    "crates/taskmesh-engine/tests/fairness_best_effort.rs",
-    "crates/taskmesh-engine/tests/fairness_drr_deadline.rs",
-    "crates/taskmesh-engine/tests/fairness_fifo.rs",
-    "crates/taskmesh-engine/tests/fairness_weighted.rs",
-    "crates/taskmesh-engine/tests/harness/mod.rs",
-    "crates/taskmesh-engine/tests/leak_sweep.rs",
-    "crates/taskmesh-engine/tests/loom_governance.rs",
-    "crates/taskmesh-engine/tests/memory_modes.rs",
-    "crates/taskmesh-engine/tests/permit_lifecycle.rs",
-    "crates/taskmesh-engine/tests/prop_invariants.rs",
-    "crates/taskmesh-engine/tests/provenance.rs",
-    "crates/taskmesh-engine/tests/provenance_preservation.rs",
-    "crates/taskmesh-engine/tests/recursive_rejection.rs",
-    "crates/taskmesh-engine/tests/shuttle_governance.rs",
-    "crates/taskmesh-rayon/src/lib.rs",
-    "crates/taskmesh-rayon/tests/rayon_smoke.rs",
-    "crates/taskmesh/rustc-ice-2026-06-20T18_54_11-32693.txt",
-    "crates/taskmesh/rustc-ice-2026-06-20T18_59_04-57571.txt",
-    "crates/taskmesh/rustc-ice-2026-06-20T19_04_30-89850.txt",
-    "crates/taskmesh/src/builder.rs",
-    "crates/taskmesh/src/executor/tokio_exec.rs",
-    "crates/taskmesh/src/lib.rs",
-    "crates/taskmesh/src/runtime.rs",
-    "crates/taskmesh/tests/deadline_cancel.rs",
-    "crates/taskmesh/tests/e2e_chaos.rs",
-    "crates/taskmesh/tests/e2e_proof.rs",
-    "crates/taskmesh/tests/e2e_scenarios.rs",
-    "crates/taskmesh/tests/host_inferno.rs",
-    "crates/taskmesh/tests/runtime_cancel_leak.rs",
-    "crates/taskmesh/tests/runtime_cancel_timeout.rs",
-    "crates/taskmesh/tests/runtime_cpu_executor.rs",
-    "crates/taskmesh/tests/substrate_enforcement.rs",
-    "docs/release-checklist.md",
-    "docs/runtime-inventory-baseline.md",
-    "docs/taskmesh-external-interface.md",
-    "docs/taskmesh-library-spec.md",
-    "pyproject.toml",
-    "tools/arch/check_crate_boundaries.py",
-    "tools/bench-gate.sh",
-    "tools/bench-iai.sh",
-    "tools/pm/README.md",
-    "tools/pm/pm.py",
-    "tools/pm/sources/agent-specific/claude.md",
-    "tools/pm/sources/agent-specific/codex.md",
-    "tools/pm/sources/agent-specific/cursor.md",
-    "tools/pm/sources/operational/agent-core.md",
-    "tools/pm/sources/operational/agent-playbook.md",
-    "tools/pm/sources/operational/agent-router.md",
-    "tools/pm/sources/operational/quick-reference.md",
-    "tools/pm/sources/rules/architecture.md",
-    "tools/pm/sources/rules/build.md",
-    "tools/pm/sources/rules/cheatsheet.md",
-    "tools/pm/sources/rules/cursor-architecture.md",
-    "tools/pm/sources/rules/dependencies.md",
-    "tools/pm/sources/rules/determinism.md",
-    "tools/pm/sources/rules/error-handling.md",
-    "tools/pm/sources/rules/tests.md",
-    "tools/pm/targets.yaml",
-    "tools/pm/templates/_banner.j2",
-    "tools/pm/templates/agents.md.j2",
-    "tools/pm/templates/claude.md.j2",
-    "tools/pm/templates/codex-rules.md.j2",
-    "tools/pm/templates/codex-start.md.j2",
-    "tools/pm/templates/cursor-rule.md.j2",
-    "tools/pm/templates/cursorrules.md.j2",
-    "tools/semgrep/README.md",
-    "tools/semgrep/rules/architecture.yml",
-    "tools/semgrep/rules/dependency-policy.yml",
-    "tools/semgrep/rules/determinism.yml",
-    "tools/semgrep/rules/error-handling.yml",
-    "tools/semgrep/rules/indexing-policy.yml",
-    "tools/semgrep/rules/test-quality.yml",
-    "tools/semgrep/tests/test_rules_fire.py",
-    ".semgrepignore",
-    "crates/taskmesh-contract/tests/topology_validation.rs",
-    "crates/taskmesh-engine/src/sync.rs",
-    "crates/taskmesh-engine/tests/hardening_child_scope.rs",
-    "crates/taskmesh-engine/tests/hardening_effect_retirement.rs",
-    "crates/taskmesh-engine/tests/hardening_exact_accounting.rs",
-    "crates/taskmesh-engine/tests/hardening_fairness_reference.rs",
-    "crates/taskmesh-engine/tests/hardening_lifecycle.rs",
-    "crates/taskmesh-engine/tests/hardening_memory_epochs.rs",
-    "crates/taskmesh-engine/tests/hardening_policy_inventory.rs",
-    "crates/taskmesh-engine/tests/hardening_snapshot_projection.rs",
-    "crates/taskmesh/src/execution_plan.rs",
-    "crates/taskmesh/src/runtime/claim_acquisition_tests.rs",
-    "crates/taskmesh/tests/hardening_deadline_custody.rs",
-    "crates/taskmesh/tests/hardening_degrade_policy.rs",
-    "crates/taskmesh/tests/hardening_dispatch_resolution.rs",
-    "crates/taskmesh/tests/hardening_executor_protocol.rs",
-    "crates/taskmesh/tests/hardening_intake_bounds.rs",
-    "docs/adr/0003-sep-16-hardening-contracts.md",
-    "docs/bugbash/sep-16-general/tickets/PARALLEL-REMEDIATION-PLAN.md",
-    "docs/bugbash/sep-16-general/tickets/QUALITY-AND-SCOPE.md",
-    "docs/bugbash/sep-16-general/tickets/README.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-001-substrate-waiters-bypass-bounded-admission.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-002-blocking-runfor-deadline-is-inert.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-003-invalid-topology-panics.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-004-policyset-default-inventory-bypass.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-005-memory-release-policy-not-enforced.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-006-local-gates-not-enforced-by-ci.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-007-dependency-advisories.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-008-resource-counter-saturation.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-009-stage-activity-does-not-touch-leak-lease.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-010-leak-sweep-leaves-dead-claim.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-011-estimated-reconcile-undoes-stage-release.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-012-drr-unbounded-work-under-lock.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-013-wfq-zero-increment.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-014-wfq-cancelled-service-debt.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-015-requested-stack-completion-before-release.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-016-architecture-checker-false-green.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-017-semgrep-test-enrollment-gap.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-018-benchmarks-skip-intended-work.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-019-benchmark-workflow-swallowed-failures.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-020-iai-proof-config-and-baseline-mismatch.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-021-developer-toolchain-floor.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-022-cpu-relative-deadline-starts-after-spawn.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-023-stack-dispatch-bypasses-capability.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-024-requested-stack-shutdown-delays-deadline.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-025-prompt-manager-real-target-drift.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-026-lease-timestamp-before-state-commit.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-027-invalid-trace-times-not-rejected.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-028-mmpp-crosses-phases-with-old-rate.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-029-open-loop-double-corrects-latency.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-030-waker-destructor-under-governor-lock.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-031-class-nul-panics-thread-construction.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-032-acquire-timeout-ignores-admission-lock-wait.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-033-test-quality-refers-to-missing-gates.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-034-iai-input-teardown-in-measurement.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-035-pm-template-path-collapses-to-basename.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-036-contention-bench-iteration-denominator.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-037-drr-idle-credit-accumulation.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-038-allocation-gate-malformed-number-passes.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-039-pm-duplicate-target-key-hides-output.md",
-    "docs/bugbash/sep-16-general/tickets/TM16-040-mixed-soak-discards-all-run-errors.md",
-    "docs/bugbash/sep-16-general/tickets/evidence/allocation-gate-input.sh",
-    "docs/bugbash/sep-16-general/tickets/evidence/pm-duplicate-target/KEEP.md",
-    "docs/bugbash/sep-16-general/tickets/evidence/pm-duplicate-target/sources/body.md",
-    "docs/bugbash/sep-16-general/tickets/evidence/pm-duplicate-target/targets.yaml",
-    "docs/bugbash/sep-16-general/tickets/evidence/pm-duplicate-target/templates/demo.j2",
-    "docs/bugbash/sep-16-general/tickets/evidence/pm-nested-template/WRONG.md",
-    "docs/bugbash/sep-16-general/tickets/evidence/pm-nested-template/sources/body.md",
-    "docs/bugbash/sep-16-general/tickets/evidence/pm-nested-template/targets.yaml",
-    "docs/bugbash/sep-16-general/tickets/evidence/pm-nested-template/templates/demo.j2",
-    "docs/bugbash/sep-16-general/tickets/evidence/pm-nested-template/templates/nested/demo.j2",
-    "docs/bugbash/sep-16-general/tickets/evidence/repro-bench/Cargo.lock",
-    "docs/bugbash/sep-16-general/tickets/evidence/repro-bench/Cargo.toml",
-    "docs/bugbash/sep-16-general/tickets/evidence/repro-bench/build.rs",
-    "docs/bugbash/sep-16-general/tickets/evidence/repro-bench/src/lib.rs",
-    "docs/bugbash/sep-16-general/tickets/evidence/repro/Cargo.lock",
-    "docs/bugbash/sep-16-general/tickets/evidence/repro/Cargo.toml",
-    "docs/bugbash/sep-16-general/tickets/evidence/repro/build.rs",
-    "docs/bugbash/sep-16-general/tickets/evidence/repro/src/lib.rs",
-    "docs/bugbash/sep-16-general/tickets/evidence/verification.md",
-    "docs/plans/sep-16-hardening/AUDIT-2026-09-16.md",
-    "docs/plans/sep-16-hardening/receipts/local-2026-09-16.gates.json",
-    "docs/plans/sep-16-hardening/receipts/local-2026-09-16.json",
-    "docs/plans/sep-16-hardening/receipts/local-2026-09-16.mutations.json",
-    "docs/plans/sep-16-hardening/tickets/ARCHITECTURE.md",
-    "docs/plans/sep-16-hardening/tickets/COVERAGE.md",
-    "docs/plans/sep-16-hardening/tickets/DECISIONS.md",
-    "docs/plans/sep-16-hardening/tickets/EXECUTION.md",
-    "docs/plans/sep-16-hardening/tickets/FINAL-AUDIT.md",
-    "docs/plans/sep-16-hardening/tickets/H16-001-contracts-and-compatibility.md",
-    "docs/plans/sep-16-hardening/tickets/H16-002-validated-policy-topology.md",
-    "docs/plans/sep-16-hardening/tickets/H16-003-terminal-ticket-lifecycle.md",
-    "docs/plans/sep-16-hardening/tickets/H16-004-exact-resource-accounting.md",
-    "docs/plans/sep-16-hardening/tickets/H16-005-memory-epochs-and-lease-clock.md",
-    "docs/plans/sep-16-hardening/tickets/H16-006-effects-and-bounded-promotion.md",
-    "docs/plans/sep-16-hardening/tickets/H16-007-fairness-reference-and-credit.md",
-    "docs/plans/sep-16-hardening/tickets/H16-008-resolved-execution-plan.md",
-    "docs/plans/sep-16-hardening/tickets/H16-009-bounded-intake.md",
-    "docs/plans/sep-16-hardening/tickets/H16-010-dispatch-integration.md",
-    "docs/plans/sep-16-hardening/tickets/H16-011-executor-protocol-and-setup.md",
-    "docs/plans/sep-16-hardening/tickets/H16-012-deadlines-and-cleanup.md",
-    "docs/plans/sep-16-hardening/tickets/H16-013-observability-and-invariants.md",
-    "docs/plans/sep-16-hardening/tickets/H16-014-production-regression-proof.md",
-    "docs/plans/sep-16-hardening/tickets/H16-015-benchmark-measurement.md",
-    "docs/plans/sep-16-hardening/tickets/H16-016-workload-and-latency-model.md",
-    "docs/plans/sep-16-hardening/tickets/H16-017-performance-gates.md",
-    "docs/plans/sep-16-hardening/tickets/H16-018-gate-inventory-and-ci.md",
-    "docs/plans/sep-16-hardening/tickets/H16-019-dependency-and-toolchain.md",
-    "docs/plans/sep-16-hardening/tickets/H16-020-pm-validated-render-plan.md",
-    "docs/plans/sep-16-hardening/tickets/H16-021-quality-and-doc-migration.md",
-    "docs/plans/sep-16-hardening/tickets/H16-022-qualification-and-rollout.md",
-    "docs/plans/sep-16-hardening/tickets/README.md",
-    "docs/plans/sep-16-hardening/tickets/VERIFICATION.md",
-    "docs/plans/sep-16-hardening/tickets/plan.json",
-    "docs/plans/sep-16-hardening/tickets/validate_plan.py",
-    "tools/arch/tests/test_crate_boundaries.py",
-    "tools/bench/allocation_gate.py",
-    "tools/bench/iai_gate.py",
-    "tools/bench/perf-gate.json",
-    "tools/bench/tests/test_allocation_gate.py",
-    "tools/bench/tests/test_iai_gate.py",
-    "tools/bench/validate_bencher_output.py",
-    "tools/consumer-msrv/Cargo.lock",
-    "tools/consumer-msrv/Cargo.toml",
-    "tools/consumer-msrv/check.py",
-    "tools/consumer-msrv/src/main.rs",
-    "tools/consumer-msrv/tests/test_consumer_msrv.py",
-    "tools/gates/inventory.json",
-    "tools/gates/required.json",
-    "tools/gates/run.py",
-    "tools/gates/tests/test_inventory.py",
-    "tools/gates/validate_inventory.py",
-    "tools/pm/tests/test_render_plan.py",
-    "tools/qualification/receipt.py",
-    "tools/qualification/tests/test_receipt.py",
-    "tools/verification/mutations.json",
-    "tools/verification/run_mutations.py",
-    "tools/verification/tests/test_policy_recipe_drift.py",
-    "tools/verification/tests/test_run_mutations.py"
-  ],
-  "total": 43,
+  "dirty_tree": false,
+  "dirty_paths": [],
+  "total": 62,
   "problems": 0,
   "results": [
     {
@@ -277,7 +15,7 @@
       "observed_failures": [
         "abandoning_a_queued_request_retires_its_waker_outside_the_lock"
       ],
-      "duration_s": 25.725
+      "duration_s": 76.229
     },
     {
       "id": "wfq-scale-loses-precision",
@@ -289,7 +27,7 @@
         "extreme_weights_still_produce_a_non_zero_increment",
         "weighted_share_survives_uniform_rescaling_of_every_weight"
       ],
-      "duration_s": 3.845
+      "duration_s": 26.377
     },
     {
       "id": "drr-keeps-idle-credit",
@@ -300,7 +38,7 @@
       "observed_failures": [
         "an_idle_class_does_not_bank_credit_across_busy_periods"
       ],
-      "duration_s": 2.95
+      "duration_s": 5.021
     },
     {
       "id": "cancellation-leaves-service-debt",
@@ -311,7 +49,7 @@
       "observed_failures": [
         "cancelled_requests_leave_no_virtual_time_debt"
       ],
-      "duration_s": 3.156
+      "duration_s": 5.292
     },
     {
       "id": "dead-ticket-survives-unwind",
@@ -322,9 +60,10 @@
       "observed_failures": [
         "a_swept_promotion_hands_the_waiter_a_terminal_outcome_not_a_dead_permit",
         "observing_a_terminal_record_releases_its_retention_slot",
-        "terminal_records_stay_bounded_under_repeated_churn"
+        "terminal_records_stay_bounded_under_repeated_churn",
+        "terminal_retention_holds_exactly_the_bound_and_evicts_the_oldest_first"
       ],
-      "duration_s": 2.809
+      "duration_s": 5.894
     },
     {
       "id": "saturating-capacity-check",
@@ -336,16 +75,16 @@
         "the_budget_boundary_is_exact_on_both_sides",
         "two_half_max_cpu_requests_cannot_both_fit_a_max_budget"
       ],
-      "duration_s": 3.654
+      "duration_s": 7.168
     },
     {
       "id": "control-behaviour-preserving-max-zero",
       "finding": "control",
       "status": "CONTROL_GREEN",
-      "detail": "suite stayed green across 11 tests",
+      "detail": "suite stayed green across 14 tests",
       "expected_test": "",
       "observed_failures": [],
-      "duration_s": 3.563
+      "duration_s": 6.128
     },
     {
       "id": "stage-release-skips-the-lease-touch",
@@ -357,7 +96,7 @@
         "a_zero_unit_stage_release_still_counts_as_activity",
         "stage_activity_keeps_a_lease_alive_through_the_sweep"
       ],
-      "duration_s": 2.119
+      "duration_s": 5.923
     },
     {
       "id": "lease-timestamp-skips-the-watermark",
@@ -368,7 +107,7 @@
       "observed_failures": [
         "a_late_clock_sample_cannot_backdate_a_new_lease"
       ],
-      "duration_s": 3.334
+      "duration_s": 8.965
     },
     {
       "id": "thread-label-uses-raw-class",
@@ -380,7 +119,7 @@
         "an_awkward_class_never_panics_a_requested_stack_submission",
         "class_identity_is_not_rewritten_to_suit_an_os_label"
       ],
-      "duration_s": 4.226
+      "duration_s": 15.503
     },
     {
       "id": "acquisition-budget-ignored-on-immediate-admit",
@@ -391,7 +130,7 @@
       "observed_failures": [
         "an_expired_acquisition_budget_does_not_start_work_it_could_admit"
       ],
-      "duration_s": 3.264
+      "duration_s": 6.208
     },
     {
       "id": "stack-request-charged-to-the-declared-hint",
@@ -403,7 +142,7 @@
         "a_stack_request_consumes_the_large_stack_capability_whatever_the_hint_says",
         "the_requested_stack_async_path_shares_the_same_capability"
       ],
-      "duration_s": 7.626
+      "duration_s": 10.189
     },
     {
       "id": "run-deadline-judged-from-the-timer-only",
@@ -414,7 +153,7 @@
       "observed_failures": [
         "an_inline_executor_cannot_report_a_late_result_as_success"
       ],
-      "duration_s": 4.541
+      "duration_s": 6.656
     },
     {
       "id": "capability-not-checked-at-admission",
@@ -425,7 +164,7 @@
       "observed_failures": [
         "a_saturated_capability_pool_alone_is_enough_to_shed"
       ],
-      "duration_s": 3.986
+      "duration_s": 6.846
     },
     {
       "id": "mixed-soak-all-classes-disabled",
@@ -436,7 +175,7 @@
       "observed_failures": [
         "mixed_substrate_soak_with_concurrent_sweeper"
       ],
-      "duration_s": 3.387
+      "duration_s": 5.881
     },
     {
       "id": "mmpp-draws-at-the-old-rate",
@@ -448,7 +187,7 @@
         "workload::tests::asymmetric_dwells_weight_the_rate_by_occupancy",
         "workload::tests::fast_equal_dwell_switching_converges_to_the_stationary_rate"
       ],
-      "duration_s": 7.853
+      "duration_s": 12.142
     },
     {
       "id": "reversed-trace-accepted",
@@ -460,7 +199,7 @@
         "workload::tests::invalid_event_times_are_rejected_at_the_direct_api_too",
         "workload::tests::invalid_event_times_are_rejected_by_the_parser_with_the_line"
       ],
-      "duration_s": 1.909
+      "duration_s": 6.138
     },
     {
       "id": "open-loop-histogram-double-corrected",
@@ -472,7 +211,7 @@
         "loadgen::tests::open_loop_waits_are_recorded_exactly_once",
         "loadgen::tests::histogram_population_equals_started_requests_under_overload"
       ],
-      "duration_s": 1.777
+      "duration_s": 3.728
     },
     {
       "id": "contention-ops-rounded-to-thread-multiple",
@@ -484,7 +223,7 @@
         "loadgen::tests::ops_are_distributed_exactly",
         "loadgen::tests::a_contention_run_completes_exactly_the_requested_count"
       ],
-      "duration_s": 2.179
+      "duration_s": 3.426
     },
     {
       "id": "panicking-waker-aborts-the-wake-loop",
@@ -495,7 +234,7 @@
       "observed_failures": [
         "every_waiter_in_one_pass_is_woken_even_if_an_earlier_one_panics"
       ],
-      "duration_s": 2.762
+      "duration_s": 4.412
     },
     {
       "id": "estimated-reconcile-restores-reservation",
@@ -504,10 +243,10 @@
       "detail": "'estimated_reconcile_does_not_restore_released_stage_units' failed as expected",
       "expected_test": "estimated_reconcile_does_not_restore_released_stage_units",
       "observed_failures": [
-        "hybrid_floor_follows_the_remaining_reservation_not_the_original",
-        "estimated_reconcile_does_not_restore_released_stage_units"
+        "estimated_reconcile_does_not_restore_released_stage_units",
+        "hybrid_floor_follows_the_remaining_reservation_not_the_original"
       ],
-      "duration_s": 2.068
+      "duration_s": 4.371
     },
     {
       "id": "promotion-budget-charges-an-unmade-dispatch",
@@ -518,7 +257,7 @@
       "observed_failures": [
         "drr_order_is_exact_across_the_promotion_budget_boundary"
       ],
-      "duration_s": 1.878
+      "duration_s": 5.184
     },
     {
       "id": "newcomer-overtakes-a-runnable-head",
@@ -529,7 +268,7 @@
       "observed_failures": [
         "the_capability_exception_holds_inside_the_continuation_gap_too"
       ],
-      "duration_s": 1.982
+      "duration_s": 4.717
     },
     {
       "id": "drr-walks-the-ring-visit-by-visit",
@@ -541,7 +280,7 @@
         "drr_examines_each_runnable_class_once_per_selection",
         "a_head_costing_many_quanta_is_served_without_walking_every_round"
       ],
-      "duration_s": 9.222
+      "duration_s": 10.051
     },
     {
       "id": "claim-does-not-touch-the-lease",
@@ -552,7 +291,7 @@
       "observed_failures": [
         "a_claim_restarts_the_lease_staleness_clock"
       ],
-      "duration_s": 4.826
+      "duration_s": 8.214
     },
     {
       "id": "degrade-to-disabled-fallback-accepted",
@@ -563,7 +302,7 @@
       "observed_failures": [
         "degrade_to_a_disabled_fallback_is_rejected"
       ],
-      "duration_s": 2.221
+      "duration_s": 5.09
     },
     {
       "id": "budget-ignored-on-a-racing-promotion",
@@ -574,7 +313,7 @@
       "observed_failures": [
         "runtime::claim_acquisition_tests::timeout_after_racing_promotion_unwinds_instead_of_starting_v1"
       ],
-      "duration_s": 5.637
+      "duration_s": 5.39
     },
     {
       "id": "executor-declaration-ignored",
@@ -585,7 +324,7 @@
       "observed_failures": [
         "a_cpu_gate_wider_than_the_executor_declares_is_refused_at_build"
       ],
-      "duration_s": 3.28
+      "duration_s": 166.826
     },
     {
       "id": "unsupported-deadline-silently-dropped",
@@ -596,7 +335,7 @@
       "observed_failures": [
         "deadline_on_a_class_that_cannot_enforce_it_is_refused_not_ignored"
       ],
-      "duration_s": 2.927
+      "duration_s": 20.821
     },
     {
       "id": "blocking-run-budget-not-applied",
@@ -607,7 +346,7 @@
       "observed_failures": [
         "a_blocking_run_budget_bounds_the_caller_and_keeps_the_worker_charged"
       ],
-      "duration_s": 7.699
+      "duration_s": 14.808
     },
     {
       "id": "terminal-reply-waits-for-teardown",
@@ -618,7 +357,7 @@
       "observed_failures": [
         "a_deadline_answer_is_not_delayed_by_a_blocking_child_teardown"
       ],
-      "duration_s": 14.192
+      "duration_s": 12.345
     },
     {
       "id": "panic-reply-waits-for-teardown",
@@ -629,7 +368,7 @@
       "observed_failures": [
         "a_panic_answer_is_not_delayed_by_a_blocking_child_teardown"
       ],
-      "duration_s": 10.543
+      "duration_s": 9.518
     },
     {
       "id": "alloc-gate-trusts-a-broken-counter",
@@ -640,7 +379,7 @@
       "observed_failures": [
         "test_a_counter_that_cannot_see_known_allocations_is_not_a_measurement"
       ],
-      "duration_s": 0.602
+      "duration_s": 0.882
     },
     {
       "id": "receipt-validator-trusts-the-receipts-dirty-flag",
@@ -651,7 +390,7 @@
       "observed_failures": [
         "test_a_receipt_claiming_a_clean_tree_over_a_dirty_one_is_caught"
       ],
-      "duration_s": 0.111
+      "duration_s": 0.181
     },
     {
       "id": "proof-parity-not-checked",
@@ -662,7 +401,7 @@
       "observed_failures": [
         "test_just_proof_skipping_a_required_gate_is_reported"
       ],
-      "duration_s": 0.236
+      "duration_s": 0.247
     },
     {
       "id": "iai-runner-self-report-ignored",
@@ -673,7 +412,7 @@
       "observed_failures": [
         "test_the_runner_version_is_accepted_from_its_own_error_report"
       ],
-      "duration_s": 0.922
+      "duration_s": 1.052
     },
     {
       "id": "arch-checker-trusts-the-test-module-naming-convention",
@@ -684,7 +423,7 @@
       "observed_failures": [
         "test_test_modules_inside_src_are_scanned_and_must_be_cfg_test"
       ],
-      "duration_s": 0.147
+      "duration_s": 0.189
     },
     {
       "id": "capability-blocked-head-holds-back-every-newcomer",
@@ -696,7 +435,7 @@
         "a_head_blocked_on_another_capability_pool_does_not_hold_back_a_newcomer",
         "the_capability_exception_holds_inside_the_continuation_gap_too"
       ],
-      "duration_s": 4.054
+      "duration_s": 6.568
     },
     {
       "id": "budget-ignored-on-a-promotion-found-on-wake",
@@ -707,7 +446,7 @@
       "observed_failures": [
         "runtime::claim_acquisition_tests::a_promotion_found_on_wake_after_the_budget_is_spent_is_unwound_v1"
       ],
-      "duration_s": 2.604
+      "duration_s": 6.054
     },
     {
       "id": "cross-class-newcomer-takes-the-continuation-gap",
@@ -716,9 +455,10 @@
       "detail": "'a_newcomer_of_another_class_also_waits_for_the_pending_continuation' failed as expected",
       "expected_test": "a_newcomer_of_another_class_also_waits_for_the_pending_continuation",
       "observed_failures": [
+        "a_reject_class_that_queues_on_memory_waits_for_the_pending_continuation_too",
         "a_newcomer_of_another_class_also_waits_for_the_pending_continuation"
       ],
-      "duration_s": 2.367
+      "duration_s": 4.247
     },
     {
       "id": "queued-behind-shed-by-overflow-policy",
@@ -727,9 +467,10 @@
       "detail": "'a_reject_class_that_queues_on_memory_joins_its_queue_behind_a_runnable_head' failed as expected",
       "expected_test": "a_reject_class_that_queues_on_memory_joins_its_queue_behind_a_runnable_head",
       "observed_failures": [
+        "a_reject_class_that_queues_on_memory_waits_for_the_pending_continuation_too",
         "a_reject_class_that_queues_on_memory_joins_its_queue_behind_a_runnable_head"
       ],
-      "duration_s": 2.597
+      "duration_s": 3.849
     },
     {
       "id": "executor-gate-boundary-off-by-one",
@@ -740,7 +481,7 @@
       "observed_failures": [
         "a_cpu_gate_wider_than_the_executor_declares_is_refused_at_build"
       ],
-      "duration_s": 3.256
+      "duration_s": 5.228
     },
     {
       "id": "absolute-deadline-accepted-on-a-blocking-stack-thread",
@@ -751,7 +492,219 @@
       "observed_failures": [
         "absolute_deadline_rejects_non_cancellable_blocking_work_v1"
       ],
-      "duration_s": 3.357
+      "duration_s": 4.536
+    },
+    {
+      "id": "promotion-pending-is-sticky",
+      "finding": "R3-shuttle",
+      "status": "KILLED",
+      "detail": "'randomized_gap_arrivals_queue_behind_runnable_heads' failed as expected",
+      "expected_test": "randomized_gap_arrivals_queue_behind_runnable_heads",
+      "observed_failures": [
+        "randomized_only_unqueueable_work_overtakes_in_the_gap",
+        "randomized_gap_arrivals_queue_behind_runnable_heads"
+      ],
+      "duration_s": 5.963
+    },
+    {
+      "id": "unqueueable-newcomer-queued-in-the-gap",
+      "finding": "R3-shuttle",
+      "status": "KILLED",
+      "detail": "'randomized_only_unqueueable_work_overtakes_in_the_gap' failed as expected",
+      "expected_test": "randomized_only_unqueueable_work_overtakes_in_the_gap",
+      "observed_failures": [
+        "randomized_only_unqueueable_work_overtakes_in_the_gap"
+      ],
+      "duration_s": 9.096
+    },
+    {
+      "id": "stage-release-never-promotes",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'a_stage_release_promotes_work_queued_on_memory' failed as expected",
+      "expected_test": "a_stage_release_promotes_work_queued_on_memory",
+      "observed_failures": [
+        "a_stage_release_promotes_work_queued_on_memory"
+      ],
+      "duration_s": 63.588
+    },
+    {
+      "id": "leak-reclaim-never-promotes",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'a_reclaimed_leak_promotes_work_queued_on_memory' failed as expected",
+      "expected_test": "a_reclaimed_leak_promotes_work_queued_on_memory",
+      "observed_failures": [
+        "a_reclaimed_leak_promotes_work_queued_on_memory"
+      ],
+      "duration_s": 41.849
+    },
+    {
+      "id": "per-request-memory-cap-inverted",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'per_request_memory_limit_overflow_fails' failed as expected",
+      "expected_test": "per_request_memory_limit_overflow_fails",
+      "observed_failures": [
+        "per_request_memory_limit_overflow_fails"
+      ],
+      "duration_s": 61.56
+    },
+    {
+      "id": "every-class-can-queue-in-the-gap",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'an_unqueueable_newcomer_is_admitted_in_the_continuation_gap' failed as expected",
+      "expected_test": "an_unqueueable_newcomer_is_admitted_in_the_continuation_gap",
+      "observed_failures": [
+        "an_unqueueable_newcomer_is_admitted_in_the_continuation_gap"
+      ],
+      "duration_s": 12.302
+    },
+    {
+      "id": "full-queue-loses-the-capability-cause",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'a_full_queue_sheds_with_the_cause_that_blocked_the_request' failed as expected",
+      "expected_test": "a_full_queue_sheds_with_the_cause_that_blocked_the_request",
+      "observed_failures": [
+        "a_full_queue_sheds_with_the_cause_that_blocked_the_request"
+      ],
+      "duration_s": 29.064
+    },
+    {
+      "id": "drr-cursor-serves-the-wrong-class",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'drr_selection_matches_the_reference_for_heterogeneous_costs' failed as expected",
+      "expected_test": "drr_selection_matches_the_reference_for_heterogeneous_costs",
+      "observed_failures": [
+        "drr_selection_matches_the_reference_for_heterogeneous_costs"
+      ],
+      "duration_s": 15.861
+    },
+    {
+      "id": "drr-visits-needed-adds-the-deficit",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'drr_selection_matches_the_reference_for_heterogeneous_costs' failed as expected",
+      "expected_test": "drr_selection_matches_the_reference_for_heterogeneous_costs",
+      "observed_failures": [
+        "drr_selection_matches_the_reference_for_heterogeneous_costs"
+      ],
+      "duration_s": 16.405
+    },
+    {
+      "id": "drr-skipped-laps-credit-the-wrong-count",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'drr_selection_matches_the_reference_for_heterogeneous_costs' failed as expected",
+      "expected_test": "drr_selection_matches_the_reference_for_heterogeneous_costs",
+      "observed_failures": [
+        "drr_selection_matches_the_reference_for_heterogeneous_costs"
+      ],
+      "duration_s": 13.779
+    },
+    {
+      "id": "drr-work-oracle-counts-nothing",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'drr_examines_each_runnable_class_once_per_selection' failed as expected",
+      "expected_test": "drr_examines_each_runnable_class_once_per_selection",
+      "observed_failures": [
+        "drr_examines_each_runnable_class_once_per_selection"
+      ],
+      "duration_s": 13.144
+    },
+    {
+      "id": "absolute-deadline-mapping-inverted",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'an_absolute_deadline_that_expires_while_queued_is_deadline_exceeded_v1' failed as expected",
+      "expected_test": "an_absolute_deadline_that_expires_while_queued_is_deadline_exceeded_v1",
+      "observed_failures": [
+        "an_acquire_timeout_under_a_far_absolute_deadline_stays_an_acquisition_timeout_v1",
+        "an_absolute_deadline_that_expires_while_queued_is_deadline_exceeded_v1"
+      ],
+      "duration_s": 26.751
+    },
+    {
+      "id": "conservation-oracle-accepts-everything",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'a_capability_pool_cannot_exceed_its_limit' failed as expected",
+      "expected_test": "a_capability_pool_cannot_exceed_its_limit",
+      "observed_failures": [
+        "a_capability_pool_cannot_exceed_its_limit",
+        "a_snapshot_reports_the_violating_class_by_name"
+      ],
+      "duration_s": 27.03
+    },
+    {
+      "id": "degrade-chain-accepted",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'a_degrade_chain_is_rejected' failed as expected",
+      "expected_test": "a_degrade_chain_is_rejected",
+      "observed_failures": [
+        "a_degrade_chain_is_rejected"
+      ],
+      "duration_s": 19.028
+    },
+    {
+      "id": "has-runnable-always-true",
+      "finding": "R3-mutants",
+      "status": "KILLED",
+      "detail": "'no_continuation_is_owed_when_a_pass_ends_exactly_at_its_budget' failed as expected",
+      "expected_test": "no_continuation_is_owed_when_a_pass_ends_exactly_at_its_budget",
+      "observed_failures": [
+        "no_continuation_is_owed_when_a_pass_ends_exactly_at_its_budget"
+      ],
+      "duration_s": 27.715
+    },
+    {
+      "id": "class-can-queue-ignores-the-memory-queue",
+      "finding": "R3B-P2-1",
+      "status": "KILLED",
+      "detail": "'a_reject_class_that_queues_on_memory_waits_for_the_pending_continuation_too' failed as expected",
+      "expected_test": "a_reject_class_that_queues_on_memory_waits_for_the_pending_continuation_too",
+      "observed_failures": [
+        "a_reject_class_that_queues_on_memory_waits_for_the_pending_continuation_too"
+      ],
+      "duration_s": 7.545
+    },
+    {
+      "id": "abandoning-a-queued-ticket-never-promotes",
+      "finding": "R3B-P3-5",
+      "status": "KILLED",
+      "detail": "'engine_agrees_with_the_reference_model' failed as expected",
+      "expected_test": "engine_agrees_with_the_reference_model",
+      "observed_failures": [
+        "engine_agrees_with_the_reference_model"
+      ],
+      "duration_s": 54.043
+    },
+    {
+      "id": "self-reporting-gate-passes-on-exit-zero-alone",
+      "finding": "R3C-1",
+      "status": "KILLED",
+      "detail": "'test_every_self_reporting_recipe_declares_the_status_line_it_prints' failed as expected",
+      "expected_test": "test_every_self_reporting_recipe_declares_the_status_line_it_prints",
+      "observed_failures": [
+        "test_every_self_reporting_recipe_declares_the_status_line_it_prints"
+      ],
+      "duration_s": 0.72
+    },
+    {
+      "id": "an-earlier-status-line-stands-in-for-the-verdict",
+      "finding": "R3C-1",
+      "status": "KILLED",
+      "detail": "'test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps' failed as expected",
+      "expected_test": "test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps",
+      "observed_failures": [
+        "test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps"
+      ],
+      "duration_s": 0.234
     }
   ]
 }

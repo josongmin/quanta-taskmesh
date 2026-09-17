@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "platform": "macos",
+  "generated_at": "2026-09-17T21:10:08.565371+00:00",
+  "qualified": false,
+  "required_not_run": [
+    "mutants-critical"
+  ],
+  "required_not_passed": [
+    "bench-iai"
+  ],
+  "results": [
+    {
+      "id": "fmt-check",
+      "recipe": "fmt-check",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:04:42.888551+00:00",
+      "duration_s": 0.362,
+      "output_tail": "cargo fmt --all --check\n"
+    },
+    {
+      "id": "clippy",
+      "recipe": "clippy",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:04:43.250467+00:00",
+      "duration_s": 30.715,
+      "output_tail": "f_let_else -A clippy::unused_async -A clippy::cast_lossless -A clippy::future_not_send  -D clippy::unwrap_used -D clippy::panic -D clippy::todo -D clippy::unimplemented -D clippy::unreachable -D clippy::indexing_slicing -D clippy::string_slice -D clippy::cast_possible_truncation -D clippy::cast_sign_loss -D clippy::cast_possible_wrap -D clippy::lossy_float_literal -D clippy::float_cmp -D clippy::dbg_macro -D clippy::unwrap_or_default -D clippy::or_fun_call -D clippy::default_trait_access -D clippy::manual_assert -D clippy::question_mark -D clippy::mem_forget -D clippy::match_wild_err_arm -D clippy::map_err_ignore -D clippy::let_underscore_must_use -D clippy::missing_assert_message -D clippy::semicolon_if_nothing_returned -D clippy::implicit_clone -D clippy::inefficient_to_string -D clippy::str_to_string -D clippy::needless_pass_by_value -D clippy::as_conversions -D clippy::as_underscore -D clippy::undocumented_unsafe_blocks -D clippy::else_if_without_else -D clippy::useless_let_if_seq -D clippy::bool_to_int_with_if -D clippy::clone_on_ref_ptr -D clippy::empty_enums -D clippy::redundant_closure_for_method_calls -D clippy::manual_let_else -D clippy::ref_option -D clippy::explicit_iter_loop \n    Blocking waiting for file lock on package cache\n    Blocking waiting for file lock on package cache\n    Blocking waiting for file lock on package cache\n    Checking taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n    Checking taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n    Checking taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n    Checking taskmesh v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.44s\ncargo clippy -p taskmesh-bench --all-targets -- -D warnings\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.65s\n"
+    },
+    {
+      "id": "test",
+      "recipe": "test",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:05:13.965785+00:00",
+      "duration_s": 35.125,
+      "output_tail": "/deps/hardening_memory_epochs-25e5bfb52f3ad42b)\n     Running tests/hardening_policy_inventory.rs (target/debug/deps/hardening_policy_inventory-8183c58f2e185c0f)\n     Running tests/hardening_snapshot_projection.rs (target/debug/deps/hardening_snapshot_projection-e5dd655fa1ec5e97)\n     Running tests/leak_sweep.rs (target/debug/deps/leak_sweep-9e36ce00c5daa981)\n     Running tests/loom_governance.rs (target/debug/deps/loom_governance-4edab5374a277878)\n     Running tests/memory_modes.rs (target/debug/deps/memory_modes-a146d5170d9ea1c5)\n     Running tests/memory_overcommit.rs (target/debug/deps/memory_overcommit-f330be509f771163)\n     Running tests/permit_lifecycle.rs (target/debug/deps/permit_lifecycle-18e9474a972d7814)\n     Running tests/prop_invariants.rs (target/debug/deps/prop_invariants-42704b249058067f)\n     Running tests/provenance.rs (target/debug/deps/provenance-8566f5f8467960b8)\n     Running tests/provenance_preservation.rs (target/debug/deps/provenance_preservation-6d77c3cc225cff82)\n     Running tests/recursive_rejection.rs (target/debug/deps/recursive_rejection-830f8c901bddbc24)\n     Running tests/reduce_policy_validation.rs (target/debug/deps/reduce_policy_validation-8f3c2eb191bdb3e2)\n     Running tests/request_key_hot_path.rs (target/debug/deps/request_key_hot_path-2bfa76edc12d0369)\n     Running tests/retry_after.rs (target/debug/deps/retry_after-a629af137f93a098)\n     Running tests/retry_after_property.rs (target/debug/deps/retry_after_property-40f67b804785a39b)\n     Running tests/shuttle_governance.rs (target/debug/deps/shuttle_governance-1b621e3062c53d87)\n     Running tests/substrate_inventory.rs (target/debug/deps/substrate_inventory-9aaf5481683f07cb)\n     Running unittests src/lib.rs (target/debug/deps/taskmesh_rayon-b9220ce8b0e465fd)\n     Running tests/rayon_smoke.rs (target/debug/deps/rayon_smoke-13e74892ec0d1e65)\n   Doc-tests taskmesh\n   Doc-tests taskmesh_bench\n   Doc-tests taskmesh_contract\n   Doc-tests taskmesh_engine\n   Doc-tests taskmesh_rayon\n"
+    },
+    {
+      "id": "deny",
+      "recipe": "deny",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:05:49.091255+00:00",
+      "duration_s": 2.274,
+      "output_tail": "advisories ok, bans ok, licenses ok, sources ok\ncargo deny check --config config/deny.toml\n"
+    },
+    {
+      "id": "semgrep",
+      "recipe": "semgrep",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:05:51.365361+00:00",
+      "duration_s": 9.008,
+      "output_tail": "semgrep --config tools/semgrep/rules --error crates\n               \n               \n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502 Scan Status \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n  Scanning 127 files tracked by git with 38 Code rules:\n                                                                                                                        \n  Language      Rules   Files          Origin   Rules                                                                   \n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500        \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500                                                                  \n  rust             32     121          Custom      38                                                                   \n  <multilang>       5     121                                                                                           \n                                                                                                                        \n                \n                \n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502 Scan Summary \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\u2705 Scan completed successfully.\n \u2022 Findings: 0 (0 blocking)\n \u2022 Rules run: 37\n \u2022 Targets scanned: 121\n \u2022 Parsed lines: ~100.0%\n \u2022 Scan was limited to files tracked by git\n \u2022 For a detailed list of skipped files and lines, run semgrep with the --verbose flag\nRan 37 rules on 121 files: 0 findings.\n\nA new version of Semgrep is available. See https://semgrep.dev/docs/upgrading\nIf Semgrep missed a finding, please send us feedback to let us know!\nSee https://semgrep.dev/docs/reporting-false-negatives/\n"
+    },
+    {
+      "id": "test-architecture",
+      "recipe": "test-architecture",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:06:00.373243+00:00",
+      "duration_s": 0.247,
+      "output_tail": "crate-boundary check OK: no violations\nuv run python tools/arch/check_crate_boundaries.py\n"
+    },
+    {
+      "id": "py-lint",
+      "recipe": "py-lint",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:06:00.620783+00:00",
+      "duration_s": 0.166,
+      "output_tail": "All checks passed!\nuv run ruff check tools\n"
+    },
+    {
+      "id": "py-test",
+      "recipe": "py-test",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:06:00.787314+00:00",
+      "duration_s": 41.652,
+      "output_tail": "........................................................................ [ 33%]\n........................................................................ [ 66%]\n........................................................................ [ 99%]\n.                                                                        [100%]\n217 passed in 41.14s\nuv run pytest tools -q\n"
+    },
+    {
+      "id": "pm-lint",
+      "recipe": "pm-lint",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:06:42.439855+00:00",
+      "duration_s": 0.173,
+      "output_tail": "pm lint OK: 0 target(s) up to date\nuv run python tools/pm/pm.py lint\n"
+    },
+    {
+      "id": "bench-gate",
+      "recipe": "bench-gate",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:06:42.612668+00:00",
+      "duration_s": 0.448,
+      "output_tail": "== allocation gate: admit+release allocs/op must be <= 3.0 (schema 2, 200000 ops) ==\nok: 3.0 allocs/op (<= baseline 3.0)\nbench-gate: allocation gate passed\nbash tools/bench-gate.sh\n(baseline characterization; 0-alloc is a separate storage-model goal \u2014 ADR 9000 / P2)\n"
+    },
+    {
+      "id": "gates-inventory",
+      "recipe": "gates-inventory",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:06:43.060551+00:00",
+      "duration_s": 0.115,
+      "output_tail": "gate inventory OK: 22 gates, 22 required, parity with 22 workflow invocations\nuv run python tools/gates/validate_inventory.py\n"
+    },
+    {
+      "id": "test-rayon",
+      "recipe": "test-rayon",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:06:43.175163+00:00",
+      "duration_s": 86.451,
+      "output_tail": "ace.rs (target/debug/deps/hardening_consumer_surface-a899edec408e00e3)\n     Running tests/hardening_deadline_custody.rs (target/debug/deps/hardening_deadline_custody-3426df90415c5494)\n     Running tests/hardening_degrade_policy.rs (target/debug/deps/hardening_degrade_policy-3a4d6807136de00a)\n     Running tests/hardening_dispatch_resolution.rs (target/debug/deps/hardening_dispatch_resolution-50b56cb7cd68590b)\n     Running tests/hardening_executor_protocol.rs (target/debug/deps/hardening_executor_protocol-a6fc80b310e254d0)\n     Running tests/hardening_intake_bounds.rs (target/debug/deps/hardening_intake_bounds-776e9e65eb8c937a)\n     Running tests/host_inferno.rs (target/debug/deps/host_inferno-8f8b3b25683fc89c)\n     Running tests/local_runtime_guard.rs (target/debug/deps/local_runtime_guard-420a61f2fad5cf44)\n     Running tests/runtime_blocking.rs (target/debug/deps/runtime_blocking-e38a79c684126bd1)\n     Running tests/runtime_cancel_leak.rs (target/debug/deps/runtime_cancel_leak-bc09002541b4b539)\n     Running tests/runtime_cancel_timeout.rs (target/debug/deps/runtime_cancel_timeout-85a8c994dee90bd3)\n     Running tests/runtime_cpu.rs (target/debug/deps/runtime_cpu-7a3934439ab1299c)\n     Running tests/runtime_cpu_executor.rs (target/debug/deps/runtime_cpu_executor-2459a763ef57a2c8)\n     Running tests/runtime_io.rs (target/debug/deps/runtime_io-5172929996e5f53b)\n     Running tests/runtime_local.rs (target/debug/deps/runtime_local-fe13415a8e207524)\n     Running tests/substrate_enforcement.rs (target/debug/deps/substrate_enforcement-44775cd6795abda3)\n   Doc-tests taskmesh\ncargo test -p taskmesh-rayon\n   Compiling taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.30s\n     Running unittests src/lib.rs (target/debug/deps/taskmesh_rayon-e8583dcac963dc5b)\n     Running tests/rayon_smoke.rs (target/debug/deps/rayon_smoke-93fc6494f1a24a17)\n   Doc-tests taskmesh_rayon\n"
+    },
+    {
+      "id": "doctest",
+      "recipe": "doctest",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:08:09.626137+00:00",
+      "duration_s": 5.161,
+      "output_tail": "\nrunning 1 test\ntest crates/taskmesh/src/lib.rs - (line 10) - compile ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.14s\n\ncargo test --doc -p taskmesh\n   Compiling taskmesh v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.94s\n   Doc-tests taskmesh\n"
+    },
+    {
+      "id": "rustdoc",
+      "recipe": "rustdoc",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:08:14.787586+00:00",
+      "duration_s": 8.051,
+      "output_tail": "RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps --workspace\n    Checking taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n Documenting taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n    Checking taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n Documenting taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n Documenting taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n    Checking taskmesh v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh)\n Documenting taskmesh v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh)\n Documenting taskmesh-bench v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-bench)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.94s\n   Generated /Users/songmin/Documents/code-new/quanta-taskmesh/target/doc/taskmesh/index.html and 4 other files\n"
+    },
+    {
+      "id": "bench-smoke",
+      "recipe": "bench-smoke",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:08:22.838249+00:00",
+      "duration_s": 14.812,
+      "output_tail": "un_io_deadline_zero_budget\nSuccess\nTesting host_deadline_failclosed/run_local_deadline_zero_budget\nSuccess\n\nTesting host_substrate_saturated_shed/large_stack_saturated_shed\nSuccess\nTesting host_substrate_saturated_shed/background_saturated_shed\nSuccess\nTesting host_substrate_saturated_shed/cpu_saturated_shed\nSuccess\nTesting host_substrate_saturated_shed/local_runtime_saturated_shed\nSuccess\n\nweighted windowed shares (heavy:light) = [40.0, 10.0]  windowed Jain = 0.7353\nTesting fairness_promotion_order\nSuccess\n\nTesting overload_stability_sim\nSuccess\n\nTesting retrieval_saturation_sim\nSuccess\n\ncargo bench -p taskmesh-bench -- --test\n   Compiling taskmesh-bench v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-bench)\n    Finished `bench` profile [optimized] target(s) in 11.19s\n     Running unittests src/lib.rs (target/release/deps/taskmesh_bench-e32ebc1df6b8bda0)\n     Running benches/admit_release.rs (target/release/deps/admit_release-206ae6fd05d8c5b6)\nGnuplot not found, using plotters backend\n     Running benches/composite_reduce.rs (target/release/deps/composite_reduce-357e0a0d21285bec)\nGnuplot not found, using plotters backend\n     Running benches/contention.rs (target/release/deps/contention-463d8b1ad824cea9)\nGnuplot not found, using plotters backend\n     Running benches/governance_tax.rs (target/release/deps/governance_tax-b8d40d736f47e7f2)\nGnuplot not found, using plotters backend\n     Running benches/host_edge_paths.rs (target/release/deps/host_edge_paths-411045dd3c49f903)\nGnuplot not found, using plotters backend\n     Running benches/multiclass_fairness.rs (target/release/deps/multiclass_fairness-c2ddcee129b6a308)\nGnuplot not found, using plotters backend\n     Running benches/overload_stability.rs (target/release/deps/overload_stability-61f4ecd80a426abd)\nGnuplot not found, using plotters backend\n     Running benches/retrieval_saturation.rs (target/release/deps/retrieval_saturation-3b0dbe39190e5eeb)\nGnuplot not found, using plotters backend\n"
+    },
+    {
+      "id": "consumer-msrv",
+      "recipe": "consumer-msrv",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:08:37.650517+00:00",
+      "duration_s": 0.966,
+      "output_tail": "taskmesh-consumer-msrv surface=default toolchain=1.81-aarch64-apple-darwin status=PASS\ntaskmesh-consumer-msrv surface=rayon toolchain=1.81-aarch64-apple-darwin status=PASS\ntaskmesh-consumer-msrv status=PASS msrv=1.81 toolchain=1.81-aarch64-apple-darwin\npython3 tools/consumer-msrv/check.py\n",
+      "status_line": "taskmesh-consumer-msrv status=PASS msrv=1.81 toolchain=1.81-aarch64-apple-darwin"
+    },
+    {
+      "id": "loom",
+      "recipe": "loom",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:08:38.616363+00:00",
+      "duration_s": 4.561,
+      "output_tail": "\nrunning 5 tests\ntest a_pending_claim_is_always_followed_by_a_wake ... ok\ntest unordered_concurrent_reconciles_both_apply ... ok\ntest claim_and_reap_of_a_stale_promotion_fail_closed_both_ways ... ok\ntest promote_claim_abandon_three_way_is_exactly_once ... ok\ntest concurrent_admits_and_releases_conserve_capacity ... ok\n\ntest result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s\n\nRUSTFLAGS=\"--cfg loom\" cargo test -p taskmesh-engine --features loom --test loom_governance --release\n   Compiling taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n   Compiling taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n    Finished `release` profile [optimized] target(s) in 4.20s\n     Running tests/loom_governance.rs (target/release/deps/loom_governance-b532345b6d69b48b)\n"
+    },
+    {
+      "id": "shuttle",
+      "recipe": "shuttle",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:08:43.177438+00:00",
+      "duration_s": 6.492,
+      "output_tail": "\nrunning 6 tests\ntest randomized_claim_versus_reap_fails_closed_both_ways ... ok\ntest randomized_promote_claim_double_abandon_is_exactly_once ... ok\ntest randomized_waiters_are_never_parked_past_their_promotion ... ok\ntest randomized_admit_release_churn_conserves_capacity ... ok\ntest randomized_only_unqueueable_work_overtakes_in_the_gap ... ok\ntest randomized_gap_arrivals_queue_behind_runnable_heads ... ok\n\ntest result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.41s\n\nRUSTFLAGS=\"--cfg shuttle\" cargo test -p taskmesh-engine --features shuttle --test shuttle_governance --release\n   Compiling taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n   Compiling taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n    Finished `release` profile [optimized] target(s) in 4.78s\n     Running tests/shuttle_governance.rs (target/release/deps/shuttle_governance-457d21d8d8c2a929)\n"
+    },
+    {
+      "id": "bench-iai",
+      "recipe": "bench-iai",
+      "status": "SKIPPED_PLATFORM",
+      "exit_code": null,
+      "platform": "macos"
+    },
+    {
+      "id": "tsan",
+      "recipe": "tsan",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:08:49.669313+00:00",
+      "duration_s": 21.768,
+      "output_tail": " in 3.33s\n     Running unittests src/lib.rs (target/aarch64-apple-darwin/debug/build/taskmesh/2170c38340f9e58a/out/taskmesh-2170c38340f9e58a)\n     Running tests/deadline_cancel.rs (target/aarch64-apple-darwin/debug/build/taskmesh/c0bdd6a153b45c1f/out/deadline_cancel-c0bdd6a153b45c1f)\n     Running tests/e2e_chaos.rs (target/aarch64-apple-darwin/debug/build/taskmesh/e620ae5fe634fffa/out/e2e_chaos-e620ae5fe634fffa)\n     Running tests/hardening_deadline_custody.rs (target/aarch64-apple-darwin/debug/build/taskmesh/3efcda1876865cf4/out/hardening_deadline_custody-3efcda1876865cf4)\n     Running tests/hardening_executor_protocol.rs (target/aarch64-apple-darwin/debug/build/taskmesh/0caf17f9c7d399de/out/hardening_executor_protocol-0caf17f9c7d399de)\n     Running tests/hardening_intake_bounds.rs (target/aarch64-apple-darwin/debug/build/taskmesh/d4876d77d6fa4609/out/hardening_intake_bounds-d4876d77d6fa4609)\n     Running tests/host_inferno.rs (target/aarch64-apple-darwin/debug/build/taskmesh/164fc0b6b313b218/out/host_inferno-164fc0b6b313b218)\n     Running tests/runtime_cancel_leak.rs (target/aarch64-apple-darwin/debug/build/taskmesh/e261d53bd4aabe0b/out/runtime_cancel_leak-e261d53bd4aabe0b)\n     Running tests/runtime_cancel_timeout.rs (target/aarch64-apple-darwin/debug/build/taskmesh/7f50235d23aaba2e/out/runtime_cancel_timeout-7f50235d23aaba2e)\n     Running tests/runtime_cpu_executor.rs (target/aarch64-apple-darwin/debug/build/taskmesh/97cb5e7310d8b7bf/out/runtime_cpu_executor-97cb5e7310d8b7bf)\n   Compiling taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.61s\n     Running unittests src/lib.rs (target/aarch64-apple-darwin/debug/build/taskmesh-rayon/af836c44f3369538/out/taskmesh_rayon-af836c44f3369538)\n     Running tests/rayon_smoke.rs (target/aarch64-apple-darwin/debug/build/taskmesh-rayon/d23c0a50605835a4/out/rayon_smoke-d23c0a50605835a4)\n   Doc-tests taskmesh_rayon\n",
+      "status_line": "taskmesh-tsan status=CLEAN target=aarch64-apple-darwin"
+    },
+    {
+      "id": "coverage-report",
+      "recipe": "coverage-report",
+      "status": "PASS",
+      "exit_code": 0,
+      "started_at": "2026-09-17T21:09:11.437695+00:00",
+      "duration_s": 57.127,
+      "output_tail": "t_projection-e323c0c771f1a6a0)\n     Running tests/leak_sweep.rs (target/llvm-cov-target/debug/deps/leak_sweep-a705c45d842194cb)\n     Running tests/loom_governance.rs (target/llvm-cov-target/debug/deps/loom_governance-7fe41d4ae66692bd)\n     Running tests/memory_modes.rs (target/llvm-cov-target/debug/deps/memory_modes-77024167235e6380)\n     Running tests/memory_overcommit.rs (target/llvm-cov-target/debug/deps/memory_overcommit-9b44d7886bcc7db0)\n     Running tests/permit_lifecycle.rs (target/llvm-cov-target/debug/deps/permit_lifecycle-faf4f7be38b487cb)\n     Running tests/prop_invariants.rs (target/llvm-cov-target/debug/deps/prop_invariants-6c5327222d6282fe)\n     Running tests/provenance.rs (target/llvm-cov-target/debug/deps/provenance-f096327197a50ccb)\n     Running tests/provenance_preservation.rs (target/llvm-cov-target/debug/deps/provenance_preservation-f360f6ec4c6c4d58)\n     Running tests/recursive_rejection.rs (target/llvm-cov-target/debug/deps/recursive_rejection-37ecea25a3894b3b)\n     Running tests/reduce_policy_validation.rs (target/llvm-cov-target/debug/deps/reduce_policy_validation-da6f74c6bb7e1f2d)\n     Running tests/request_key_hot_path.rs (target/llvm-cov-target/debug/deps/request_key_hot_path-40913f3b9df6e6d5)\n     Running tests/retry_after.rs (target/llvm-cov-target/debug/deps/retry_after-f1d346de65b40aa4)\n     Running tests/retry_after_property.rs (target/llvm-cov-target/debug/deps/retry_after_property-9bad73cbc27d7d43)\n     Running tests/shuttle_governance.rs (target/llvm-cov-target/debug/deps/shuttle_governance-69d5bbf0b684af2a)\n     Running tests/substrate_inventory.rs (target/llvm-cov-target/debug/deps/substrate_inventory-5daf9e6e457ca9a2)\n     Running unittests src/lib.rs (target/llvm-cov-target/debug/deps/taskmesh_rayon-e8583dcac963dc5b)\n     Running tests/rayon_smoke.rs (target/llvm-cov-target/debug/deps/rayon_smoke-93fc6494f1a24a17)\n\n    Finished report saved to target/coverage/summary.json\n\n    Finished report saved to target/coverage/lcov.info\n",
+      "status_line": "taskmesh-coverage status=REPORTED lines=93.85 regions=93.53 functions=95.76 report=target/coverage/summary.json"
+    }
+  ]
+}

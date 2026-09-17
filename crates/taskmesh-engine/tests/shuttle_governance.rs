@@ -4,7 +4,8 @@
 //! `loom_governance.rs` explores *every* interleaving but only for tiny state.
 //! Under `--cfg shuttle` the same `sync` seam builds `Governor` on shuttle's
 //! mutex, and these models sample thousands of schedules over larger state —
-//! more threads, more operations, two racing abandoners —
+//! more threads, more operations, two racing abandoners, newcomers racing a
+//! promotion pass's continuation gap —
 //! on the production `admit` / `claim` / `abandon` / `release` / `reap_leaks`
 //! transitions. No replica of the locking design: the thing checked is the
 //! thing shipped.
@@ -19,11 +20,12 @@ use std::sync::Arc;
 
 use shuttle::thread;
 use taskmesh_contract::{
-    ClassPolicy, ExecutionPhase, ManualClock, MemoryReleasePolicy, OverflowPolicy, PermitWaker,
-    ResourceBudget, TaskClass, TaskSpec,
+    AdmissionVerdict, ClassPolicy, ExecutionPhase, FairnessPolicy, ManualClock,
+    MemoryReleasePolicy, OverflowPolicy, PermitWaker, ResourceBudget, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
-    AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome, TerminalReason,
+    AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome,
+    TerminalReason, Ticket, PROMOTION_BUDGET,
 };
 
 const SCHEDULES: usize = 10_000;
@@ -82,12 +84,25 @@ fn queue_with_waker(g: &Governor, op: &str) -> (u64, Arc<CountingWaker>) {
 
 fn assert_quiescent(g: &Governor) {
     let snapshot = g.snapshot();
-    let c = &snapshot.classes[&class()];
-    assert_eq!(c.inflight, 0, "inflight must return to zero");
-    assert_eq!(c.queued, 0, "nothing may remain queued");
-    assert_eq!(c.cpu_units_held, 0);
-    assert_eq!(c.memory_units_held, 0);
-    assert_eq!(c.admitted_total, c.terminated_total);
+    for (class, c) in &snapshot.classes {
+        assert_eq!(c.inflight, 0, "class {class}: inflight must return to zero");
+        assert_eq!(c.queued, 0, "class {class}: nothing may remain queued");
+        assert_eq!(
+            c.cpu_units_held, 0,
+            "class {class}: cpu units must be returned"
+        );
+        assert_eq!(
+            c.memory_units_held, 0,
+            "class {class}: memory units must be returned"
+        );
+        assert_eq!(
+            c.admitted_total, c.terminated_total,
+            "class {class}: every admission must have terminated"
+        );
+    }
+    for (pool, usage) in &snapshot.capabilities {
+        assert_eq!(usage.in_use, 0, "pool {pool}: every slot must be returned");
+    }
     assert_eq!(snapshot.conservation_violation(), None);
     assert!(g.permit_ledgers().is_empty(), "no permit may leak");
     assert_eq!(g.accounting_fault(), None);
@@ -293,5 +308,359 @@ fn randomized_claim_versus_reap_fails_closed_both_ways() {
             assert_quiescent(&g);
         },
         SCHEDULES,
+    );
+}
+
+// ---- D08: the promotion-gap rule under real concurrency ----------------------
+//
+// `hardening_fairness_reference.rs` proves the gap rule from one deterministic
+// vantage point: a waker that re-enters `admit` while the pass that woke it is
+// still owed a continuation. That is single-threaded. Here the same production
+// transitions run with the gap *open to other threads*: a release drains a
+// queue longer than `PROMOTION_BUDGET` while newcomers race to admit, and
+// shuttle decides — thousands of times — whether each lands before the release,
+// inside the gap, or after the drain.
+
+/// `a` arrivals queued behind the holder: one full pass plus a tail, so the drain
+/// has exactly one continuation gap.
+const GAP_QUEUED: usize = PROMOTION_BUDGET + 4;
+/// Heavier per schedule than the models above (a 68-deep queue and a full drain),
+/// so fewer schedules; still far more than the gap needs to be hit.
+const GAP_SCHEDULES: usize = 5_000;
+
+fn class_named(name: &str) -> TaskClass {
+    TaskClass::new(name.to_string())
+}
+
+fn spec_of(class: &str, op: &str) -> TaskSpec {
+    TaskSpec::io(class_named(class)).operation(op.to_string())
+}
+
+fn queueable_fifo(cpu_units: u32) -> ClassPolicy {
+    ClassPolicy::new()
+        .max_inflight(1_000)
+        .max_queue_depth(1_000)
+        .cpu_units(cpu_units)
+        .overflow_policy(OverflowPolicy::QueueWithinDepth)
+        .fairness(FairnessPolicy::Fifo)
+}
+
+/// The gap fixture. The cpu budget is exactly `GAP_QUEUED` units and `holder`
+/// takes all of it, so:
+///  * before the release every `a` arrival queues on `Cpu`;
+///  * the release opens the whole budget, pass 1 grants `PROMOTION_BUDGET`,
+///    drops the lock (the gap), and the continuation grants the tail;
+///  * after the drain the budget is full again — no cpu-costing newcomer fits.
+///
+/// A cpu-costing queueable newcomer therefore has exactly one way to be admitted
+/// directly: inside the gap. That makes the overtake unambiguous without relying
+/// on permit ids, which a direct admit allocates *before* taking the lock.
+fn gap_governor(extra: Vec<(&str, ClassPolicy)>, limits: BTreeMap<String, u32>) -> Arc<Governor> {
+    let units = u32::try_from(GAP_QUEUED).expect("small");
+    let mut classes = BTreeMap::new();
+    classes.insert(class_named("a"), queueable_fifo(1));
+    classes.insert(
+        class_named("holder"),
+        ClassPolicy::new().max_inflight(1).cpu_units(units),
+    );
+    for (name, policy) in extra {
+        classes.insert(class_named(name), policy);
+    }
+    let policy = PolicySet::new(ResourceBudget::new().cpu_units(units), classes)
+        .with_capability_limits(limits)
+        .expect("registered pools");
+    Arc::new(Governor::new(policy, Arc::new(ManualClock::new(1_000))).expect("valid policy"))
+}
+
+fn admit_on(g: &Governor, class: &str, op: &str, pool: Option<&str>) -> PermitId {
+    match g.admit_resolved(&spec_of(class, op), pool, None) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("expected {class}/{op} to be admitted, got {other:?}"),
+    }
+}
+
+fn queue_on(g: &Governor, class: &str, op: &str, pool: Option<&str>) -> Ticket {
+    match g.admit_resolved(&spec_of(class, op), pool, None) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("expected {class}/{op} to queue, got {other:?}"),
+    }
+}
+
+/// Queue `GAP_QUEUED` requests of `a` behind the holder, in arrival order.
+fn queue_originals(g: &Governor) -> Vec<Ticket> {
+    (0..GAP_QUEUED)
+        .map(|i| queue_on(g, "a", &format!("a{i}"), None))
+        .collect()
+}
+
+/// Claim every ticket, in the given order; each must have been promoted.
+fn claim_all(g: &Governor, tickets: &[Ticket]) -> Vec<PermitId> {
+    tickets
+        .iter()
+        .map(|ticket| match g.claim(*ticket) {
+            ClaimOutcome::Ready(permit) => permit,
+            other => panic!("ticket {ticket} must be promoted by the drain, got {other:?}"),
+        })
+        .collect()
+}
+
+/// Admit on another thread; report the decision and, when queued, the block
+/// reason recorded at intake (`QueuedBehind` is the gap's signature).
+fn spawn_newcomer(
+    g: &Arc<Governor>,
+    spec: TaskSpec,
+    pool: Option<&'static str>,
+) -> thread::JoinHandle<(AdmissionDecision, Option<CapacityBlock>)> {
+    let g = Arc::clone(g);
+    thread::spawn(move || {
+        let decision = g.admit_resolved(&spec, pool, None);
+        let blocked_on = match &decision {
+            AdmissionDecision::Queued { ticket } => g.pending_block_reason(*ticket),
+            _ => None,
+        };
+        (decision, blocked_on)
+    })
+}
+
+/// A cpu-costing queueable newcomer must have queued, whatever the schedule:
+/// on `Cpu` if it landed before the release or after the drain, as
+/// `QueuedBehind` if it landed in the gap. `Admitted` is the overtake D08
+/// forbids. Returns the ticket and whether the gap was where it landed.
+fn queued_newcomer(
+    who: &str,
+    decision: &AdmissionDecision,
+    blocked_on: Option<CapacityBlock>,
+) -> (Ticket, bool) {
+    let AdmissionDecision::Queued { ticket } = *decision else {
+        panic!("{who} must queue: capacity that opens in the gap belongs to the queue, got {decision:?}");
+    };
+    match blocked_on {
+        Some(CapacityBlock::QueuedBehind) => (ticket, true),
+        Some(CapacityBlock::Cpu) => (ticket, false),
+        other => panic!("{who} queued for an unexpected reason: {other:?}"),
+    }
+}
+
+/// `promotion_pending` has no accessor; it is observed through behaviour. With
+/// every queue empty and capacity free, a direct admit of a queueable class is
+/// `Admitted` only if no continuation is still owed — a flag left set would
+/// queue it for a pass that never comes.
+fn assert_nothing_owed(g: &Governor, class: &str) {
+    match g.admit(&spec_of(class, "after-the-drain")) {
+        AdmissionDecision::Admitted { permit_id } => {
+            assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
+        }
+        other => {
+            panic!("no continuation is owed after the drain: direct admit expected, got {other:?}")
+        }
+    }
+}
+
+/// The D08 gap rule with other threads in the gap. Three newcomers race the
+/// release that drains the `a` queue:
+///  * same class `a` — runnable earlier arrivals are queued ahead of it, so it
+///    must queue behind them wherever it lands (rule 1, `queued_head_blocks`);
+///  * another queueable class `b`, own queue empty — while the continuation is
+///    owed it must become `b`'s head and let the pass order it, not take the
+///    slot (rule 2, `promotion_pending`);
+///  * class `c`, whose head is stuck behind the held `large_stack` slot, on the
+///    `blocking` pool — the one same-class exception: admitted directly, mid-gap
+///    or not, because queueing it would pin it to a pool it does not need.
+///
+/// Every schedule ends with every earlier `a` arrival granted in arrival order,
+/// both queueable newcomers still waiting, the exception admitted, and nothing
+/// owed once the drain is over.
+#[test]
+fn randomized_gap_arrivals_queue_behind_runnable_heads() {
+    static SAME_CLASS_IN_GAP: AtomicUsize = AtomicUsize::new(0);
+    static CROSS_CLASS_IN_GAP: AtomicUsize = AtomicUsize::new(0);
+    shuttle::check_random(
+        || {
+            let g = gap_governor(
+                vec![("b", queueable_fifo(1)), ("c", queueable_fifo(0))],
+                BTreeMap::from([("large_stack".to_string(), 1), ("blocking".to_string(), 10)]),
+            );
+            let slot = admit_on(&g, "c", "slot", Some("large_stack"));
+            let blocked_head = queue_on(&g, "c", "blocked-head", Some("large_stack"));
+            let holder = admit_on(&g, "holder", "holder", None);
+            let originals = queue_originals(&g);
+
+            let releaser = {
+                let g = Arc::clone(&g);
+                thread::spawn(move || assert_eq!(g.release(holder), ReleaseOutcome::Released))
+            };
+            let same = spawn_newcomer(&g, spec_of("a", "same-class"), None);
+            let cross = spawn_newcomer(&g, spec_of("b", "cross-class"), None);
+            let exception = spawn_newcomer(&g, spec_of("c", "other-pool"), Some("blocking"));
+            releaser.join().unwrap();
+            let (same_decision, same_blocked_on) = same.join().unwrap();
+            let (cross_decision, cross_blocked_on) = cross.join().unwrap();
+            let (exception_decision, _) = exception.join().unwrap();
+
+            let (same_ticket, same_in_gap) =
+                queued_newcomer("the same-class newcomer", &same_decision, same_blocked_on);
+            let (cross_ticket, cross_in_gap) = queued_newcomer(
+                "the cross-class newcomer",
+                &cross_decision,
+                cross_blocked_on,
+            );
+            if same_in_gap {
+                SAME_CLASS_IN_GAP.fetch_add(1, Ordering::SeqCst);
+            }
+            if cross_in_gap {
+                CROSS_CLASS_IN_GAP.fetch_add(1, Ordering::SeqCst);
+            }
+            let AdmissionDecision::Admitted {
+                permit_id: exception_permit,
+            } = exception_decision
+            else {
+                panic!(
+                    "a newcomer on another pool must not be queued behind a capability-blocked head, \
+                     even mid-gap: {exception_decision:?}"
+                );
+            };
+
+            // Every earlier `a` arrival was promoted by the drain, in arrival
+            // order: promotion allocates permit ids under the lock, so the ids
+            // are the promotion order.
+            let permits = claim_all(&g, &originals);
+            assert!(
+                permits.windows(2).all(|pair| pair[0] < pair[1]),
+                "in-class FIFO: the drain grants earlier arrivals first"
+            );
+            // Neither queueable newcomer got a slot: the drain refilled the
+            // budget with the arrivals that were ahead of them.
+            assert!(
+                matches!(g.ticket_status(same_ticket), ClaimOutcome::Pending),
+                "the same-class newcomer waits behind every earlier arrival"
+            );
+            assert!(
+                matches!(g.ticket_status(cross_ticket), ClaimOutcome::Pending),
+                "the cross-class newcomer waits for the pass to order it"
+            );
+            assert!(
+                matches!(g.ticket_status(blocked_head), ClaimOutcome::Pending),
+                "the blocked head still waits for its own pool"
+            );
+
+            // Nothing is stranded: the originals' release promotes both
+            // newcomers, the slot's release promotes the blocked head.
+            for permit in permits {
+                assert_eq!(g.release(permit), ReleaseOutcome::Released);
+            }
+            for ticket in [same_ticket, cross_ticket] {
+                let ClaimOutcome::Ready(permit) = g.claim(ticket) else {
+                    panic!("newcomer {ticket} is promoted once the arrivals ahead of it release");
+                };
+                assert_eq!(g.release(permit), ReleaseOutcome::Released);
+            }
+            assert_eq!(g.release(exception_permit), ReleaseOutcome::Released);
+            assert_eq!(g.release(slot), ReleaseOutcome::Released);
+            let ClaimOutcome::Ready(head_permit) = g.claim(blocked_head) else {
+                panic!("the freed slot promotes the blocked head");
+            };
+            assert_eq!(g.release(head_permit), ReleaseOutcome::Released);
+            assert_nothing_owed(&g, "b");
+            assert_quiescent(&g);
+        },
+        GAP_SCHEDULES,
+    );
+    // The sample must actually have put newcomers inside the gap; a run that
+    // only ever saw `Cpu` proved nothing about the rule.
+    assert!(
+        SAME_CLASS_IN_GAP.load(Ordering::SeqCst) > 0,
+        "no schedule landed the same-class newcomer in the gap"
+    );
+    assert!(
+        CROSS_CLASS_IN_GAP.load(Ordering::SeqCst) > 0,
+        "no schedule landed the cross-class newcomer in the gap"
+    );
+}
+
+/// The only work that may overtake a runnable head in the gap is work that
+/// could not have waited: a class with no queue at all (`Reject` overflow, no
+/// memory queue). `r` races the drain alongside a same-class `a` newcomer. `r`
+/// is shed with `CpuSaturated` before the release or after the drain, and
+/// admitted inside the gap — and that overtake costs `a` exactly one slot, at
+/// its *tail*: in-class order is untouched, the tail arrival runs when `r`
+/// releases, and the same-class newcomer still queues behind all of it.
+#[test]
+fn randomized_only_unqueueable_work_overtakes_in_the_gap() {
+    static OVERTOOK_IN_GAP: AtomicUsize = AtomicUsize::new(0);
+    shuttle::check_random(
+        || {
+            let g = gap_governor(
+                vec![("r", ClassPolicy::new().max_inflight(1_000).cpu_units(1))],
+                BTreeMap::new(),
+            );
+            let holder = admit_on(&g, "holder", "holder", None);
+            let originals = queue_originals(&g);
+
+            let releaser = {
+                let g = Arc::clone(&g);
+                thread::spawn(move || assert_eq!(g.release(holder), ReleaseOutcome::Released))
+            };
+            let unqueueable = spawn_newcomer(&g, spec_of("r", "unqueueable"), None);
+            let same = spawn_newcomer(&g, spec_of("a", "same-class"), None);
+            releaser.join().unwrap();
+            let (unqueueable_decision, _) = unqueueable.join().unwrap();
+            let (same_decision, same_blocked_on) = same.join().unwrap();
+
+            let (same_ticket, _) =
+                queued_newcomer("the same-class newcomer", &same_decision, same_blocked_on);
+            let overtaker = match unqueueable_decision {
+                AdmissionDecision::Admitted { permit_id } => Some(permit_id),
+                AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated {
+                    retry_after_ms: None,
+                }) => None,
+                other => panic!(
+                    "an unqueueable newcomer is admitted in the gap or shed with CpuSaturated, \
+                     never queued: {other:?}"
+                ),
+            };
+
+            // Everything but the tail was promoted by the drain, in order.
+            let (tail, ahead) = originals.split_last().expect("non-empty");
+            let mut permits = claim_all(&g, ahead);
+            assert!(
+                permits.windows(2).all(|pair| pair[0] < pair[1]),
+                "in-class FIFO: the drain grants earlier arrivals first"
+            );
+            if let Some(permit_id) = overtaker {
+                OVERTOOK_IN_GAP.fetch_add(1, Ordering::SeqCst);
+                // The overtake displaced exactly one arrival — the last one.
+                assert!(
+                    matches!(g.ticket_status(*tail), ClaimOutcome::Pending),
+                    "an in-gap overtake displaces only the tail arrival"
+                );
+                assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
+            }
+            let ClaimOutcome::Ready(tail_permit) = g.claim(*tail) else {
+                panic!("the tail arrival is promoted, by the drain or by the overtaker's release");
+            };
+            assert!(
+                permits.iter().all(|permit| *permit < tail_permit),
+                "the tail is granted after every earlier arrival"
+            );
+            permits.push(tail_permit);
+            assert!(
+                matches!(g.ticket_status(same_ticket), ClaimOutcome::Pending),
+                "the same-class newcomer waits behind every earlier arrival"
+            );
+            for permit in permits {
+                assert_eq!(g.release(permit), ReleaseOutcome::Released);
+            }
+            let ClaimOutcome::Ready(permit) = g.claim(same_ticket) else {
+                panic!("the newcomer is promoted once the arrivals ahead of it release");
+            };
+            assert_eq!(g.release(permit), ReleaseOutcome::Released);
+            assert_nothing_owed(&g, "a");
+            assert_quiescent(&g);
+        },
+        GAP_SCHEDULES,
+    );
+    assert!(
+        OVERTOOK_IN_GAP.load(Ordering::SeqCst) > 0,
+        "no schedule admitted the unqueueable newcomer inside the gap"
     );
 }

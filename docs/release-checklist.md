@@ -53,6 +53,12 @@ The gate set is `tools/gates/inventory.json`; the required subset is
   promotion-gap rule under concurrent admits (shuttle, 5,000 schedules each).
 - `differential_model.rs`: the admission/promotion contract as a ~150-line
   executable specification, checked against the engine after every random op.
+- Fuzzing: `just fuzz` — three libFuzzer targets (`fuzz/`): every public
+  `Governor` transition in random order with the published invariants checked
+  after each step and quiescence at the end; the policy / topology / builder
+  front doors; the JSON wire formats. `just fuzz-check` keeps the targets
+  compiling on stable. NOT_RUN without nightly + cargo-fuzz; only
+  `taskmesh-fuzz status=CLEAN` is PASS.
 - Mutation gate: 74 entries — 73 single-edit reintroductions of fixed defects
   (63 cargo incl. 2 shuttle-model targets and 1 differential-model target, 10 pytest
   against the Python tooling and the bench workflow scripts), each killed by its named regression for its named

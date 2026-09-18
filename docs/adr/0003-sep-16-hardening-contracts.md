@@ -404,7 +404,13 @@ spec 문자열을 빌려 allocation 없이 한다.
   위에서), **실제 메모리 시스템**(`just tsan` — nightly `-Zbuild-std -Zsanitizer=thread`로
   engine/host 동시성 test를 실제 parking_lot·Tokio·OS thread 위에서; 도구가 없으면 NOT_RUN),
   **객관 지표**(`just coverage-report` — cargo-llvm-cov 수치를 receipt에 기록; 절대 threshold가
-  아니다. 이 저장소는 coverage gate를 약속하지 않는다). 첫 TSan 실행이 실제 취약점을 하나
+  아니다. 이 저장소는 coverage gate를 약속하지 않는다). 마무리 검증에서 네 번째 층을 더했다:
+  **coverage-guided 탐색**(`just fuzz` — libFuzzer가 production `Governor`의 모든 public transition을
+  branch coverage로 조향하며 매 step 뒤 published invariant를 검사하고 마지막에 quiescence를 요구;
+  policy/topology/builder front door와 JSON wire format도 같은 방식. nightly+cargo-fuzz 없으면 NOT_RUN;
+  target은 `just fuzz-check`가 stable에서 항상 컴파일·lint하므로 campaign 사이에 썩지 않는다. 검증:
+  engine의 inflight 상한 `>=`→`>` 한 글자 mutant를 첫 run에서 `class alpha: inflight 2 over max_inflight 1`로
+  잡는다). 첫 TSan 실행이 실제 취약점을 하나
   드러냈다: `stack_size_bytes(u64::MAX)`가 "OS가 거절한다"에 의존했는데 debug-built `std`에서는
   spawn 안에서 overflow panic이 났다 → host가 `MAX_REQUESTED_STACK_BYTES`(16 GiB) 초과 요청을
   결정적으로 거절한다. 환경 의존 동작은 계약이 아니다.

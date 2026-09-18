@@ -50,6 +50,7 @@ jobs:
       - run: just pm-lint
       - run: just bench-gate
       - run: just gates-inventory
+      - run: just fuzz-check
 
   proof-matrix:
     name: feature / doc / bench-smoke matrix
@@ -100,6 +101,33 @@ jobs:
       - run: sudo sysctl -w vm.mmap_rnd_bits=28
       - run: just tsan
 
+  fuzz:
+    name: libFuzzer campaign (just fuzz)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            fuzz
+      - uses: extractions/setup-just@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      # 60 s per target in CI (30 s locally): long enough for libFuzzer to
+      # reach the engine's branches from an empty corpus, short enough to run
+      # on every push. A crash uploads its reproducer.
+      - run: FUZZ_SECONDS=60 just fuzz
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+
   coverage:
     name: coverage report (just coverage-report)
     runs-on: ubuntu-latest
@@ -147,7 +175,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny,cargo-llvm-cov
+          tool: cargo-deny,cargo-llvm-cov,cargo-fuzz
       - name: Install semgrep
         run: uv tool install semgrep
       - name: Install valgrind

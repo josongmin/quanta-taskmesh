@@ -125,8 +125,13 @@ loom:
 # (`just matrix`) or the heavier rails CI enforces (bench-iai instruction-count,
 # loom + shuttle model-checks, mutation gate, consumer MSRV). Run `just proof`
 # to exercise those locally before relying on a green `gate`.
-gate: fmt-check clippy test deny semgrep test-architecture py-lint py-test pm-lint bench-gate gates-inventory
-    @echo "gate: fast local checks passed (CI additionally runs: matrix [test-rayon doctest rustdoc bench-smoke consumer-msrv], mutants-critical, loom, shuttle, bench-iai — see 'just proof')"
+gate: fmt-check clippy test deny semgrep test-architecture py-lint py-test pm-lint bench-gate gates-inventory fuzz-check
+    @echo "gate: fast local checks passed (CI additionally runs: matrix [test-rayon doctest rustdoc bench-smoke consumer-msrv], mutants-critical, loom, shuttle, tsan, fuzz, bench-iai — see 'just proof')"
+
+# The libFuzzer targets (fuzz/) type-check and lint on stable, so they cannot
+# rot between nightly fuzzing campaigns (`just fuzz`).
+fuzz-check:
+    bash tools/fuzz/check.sh
 
 # The CI proof-matrix job: feature-matrix drift, doctests, link-clean rustdoc,
 # bench compilation, and the consumer-MSRV build. Chained by `proof`.
@@ -145,6 +150,12 @@ shuttle:
 tsan:
     bash tools/tsan/run.sh
 
+# Coverage-guided fuzzing of the production engine, the host builder and the
+# wire formats (nightly + cargo-fuzz; NOT_RUN/exit 2 without them — never
+# PASS). FUZZ_SECONDS bounds each target (default 30).
+fuzz:
+    bash tools/fuzz/run.sh
+
 # Coverage REPORT (cargo-llvm-cov). Numbers for the receipt; never a threshold —
 # this repository makes no coverage-gate promise. NOT_RUN/exit 2 without the tool.
 coverage-report:
@@ -155,5 +166,5 @@ coverage-report:
 # same set of checks CI requires. tools/gates/validate_inventory.py verifies
 # that this chain expands to exactly the required set; a gate added to CI
 # without being added here fails `gates-inventory`.
-proof: gate matrix mutants-critical loom shuttle tsan coverage-report bench-iai
+proof: gate matrix mutants-critical loom shuttle tsan fuzz coverage-report bench-iai
     @echo "proof: full proof surface passed (matches CI required rails)"

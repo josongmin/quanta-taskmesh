@@ -184,6 +184,24 @@
       "workflow": "ci.yml"
     },
     {
+      "id": "fuzz-check",
+      "recipe": "fuzz-check",
+      "tier": "fast",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "stable toolchain (clippy)",
+        "C++ compiler for the libFuzzer runtime"
+      ],
+      "workflow": "ci.yml",
+      "note": "Type-checks and lints every libFuzzer target in fuzz/ on stable (its own workspace). The fuzzing campaign itself is the `fuzz` proof gate; this keeps its targets compiling against the current API in the fast gate."
+    },
+    {
       "id": "test-rayon",
       "recipe": "test-rayon",
       "tier": "matrix",
@@ -349,6 +367,29 @@
       "note": "ThreadSanitizer on the real memory system (engine concurrency/effect/lifecycle tests, host chaos/executor/deadline/cancel tests). Complements loom/shuttle, which model interleavings.",
       "status_line": {
         "marker": "taskmesh-tsan",
+        "require": "status=CLEAN"
+      }
+    },
+    {
+      "id": "fuzz",
+      "recipe": "fuzz",
+      "tier": "proof",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "rustup nightly toolchain",
+        "cargo-fuzz"
+      ],
+      "workflow": "ci.yml",
+      "conditional": "reports NOT_RUN (exit 2) when nightly or cargo-fuzz is missing; CI installs them. Only `taskmesh-fuzz status=CLEAN` is PASS; the line (targets, seconds per target, total runs) is kept in the receipt",
+      "note": "libFuzzer over the production Governor (every public transition, invariants after each step, quiescence at the end), the policy/topology/builder front doors, and the JSON wire formats. Complements the proptest differential model: coverage-guided rather than blind. FUZZ_SECONDS (default 30) bounds each target.",
+      "status_line": {
+        "marker": "taskmesh-fuzz",
         "require": "status=CLEAN"
       }
     },

@@ -7,6 +7,10 @@ members = [
     "crates/taskmesh-bench",
     "tools/doc-examples",
 ]
+# Separate workspaces: the MSRV consumer fixture resolves like a downstream
+# user, and the libFuzzer targets link a runtime that has no place in the
+# shipped graph (`just consumer-msrv`, `just fuzz` / `just fuzz-check`).
+exclude = ["tools/consumer-msrv", "fuzz"]
 resolver = "2"
 
 [workspace.package]

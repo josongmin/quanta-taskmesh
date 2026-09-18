@@ -13,6 +13,7 @@
     "pm-lint",
     "bench-gate",
     "gates-inventory",
+    "fuzz-check",
     "test-rayon",
     "doctest",
     "rustdoc",
@@ -23,12 +24,14 @@
     "consumer-msrv",
     "bench-iai",
     "tsan",
+    "fuzz",
     "coverage-report"
   ],
   "platform_conditional": {
     "bench-iai": "linux",
     "consumer-msrv": "declared-toolchain-installed",
     "tsan": "nightly-toolchain-with-rust-src",
-    "coverage-report": "cargo-llvm-cov-installed"
+    "coverage-report": "cargo-llvm-cov-installed",
+    "fuzz": "nightly-toolchain-with-cargo-fuzz"
   }
 }

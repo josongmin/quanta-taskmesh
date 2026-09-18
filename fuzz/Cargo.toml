@@ -1,0 +1,56 @@
+# Coverage-guided fuzzing of the production engine, the host builder, and the
+# wire formats (`just fuzz`; ADR 0003 D16).
+#
+# Its own workspace, like `tools/consumer-msrv`: `libfuzzer-sys` links the
+# libFuzzer runtime, which has no place in the shipped dependency graph the
+# root workspace's `cargo deny` / architecture checker police. `just fuzz-check`
+# type-checks every target on stable so the targets cannot rot unnoticed
+# between the (nightly-only) fuzzing runs.
+[package]
+name = "taskmesh-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "libFuzzer targets over the taskmesh engine, builder and wire formats. Not a library."
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+serde_json = "1"
+taskmesh = { path = "../crates/taskmesh" }
+taskmesh-contract = { path = "../crates/taskmesh-contract" }
+taskmesh-engine = { path = "../crates/taskmesh-engine" }
+
+[[bin]]
+name = "admission_churn"
+path = "fuzz_targets/admission_churn.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "policy_topology"
+path = "fuzz_targets/policy_topology.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wire_formats"
+path = "fuzz_targets/wire_formats.rs"
+test = false
+doc = false
+bench = false
+
+# libFuzzer instruments the target; the engine's own debug invariants
+# (`assert_consistent`) must stay armed, which cargo-fuzz does by default
+# (release optimisation + debug assertions). Kept explicit here so a profile
+# edit cannot silently disarm them.
+[profile.release]
+debug-assertions = true
+overflow-checks = true

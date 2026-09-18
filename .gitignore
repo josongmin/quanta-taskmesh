@@ -2,6 +2,13 @@
 /target/
 # The out-of-workspace MSRV consumer fixture builds into its own target dir.
 /tools/consumer-msrv/target/
+# The libFuzzer workspace: its build, the corpus libFuzzer grows locally
+# (thousands of small files; every run starts from the harness's own inputs),
+# and crash reproducers (`just fuzz` prints their paths; CI uploads them).
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
 
 # Lockfile is committed for reproducible CI/bench (workspace root).
 # Do not add: Cargo.lock

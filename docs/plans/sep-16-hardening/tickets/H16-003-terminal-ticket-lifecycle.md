@@ -33,7 +33,7 @@ ticket/permit/root guard를 하나의 terminal transition에서 정리하고 dea
   → ID 공간은 u64 monotonic(재사용 없음); exhaustion은 실용적으로 도달 불가로 두었다
 - [x] run_local future/closure 자체는 Send kernel로 이동하지 않는다. kernel에는 immutable metadata/handle만 두고 !Send payload는 caller-local owner에 유지한다.
 - [x] runtime-owned lease와 직접 Governor/manual permit의 release/reap 권한을 구분한다. 공개 제어 API로 살아 있는 runtime task의 capacity를 조기 환급할 수 없게 ownership capability를 검증한다.
-  → capability token은 두지 않았다: runtime-owned lease는 `ExecutionLease`가 쥐고, `ext` `Governor::release`의 오용은 post-dispatch double release로 검출(debug assert; release: `UnknownPermit`) — D14; ext API는 embedder 신뢰
+  → 처음엔 token 없이 검출만 했다(post-dispatch double release debug assert). 마무리 검증에서 방지로 바꿈: `DispatchReserved`를 벗어나는 첫 `advance_phase`가 `LeaseToken`을 mint하고(`AdvanceOutcome::Leased`), 이후 `release(id)`는 `HeldByLease { phase }`로 거절되며 `release_leased(token)`만 permit을 끝낸다 — `hardening_lease_token.rs`, `an_ext_release_cannot_free_a_running_jobs_slot` (ADR 0003 D14 개정)
 
 ## 구현 결과 — 2026-09-16
 

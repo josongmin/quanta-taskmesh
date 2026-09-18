@@ -406,7 +406,11 @@ let runtime = taskmesh::Builder::new()
 resolve한 `cpu` gate보다 좁은 pool은 `build()`에서 `ExecutorDeclaresFewerWorkers`로 거절된다.
 직접 `Governor`를 구동하는 embedder는 `advance_phase(permit, Running)`/`CleanupPending`을
 자기가 선언해야 한다: leak sweep(`DEFAULT_LEAK_STALE_MS` = 60 000 ms)은 `DispatchReserved`인
-permit만 회수하므로, 전진시키지 않은 permit은 실행 중에도 회수 대상이다.
+permit만 회수하므로, 전진시키지 않은 permit은 실행 중에도 회수 대상이다. `DispatchReserved`를
+벗어나는 **첫** `advance_phase`는 `AdvanceOutcome::Leased(LeaseToken)`으로 그 permit의 유일한
+lease를 돌려준다 — 그 뒤로는 `release_leased(token)`만 permit을 끝내고, `release(permit_id)`는
+`ReleaseOutcome::HeldByLease { phase }`로 거절된다(아무것도 바꾸지 않음). 실행 중인 남의 작업
+용량을 번호 하나 잘못 넘겨 환급하는 실수를 구조로 막는다; token은 `Clone`이 아니고 `#[must_use]`다.
 
 > `ext`에는 `Governor`, `PolicySet`, `AdmissionDecision`, `Provenance`,
 > `RootAttribution`, `Clock`/`SystemClock`/`ManualClock`, `CpuExecutor`,
@@ -415,7 +419,8 @@ permit만 회수하므로, 전진시키지 않은 permit은 실행 중에도 회
 > `BUILTIN_SUBSTRATES`, `DEFAULT_LEAK_STALE_MS`, `ClaimOutcome`, `ReleaseOutcome`,
 > `StageReleaseOutcome`, `ReconcileOutcome`, `PermitLedgerView`, `CapacityBlock` 등이 있다.
 > `Governor::release`는 `ReleaseOutcome`(`#[must_use]`)을 돌려준다 — `UnknownPermit`은 double
-> release이거나 sweep에 회수된 lease이며 조용한 no-op이 아니다. `RequestKey`는 더 이상
+> release이거나 sweep에 회수된 lease이며 조용한 no-op이 아니다; `HeldByLease { phase }`는 dispatch된
+> permit을 id로 놓으려 한 것으로, 그 permit은 `LeaseToken`의 것이다. `RequestKey`는 더 이상
 > 공개 입력이 아니다 — admission key는 `root_operation_id`에서 권위적으로 파생된다.
 > 계약의 근거는 [ADR 0003](docs/adr/0003-sep-16-hardening-contracts.md)에 있다.
 

@@ -130,9 +130,10 @@ pub mod ext {
     /// The governance engine and its admission primitives, for embedding in a
     /// non-Tokio host or driving admission directly.
     pub use taskmesh_engine::{
-        builtin_records, AdmissionDecision, CapabilityName, CapacityBlock, ClaimOutcome, Governor,
-        LeakSweepReport, PendingView, PermitId, PermitLedgerView, PolicySet, Provenance,
-        ReconcileOutcome, ReleaseOutcome, RequestKey, RootAttribution, StageReleaseOutcome, Ticket,
-        BUILTIN_SUBSTRATES, DEFAULT_LEAK_STALE_MS, MAX_TERMINAL_TICKETS, PROMOTION_BUDGET,
+        builtin_records, AdmissionDecision, AdvanceOutcome, AdvanceRefusal, CapabilityName,
+        CapacityBlock, ClaimOutcome, Governor, LeakSweepReport, LeaseToken, PendingView, PermitId,
+        PermitLedgerView, PolicySet, Provenance, ReconcileOutcome, ReleaseOutcome, RequestKey,
+        RootAttribution, StageReleaseOutcome, Ticket, BUILTIN_SUBSTRATES, DEFAULT_LEAK_STALE_MS,
+        MAX_TERMINAL_TICKETS, PROMOTION_BUDGET,
     };
 }

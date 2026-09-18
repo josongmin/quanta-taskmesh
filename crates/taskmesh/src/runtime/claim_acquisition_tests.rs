@@ -8,7 +8,7 @@ use std::time::Duration;
 use taskmesh_contract::{
     ClassPolicy, ManualClock, MemoryReleasePolicy, OverflowPolicy, ResourceBudget, TaskClass,
 };
-use taskmesh_engine::{PolicySet, ReleaseOutcome};
+use taskmesh_engine::{AdvanceOutcome, PolicySet, ReleaseOutcome};
 
 fn runtime() -> (TokioRuntime, Arc<ManualClock>, TaskSpec) {
     let mut runtime = crate::Builder::new()
@@ -349,13 +349,11 @@ async fn a_lease_the_sweep_reclaimed_before_dispatch_refuses_to_advance_v1() {
     // the engine already handed to someone else, never double-release.
     let (runtime, clock, spec) = runtime();
     let permit = occupy(&runtime, &spec);
-    let mut lease = ExecutionLease {
-        governor: Arc::clone(&runtime.governor),
-        drain: Arc::clone(&runtime.drain),
-        permit_id: permit,
-        permit: Some(permit),
-        dispatched: false,
-    };
+    let mut lease = ExecutionLease::reserved(
+        Arc::clone(&runtime.governor),
+        Arc::clone(&runtime.drain),
+        permit,
+    );
     clock.advance(11);
     assert_eq!(runtime.governor.reap_leaks_with(10).reclaimed_permits, 1);
     assert_accounting(&runtime, 0, 0);
@@ -379,13 +377,11 @@ async fn a_lease_the_sweep_reclaimed_before_dispatch_refuses_to_advance_v1() {
     // Control: once `Accepted`, the sweep leaves the lease alone and the drop
     // is the one release.
     let permit = occupy(&runtime, &spec);
-    let mut lease = ExecutionLease {
-        governor: Arc::clone(&runtime.governor),
-        drain: Arc::clone(&runtime.drain),
-        permit_id: permit,
-        permit: Some(permit),
-        dispatched: false,
-    };
+    let mut lease = ExecutionLease::reserved(
+        Arc::clone(&runtime.governor),
+        Arc::clone(&runtime.drain),
+        permit,
+    );
     assert_eq!(lease.advance(ExecutionPhase::Accepted), Ok(()));
     clock.advance(11);
     let report = runtime.governor.reap_leaks_with(10);
@@ -399,13 +395,11 @@ async fn a_lease_the_sweep_reclaimed_before_dispatch_refuses_to_advance_v1() {
 async fn a_phase_that_does_not_advance_is_reported_not_ignored_v1() {
     let (runtime, _, spec) = runtime();
     let permit = occupy(&runtime, &spec);
-    let mut lease = ExecutionLease {
-        governor: Arc::clone(&runtime.governor),
-        drain: Arc::clone(&runtime.drain),
-        permit_id: permit,
-        permit: Some(permit),
-        dispatched: false,
-    };
+    let mut lease = ExecutionLease::reserved(
+        Arc::clone(&runtime.governor),
+        Arc::clone(&runtime.drain),
+        permit,
+    );
     assert_eq!(lease.advance(ExecutionPhase::Running), Ok(()));
     // Backwards, and repeated: both are host programming errors and both are
     // said out loud, while the permit stays live and owned.
@@ -420,5 +414,50 @@ async fn a_phase_that_does_not_advance_is_reported_not_ignored_v1() {
     }
     assert_accounting(&runtime, 1, 0);
     drop(lease);
+    assert_accounting(&runtime, 0, 0);
+}
+
+#[tokio::test]
+async fn a_lease_taken_through_ext_is_refused_not_run_v1() {
+    // Before dispatch the permit is not the runtime lease's alone (D14): an
+    // `ext` caller can advance it and take the lease the engine mints on that
+    // first advance. The runtime lease then cannot release the permit, so it
+    // must not start work under it either — the work would run on capacity
+    // this lease can never return. It refuses, typed, and its drop releases
+    // nothing; the permit belongs to whoever holds the token.
+    let (runtime, _, spec) = runtime();
+    let permit = occupy(&runtime, &spec);
+    let mut lease = ExecutionLease::reserved(
+        Arc::clone(&runtime.governor),
+        Arc::clone(&runtime.drain),
+        permit,
+    );
+    let AdvanceOutcome::Leased(taken) = runtime
+        .governor
+        .advance_phase(permit, ExecutionPhase::Accepted)
+    else {
+        panic!("the first advance of a reserved permit leases it");
+    };
+
+    let error = lease
+        .advance(ExecutionPhase::Running)
+        .expect_err("a runtime lease must not run under a lease it does not hold");
+    assert!(
+        matches!(&error, GovernorError::PolicyViolation(message) if message.contains("leased outside its runtime lease")),
+        "got {error:?}"
+    );
+    // Phase declarations are not token-gated — only the release is — so the
+    // engine did record the move; the capacity is what stays with the token.
+    assert_eq!(
+        runtime.governor.phase(permit),
+        Some(ExecutionPhase::Running)
+    );
+    drop(lease);
+    assert_accounting(&runtime, 1, 0);
+
+    assert_eq!(
+        runtime.governor.release_leased(taken),
+        ReleaseOutcome::Released
+    );
     assert_accounting(&runtime, 0, 0);
 }

@@ -28,7 +28,8 @@ mod sync;
 
 pub use engine::governor::{PendingView, PermitLedgerView, PROMOTION_BUDGET};
 pub use engine::state::{
-    CapacityBlock, ClaimOutcome, ReleaseOutcome, TerminalReason, MAX_TERMINAL_TICKETS,
+    AdvanceOutcome, AdvanceRefusal, CapacityBlock, ClaimOutcome, LeaseToken, ReleaseOutcome,
+    TerminalReason, MAX_TERMINAL_TICKETS,
 };
 pub use engine::Governor;
 #[cfg(feature = "test-util")]

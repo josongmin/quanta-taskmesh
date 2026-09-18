@@ -155,6 +155,10 @@ pub struct PermitRecord {
     pub capability: Option<CapabilityName>,
     /// Current ownership phase. Advances monotonically.
     pub phase: ExecutionPhase,
+    /// The custody proof minted when the permit left `DispatchReserved`, or
+    /// `None` while it has not. Once set, only a [`LeaseToken`] carrying this
+    /// value ends the permit (see [`ReleaseOutcome::HeldByLease`]).
+    pub lease_nonce: Option<u64>,
     /// The queued ticket this permit was promoted for, until it is claimed. A
     /// permit that dies before its claim uses this to hand the waiter a terminal
     /// outcome instead of leaving it parked.
@@ -225,8 +229,12 @@ pub enum ClaimOutcome {
 /// (host bug) or a release of a lease the leak sweep already reclaimed (a real
 /// race the host must be able to notice). Returning `()` for both is how either
 /// stays invisible until the accounting drifts.
+///
+/// A release that finds a permit it is not entitled to end is a third thing —
+/// a caller reaching for capacity that a dispatched execution still owns — and
+/// it changes nothing (`HeldByLease`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use = "an unknown permit on release is a double release or a reclaimed lease; handle it"]
+#[must_use = "an unknown permit on release is a double release or a reclaimed lease, and a held one was not released; handle it"]
 pub enum ReleaseOutcome {
     /// The permit was live; its capacity, capability slot, and attribution are
     /// returned and queued work has been promoted.
@@ -234,6 +242,114 @@ pub enum ReleaseOutcome {
     /// No live permit had this id: already released, reclaimed, abandoned, or
     /// never granted by this governor.
     UnknownPermit,
+    /// A live permit has this id and the caller's proof of custody is not the
+    /// permit's, so nothing was released: either a plain
+    /// [`Governor::release`](crate::Governor::release) of a permit that has
+    /// left `DispatchReserved` — its [`LeaseToken`] owns it now — or a
+    /// [`Governor::release_leased`](crate::Governor::release_leased) with a
+    /// token that is not this permit's lease (one minted by another governor
+    /// for the same id). `phase` is the permit's current phase; it reads
+    /// `DispatchReserved` only in the second case, for a permit that has no
+    /// lease at all and that `release` would end.
+    HeldByLease { phase: ExecutionPhase },
+}
+
+/// Proof of custody over a dispatched permit.
+///
+/// Minted exactly once per permit, by the [`Governor::advance_phase`]
+/// transition that moves it out of `DispatchReserved`, and handed to the
+/// caller that declared the phase. From that moment the permit is owned by
+/// whoever holds this value: [`Governor::release`] answers
+/// [`ReleaseOutcome::HeldByLease`] and changes nothing, and only
+/// [`Governor::release_leased`] with this token ends the permit. The leak sweep
+/// never reclaims a leased permit either, so a token that is dropped without
+/// being spent leaves its capacity charged for good — hence `#[must_use]`.
+///
+/// The token is not `Clone` or `Copy`: one execution, one proof, spent once.
+/// Its nonce is drawn from a process-wide counter, so two governors in one
+/// process never mint the same proof for the same permit id. It is a guard
+/// against *accidental* misuse — sequential permit ids are easy to confuse —
+/// not a security boundary: an embedder that reaches for engine internals is
+/// trusted by construction, and nothing here is meant to stop a hostile one.
+///
+/// [`Governor::advance_phase`]: crate::Governor::advance_phase
+/// [`Governor::release`]: crate::Governor::release
+/// [`Governor::release_leased`]: crate::Governor::release_leased
+#[derive(Debug, PartialEq, Eq, Hash)]
+#[must_use = "a lease token that is dropped unspent leaves its permit charged forever: nothing else can release a dispatched permit"]
+pub struct LeaseToken {
+    pub(crate) permit_id: PermitId,
+    pub(crate) nonce: u64,
+}
+
+impl LeaseToken {
+    /// The permit this token is the lease of.
+    pub fn permit_id(&self) -> PermitId {
+        self.permit_id
+    }
+
+    /// Construct a token with an explicit nonce.
+    ///
+    /// Test-only: production code obtains tokens from
+    /// [`Governor::advance_phase`](crate::Governor::advance_phase) and nowhere
+    /// else. This exists so a test can present a *wrong* proof (a forged nonce,
+    /// or a twin of a token already spent) and check that the engine refuses it.
+    #[cfg(feature = "test-util")]
+    #[doc(hidden)]
+    pub fn forge(permit_id: PermitId, nonce: u64) -> Self {
+        Self { permit_id, nonce }
+    }
+
+    /// The nonce this token carries. Test-only, for forging a twin or a
+    /// near-miss of a real token.
+    #[cfg(feature = "test-util")]
+    #[doc(hidden)]
+    pub fn nonce(&self) -> u64 {
+        self.nonce
+    }
+}
+
+/// The result of declaring an ownership phase for a live permit.
+///
+/// The first successful move out of `DispatchReserved` is where custody
+/// changes hands: it mints the permit's [`LeaseToken`] and gives it to the
+/// caller, who must keep it — nothing else releases the permit from then on.
+/// Later moves along the same lease only advance the gauges.
+#[derive(Debug, PartialEq, Eq)]
+#[must_use = "Leased carries the only proof that can release the permit, and Refused means it did not advance; handle every arm"]
+pub enum AdvanceOutcome {
+    /// The permit left `DispatchReserved`. The token is its lease.
+    Leased(LeaseToken),
+    /// The permit moved to a later phase under the lease minted earlier.
+    Advanced,
+    /// Nothing changed.
+    Refused(AdvanceRefusal),
+}
+
+/// Why a phase declaration did not advance a permit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdvanceRefusal {
+    /// No live permit had this id: released, reclaimed, abandoned, or never
+    /// granted by this governor.
+    UnknownPermit,
+    /// The permit is live but the declared phase is not later than its
+    /// current one. Phases are monotonic; a backwards or repeated declaration
+    /// is a caller ordering error and is reported rather than absorbed.
+    NotLater { current: ExecutionPhase },
+}
+
+/// Source of lease nonces: one process-wide counter, so every token minted
+/// in this process — by any governor — carries a distinct value.
+///
+/// Deliberately a `std` atomic outside the `sync` seam: the model checkers
+/// swap in their own primitives for the state that transitions *synchronize*
+/// on, and this counter is not that. Nothing reads it back but the transition
+/// that drew it; its only property is uniqueness, which a relaxed `fetch_add`
+/// provides under every memory model.
+static LEASE_NONCES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn mint_lease_nonce() -> u64 {
+    LEASE_NONCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Host-owned values a transition produced that must not be touched under the
@@ -501,6 +617,7 @@ impl GovernedState {
                 provenance,
                 capability,
                 phase: ExecutionPhase::DispatchReserved,
+                lease_nonce: None,
                 pending_ticket,
                 claim_waker,
                 ledger: PermitLedger {
@@ -520,17 +637,30 @@ impl GovernedState {
     }
 
     /// Advance a permit's ownership phase. Monotonic: a request never moves back
-    /// to an earlier phase, and re-declaring the current phase is a no-op.
-    /// Returns `false` for an unknown permit or a backwards move.
-    pub fn advance_phase(&mut self, permit_id: PermitId, phase: ExecutionPhase) -> bool {
+    /// to an earlier phase, and re-declaring the current phase is refused.
+    ///
+    /// The move out of `DispatchReserved` is the one that mints the permit's
+    /// [`LeaseToken`]: the nonce is recorded in the ledger here, in the same
+    /// transition that changes the phase, so there is no instant at which the
+    /// permit is dispatched but unowned.
+    pub fn advance_phase(&mut self, permit_id: PermitId, phase: ExecutionPhase) -> AdvanceOutcome {
         let Some(record) = self.permits.get_mut(&permit_id) else {
-            return false;
+            return AdvanceOutcome::Refused(AdvanceRefusal::UnknownPermit);
         };
         if phase.rank() <= record.phase.rank() {
-            return false;
+            return AdvanceOutcome::Refused(AdvanceRefusal::NotLater {
+                current: record.phase,
+            });
         }
         let previous = record.phase;
         record.phase = phase;
+        let outcome = if record.lease_nonce.is_none() {
+            let nonce = mint_lease_nonce();
+            record.lease_nonce = Some(nonce);
+            AdvanceOutcome::Leased(LeaseToken { permit_id, nonce })
+        } else {
+            AdvanceOutcome::Advanced
+        };
         let class = record.class.clone();
         let newly_started = !previous.has_started() && phase.has_started();
         let cstate = self.class_mut(&class);
@@ -540,7 +670,32 @@ impl GovernedState {
             cstate.started_total += 1;
         }
         self.assert_consistent();
-        true
+        outcome
+    }
+
+    /// Unwind a permit if — and only if — `proof` is its custody: `None` for a
+    /// permit that has not left `DispatchReserved`, or its minted lease nonce
+    /// once it has. A permit is never ended by a caller that does not hold
+    /// exactly what the ledger says its owner holds.
+    pub fn release_with_proof(
+        &mut self,
+        permit_id: PermitId,
+        proof: Option<u64>,
+        effects: &mut TransitionEffects,
+    ) -> ReleaseOutcome {
+        let Some(record) = self.permits.get(&permit_id) else {
+            return ReleaseOutcome::UnknownPermit;
+        };
+        if record.lease_nonce != proof {
+            return ReleaseOutcome::HeldByLease {
+                phase: record.phase,
+            };
+        }
+        match self.unwind(permit_id, TerminalReason::Released, effects) {
+            Some(_) => ReleaseOutcome::Released,
+            // The record was found a moment ago under the same lock.
+            None => ReleaseOutcome::UnknownPermit,
+        }
     }
 
     /// Record a terminal outcome for a ticket, evicting the oldest retained
@@ -727,6 +882,14 @@ impl GovernedState {
             if let Some(name) = record.capability.as_ref() {
                 *capability_by_pool.entry(name.as_ref()).or_default() += 1;
             }
+            debug_assert_eq!(
+                record.lease_nonce.is_some(),
+                record.phase != ExecutionPhase::DispatchReserved,
+                "permit {} is {} with lease nonce {:?}: a permit is leased exactly when it has left DispatchReserved",
+                record.permit_id,
+                record.phase,
+                record.lease_nonce
+            );
         }
         debug_assert_eq!(
             permit_cpu, self.cpu_units_held,

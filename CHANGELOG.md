@@ -81,9 +81,19 @@ The public surface a downstream consumer depends on is the `taskmesh` crate
 - `Governor::admit_resolved(spec, capability, waker)`: admit against an
   explicitly resolved capability pool (D04).
 - `Governor::ticket_status(ticket) -> ClaimOutcome` (read-only; `claim` consumes).
-- `Governor::advance_phase(permit, ExecutionPhase) -> bool` and
+- `Governor::advance_phase(permit, ExecutionPhase) -> AdvanceOutcome` and
   `Governor::phase(permit) -> Option<ExecutionPhase>` (monotonic; a backwards or
-  repeated declaration returns `false`).
+  repeated declaration is `Refused(AdvanceRefusal::NotLater { current })`, an
+  unknown permit `Refused(AdvanceRefusal::UnknownPermit)`). The first advance
+  out of `DispatchReserved` answers `Leased(LeaseToken)` — the permit's one
+  proof of custody — and later advances `Advanced`.
+- `LeaseToken` (not `Clone`; `#[must_use]`; `permit_id()`) and
+  `Governor::release_leased(token) -> ReleaseOutcome` (D14 revision): the only
+  way to end a dispatched permit. `ReleaseOutcome::HeldByLease { phase }` is
+  what a plain `release(permit_id)` answers for a permit that has left
+  `DispatchReserved`, and what `release_leased` answers for a token that is not
+  that permit's lease (another governor's token for the same id, or a token for
+  a permit that was never leased). Nothing moves on either refusal.
 - Diagnostics: `PendingView` (`Governor::pending_view`), `PermitLedgerView`
   (`Governor::permit_ledger`, `Governor::permit_ledgers`) exposing
   `original_estimate_units` / `remaining_reservation_units` / `effective_units`
@@ -142,7 +152,7 @@ The public surface a downstream consumer depends on is the `taskmesh` crate
   `ClaimOutcome`, `ReleaseOutcome`, `CapacityBlock`, `AdmissionDecision`.
 - `#[must_use]` on every outcome an embedder could drop by mistake:
   `AdmissionDecision`, `ClaimOutcome`, `ReleaseOutcome`, `StageReleaseOutcome`,
-  `ReconcileOutcome`, and `Governor::advance_phase`. A statement-form
+  `ReconcileOutcome`, `AdvanceOutcome`, and `LeaseToken`. A statement-form
   `governor.admit(&spec);` is now a warning, because a dropped `Admitted` is a
   leaked permit.
 - `Debug` for `TokioRuntime`, `Builder`, and `Governor` (identity and policy
@@ -379,7 +389,9 @@ An embedder that drives the engine this way also owes the ownership phases:
 `CleanupPending` after. The leak sweep reclaims only `DispatchReserved` permits,
 so a permit that is never advanced is *reclaimable while its work runs* once
 `DEFAULT_LEAK_STALE_MS` (60 000 ms) passes on a `LeakDetecting` class; the phase
-gauges and `started_total` are meaningless without the declarations.
+gauges and `started_total` are meaningless without the declarations. The first
+advance hands back the permit's `LeaseToken`; keep it with the work and end the
+permit with `release_leased(token)` (see the next section).
 
 `claim` consumes the ticket; use `Governor::ticket_status(ticket)` for a
 read-only look.
@@ -387,7 +399,9 @@ read-only look.
 #### `Governor::release` returns `ReleaseOutcome` (was `()`), `#[must_use]`
 
 `UnknownPermit` is a double release (host bug) or a lease the leak sweep already
-reclaimed (a race the host must notice). A statement-form call now warns.
+reclaimed (a race the host must notice). `HeldByLease { phase }` is a release by
+id of a permit that has been dispatched: its `LeaseToken` owns it now (next
+section). A statement-form call now warns.
 
 ```rust
 // 0.1.0
@@ -401,9 +415,43 @@ match governor.release(permit) {
         // before dispatch: the sweep reclaimed a stale DispatchReserved lease;
         // after dispatch: a double release — treat as a bug.
     }
+    ReleaseOutcome::HeldByLease { phase } => {
+        // the permit was advanced past DispatchReserved: only its LeaseToken
+        // releases it. Nothing changed.
+        let _ = phase;
+    }
 }
 // or, where a double release is impossible by construction:
 assert_eq!(governor.release(permit), ReleaseOutcome::Released);
+```
+
+#### `Governor::advance_phase` returns `AdvanceOutcome` (was `bool`); dispatched permits are released by `LeaseToken`
+
+Naming a permit is no longer owning it. `runtime.governor()` is public and permit
+ids are sequential, so a plain `release(permit_id)` could refund a *running*
+job's capacity under it by passing the wrong number; the runtime's own lease
+only found out later (`UnknownPermit`, a debug assertion). Now the first advance
+out of `DispatchReserved` mints the permit's one `LeaseToken`, and from then on
+only `release_leased(token)` ends the permit. The token is not `Clone` and is
+`#[must_use]`: dropped unspent, its permit stays charged for good (the leak
+sweep never reclaims a leased permit). Undispatched permits — a direct `admit`
+an embedder never advances — are still released by id.
+
+```rust
+// 0.1.0
+assert!(governor.advance_phase(permit, ExecutionPhase::Running));
+run(job);
+governor.release(permit);
+
+// 0.2.0
+use taskmesh::ext::{AdvanceOutcome, ReleaseOutcome};
+let token = match governor.advance_phase(permit, ExecutionPhase::Running) {
+    AdvanceOutcome::Leased(token) => token, // keep it with the work
+    AdvanceOutcome::Advanced => unreachable!("a permit is leased on its first advance"),
+    AdvanceOutcome::Refused(refusal) => return Err(refusal), // reclaimed, or not later
+};
+run(job);
+assert_eq!(governor.release_leased(token), ReleaseOutcome::Released);
 ```
 
 #### `Governor::release_stage_memory` returns `StageReleaseOutcome` (was `u32`)

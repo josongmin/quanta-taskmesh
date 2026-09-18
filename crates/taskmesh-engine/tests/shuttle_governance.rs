@@ -286,8 +286,19 @@ fn randomized_claim_versus_reap_fails_closed_both_ways() {
                 let g = Arc::clone(&g);
                 thread::spawn(move || match g.claim(ticket) {
                     ClaimOutcome::Ready(permit) => {
-                        assert!(g.advance_phase(permit, ExecutionPhase::Accepted));
-                        assert_eq!(g.release(permit), ReleaseOutcome::Released);
+                        let taskmesh_engine::AdvanceOutcome::Leased(lease) =
+                            g.advance_phase(permit, ExecutionPhase::Accepted)
+                        else {
+                            panic!("a claimed lease is live and leases on its first advance");
+                        };
+                        assert_eq!(
+                            g.release(permit),
+                            ReleaseOutcome::HeldByLease {
+                                phase: ExecutionPhase::Accepted
+                            },
+                            "a dispatched permit is not releasable by id"
+                        );
+                        assert_eq!(g.release_leased(lease), ReleaseOutcome::Released);
                         true
                     }
                     ClaimOutcome::Terminal(TerminalReason::Reclaimed) => false,

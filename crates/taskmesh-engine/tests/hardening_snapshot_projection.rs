@@ -19,8 +19,17 @@ use taskmesh_contract::{
     ClassPolicy, ExecutionPhase, ManualClock, OverflowPolicy, ResourceBudget, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
-    AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome,
+    AdmissionDecision, AdvanceOutcome, AdvanceRefusal, ClaimOutcome, Governor, LeaseToken,
+    PermitId, PolicySet, ReleaseOutcome,
 };
+
+/// The first advance out of `DispatchReserved` hands over the permit's lease.
+fn lease(g: &Governor, permit: PermitId, phase: ExecutionPhase) -> LeaseToken {
+    match g.advance_phase(permit, phase) {
+        AdvanceOutcome::Leased(token) => token,
+        other => panic!("the first advance of permit {permit} must lease it, got {other:?}"),
+    }
+}
 
 fn gov() -> Governor {
     let mut classes = BTreeMap::new();
@@ -99,12 +108,10 @@ fn every_transition_leaves_the_projection_consistent() {
     let first = admit(&g, "first");
     assert_projection_matches_records(&g, "after admit");
 
-    for phase in [
-        ExecutionPhase::Accepted,
-        ExecutionPhase::Running,
-        ExecutionPhase::CleanupPending,
-    ] {
-        assert!(g.advance_phase(first, phase));
+    let first_lease = lease(&g, first, ExecutionPhase::Accepted);
+    assert_projection_matches_records(&g, "after phase advance");
+    for phase in [ExecutionPhase::Running, ExecutionPhase::CleanupPending] {
+        assert_eq!(g.advance_phase(first, phase), AdvanceOutcome::Advanced);
         assert_projection_matches_records(&g, "after phase advance");
     }
 
@@ -118,7 +125,7 @@ fn every_transition_leaves_the_projection_consistent() {
     assert_eq!(g.snapshot().classes[&TaskClass::new("c")].queued, 1);
     assert_projection_matches_records(&g, "queued");
 
-    assert_eq!(g.release(first), ReleaseOutcome::Released);
+    assert_eq!(g.release_leased(first_lease), ReleaseOutcome::Released);
     assert_projection_matches_records(&g, "after release + promotion");
     let ClaimOutcome::Ready(promoted) = g.claim(ticket) else {
         panic!("the queued request must have been promoted");
@@ -142,11 +149,17 @@ fn phases_are_monotonic_and_partition_inflight() {
     let permit = admit(&g, "op");
     assert_eq!(g.phase(permit), Some(ExecutionPhase::DispatchReserved));
 
-    assert!(g.advance_phase(permit, ExecutionPhase::Running));
+    let token = lease(&g, permit, ExecutionPhase::Running);
     // Backwards and repeated declarations change nothing — an adapter that
-    // reports an event twice must not double-count it.
-    assert!(!g.advance_phase(permit, ExecutionPhase::Accepted));
-    assert!(!g.advance_phase(permit, ExecutionPhase::Running));
+    // reports an event twice must not double-count it — and say why.
+    for phase in [ExecutionPhase::Accepted, ExecutionPhase::Running] {
+        assert_eq!(
+            g.advance_phase(permit, phase),
+            AdvanceOutcome::Refused(AdvanceRefusal::NotLater {
+                current: ExecutionPhase::Running
+            })
+        );
+    }
     assert_eq!(g.phase(permit), Some(ExecutionPhase::Running));
 
     let observed = &g.snapshot().classes[&TaskClass::new("c")];
@@ -157,8 +170,11 @@ fn phases_are_monotonic_and_partition_inflight() {
     assert_projection_matches_records(&g, "monotonic");
 
     // An unknown permit cannot be advanced.
-    assert!(!g.advance_phase(u64::MAX, ExecutionPhase::Running));
-    assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    assert_eq!(
+        g.advance_phase(u64::MAX, ExecutionPhase::Running),
+        AdvanceOutcome::Refused(AdvanceRefusal::UnknownPermit)
+    );
+    assert_eq!(g.release_leased(token), ReleaseOutcome::Released);
 }
 
 #[test]
@@ -168,7 +184,7 @@ fn accepted_work_is_visible_rather_than_hidden_as_pending() {
     // "running" would overstate them.
     let g = gov();
     let permit = admit(&g, "op");
-    assert!(g.advance_phase(permit, ExecutionPhase::Accepted));
+    let token = lease(&g, permit, ExecutionPhase::Accepted);
 
     let observed = &g.snapshot().classes[&TaskClass::new("c")];
     assert_eq!(observed.accepted, 1);
@@ -179,7 +195,7 @@ fn accepted_work_is_visible_rather_than_hidden_as_pending() {
         "accepted is not started: the adapter has it, the work has not begun"
     );
     assert_projection_matches_records(&g, "accepted");
-    assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    assert_eq!(g.release_leased(token), ReleaseOutcome::Released);
 }
 
 #[test]
@@ -190,8 +206,8 @@ fn terminated_counters_survive_the_records_they_counted() {
     let g = gov();
     for round in 0..50 {
         let permit = admit(&g, &format!("op{round}"));
-        assert!(g.advance_phase(permit, ExecutionPhase::Running));
-        assert_eq!(g.release(permit), ReleaseOutcome::Released);
+        let token = lease(&g, permit, ExecutionPhase::Running);
+        assert_eq!(g.release_leased(token), ReleaseOutcome::Released);
     }
     let observed = &g.snapshot().classes[&TaskClass::new("c")];
     assert_eq!(observed.inflight, 0);

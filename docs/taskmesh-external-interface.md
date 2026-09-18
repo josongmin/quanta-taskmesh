@@ -101,10 +101,14 @@ let out = runtime
 3. `Snapshot`은 `schema_version = 2`다. held 자원은 `u128`이며 JSON에서는 decimal string으로 직렬화된다.
    phase gauge(`dispatch_reserved`/`accepted`/`running`/`cleanup_pending`)는 `inflight`를 정확히 분할하고,
    `admitted_total == inflight + terminated_total`이다 (`Snapshot::conservation_violation`).
-4. `Governor::claim`은 `ClaimOutcome`, `release`는 `ReleaseOutcome::{Released, UnknownPermit}`
+4. `Governor::claim`은 `ClaimOutcome`, `release`는 `ReleaseOutcome::{Released, UnknownPermit, HeldByLease { phase }}`
    (`#[must_use]`), `release_stage_memory`는 `StageReleaseOutcome`, `reconcile_memory_at`은
    `ReconcileOutcome`을 반환한다. 거부·stale·unknown은 값으로 보고되며 0이나 `None`이나 `()`로 접히지
    않는다. `claim`은 lease 활동으로 간주되어 leak sweep의 staleness 시계를 다시 시작한다.
+   `advance_phase`는 `AdvanceOutcome`을 반환한다: `DispatchReserved`를 벗어나는 첫 전진이
+   `Leased(LeaseToken)`으로 custody를 넘기고, 그 뒤 dispatch된 permit은 `release_leased(token)`으로만
+   끝난다 — `release(id)`는 `HeldByLease`로 거절되고 아무것도 바꾸지 않는다. token은 `Clone`이 아니며
+   `#[must_use]`다 (버리면 그 permit은 sweep도 회수하지 않는 영구 charged 상태).
 5. `CpuExecutor::capabilities()`(default 구현 제공)로 adapter가 보장하는 것을 선언한다. host는 선언
    이상을 가정하지 않으며, 공유 pool의 ambient 작업을 제한한다고 주장하지 않는다. 선언은 load-bearing이다:
    `declared_workers`가 topology의 `cpu` gate보다 작으면 `Builder::build`가

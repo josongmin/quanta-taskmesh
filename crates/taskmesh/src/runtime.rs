@@ -276,15 +276,15 @@ impl TokioRuntime {
 
     /// Return a permit whose work will not start (budget expired after grant).
     ///
-    /// Both outcomes are terminal for the caller and neither is a fault: the
-    /// leak sweep may reclaim an unstarted (`DispatchReserved`) lease at any
-    /// moment, and if it reached this permit first there is simply nothing left
-    /// to return.
+    /// The permit is still `DispatchReserved`, so this is exactly what dropping
+    /// an undispatched [`ExecutionLease`] does — and it is done *by* one, so the
+    /// pre-dispatch release rules live in a single place.
     fn return_unstarted(&self, permit_id: PermitId) {
-        match self.governor.release(permit_id) {
-            ReleaseOutcome::Released | ReleaseOutcome::UnknownPermit => {}
-        }
-        self.drain.settled();
+        drop(ExecutionLease::reserved(
+            Arc::clone(&self.governor),
+            Arc::clone(&self.drain),
+            permit_id,
+        ));
     }
 
     /// Acquire the execution lease for a resolved plan.
@@ -327,13 +327,11 @@ impl TokioRuntime {
             .acquire(spec, plan.capability, opts, acquire_deadline)
             .await
             .map_err(|error| absolute_acquire_error_v1(absolute_deadline, error))?;
-        Ok(ExecutionLease {
-            governor: Arc::clone(&self.governor),
-            drain: Arc::clone(&self.drain),
-            permit_id: permit,
-            permit: Some(permit),
-            dispatched: false,
-        })
+        Ok(ExecutionLease::reserved(
+            Arc::clone(&self.governor),
+            Arc::clone(&self.drain),
+            permit,
+        ))
     }
 
     /// Resolve the plan for one submission against its class policy.
@@ -1200,17 +1198,40 @@ struct ExecutionLease {
     /// this lease re-reads the gauges (D17).
     drain: Arc<DrainSignal>,
     permit_id: PermitId,
-    /// `None` once the permit has been returned — or once the engine reported
-    /// it gone, so a later drop does not release it a second time.
-    permit: Option<PermitId>,
-    /// Set once the engine accepted a phase past `DispatchReserved`. From then
-    /// on the leak sweep leaves the permit alone, so the only way its release
-    /// can find nothing is a double release.
-    dispatched: bool,
+    custody: Custody,
+}
+
+/// What the lease holds over its permit. Exactly one of these is true at any
+/// time, which is why it is not two `Option`s.
+enum Custody {
+    /// Admitted, not yet dispatched. The permit is releasable by id — by this
+    /// lease, or by the leak sweep if the reservation goes stale first.
+    Reserved,
+    /// Dispatched. The engine minted this token on the first phase advance and
+    /// nothing else can end the permit now: not the sweep, not a plain
+    /// `release(permit_id)` from anyone who happens to know the id.
+    Leased(taskmesh_engine::LeaseToken),
+    /// Nothing left to release: returned by this lease, reclaimed by the sweep
+    /// before dispatch, or leased away from under it.
+    Gone,
 }
 
 impl ExecutionLease {
+    /// A lease over a freshly granted, undispatched permit.
+    fn reserved(governor: Arc<Governor>, drain: Arc<DrainSignal>, permit_id: PermitId) -> Self {
+        Self {
+            governor,
+            drain,
+            permit_id,
+            custody: Custody::Reserved,
+        }
+    }
+
     /// Declare the execution's next ownership phase.
+    ///
+    /// The first successful advance takes custody: the engine's lease token is
+    /// kept here, and from then on this value — travelling with the work — is
+    /// the only thing that can release the permit.
     ///
     /// Fails, and disarms the lease, when the engine no longer holds a live
     /// permit for it: the leak sweep reclaimed the lease before dispatch. The
@@ -1218,47 +1239,87 @@ impl ExecutionLease {
     /// the failure says so instead of letting the phase gauges quietly diverge
     /// from a worker that ran anyway.
     fn advance(&mut self, phase: ExecutionPhase) -> Result<(), GovernorError> {
-        let Some(permit) = self.permit else {
-            return Err(GovernorError::LeaseReclaimed {
-                permit_id: self.permit_id,
-            });
-        };
-        if self.governor.advance_phase(permit, phase) {
-            self.dispatched |= phase != ExecutionPhase::DispatchReserved;
-            return Ok(());
-        }
-        if self.governor.phase(permit).is_none() {
-            self.permit = None;
+        use taskmesh_engine::{AdvanceOutcome, AdvanceRefusal};
+
+        let permit = self.permit_id;
+        if matches!(self.custody, Custody::Gone) {
             return Err(GovernorError::LeaseReclaimed { permit_id: permit });
         }
-        // The permit is live and refused the move: the host declared a phase
-        // that is not later than the current one. The host's sequence is fixed
-        // (`Accepted` → `Running` → `CleanupPending`), so this is a programming
-        // error, reported rather than ignored.
-        Err(GovernorError::PolicyViolation(
-            format!("execution phase {phase:?} does not advance permit {permit}").into(),
-        ))
+        match self.governor.advance_phase(permit, phase) {
+            AdvanceOutcome::Leased(token) => {
+                self.custody = Custody::Leased(token);
+                Ok(())
+            }
+            AdvanceOutcome::Advanced => {
+                if matches!(self.custody, Custody::Leased(_)) {
+                    return Ok(());
+                }
+                // The engine says the permit was leased earlier, but not to
+                // this lease: something else — an embedder driving
+                // `advance_phase` through `ext` on a runtime-owned permit —
+                // took the token. This lease can no longer release the
+                // permit, and running the work under a lease it does not hold
+                // would leave that capacity charged forever. Refuse, and stop
+                // pretending to own it.
+                self.custody = Custody::Gone;
+                Err(GovernorError::PolicyViolation(
+                    format!(
+                        "permit {permit} was leased outside its runtime lease; \
+                         the runtime cannot release it and will not run under it"
+                    )
+                    .into(),
+                ))
+            }
+            AdvanceOutcome::Refused(AdvanceRefusal::UnknownPermit) => {
+                self.custody = Custody::Gone;
+                Err(GovernorError::LeaseReclaimed { permit_id: permit })
+            }
+            // The permit is live and refused the move: the host declared a
+            // phase that is not later than the current one. The host's sequence
+            // is fixed (`Accepted` → `Running` → `CleanupPending`), so this is a
+            // programming error, reported rather than ignored.
+            AdvanceOutcome::Refused(AdvanceRefusal::NotLater { current }) => {
+                Err(GovernorError::PolicyViolation(
+                    format!(
+                        "execution phase {phase:?} does not advance permit {permit} \
+                         (currently {current:?})"
+                    )
+                    .into(),
+                ))
+            }
+        }
     }
 }
 
 impl Drop for ExecutionLease {
     fn drop(&mut self) {
-        if let Some(permit) = self.permit.take() {
-            match self.governor.release(permit) {
-                ReleaseOutcome::Released => {}
-                ReleaseOutcome::UnknownPermit => {
-                    // Legitimate only before dispatch, where the leak sweep can
-                    // reclaim a stale `DispatchReserved` lease under us. After
-                    // dispatch nothing but this lease can end the permit, so a
-                    // miss here is a double release — an invariant the test
-                    // suite must see. (Not asserted while unwinding: a panic in
-                    // a destructor during a panic aborts the process.)
-                    if !std::thread::panicking() {
-                        debug_assert!(
-                            !self.dispatched,
-                            "permit {permit} released twice: a dispatched lease found no permit"
-                        );
-                    }
+        let permit = self.permit_id;
+        match std::mem::replace(&mut self.custody, Custody::Gone) {
+            Custody::Gone => {}
+            Custody::Reserved => match self.governor.release(permit) {
+                // Before dispatch the permit is not exclusively this lease's:
+                // the leak sweep may reclaim a stale `DispatchReserved`
+                // reservation (`UnknownPermit`), and an `ext` caller may have
+                // released it or taken its lease (`HeldByLease`, and the token
+                // is theirs to spend). Each ends this lease's claim; none ran
+                // work — `advance` refuses to start on a permit it does not hold.
+                ReleaseOutcome::Released
+                | ReleaseOutcome::UnknownPermit
+                | ReleaseOutcome::HeldByLease { .. } => {}
+            },
+            Custody::Leased(token) => {
+                // Nothing but the token this lease is spending can end a
+                // dispatched permit, and a token cannot be spent twice. A miss
+                // here means the engine and this lease disagree about who owns
+                // the permit — an invariant the test suite must see. (Not
+                // asserted while unwinding: a panic in a destructor during a
+                // panic aborts the process.)
+                let outcome = self.governor.release_leased(token);
+                if !std::thread::panicking() {
+                    debug_assert!(
+                        outcome == ReleaseOutcome::Released,
+                        "permit {permit}: its runtime lease could not release it ({outcome:?})"
+                    );
                 }
             }
         }

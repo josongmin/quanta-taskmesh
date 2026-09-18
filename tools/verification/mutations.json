@@ -1051,6 +1051,71 @@
       "test_target": "hardening_drain",
       "expect_failing_test": "not_drained_lists_each_class_with_its_own_inflight_and_queued_counts",
       "expect_message": "class b must report its queued request as queued"
+    },
+    {
+      "id": "lease-token-plain-release-ignores-the-lease",
+      "finding": "A5-lease-token",
+      "runner": "cargo",
+      "rationale": "D14 revision: naming a permit is not owning it. If a plain release(id) bypasses the custody check, any holder of the governor can refund a running job's capacity under it by passing the wrong sequential id — the defect the token exists to prevent, not merely detect.",
+      "file": "crates/taskmesh-engine/src/engine/state.rs",
+      "find": "        if record.lease_nonce != proof {",
+      "replace": "        if proof.is_some() && record.lease_nonce != proof {",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_lease_token",
+      "expect_failing_test": "a_plain_release_cannot_end_a_dispatched_permit",
+      "expect_message": "a plain release must not end a dispatched permit"
+    },
+    {
+      "id": "lease-token-nonce-not-checked",
+      "finding": "A5-lease-token",
+      "runner": "cargo",
+      "rationale": "A token must be the permit's own lease, not merely a token. Checking only that some lease exists lets a forged or foreign token (same id, other nonce) end the permit.",
+      "file": "crates/taskmesh-engine/src/engine/state.rs",
+      "find": "        if record.lease_nonce != proof {",
+      "replace": "        if record.lease_nonce.is_some() != proof.is_some() {",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_lease_token",
+      "expect_failing_test": "a_forged_token_is_refused_and_changes_nothing",
+      "expect_message": "a token whose nonce is not the permit's lease must not release it"
+    },
+    {
+      "id": "lease-token-minted-on-every-advance",
+      "finding": "A5-lease-token",
+      "runner": "cargo",
+      "rationale": "One permit, one lease. Re-minting on every advance invalidates the token the owner already holds, so the owner's own release is refused and its capacity is stranded.",
+      "file": "crates/taskmesh-engine/src/engine/state.rs",
+      "find": "        let outcome = if record.lease_nonce.is_none() {",
+      "replace": "        let outcome = if record.lease_nonce.is_none() || true {",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_lease_token",
+      "expect_failing_test": "only_the_first_advance_mints_the_lease",
+      "expect_message": "only the first advance mints a lease; a later one must not reissue it"
+    },
+    {
+      "id": "lease-token-nonce-not-unique",
+      "finding": "A5-lease-token",
+      "runner": "cargo",
+      "rationale": "Two governors in one process issue the same sequential permit ids; only the process-wide nonce keeps their leases apart. A constant nonce lets one governor's token release the other's permit.",
+      "file": "crates/taskmesh-engine/src/engine/state.rs",
+      "find": "    LEASE_NONCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)",
+      "replace": "    LEASE_NONCES.load(std::sync::atomic::Ordering::Relaxed)",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_lease_token",
+      "expect_failing_test": "a_token_from_another_governor_is_not_this_permits_lease",
+      "expect_message": "another governor's lease for the same permit id must not release this permit"
+    },
+    {
+      "id": "runtime-lease-runs-under-a-lease-it-does-not-hold",
+      "finding": "A5-lease-token",
+      "runner": "cargo",
+      "rationale": "If an ext caller took the permit's lease before dispatch, the runtime lease can never release it. Starting the work anyway runs it on capacity that stays charged forever; the host must refuse, typed.",
+      "file": "crates/taskmesh/src/runtime.rs",
+      "find": "                if matches!(self.custody, Custody::Leased(_)) {\n                    return Ok(());\n                }",
+      "replace": "                if matches!(self.custody, Custody::Leased(_) | Custody::Reserved) {\n                    return Ok(());\n                }",
+      "package": "taskmesh",
+      "test_target": "lib",
+      "expect_failing_test": "runtime::claim_acquisition_tests::a_lease_taken_through_ext_is_refused_not_run_v1",
+      "expect_message": "a runtime lease must not run under a lease it does not hold"
     }
   ]
 }

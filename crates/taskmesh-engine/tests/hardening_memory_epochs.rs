@@ -503,7 +503,11 @@ fn a_running_lease_is_suspected_but_not_reclaimed() {
         .memory_release_policy(MemoryReleasePolicy::LeakDetecting));
     let running = admit(&g, "running");
     let never_started = admit(&g, "reserved");
-    assert!(g.advance_phase(running, ExecutionPhase::Running));
+    let taskmesh_engine::AdvanceOutcome::Leased(running_lease) =
+        g.advance_phase(running, ExecutionPhase::Running)
+    else {
+        panic!("the first advance of a live permit leases it");
+    };
 
     clock.set(200_000);
     let report = g.reap_leaks_with(1_000);
@@ -518,5 +522,5 @@ fn a_running_lease_is_suspected_but_not_reclaimed() {
         "running work stays charged"
     );
     assert!(g.permit_ledger(never_started).is_none());
-    assert_eq!(g.release(running), ReleaseOutcome::Released);
+    assert_eq!(g.release_leased(running_lease), ReleaseOutcome::Released);
 }

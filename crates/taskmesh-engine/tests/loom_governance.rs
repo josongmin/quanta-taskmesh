@@ -252,10 +252,20 @@ fn claim_and_reap_of_a_stale_promotion_fail_closed_both_ways() {
                 ClaimOutcome::Ready(permit) => {
                     // The claim touched the lease (t=1002), so a sweep that runs
                     // after it sees a fresh lease and must leave it alone.
-                    let advanced =
-                        g.advance_phase(permit, taskmesh_contract::ExecutionPhase::Accepted);
-                    assert!(advanced, "a claimed, touched lease is live");
-                    assert_eq!(g.release(permit), ReleaseOutcome::Released);
+                    let taskmesh_engine::AdvanceOutcome::Leased(lease) =
+                        g.advance_phase(permit, taskmesh_contract::ExecutionPhase::Accepted)
+                    else {
+                        panic!("a claimed, touched lease is live and leases on its first advance");
+                    };
+                    // Dispatched: the sweep can no longer take it, and only
+                    // its lease can end it.
+                    assert_eq!(
+                        g.release(permit),
+                        ReleaseOutcome::HeldByLease {
+                            phase: taskmesh_contract::ExecutionPhase::Accepted
+                        }
+                    );
+                    assert_eq!(g.release_leased(lease), ReleaseOutcome::Released);
                     Some(permit)
                 }
                 ClaimOutcome::Terminal(TerminalReason::Reclaimed) => None,

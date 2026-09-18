@@ -357,6 +357,29 @@ resolve되지 않는다(consumer-MSRV 1.81 빌드는 그대로 PASS). cfg와 fea
 
 **근거.** 감사 A1 P2-4/P2-5/P2-6, A2 H16-011-A06. 사용자 규칙: 조용한 실패 금지.
 
+**개정 (마무리 검증 A5) — dispatch된 permit의 custody는 lease token이다.** 첫 bullet의
+"dispatch 후 `UnknownPermit`은 double release로 *검출*"은 검출이지 방지가 아니었다:
+`Governor::release(permit_id)`는 public이고 permit id는 순차적이므로, `runtime.governor()`를
+쥔 소비자가 번호 하나를 잘못 넘기면 실행 중인 작업의 용량이 그 밑에서 환급됐다(그 작업의 lease가
+나중에 `UnknownPermit`을 보고 debug에서만 단정). 이제 **`DispatchReserved`를 벗어나는 첫
+`advance_phase`가 permit의 유일한 `LeaseToken`을 mint**하고(`AdvanceOutcome::Leased(token)`;
+이후 전진은 `Advanced`, 거절은 `Refused(UnknownPermit | NotLater { current })`), 그 뒤로는
+`release_leased(token)`만 permit을 끝낸다 — `release(id)`는 `ReleaseOutcome::HeldByLease { phase }`를
+답하고 아무것도 바꾸지 않는다. token은 `Clone`이 아니어서 두 번 쓸 수 없고 `#[must_use]`다
+(버리면 그 permit은 영원히 charged — sweep도 lease된 permit은 회수하지 않는다). nonce는
+process-wide counter에서 뽑아 두 governor가 같은 id에 같은 proof를 내지 않는다. dispatch 전
+permit(직접 `admit`한 embedder의 것, budget 만료로 unstarted 반환되는 것)은 여전히 id로
+release된다. host `ExecutionLease`는 `Custody::{Reserved, Leased(token), Gone}`으로 정확히
+하나의 상태를 가지며, 자기 permit이 `ext`를 통해 남에게 lease되면(`Advanced`가 돌아오는데 자기는
+token이 없음) 작업을 시작하지 않고 `PolicyViolation`으로 거절한다 — 자기가 놓을 수 없는 lease
+아래에서 실행하면 그 용량은 영원히 남는다. **breaking**: `advance_phase -> bool`이
+`AdvanceOutcome`으로, `ReleaseOutcome`(exhaustive)에 `HeldByLease` arm 추가. 이것은 security
+boundary가 아니라 *실수* 방지다(embedder는 신뢰 대상). 증명:
+`crates/taskmesh-engine/tests/hardening_lease_token.rs`(7),
+`hardening_executor_protocol.rs::an_ext_release_cannot_free_a_running_jobs_slot`,
+`claim_acquisition_tests::a_lease_taken_through_ext_is_refused_not_run_v1`, mutation
+`lease-token-*` 5건.
+
 ---
 
 ## D15 — lease 활동과 epoch 배정은 그 transition 안에서 일어난다
@@ -476,7 +499,8 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
 | `SubmitOptions::deadline` on non-`CooperativeWithDeadline` class | `deadline_cancel.rs` (test 1건) | **breaking**: `DeadlineUnsupported`로 거절 (D14). 이전에는 무시 |
 | `TokioRuntime::drain` / `Governor::close_admission` | 없음 (신규) | additive (D17). `RuntimeUnavailable`을 accounting fault로만 해석하던 코드는 `admission_closed()`도 봐야 한다 |
 | `GovernorError` match arms | host tests 10곳 | additive (`non_exhaustive`): `DeadlineUnsupported`, `LeaseReclaimed`, `WorkerUnavailable`, `WorkerPanicked`, `JobAbandoned`; worker 실패가 더 이상 `PolicyViolation`이 아니다 |
-| `Governor::release` | engine/bench tests 145곳 | **breaking**: `ReleaseOutcome` (`#[must_use]`); 통계상 statement-form 호출은 `assert_eq!(…, Released)`로 바뀌었다 |
+| `Governor::release` | engine/bench tests 145곳 | **breaking**: `ReleaseOutcome` (`#[must_use]`); 통계상 statement-form 호출은 `assert_eq!(…, Released)`로 바뀌었다. D14 개정: dispatch된 permit은 `HeldByLease`를 답한다 — `advance_phase`를 쓰는 embedder는 `Leased(token)`을 보관하고 `release_leased(token)`으로 끝낸다 |
+| `Governor::advance_phase` | host `ExecutionLease`, engine tests | **breaking** (D14 개정): `bool` → `AdvanceOutcome::{Leased(LeaseToken), Advanced, Refused(AdvanceRefusal)}` |
 | custom `Clock` | `SystemClock`, `ManualClock` (contract 제공분만) | 없음. 호출 위치가 lock 밖으로 고정되었을 뿐 trait은 그대로 |
 | `run_local` non-`Send` payload | `runtime_local`, `local_runtime_guard`, `e2e_proof`, `e2e_scenarios`, `host_edge_paths` bench | 없음 — 의도적으로 보존 (D12) |
 | `Snapshot` serde 소비자 | `contract_roundtrip` test | **breaking**: `schema_version = 2`, held 필드가 decimal string |

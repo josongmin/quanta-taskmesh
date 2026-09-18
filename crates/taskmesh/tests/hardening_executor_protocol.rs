@@ -402,6 +402,21 @@ async fn a_caller_that_leaves_while_the_job_is_accepted_but_not_started_keeps_it
         (1, 1),
         "the caller left; the accepted job still holds its permit"
     );
+    // Nor can anyone holding the governor end it by id: the permit left
+    // `DispatchReserved`, so the lease inside the held closure owns it (D14).
+    let permit = rt.governor().permit_ledgers()[0].permit_id;
+    assert_eq!(
+        rt.governor().release(permit),
+        ReleaseOutcome::HeldByLease {
+            phase: ExecutionPhase::Accepted
+        },
+        "an accepted job's permit is its lease's, not the governor caller's"
+    );
+    assert_eq!(
+        rt.snapshot(),
+        snapshot,
+        "the refused release changed nothing"
+    );
 
     // The executor finally runs it: one execution, one refund.
     let job = held.lock().expect("lock").pop().expect("the held job");
@@ -570,6 +585,73 @@ async fn a_caller_that_stops_waiting_leaves_custody_with_the_worker() {
     release.send(()).expect("worker still waiting");
     assert_drains(&rt, &class, "abandoned caller").await;
     assert_eq!(finished.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_ext_release_cannot_free_a_running_jobs_slot() {
+    // H16-003 A7 / D14: `runtime.governor()` is public and permit ids are
+    // sequential, so a consumer can name a running job's permit by accident.
+    // Naming it is not owning it: the job's runtime lease holds the token the
+    // engine minted at dispatch, and a plain `release` of that id is refused
+    // without moving a gauge. The job keeps its slot until it finishes, and its
+    // own completion releases it — once.
+    let class = TaskClass::new("c");
+    let rt = runtime_for(class.clone());
+    let (finish_job, hold) = std::sync::mpsc::channel::<()>();
+    let mut submission = Box::pin(rt.run_blocking(
+        TaskSpec::blocking(class.clone()).operation("owned"),
+        move || {
+            // A signal or a dropped sender both let the job finish, so a test
+            // that fails before signalling never hangs on its own fixture.
+            let _released = hold.recv();
+            Ok::<i32, ()>(7)
+        },
+    ));
+    assert!(
+        futures_poll_once(&mut submission).await.is_none(),
+        "the held job keeps the caller pending"
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while rt.snapshot().classes[&class].running == 0 {
+        assert!(Instant::now() < deadline, "the job never started");
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    let ledgers = rt.governor().permit_ledgers();
+    assert_eq!(ledgers.len(), 1, "one job, one permit");
+    let permit = ledgers[0].permit_id;
+
+    let before = rt.snapshot();
+    assert_eq!(before.classes[&class].inflight, 1);
+    assert_eq!(
+        rt.governor().release(permit),
+        ReleaseOutcome::HeldByLease {
+            phase: ExecutionPhase::Running
+        },
+        "an ext release must not end a permit its runtime lease owns"
+    );
+    assert_eq!(
+        (rt.snapshot(), rt.governor().permit_ledgers()),
+        (before, ledgers),
+        "the refused release must leave every gauge and ledger as it was"
+    );
+
+    finish_job.send(()).expect("the job is still waiting");
+    let value = submission.await.expect("the job completes under its lease");
+    assert_eq!(value, 7);
+    // D10: a caller that sees the value sees the capacity already returned.
+    let snapshot = rt.snapshot();
+    let observed = &snapshot.classes[&class];
+    assert_eq!(
+        (observed.inflight, observed.terminated_total),
+        (0, 1),
+        "the job's own completion must release its slot, exactly once"
+    );
+    assert_eq!(snapshot.conservation_violation(), None);
+    assert_eq!(
+        rt.governor().release(permit),
+        ReleaseOutcome::UnknownPermit,
+        "the lease already ended the permit"
+    );
 }
 
 /// Poll a future once, discarding the result. Used to start work without

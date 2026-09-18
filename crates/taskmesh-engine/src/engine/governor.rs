@@ -33,8 +33,8 @@ use taskmesh_contract::{
 };
 
 use crate::engine::state::{
-    CapacityBlock, ClaimOutcome, GovernedState, GrantRequest, ReleaseOutcome, TerminalReason,
-    TicketState, TransitionEffects,
+    AdvanceOutcome, CapacityBlock, ClaimOutcome, GovernedState, GrantRequest, LeaseToken,
+    ReleaseOutcome, TerminalReason, TicketState, TransitionEffects,
 };
 use crate::features::memory::ReconcileOutcome;
 use crate::features::{admission, composite, fairness, inventory, memory};
@@ -343,29 +343,57 @@ impl Governor {
 
     // ---- permit lifecycle -------------------------------------------------
 
-    /// Release a permit, returning its resources and promoting queued work.
+    /// Release an **undispatched** permit, returning its resources and
+    /// promoting queued work.
     ///
-    /// The outcome says whether there was a permit to release. `UnknownPermit`
-    /// is never a no-op to shrug at: it is either a double release or a lease
-    /// the sweep already reclaimed, and the holder has to know which path it is
-    /// on (see [`ReleaseOutcome`]).
+    /// This is the release for a permit that never left `DispatchReserved`: a
+    /// direct `admit` an embedder owns outright, or a reservation a host
+    /// returns unstarted. A permit that has been advanced past that phase
+    /// belongs to the [`LeaseToken`] minted by [`Self::advance_phase`], and this
+    /// call answers [`ReleaseOutcome::HeldByLease`] without touching it — a
+    /// running job's capacity cannot be refunded under it by anyone who merely
+    /// knows its (sequential) id. Use [`Self::release_leased`] with the token.
+    ///
+    /// The outcome is never a no-op to shrug at: `UnknownPermit` is either a
+    /// double release or a lease the sweep already reclaimed, and the holder
+    /// has to know which path it is on (see [`ReleaseOutcome`]).
     pub fn release(&self, permit_id: PermitId) -> ReleaseOutcome {
+        self.release_with_proof(permit_id, None)
+    }
+
+    /// Release a **dispatched** permit by spending its lease.
+    ///
+    /// Releases exactly when the token is the live lease of the permit it
+    /// names: the ledger's minted nonce must equal the token's. No live permit
+    /// with that id answers `UnknownPermit` (the lease was already spent, or
+    /// the id was never granted here); a live permit whose lease is a
+    /// different token answers `HeldByLease` and stays charged (see
+    /// [`ReleaseOutcome::HeldByLease`] for when that can happen). The token is
+    /// consumed either way — it is not `Clone`, so a lease cannot be spent
+    /// twice by construction.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "spending the lease consumes the token: a value that could be reused is the defect"
+    )]
+    pub fn release_leased(&self, token: LeaseToken) -> ReleaseOutcome {
+        self.release_with_proof(token.permit_id, Some(token.nonce))
+    }
+
+    fn release_with_proof(&self, permit_id: PermitId, proof: Option<u64>) -> ReleaseOutcome {
         let sampled = self.sample_clock_ms();
         let mut effects = TransitionEffects::default();
-        {
+        let outcome = {
             let mut state = self.state.lock();
             let now = state.commit_time(sampled);
-            if state
-                .unwind(permit_id, TerminalReason::Released, &mut effects)
-                .is_none()
-            {
-                return ReleaseOutcome::UnknownPermit;
+            let outcome = state.release_with_proof(permit_id, proof, &mut effects);
+            if outcome == ReleaseOutcome::Released {
+                let pass = self.promote(&mut state, now);
+                effects.absorb(pass);
             }
-            let pass = self.promote(&mut state, now);
-            effects.absorb(pass);
-        }
+            outcome
+        };
         self.drain_effects(effects, sampled);
-        ReleaseOutcome::Released
+        outcome
     }
 
     /// Advance a live permit's ownership phase (`DispatchReserved` → `Accepted`
@@ -374,15 +402,21 @@ impl Governor {
     /// Phases are what keep a caller's answer separate from the work's custody:
     /// a timed-out caller has its result while the permit is still `Running`, and
     /// the gauges say so instead of reporting the worker as gone. Monotonic —
-    /// a backwards or repeated declaration returns `false` and changes nothing.
+    /// a backwards or repeated declaration is `Refused` and changes nothing.
+    ///
+    /// The first advance out of `DispatchReserved` **transfers custody**: it
+    /// answers [`AdvanceOutcome::Leased`] with the permit's one
+    /// [`LeaseToken`], and from then on only [`Self::release_leased`] with that
+    /// token ends the permit — [`Self::release`] answers `HeldByLease`. Keep
+    /// the token with the work. Later advances answer
+    /// [`AdvanceOutcome::Advanced`].
     ///
     /// An embedder that drives the engine directly (via `taskmesh::ext`) owes
     /// these transitions: the leak sweep reclaims only `DispatchReserved`
     /// permits, so work that is never advanced to `Running` is *reclaimable*
     /// while it runs, and `started_total`/the phase gauges only mean something
     /// if the phases are declared.
-    #[must_use = "`false` means the permit is gone or the phase did not advance; a caller that ignores it runs on capacity it may not hold"]
-    pub fn advance_phase(&self, permit_id: PermitId, phase: ExecutionPhase) -> bool {
+    pub fn advance_phase(&self, permit_id: PermitId, phase: ExecutionPhase) -> AdvanceOutcome {
         self.state.lock().advance_phase(permit_id, phase)
     }
 

@@ -115,7 +115,10 @@ fn a_reclaimed_leak_promotes_work_queued_on_memory() {
     .expect("valid policy");
     let leaked = admit(&g);
     let running = admit(&g);
-    assert!(g.advance_phase(running, ExecutionPhase::Running));
+    let AdvanceOutcome::Leased(running_lease) = g.advance_phase(running, ExecutionPhase::Running)
+    else {
+        panic!("the first advance of a live permit leases it");
+    };
     let AdmissionDecision::Queued { ticket } =
         g.admit(&TaskSpec::blocking(TaskClass::new("c")).operation("third"))
     else {
@@ -143,9 +146,8 @@ fn a_reclaimed_leak_promotes_work_queued_on_memory() {
         g.snapshot().classes[&TaskClass::new("c")].memory_units_held,
         10
     );
-    for permit in [running, third] {
-        assert_eq!(g.release(permit), ReleaseOutcome::Released);
-    }
+    assert_eq!(g.release_leased(running_lease), ReleaseOutcome::Released);
+    assert_eq!(g.release(third), ReleaseOutcome::Released);
     assert_eq!(g.snapshot().conservation_violation(), None);
 }
 

@@ -1,4 +1,4 @@
-# 0003. Sep-16 hardening — 확정한 계약 (D01–D16)
+# 0003. Sep-16 hardening — 확정한 계약 (D01–D17)
 
 - 상태: Accepted
 - 날짜: 2026-09-16
@@ -14,7 +14,7 @@
 뜻이다. 아래 결정들은 그 질문들을 하나씩 닫는다. 각 항목은 선택·근거·거부한
 대안·소비자 영향 순서로 기록한다. D01–D12는 최초 구현에서, D13–D16과 D05/D08/D09/D10의
 개정은 구현 직후 실행한 3-track 적대적 감사([AUDIT-2026-09-16](../plans/sep-16-hardening/AUDIT-2026-09-16.md))에서
-확정했다.
+확정했다. D17은 마무리 검증에서 예외 대장에 남아 있던 shutdown 계약(H16-012-A07)을 닫으며 추가했다.
 
 이 ADR은 구현된 계약을 기술한다. 계획 문서의 `PROPOSED`와 달리 여기 적힌 것은
 `crates/` 안에 존재하고 regression test가 붙어 있다. 검증 범위는 이 문서 마지막
@@ -418,6 +418,49 @@ spec 문자열을 빌려 allocation 없이 한다.
 
 ---
 
+## D17 — drain은 engine이 닫고 host가 기다린다
+
+**선택.** `TokioRuntime::drain(timeout)`은 host의 유일한 shutdown *계약*이다. teardown은
+여전히 handle drop뿐이지만, drain은 (1) `Governor::close_admission()`으로 **engine 안에서**
+admission을 닫고 — one-way, admission lock 아래에서 판정되므로 닫힌 뒤 찍은 snapshot이
+"무엇이 admit되었는가"의 마지막 말이다 — (2) engine의 `inflight`·`queued` gauge가 모든
+클래스에서 0이 될 때까지 기다린다. 닫힌 뒤의 모든 제출(`run_*`, `_with`, requested-stack,
+dedicated-thread, 그리고 `governor()`를 직접 모는 embedder까지)은 **admission 전에**
+`Rejected(RuntimeUnavailable)`로 거절된다: queue에 들어가지 않고, 계상되지 않고, total도
+움직이지 않으며, waker는 lock 밖에서 retire된다. 이미 admit·queue된 작업은 취소하지 않는다
+— queue된 요청은 여전히 promote·claim·실행되고, lease는 여전히 반환된다. timeout이 먼저
+오면 `NotDrained { classes: {class → {inflight, queued}}, elapsed }`를 돌려주고 runtime은
+**draining 상태로 남는다**(다음 `drain`은 같은 대기를 이어간다). `is_draining()`은 engine의
+flag(`admission_closed`)를 그대로 읽는다.
+
+**근거.** D10 때문에 "caller가 전부 답을 받았다"는 "작업이 끝났다"가 아니다: timeout/취소된
+caller의 worker는 lease를 쥔 채 돌고 있다. drain이 reply를 세면 그 worker를 죽인 채 프로세스가
+내려간다. 그래서 drain은 engine의 custody gauge만 본다. 거절을 host 쪽 flag로 두는 설계
+(gate 통과 후 admit 사이의 window를 Dekker 방식으로 세는 안)를 거부했다: window는 결정적으로
+test할 수 없고, embedder의 직접 admit을 막지 못한다. engine flag는 admit과 같은 mutex 아래에
+있으므로 선형화가 구조로 보장되고 shuttle 모델
+(`randomized_close_admission_is_the_last_word_on_what_was_admitted`, 4 admitter × 1 closer,
+10,000 schedules, 양쪽이 이기는 schedule 각 ≥5%)이 그것을 관찰한다. 대기는 event-driven이다:
+host가 소유한 custody 반환(`ExecutionLease` drop, `TicketGuard` abandon — promote됐지만 claim되지
+않은 ticket 포함 —, budget 만료로 unstarted 반환)이 `Notify`를 울리고, 아무것도 draining하지
+않을 때 release hot path의 비용은 atomic load 하나다(`notify_waiters`는 mutex를 잡는다). host 밖에서
+admit된 작업은 gauge에는 잡히지만 울리지 않으므로 timeout의 마지막 look에서 보인다.
+
+**거부한 대안.** (a) `shutdown()`이 teardown까지 하는 안 — 시작된 blocking 작업은 abort할 수 없어
+(D10) "종료 보장"을 표현할 수 없다; drain은 기다리고, drop은 내린다. (b) drain이 queue를 비우는
+(queued 요청을 거절하는) 안 — 이미 admission을 통과해 caller가 기다리는 요청이며, 그 거절은 backpressure
+verdict의 의미를 바꾼다. (c) 폴링 대기 — 간격을 고르는 순간 latency 또는 CPU를 고르는 것.
+
+**소비자 영향.** additive: `TokioRuntime::{drain, is_draining}`, `DrainReport`, `NotDrained`,
+`Outstanding`, `Governor::{close_admission, admission_closed}`. `AdmissionVerdict::RuntimeUnavailable`의
+의미가 넓어졌다(accounting fault *또는* draining; 어느 쪽인지는 `accounting_fault()`/`admission_closed()`).
+증명: `crates/taskmesh-engine/tests/hardening_close_admission.rs`(3),
+`crates/taskmesh/tests/hardening_drain.rs`(7, 전부 5초 bounded + release-on-drop), shuttle 모델 1,
+mutation 9(`close-admission-*`, `drain-*`, `lease-return-does-not-wake-the-drain`,
+`ticket-abandon-does-not-wake-the-drain`, `not-drained-drops-the-queued-count`).
+
+---
+
 ## 소비자 표면 inventory
 
 breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위해 in-repo 소비자를
@@ -431,6 +474,7 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
 | 직접 `Governor` (via `taskmesh::ext`) | `crates/taskmesh-engine/tests/**`, `crates/taskmesh-bench/**` | **breaking**: `claim` → `ClaimOutcome`, `release_stage_memory` → `StageReleaseOutcome`, snapshot 폭/필드 |
 | custom `CpuExecutor` | `taskmesh-rayon`, host 기본 adapter, 6개 test adapter | additive: `capabilities()`는 default 구현이 있으므로 기존 impl은 그대로 컴파일된다. **단**, `declared_workers`를 선언하는 adapter가 topology의 `cpu` gate보다 작으면 `build()`가 거절한다 (D05 개정) |
 | `SubmitOptions::deadline` on non-`CooperativeWithDeadline` class | `deadline_cancel.rs` (test 1건) | **breaking**: `DeadlineUnsupported`로 거절 (D14). 이전에는 무시 |
+| `TokioRuntime::drain` / `Governor::close_admission` | 없음 (신규) | additive (D17). `RuntimeUnavailable`을 accounting fault로만 해석하던 코드는 `admission_closed()`도 봐야 한다 |
 | `GovernorError` match arms | host tests 10곳 | additive (`non_exhaustive`): `DeadlineUnsupported`, `LeaseReclaimed`, `WorkerUnavailable`, `WorkerPanicked`, `JobAbandoned`; worker 실패가 더 이상 `PolicyViolation`이 아니다 |
 | `Governor::release` | engine/bench tests 145곳 | **breaking**: `ReleaseOutcome` (`#[must_use]`); 통계상 statement-form 호출은 `assert_eq!(…, Released)`로 바뀌었다 |
 | custom `Clock` | `SystemClock`, `ManualClock` (contract 제공분만) | 없음. 호출 위치가 lock 밖으로 고정되었을 뿐 trait은 그대로 |

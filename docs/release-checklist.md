@@ -207,6 +207,8 @@ Rollback:
       of the producer on the old version or a forward fix of the reader — a
       mixed-version window is not supported.
 - [ ] Runtime state is process-local (no persisted governor state), so a
-      rollback of the runtime itself is a restart: drain (`queued == 0`,
-      `inflight == 0` per class — there is no `shutdown`/`drain` API; teardown
-      is dropping the runtime handle), then start the previous version.
+      rollback of the runtime itself is a restart: `TokioRuntime::drain(timeout)`
+      (D17 — closes admission in the engine, then waits for `queued == 0` and
+      `inflight == 0` in every class; `Err(NotDrained)` lists what is still
+      charged, per class, and the runtime stays draining), then drop the handle
+      (the only teardown), then start the previous version.

@@ -120,6 +120,14 @@ pub fn admit(
         precheck(spec).is_ok(),
         "precheck runs before the lock is taken"
     );
+    // D17: a closed runtime is the outermost fact about a submission. Decided
+    // under the admission lock, before the class is even looked up, so nothing
+    // is queued, charged, or counted — and the waker (host code) is retired
+    // outside the lock like every other refusal's.
+    if state.admission_closed {
+        retire(effects, waker);
+        return AdmissionDecision::Rejected(AdmissionVerdict::RuntimeUnavailable);
+    }
     admit_class(
         state,
         policies,

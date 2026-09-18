@@ -10,7 +10,7 @@ While the major version is `0`, a minor bump (`0.1 → 0.2`) may contain breakin
 changes; every one of them is listed under **Breaking changes and migration**.
 
 The contract behind each entry is recorded in
-[ADR 0003 — Sep-16 hardening contracts (D01–D16)](docs/adr/0003-sep-16-hardening-contracts.md);
+[ADR 0003 — Sep-16 hardening contracts (D01–D17)](docs/adr/0003-sep-16-hardening-contracts.md);
 entries cite the decision (`D..`) or audit finding (`TM16-..`) they implement.
 The public surface a downstream consumer depends on is the `taskmesh` crate
 (everyday SDK) and `taskmesh::ext` (direct engine embedding, custom adapters).
@@ -111,6 +111,26 @@ The public surface a downstream consumer depends on is the `taskmesh` crate
   maximum are handed to the OS as before (an OS refusal is `WorkerUnavailable`).
 - `taskmesh::ext::TokioPermitWaker`: the host's `PermitWaker` adapter, for
   embedders that drive `Governor::admit_waitable` / `claim` themselves.
+- `TokioRuntime::drain(timeout)` and `TokioRuntime::is_draining()` (D17), the
+  host's graceful shutdown contract. `drain` closes admission in the engine
+  (one-way; every later `run_*` / `_with` / requested-stack / dedicated-thread
+  submission is refused *before admission* with
+  `GovernorError::Rejected(AdmissionVerdict::RuntimeUnavailable)` — nothing
+  queued, nothing charged) and then waits, event-driven, until every class
+  reports `inflight == 0 && queued == 0` on the engine's own gauges. Work
+  already queued or in flight is not cancelled. `Ok(DrainReport { elapsed,
+  classes_drained })` on success; `Err(NotDrained { classes, elapsed })` when
+  the timeout elapses first, listing each class's outstanding `Outstanding {
+  inflight, queued }` — the runtime stays draining and a later `drain`
+  continues the same wait. Dropping the handle remains the only teardown; a
+  started blocking job cannot be aborted (D10), so `NotDrained` is what a
+  shutdown sees when one is still running.
+- `Governor::close_admission()` / `Governor::admission_closed()` (D17): the
+  engine half of the drain, usable by embedders driving the governor directly.
+  Decided under the admission lock, so a `snapshot()` taken after
+  `close_admission` returns already holds every admission that will ever
+  happen. `AdmissionVerdict::RuntimeUnavailable` now means "closed *or*
+  accounting fault"; `admission_closed()` and `accounting_fault()` say which.
 - `taskmesh::ext::RayonCpuExecutor` (with `features = ["rayon"]`): the Rayon
   adapter is reachable through the facade; a direct `taskmesh-rayon`
   dependency is no longer needed to size or share the pool.

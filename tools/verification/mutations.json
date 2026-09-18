@@ -809,6 +809,131 @@
       "test_target": "tools/bench/tests/test_validate_bencher_output.py::test_a_partial_capture_missing_an_expected_group_is_refused",
       "expect_failing_test": "test_a_partial_capture_missing_an_expected_group_is_refused",
       "expect_message": "a partial capture must not become a data point"
+    },
+    {
+      "id": "close-admission-never-refuses",
+      "finding": "B1-drain",
+      "runner": "cargo",
+      "rationale": "D17: a closed governor must refuse every later submission before anything is charged. If the flag is never consulted, a draining runtime keeps admitting and the drain's Ok is a lie.",
+      "file": "crates/taskmesh-engine/src/features/admission/mod.rs",
+      "find": "    if state.admission_closed {\n        retire(effects, waker);",
+      "replace": "    if state.admission_closed && false {\n        retire(effects, waker);",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_close_admission",
+      "expect_failing_test": "a_closed_governor_refuses_before_the_class_is_looked_up_and_charges_nothing",
+      "expect_message": "a closed governor must refuse with RuntimeUnavailable"
+    },
+    {
+      "id": "close-admission-stops-promotion",
+      "finding": "B1-drain",
+      "runner": "cargo",
+      "rationale": "Closing refuses new work; it must not strand work already queued. A promotion pass that stops selecting once closed leaves queued requests parked forever and the drain never completes.",
+      "file": "crates/taskmesh-engine/src/engine/governor.rs",
+      "find": "            let Some(class) = fairness::select(state, &self.policy) else {",
+      "replace": "            let Some(class) = fairness::select(state, &self.policy).filter(|_| !state.admission_closed) else {",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_close_admission",
+      "expect_failing_test": "work_held_at_close_still_promotes_claims_and_releases_to_zero",
+      "expect_message": "a queued request must still be promoted after the close"
+    },
+    {
+      "id": "close-admission-decided-outside-the-lock",
+      "finding": "B1-drain",
+      "runner": "cargo",
+      "rationale": "The close is only the last word if it is decided under the admission lock. A check-then-lock shape (read the flag, release the lock, then admit under a fresh lock on that stale read) lets a submission that passed the check before the close land after the closer's snapshot. Only the shuttle race observes it; every deterministic test still passes, and the flag reads as closed to every other observer.",
+      "file": "crates/taskmesh-engine/src/engine/governor.rs",
+      "find": "        let decision = {\n            let mut state = self.state.lock();\n            let now = state.commit_time(sampled);\n            admission::admit(\n                &mut state,\n                &self.policy,\n                now,\n                &request,\n                waker,\n                ids,\n                &mut effects,\n            )\n        };",
+      "replace": "        let decision = {\n            if self.state.lock().admission_closed {\n                drop(waker);\n                return AdmissionDecision::Rejected(taskmesh_contract::AdmissionVerdict::RuntimeUnavailable);\n            }\n            let mut state = self.state.lock();\n            let closed_now = state.admission_closed;\n            state.admission_closed = false;\n            let now = state.commit_time(sampled);\n            let decision = admission::admit(\n                &mut state,\n                &self.policy,\n                now,\n                &request,\n                waker,\n                ids,\n                &mut effects,\n            );\n            state.admission_closed = closed_now;\n            decision\n        };",
+      "package": "taskmesh-engine",
+      "test_target": "shuttle_governance",
+      "profile": "release",
+      "cargo_args": [
+        "--features",
+        "shuttle"
+      ],
+      "env": {
+        "RUSTFLAGS": "--cfg shuttle"
+      },
+      "expect_failing_test": "randomized_close_admission_is_the_last_word_on_what_was_admitted",
+      "expect_message": "an admission landed after the closer's snapshot"
+    },
+    {
+      "id": "drain-does-not-close-the-engine",
+      "finding": "B1-drain",
+      "runner": "cargo",
+      "rationale": "The host drain owns no refusal of its own: it closes the engine. A drain that only waits leaves every submission path open, so work keeps arriving behind a drain that reports Ok.",
+      "file": "crates/taskmesh/src/runtime/drain.rs",
+      "find": "        self.drain.begin();\n        self.governor.close_admission();",
+      "replace": "        self.drain.begin();",
+      "package": "taskmesh",
+      "test_target": "hardening_drain",
+      "expect_failing_test": "every_submission_path_is_refused_before_admission_once_draining",
+      "expect_message": "must be refused with RuntimeUnavailable once draining"
+    },
+    {
+      "id": "lease-return-does-not-wake-the-drain",
+      "finding": "B1-drain",
+      "runner": "cargo",
+      "rationale": "The drain is event-driven: a lease returning custody must wake it. Without the ping the drain sleeps until its timeout even though the runtime went idle long before.",
+      "file": "crates/taskmesh/src/runtime.rs",
+      "find": "        // and a drain waiting for that fact must hear it now, not at timeout.\n        self.drain.settled();",
+      "replace": "        // and a drain waiting for that fact must hear it now, not at timeout.",
+      "package": "taskmesh",
+      "test_target": "hardening_drain",
+      "expect_failing_test": "queued_and_inflight_work_finish_before_drain_reports_ok",
+      "expect_message": "drain after release: the caller was still waiting after"
+    },
+    {
+      "id": "ticket-abandon-does-not-wake-the-drain",
+      "finding": "B1-drain",
+      "runner": "cargo",
+      "rationale": "A promoted-but-unclaimed ticket is charged capacity; abandoning it returns that capacity and is a custody return in its own right. If only lease drops ping, a drain whose last outstanding item was such a ticket waits out its timeout. (`return_unstarted` pings for the same reason: a budget-expired grant returned before dispatch is the last custody return of its submission.)",
+      "file": "crates/taskmesh/src/runtime.rs",
+      "find": "            self.governor.abandon(ticket);\n            self.drain.settled();",
+      "replace": "            self.governor.abandon(ticket);",
+      "package": "taskmesh",
+      "test_target": "hardening_drain",
+      "expect_failing_test": "abandoning_an_unclaimed_promotion_is_a_custody_return_the_drain_hears",
+      "expect_message": "drain after the unclaimed promotion was abandoned: the caller was still waiting"
+    },
+    {
+      "id": "drain-counts-queues-not-custody",
+      "finding": "B1-drain",
+      "runner": "cargo",
+      "rationale": "D10: a caller's reply is not the work's end. A drain that only waits for empty queues reports Ok while a blocking worker still holds its lease, and the process that tears down next kills it mid-work.",
+      "file": "crates/taskmesh/src/runtime/drain.rs",
+      "find": "        .filter(|(_, class)| class.inflight > 0 || class.queued > 0)",
+      "replace": "        .filter(|(_, class)| class.queued > 0)",
+      "package": "taskmesh",
+      "test_target": "hardening_drain",
+      "expect_failing_test": "a_held_blocking_worker_makes_drain_report_not_drained_and_stay_charged",
+      "expect_message": "a held worker must make drain report NotDrained"
+    },
+    {
+      "id": "drain-gives-up-before-its-budget",
+      "finding": "B1-drain",
+      "runner": "cargo",
+      "rationale": "The timeout is a promise to wait at least that long. A drain that reports NotDrained on its first look whenever a deadline exists turns every bounded drain into a zero-timeout one.",
+      "file": "crates/taskmesh/src/runtime/drain.rs",
+      "find": "            if deadline.is_some_and(|deadline| now >= deadline) {",
+      "replace": "            if deadline.is_some() {",
+      "package": "taskmesh",
+      "test_target": "hardening_drain",
+      "expect_failing_test": "a_held_blocking_worker_makes_drain_report_not_drained_and_stay_charged",
+      "expect_message": "the drain gave up after"
+    },
+    {
+      "id": "not-drained-drops-the-queued-count",
+      "finding": "B1-drain",
+      "runner": "cargo",
+      "rationale": "NotDrained must attribute both gauges to the class that holds them; an operator deciding whether to wait or kill needs to see queued work as queued.",
+      "file": "crates/taskmesh/src/runtime/drain.rs",
+      "find": "                Outstanding {\n                    inflight: class.inflight,\n                    queued: class.queued,\n                },",
+      "replace": "                Outstanding {\n                    inflight: class.inflight,\n                    queued: 0,\n                },",
+      "package": "taskmesh",
+      "test_target": "hardening_drain",
+      "expect_failing_test": "not_drained_lists_each_class_with_its_own_inflight_and_queued_counts",
+      "expect_message": "class b must report its queued request as queued"
     }
   ]
 }

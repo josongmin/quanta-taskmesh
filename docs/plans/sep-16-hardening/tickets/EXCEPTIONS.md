@@ -9,7 +9,6 @@
 | H16-006-A05 retained count/bytes 상한 | N/A (해당 구성요소 없음) | retirement worker를 두지 않았다. slow callback은 호출 스레드를 점유할 뿐 engine state를 잠그지 않는다 (ADR 0003 D07 effects-outside-lock) | 저장소 owner | retirement worker/비동기 effect queue를 도입하는 설계가 생기면 상한과 test를 같이 넣는다 |
 | H16-009 metadata byte budget / declared payload bound | 결정 (범위 밖) | 제한 대상은 runtime-owned outstanding work다; caller가 만든 임의 heap의 hard-cap을 약속하지 않는다 (D01) | 저장소 owner | D01을 바꾸는 계약 변경이 있을 때 |
 | H16-010-A06 nested wait cycle typed reject | 결정 (범위 밖) | D12: 선언된 nested wait cycle은 지원 범위 밖으로 문서화 | 저장소 owner | D12 개정 시 |
-| H16-012-A07 `NotDrained` 보고 | N/A (API 없음) | `shutdown`/`drain` API가 없다; teardown은 runtime handle drop뿐 | 저장소 owner | shutdown 계약을 설계할 때 (별도 작업) |
 | H16-013-A03 diagnostics ring overflow | N/A (해당 구성요소 없음) | diagnostics ring을 두지 않았다 — 넘칠 버퍼가 없다 (`diagnostics_dropped` 필드도 제거) | 저장소 owner | diagnostics 버퍼를 도입할 때 |
 | H16-015-A05 Linux instruction-count receipt | BLOCKED (환경) | `bench-iai`는 Linux/valgrind 전용; macOS local receipt는 SKIPPED_PLATFORM | 저장소 owner (push) | CI `qualification`·`bench.yml`이 Linux에서 돈 뒤 — 첫 run BASELINE_CREATED, 두 번째 run QUALIFIED |
 | H16-017-A05 Linux >5% injection FAIL / control PASS | BLOCKED (환경) | 위와 같음; injection fixture는 `tools/bench/tests/test_iai_gate.py`에 있고 실제 valgrind run만 Linux | 저장소 owner (push) | 위와 같음 |

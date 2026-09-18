@@ -867,6 +867,28 @@ impl Governor {
         self.state.lock().accounting_fault
     }
 
+    /// Stop admitting new work (ADR 0003 D17). One-way: there is no reopen.
+    ///
+    /// From the moment this returns, every `admit*` call — from the host or
+    /// from an embedder driving the governor directly — is refused with
+    /// [`AdmissionVerdict::RuntimeUnavailable`] before anything is queued,
+    /// charged, or counted. Work already admitted or queued is untouched:
+    /// queued requests are still promoted and claimed, leases are still
+    /// released, and the gauges still converge to zero. The flag is read and
+    /// written under the admission lock, so a [`Self::snapshot`] taken after
+    /// this returns already contains every admission that will ever happen.
+    ///
+    /// Distinct from an accounting fault, which refuses admission with the
+    /// same verdict but reports through [`Self::accounting_fault`].
+    pub fn close_admission(&self) {
+        self.state.lock().close_admission();
+    }
+
+    /// Whether [`Self::close_admission`] has been called.
+    pub fn admission_closed(&self) -> bool {
+        self.state.lock().admission_closed
+    }
+
     /// How many terminal ticket records are currently retained for late
     /// claimers. Never exceeds [`crate::MAX_TERMINAL_TICKETS`].
     pub fn retained_terminal_tickets(&self) -> usize {

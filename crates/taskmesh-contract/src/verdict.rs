@@ -29,6 +29,12 @@ pub enum AdmissionVerdict {
     UnknownClass {
         class: TaskClass,
     },
+    /// The runtime is not taking new work. Two causes, both refused *before*
+    /// admission (nothing is queued, nothing is charged): the host is draining
+    /// (a one-way state entered by the host's `drain`; work already admitted
+    /// runs to completion), or the engine's ledger can no longer represent its
+    /// totals (a sticky accounting fault). Neither is a backpressure hint:
+    /// there is no retry-after, and retrying does not help.
     RuntimeUnavailable,
     ClassificationFailed,
     PermitAcquireTimedOut {

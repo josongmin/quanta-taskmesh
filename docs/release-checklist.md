@@ -59,8 +59,8 @@ The gate set is `tools/gates/inventory.json`; the required subset is
   front doors; the JSON wire formats. `just fuzz-check` keeps the targets
   compiling on stable. NOT_RUN without nightly + cargo-fuzz; only
   `taskmesh-fuzz status=CLEAN` is PASS.
-- Mutation gate: 74 entries — 73 single-edit reintroductions of fixed defects
-  (63 cargo incl. 2 shuttle-model targets and 1 differential-model target, 10 pytest
+- Mutation gate: 94 entries — 93 single-edit reintroductions of fixed defects
+  (83 cargo incl. 3 shuttle-model targets and 1 differential-model target, 10 pytest
   against the Python tooling and the bench workflow scripts), each killed by its named regression for its named
   reason found in that test's own output, plus one behaviour-preserving control
   that must stay green

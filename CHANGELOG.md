@@ -197,6 +197,19 @@ The public surface a downstream consumer depends on is the `taskmesh` crate
   every migrated API shape in this changelog on the declared MSRV (Rust 1.81),
   with the default feature set and with `rayon`. `just consumer-msrv` fails
   when any documented outcome differs from what a consumer observes.
+- `tools/doc-examples` compiles every ```rust block in `README.md`,
+  `docs/taskmesh-external-interface.md` and this changelog against the facade
+  (`cargo test --workspace`). A fence attribute picks the scaffold
+  (`rust,body` / `rust,arms` / `rust,builder`); `rust,ignore` is allowed only
+  here, and only on a block that opens with `// 0.1.0` — the one kind of
+  unchecked code the docs may carry is a quotation of the previous release.
+- Fuzzing (`fuzz/`, its own workspace): three libFuzzer targets over the
+  production `Governor` (every public transition, invariants after each
+  step, quiescence at the end), the policy / topology / builder front doors,
+  and the JSON wire formats. `just fuzz` (nightly + cargo-fuzz; NOT_RUN
+  without them, `FUZZ_SECONDS` per target) is a required proof gate;
+  `just fuzz-check` type-checks and lints the targets on stable in the fast
+  gate. The gate inventory has 24 gates.
 - `docs/adr/0003-sep-16-hardening-contracts.md` records the contracts behind
   this release; `docs/release-checklist.md` gains the `cargo semver-checks`
   step.

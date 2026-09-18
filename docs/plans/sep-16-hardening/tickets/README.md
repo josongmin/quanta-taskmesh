@@ -3,15 +3,15 @@
 - 기준: 2026-09-16, HEAD `9ae9547216c70458f54f37368a67661321060886`, branch `main`.
 - 최초 관찰: tracked 변경 없음, 기존 `docs/bugbash/` 전체 untracked. 기존 audit 산출물은 수정하지 않는다.
 - 범위: 최종 정적 audit + 실행 계획 문서. production 코드/설정/의존성/실제 PM target 수정, commit/push/deploy 없음.
-- 상태 (2026-09-18): **22개 티켓 IMPLEMENTED, branch `hardening/sep-16`에 commit (0.2.0)**. 원본 40개 finding 각각 corrected
+- 상태 (2026-09-19): **22개 티켓 IMPLEMENTED, branch `hardening/sep-16`에 commit (0.2.0)**; 4차(마무리)에서 예외 대장 결정 항목 2건(drain D17, nested wait D12)을 구현으로 닫았다. 원본 40개 finding 각각 corrected
   regression 연결, 품질 항목 33개 중 32개 처분 완료·1개 EXTERNAL(Q33). local(macOS, clean tree) qualification은
   **NOT_QUALIFIED**이며 사유는 하나, Linux-only `bench-iai` 미실행(SKIPPED_PLATFORM). 사유는
   [H16-022](H16-022-qualification-and-rollout.md)와 receipt(`../receipts/local-2026-09-18.json`)에 명시되어 있다;
   최종 qualification은 CI `qualification` job(Linux clean checkout)이 낸다.
 - 구현된 계약: [ADR 0003](../../../adr/0003-sep-16-hardening-contracts.md). 로컬 증거:
-  `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 415 green (contract 38 · engine 180 · host 138 · rayon 3 · bench 55 · doc-examples 1),
-  loom 5 / shuttle 6 green **on the production `Governor`**, mutation gate 74/74
-  (Python 도구 10건·shuttle 모델 2건·differential 모델 1건·객관 sweep 갭 13건 포함), consumer MSRV 1.81 PASS(default·rayon), allocation gate 3.0 allocs/op
+  `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 458 green (contract 42 · engine 205 · host 150 · rayon 3 · bench 55 · doc-examples 3),
+  loom 5 / shuttle 7 green **on the production `Governor`**, mutation gate 94/94
+  (Python 도구 10건·shuttle 모델 3건·differential 모델 1건·객관 sweep 갭 13건 포함), libFuzzer 3 target(`just fuzz`), consumer MSRV 1.81 PASS(default·rayon), allocation gate 3.0 allocs/op
   (threshold = 측정값).
 - 구현 직후 3-track 적대적 감사(engine/runtime · 증명 강도 · tooling/CI/docs)를 실행했고 P0 3건·P1 12건·
   P2 다수를 모두 처리했다; 그 처리 위에 다시 2-track 감사(코드/주장 · 증명 표면)를 돌려 P1 4건·P2 8건을
@@ -31,7 +31,7 @@
 3. [병렬 lane·배타적 파일 소유권·실행 순서](EXECUTION.md)
 4. [40개 finding 및 33개 품질 항목 추적](COVERAGE.md)
 5. [실행·negative proof·qualification 계약](VERIFICATION.md)
-6. [예외 대장 — 미체크 acceptance 10건의 owner·사유·재검토 조건](EXCEPTIONS.md) (`validate_plan.py`가 티켓의 모든 `[ ]`이 이 대장에 있음을 강제; `just py-test`에 포함)
+6. [예외 대장 — 미체크 acceptance 8건의 owner·사유·재검토 조건](EXCEPTIONS.md) (`validate_plan.py`가 티켓의 모든 `[ ]`이 이 대장에 있음을 강제; `just py-test`에 포함)
 
 ## 실행 티켓
 

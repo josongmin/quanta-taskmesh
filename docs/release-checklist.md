@@ -91,6 +91,10 @@ The gate set is `tools/gates/inventory.json`; the required subset is
       `Snapshot`, `SubstrateRecord`, `Runtime`.
 - [ ] Zero placeholder public types.
 - [ ] README / library-spec / external-interface describe the same contract.
+- [ ] Every ```rust block in README / external-interface compiles against the
+      facade: `cargo test -p taskmesh-doc-examples` (part of `just test`; the
+      build script extracts the blocks verbatim — a new fragment that needs a
+      new placeholder gets it in `tools/doc-examples/src/lib.rs::prelude`).
 - [ ] `taskmesh-rayon` included; workspace green with and without the `rayon`
       feature.
 - [ ] Crate versions in sync (workspace `version` in the root `Cargo.toml`,

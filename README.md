@@ -76,6 +76,7 @@ async fn main() {
 | 테스트가 실제로 실패할 수 있는가 | 고친 결함 하나를 다시 넣으면 named test가 named reason으로 죽는가 | `just mutants-critical` (62 entries, cargo + pytest runner) |
 | 객관 지표 | 실행된 production 라인 (threshold 아님) | `just coverage-report` (cargo-llvm-cov, receipt에 기록) |
 | 소비자 계약 | Rust 1.81에서 default·rayon 표면 컴파일 | `just consumer-msrv` |
+| 문서가 컴파일되는가 | 이 README와 `docs/taskmesh-external-interface.md`의 모든 ```rust 블록이 *그대로* facade에 대해 type-check (build.rs가 추출; hidden line 없음) | `cargo test -p taskmesh-doc-examples` (`just test`에 포함) |
 | 성능 | allocs/op(=측정값 3.0), Linux instruction count | `just bench-gate`, `just bench-iai` |
 
 자격(QUALIFIED)은 `tools/qualification/receipt.py collect`가 **clean checkout**에서 만든 receipt에만

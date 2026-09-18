@@ -1,0 +1,21 @@
+[package]
+name = "taskmesh-doc-examples"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+description = "Compiles every Rust example in the consumer-facing docs (README.md, docs/taskmesh-external-interface.md) against the shipped facade. Not a library."
+build = "build.rs"
+
+[lib]
+# Nothing to ship: the crate exists for `cargo test --workspace` to compile the
+# generated example modules (see build.rs / src/lib.rs).
+doctest = false
+
+[dependencies]
+# Every example is written against the facade with the `rayon` feature on, so
+# the RayonCpuExecutor example compiles too.
+taskmesh = { path = "../../crates/taskmesh", features = ["rayon"] }
+tokio = { workspace = true }

@@ -9,7 +9,7 @@
   [H16-022](H16-022-qualification-and-rollout.md)와 receipt(`../receipts/local-2026-09-18.json`)에 명시되어 있다;
   최종 qualification은 CI `qualification` job(Linux clean checkout)이 낸다.
 - 구현된 계약: [ADR 0003](../../../adr/0003-sep-16-hardening-contracts.md). 로컬 증거:
-  `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 414 green (contract 38 · engine 180 · host 138 · rayon 3 · bench 55),
+  `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 415 green (contract 38 · engine 180 · host 138 · rayon 3 · bench 55 · doc-examples 1),
   loom 5 / shuttle 6 green **on the production `Governor`**, mutation gate 62/62
   (Python 도구 7건·shuttle 모델 2건·differential 모델 1건·객관 sweep 갭 13건 포함), consumer MSRV 1.81 PASS(default·rayon), allocation gate 3.0 allocs/op
   (threshold = 측정값).

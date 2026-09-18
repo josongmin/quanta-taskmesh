@@ -74,6 +74,7 @@ def known_good() -> dict:
                     dep("iai-callgrind", optional=True),
                 ],
             ),
+            package("taskmesh-doc-examples", [dep("taskmesh"), dep("tokio")]),
         ]
     )
 

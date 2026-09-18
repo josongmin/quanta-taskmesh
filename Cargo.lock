@@ -1293,6 +1293,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "taskmesh-doc-examples"
+version = "0.2.0"
+dependencies = [
+ "taskmesh",
+ "tokio",
+]
+
+[[package]]
 name = "taskmesh-engine"
 version = "0.2.0"
 dependencies = [

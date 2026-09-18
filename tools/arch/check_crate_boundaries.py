@@ -61,6 +61,10 @@ ALLOWED_EDGES: dict[str, set[str]] = {
         "rand_distr",
         "iai-callgrind",
     },
+    # Compiles the consumer-facing docs' examples against the facade (build.rs
+    # extracts them). `publish = false`; it is a consumer, so it may only see
+    # what a consumer sees: the facade (with `rayon` on) and tokio.
+    "taskmesh-doc-examples": {"taskmesh", "tokio"},
 }
 
 # Edges permitted ONLY behind a feature flag. Declaring one of these as a

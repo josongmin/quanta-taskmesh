@@ -5,6 +5,7 @@ members = [
     "crates/taskmesh",
     "crates/taskmesh-rayon",
     "crates/taskmesh-bench",
+    "tools/doc-examples",
 ]
 resolver = "2"
 

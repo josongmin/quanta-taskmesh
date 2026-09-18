@@ -25,12 +25,14 @@
 
 ## 구현 액션
 
-- [ ] RawPolicyConfig/legacy PolicySet과 private ValidatedPolicy를 분리한다. Governor::new가 registry 전체를 검증하고 이후 immutable snapshot을 소유한다.
-- [ ] canonical builtin presence, map key==record.name, name uniqueness, kind/pool binding을 검사한다. builtin 정의는 하나로 모으되 독립 expected inventory test는 유지한다.
-- [ ] topology min/max, zero 의미, Semaphore::MAX_PERMITS, usize 변환, Fixed/Auto/reserve 및 fallible OS pool creation을 검증한다.
-- [ ] available_parallelism은 build당 한 번 읽고 ResolvedTopology를 executor/gates/config에 공유한다. 두 번 읽어 서로 다른 capacity를 얻지 않게 한다.
-- [ ] test-util feature의 new_unchecked는 격리된 test/probe에만 사용한다. production constructor가 feature 활성화 때문에 검증을 생략하지 않는지 external-consumer compile fixture로 확인한다.
-- [ ] strict profile의 bounds·supported fairness range 검증 hook을 마련하되 후속 알고리즘이 지원하지 않는 값을 silent normalize하지 않는다.
+- [x] RawPolicyConfig/legacy PolicySet과 private ValidatedPolicy를 분리한다. Governor::new가 registry 전체를 검증하고 이후 immutable snapshot을 소유한다.
+  → 별도 ValidatedPolicy 타입 대신 `PolicySet` private field + `Governor::new` 전체 검증(immutable)
+- [x] canonical builtin presence, map key==record.name, name uniqueness, kind/pool binding을 검사한다. builtin 정의는 하나로 모으되 독립 expected inventory test는 유지한다.
+- [x] topology min/max, zero 의미, Semaphore::MAX_PERMITS, usize 변환, Fixed/Auto/reserve 및 fallible OS pool creation을 검증한다.
+- [x] available_parallelism은 build당 한 번 읽고 ResolvedTopology를 executor/gates/config에 공유한다. 두 번 읽어 서로 다른 capacity를 얻지 않게 한다.
+- [x] test-util feature의 new_unchecked는 격리된 test/probe에만 사용한다. production constructor가 feature 활성화 때문에 검증을 생략하지 않는지 external-consumer compile fixture로 확인한다.
+- [x] strict profile의 bounds·supported fairness range 검증 hook을 마련하되 후속 알고리즘이 지원하지 않는 값을 silent normalize하지 않는다.
+  → strict profile hook 없음; 미지원 값은 construction에서 거절(weight 0·degrade chain·AuthorityOnly pool limit), silent normalize 없음
 
 ## 구현 결과 — 2026-09-16
 
@@ -78,7 +80,7 @@ cargo test -p taskmesh --features rayon
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

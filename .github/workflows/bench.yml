@@ -136,20 +136,9 @@ jobs:
       # how a regression sails through with a green check.
       - name: Detect benchmark history branch
         id: gh_pages
-        run: |
-          set +e
-          git ls-remote --exit-code origin refs/heads/gh-pages >/dev/null 2>ls-remote.err
-          code=$?
-          set -e
-          case "${code}" in
-            0) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
-            2) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
-            *)
-              echo "::error::git ls-remote failed with exit ${code} (not 'missing ref'):"
-              cat ls-remote.err
-              exit "${code}"
-              ;;
-          esac
+        # The exit-code discrimination lives in a script so it has a fixture
+        # test (tools/bench/tests/test_history_branch.py) instead of only YAML.
+        run: bash tools/bench/history_branch.sh origin refs/heads/gh-pages >> "$GITHUB_OUTPUT"
 
       # Emit the libtest "bench" format github-action-benchmark understands.
       # `pipefail` (bash default here) means a failing `cargo bench` fails the

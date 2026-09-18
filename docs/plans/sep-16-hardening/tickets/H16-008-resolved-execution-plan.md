@@ -22,12 +22,12 @@ hint·stack request·fallback·cancel controls의 해석을 단일 ResolvedExecu
 
 ## 구현 액션
 
-- [ ] declared_class/effective_class, physical capability set, adapter identity, cost, cancellation/deadline support, config_epoch를 담는 immutable execution plan을 도입한다.
-- [ ] hint와 stack bytes를 함께 resolve한다. blocking/background+stack은 D04에 따라 실제 large-stack capability로 resolve하거나 사전 reject한다.
-- [ ] fallback 선택은 memory 상태를 보는 admission transition에서 결정하고 최종 resolved plan을 host로 반환한다. queue에 들어갈 때 effective authority를 freeze하고 나중에 original class로 다시 해석하지 않는다.
-- [ ] D03 권장안은 resource-only reclassification을 explicit하게 이름 붙이고 controls는 선언 class에 유지하는 것이다. full-policy 전환은 별도 호환성 승인 없이는 도입하지 않는다.
-- [ ] run_io/run_local/run_cpu/blocking/requested-stack의 duplicated cancel_controls/absolute_deadline lookup을 공통 resolver로 옮긴다.
-- [ ] config는 runtime lifetime동안 immutable epoch를 사용한다. hot reload나 request mid-flight reclassification은 이번 작업에 추가하지 않는다.
+- [x] declared_class/effective_class, physical capability set, adapter identity, cost, cancellation/deadline support, config_epoch를 담는 immutable execution plan을 도입한다.
+- [x] hint와 stack bytes를 함께 resolve한다. blocking/background+stack은 D04에 따라 실제 large-stack capability로 resolve하거나 사전 reject한다.
+- [x] fallback 선택은 memory 상태를 보는 admission transition에서 결정하고 최종 resolved plan을 host로 반환한다. queue에 들어갈 때 effective authority를 freeze하고 나중에 original class로 다시 해석하지 않는다.
+- [x] D03 권장안은 resource-only reclassification을 explicit하게 이름 붙이고 controls는 선언 class에 유지하는 것이다. full-policy 전환은 별도 호환성 승인 없이는 도입하지 않는다.
+- [x] run_io/run_local/run_cpu/blocking/requested-stack의 duplicated cancel_controls/absolute_deadline lookup을 공통 resolver로 옮긴다.
+- [x] config는 runtime lifetime동안 immutable epoch를 사용한다. hot reload나 request mid-flight reclassification은 이번 작업에 추가하지 않는다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -70,7 +70,7 @@ cargo test -p taskmesh-engine --test memory_overcommit
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

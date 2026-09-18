@@ -53,9 +53,9 @@ The gate set is `tools/gates/inventory.json`; the required subset is
   promotion-gap rule under concurrent admits (shuttle, 5,000 schedules each).
 - `differential_model.rs`: the admission/promotion contract as a ~150-line
   executable specification, checked against the engine after every random op.
-- Mutation gate: 63 entries — 62 single-edit reintroductions of fixed defects
-  (54 cargo incl. 2 shuttle-model targets and 1 differential-model target, 8 pytest
-  against the Python tooling), each killed by its named regression for its named
+- Mutation gate: 65 entries — 64 single-edit reintroductions of fixed defects
+  (54 cargo incl. 2 shuttle-model targets and 1 differential-model target, 10 pytest
+  against the Python tooling and the bench workflow scripts), each killed by its named regression for its named
   reason found in that test's own output, plus one behaviour-preserving control
   that must stay green
   (`receipts/local-2026-09-18.mutations.json`).
@@ -163,3 +163,50 @@ The gate set is `tools/gates/inventory.json`; the required subset is
 - No coverage gate exists. `just mutants-critical` covers the enrolled
   regressions only; property tests outside `tools/verification/mutations.json`
   are not mutation-checked.
+
+## Rollout / rollback (H16-022 A06–A07)
+
+This repository ships a library; nothing here deploys it. The steps below are
+what a *consumer* owner runs, and they are gated on that owner's explicit
+approval — a green proof surface in this repository is not activation.
+
+Staged rollout (per consumer, in this order):
+
+- [ ] Pre-flight the configuration the consumer will run, fail-closed, before
+      any traffic: `TopologyConfig::validate()`, then `Builder::build()` — a
+      policy the engine rejects (`GovernorError::PolicyViolation`,
+      `InvalidTopology`, `ExecutorDeclaresFewerWorkers`) must be fixed here.
+- [ ] Inventory diff, old vs new, from `Runtime::snapshot()` at idle:
+      `schema_version` (1 → 2), the `substrates` set, and `capabilities`
+      (every registered pool with its `limit`; `0` means ungated). A pool the
+      old deployment did not gate and the new one does is a behaviour change
+      for that consumer — record it.
+- [ ] Canary with the consumer's real classes and watch, per class:
+      `queued` and `inflight` (with the `dispatch_reserved` / `accepted` /
+      `running` / `cleanup_pending` split), the rejection verdicts the caller
+      sees (`QueueFull`, `CpuSaturated`, `MemorySaturated`,
+      `SubstrateSaturated` vs `SubstratePoolTimedOut`), `cpu_units_held`, and
+      `conservation_violation()` (must stay `None`). A rise in
+      `SubstrateSaturated` for a class that used to wait is the D01 change
+      (no unbounded waiting space) showing up: give the class a queue
+      (`OverflowPolicy::QueueWithinDepth`) or accept the shed.
+- [ ] Shadow, if used, is metadata-only: replay `TaskSpec`s through a second
+      governor for its verdicts; never re-execute the consumer's jobs.
+- [ ] Widen only after the canary window with `conservation_violation() ==
+      None` throughout and no `WorkerPanicked` / `JobAbandoned` attributable
+      to the runtime.
+
+Rollback:
+
+- [ ] Compatibility first: the previous artifact, its config, and its
+      inventory must still build against the consumer (the 0.1.0 → 0.2.0
+      breaks in CHANGELOG.md are the list of what the old code cannot see).
+- [ ] The wire `Snapshot` is schema 2 (`u128` decimal strings, phase gauges,
+      totals, capabilities); a 0.1.0 reader does not parse it. A rollback of a
+      *reader* (dashboard, collector) therefore needs either drain-and-restart
+      of the producer on the old version or a forward fix of the reader — a
+      mixed-version window is not supported.
+- [ ] Runtime state is process-local (no persisted governor state), so a
+      rollback of the runtime itself is a restart: drain (`queued == 0`,
+      `inflight == 0` per class — there is no `shutdown`/`drain` API; teardown
+      is dropping the runtime handle), then start the previous version.

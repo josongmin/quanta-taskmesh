@@ -13,6 +13,46 @@ BASE = Path(__file__).resolve().parent
 ROOT = BASE.parents[3]
 
 
+def exception_problems(base, ticket_files):
+    """Implemented state: an unchecked box in a ticket is an *exception* (a
+    recorded decision, an environment block, or an external dependency), never
+    an unfinished item. Each one must link to the register and, when it carries
+    an acceptance id, appear there by id; and the register must not list more
+    rows than there are boxes (a row for something that is checked is stale)."""
+    problems = []
+    exceptions = (base / "EXCEPTIONS.md").read_text()
+    exception_rows = [
+        line for line in exceptions.splitlines() if line.startswith("| H16-") and " | " in line
+    ]
+    unchecked = 0
+    for file in ticket_files:
+        lines = (base / file).read_text().splitlines()
+        for line_no, line in enumerate(lines):
+            if not line.strip().startswith("- [ ]"):
+                continue
+            unchecked += 1
+            block = [line]
+            for following in lines[line_no + 1 :]:
+                if following.startswith("  ") and not following.strip().startswith("- ["):
+                    block.append(following)
+                else:
+                    break
+            text = "\n".join(block)
+            if "EXCEPTIONS.md" not in text:
+                problems.append(
+                    f"{file}:{line_no + 1}: unchecked item without a link to EXCEPTIONS.md"
+                )
+            for aid in sorted(set(re.findall(r"\bH16-\d{3}-A\d{2}\b", text))):
+                if aid not in exceptions:
+                    problems.append(f"{aid}: unchecked but not in EXCEPTIONS.md")
+    if len(exception_rows) != unchecked:
+        problems.append(
+            f"EXCEPTIONS.md lists {len(exception_rows)} rows "
+            f"but the tickets have {unchecked} unchecked items"
+        )
+    return problems
+
+
 def main():
     errors = []
 
@@ -32,7 +72,7 @@ def main():
         quality = manifest["quality_items"]
         decisions = manifest["decisions"]
         require(manifest["schema_version"] == 1, "unknown schema version")
-        require(manifest["status"] == "PLANNED", "unexpected plan status")
+        require(manifest["status"] == "IMPLEMENTED", "unexpected plan status")
         require(re.fullmatch(r"[0-9a-f]{40}", manifest["source_head"]), "invalid source HEAD")
         ids = [t["id"] for t in tickets]
         expected_ids = {f"H16-{i:03}" for i in range(1, 23)}
@@ -44,16 +84,30 @@ def main():
         require(observed_files == {t["file"] for t in tickets}, "unregistered/missing ticket files")
 
         primary = []
-        required_sections = ["목적", "변경 범위", "구현 액션", "검증 / 완료 조건", "실행 명령", "호환성 / 실패 모드", "인계 / 완료 증거"]
+        required_sections = [
+            "목적",
+            "변경 범위",
+            "구현 액션",
+            "검증 / 완료 조건",
+            "실행 명령",
+            "호환성 / 실패 모드",
+            "인계 / 완료 증거",
+        ]
         for ticket in tickets:
             tid = ticket["id"]
-            require(ticket["status"] == "PLANNED", f"{tid}: unexpected status")
+            require(ticket["status"] == "IMPLEMENTED", f"{tid}: unexpected status")
             require(ticket["priority"] in {"P0", "P1", "P2"}, f"{tid}: invalid priority")
             require(ticket["owner"] in set("IERFVBCDQ"), f"{tid}: invalid owner")
             require(bool(ticket["locks"]), f"{tid}: missing write leases")
-            require(len(ticket["depends_on"]) == len(set(ticket["depends_on"])), f"{tid}: duplicate dependency")
+            require(
+                len(ticket["depends_on"]) == len(set(ticket["depends_on"])),
+                f"{tid}: duplicate dependency",
+            )
             for dependency in ticket["depends_on"]:
-                require(dependency in by_id and dependency != tid, f"{tid}: invalid dependency {dependency}")
+                require(
+                    dependency in by_id and dependency != tid,
+                    f"{tid}: invalid dependency {dependency}",
+                )
             path = safe_path(ticket["file"], BASE)
             require(path.is_file(), f"missing ticket file: {path}")
             if not path.is_file():
@@ -64,9 +118,17 @@ def main():
                 require(f"## {section}\n" in body, f"{tid}: missing section {section}")
             acceptance = re.findall(r"`(H16-\d{3}-A\d{2})`", body)
             require(acceptance == ticket["acceptance_ids"], f"{tid}: acceptance inventory drift")
-            require(bool(acceptance) and len(acceptance) == len(set(acceptance)), f"{tid}: missing/duplicate acceptance")
+            require(
+                bool(acceptance) and len(acceptance) == len(set(acceptance)),
+                f"{tid}: missing/duplicate acceptance",
+            )
             for dependency in ticket["depends_on"]:
-                require(f"[{dependency}]({by_id[dependency]['file']})" in body if dependency in by_id else False, f"{tid}: missing dependency link {dependency}")
+                require(
+                    f"[{dependency}]({by_id[dependency]['file']})" in body
+                    if dependency in by_id
+                    else False,
+                    f"{tid}: missing dependency link {dependency}",
+                )
             for raw in ticket["existing_paths"]:
                 require(safe_path(raw).exists(), f"{tid}: missing existing path {raw}")
                 require(f"](../../../../{raw})" in body, f"{tid}: existing path not linked {raw}")
@@ -81,9 +143,15 @@ def main():
         expected_bugs = {f"TM16-{i:03}" for i in range(1, 41)}
         require(len(bug_ids) == len(set(bug_ids)) == 40, "source bug count/uniqueness != 40")
         require(set(bug_ids) == expected_bugs, "source IDs mismatch")
-        require(set(primary) == expected_bugs and len(primary) == len(set(primary)), "findings missing or multiply assigned")
+        require(
+            set(primary) == expected_bugs and len(primary) == len(set(primary)),
+            "findings missing or multiply assigned",
+        )
         audit_dir = ROOT / "docs/bugbash/sep-16-general/tickets"
-        require({x.name for x in audit_dir.glob("TM16-*.md")} == {Path(b["path"]).name for b in bugs}, "audit inventory changed")
+        require(
+            {x.name for x in audit_dir.glob("TM16-*.md")} == {Path(b["path"]).name for b in bugs},
+            "audit inventory changed",
+        )
         for bug in bugs:
             path = safe_path(bug["path"])
             require(path.is_file(), f"missing source bug {path}")
@@ -111,13 +179,17 @@ def main():
             visit(tid)
         for items, prefix, count in [(quality, "Q", 33), (decisions, "D", 12)]:
             item_ids = [item["id"] for item in items]
-            require(len(item_ids) == count and set(item_ids) == {f"{prefix}{i:02}" for i in range(1, count + 1)}, f"{prefix}: inventory mismatch")
+            require(
+                len(item_ids) == count
+                and set(item_ids) == {f"{prefix}{i:02}" for i in range(1, count + 1)},
+                f"{prefix}: inventory mismatch",
+            )
             for item in items:
                 require(bool(item["tickets"]), f"{item['id']}: no responsible ticket")
                 require(all(t in by_id for t in item["tickets"]), f"{item['id']}: unknown ticket")
 
         markdown = list(BASE.glob("*.md"))
-        require(len(markdown) == 29, "expected 22 tickets + 7 coordination Markdown documents")
+        require(len(markdown) == 30, "expected 22 tickets + 8 coordination Markdown documents")
         for path in markdown:
             body = path.read_text()
             for line_no, line in enumerate(body.splitlines(), 1):
@@ -127,14 +199,22 @@ def main():
                 url = urlsplit(target)
                 if url.scheme or not url.path:
                     continue
-                require(safe_path(unquote(url.path), path.parent).exists(), f"{path.name}: broken local link {target}")
+                require(
+                    safe_path(unquote(url.path), path.parent).exists(),
+                    f"{path.name}: broken local link {target}",
+                )
             for tid in set(re.findall(r"\bH16-\d{3}\b", body)):
                 require(tid in by_id, f"{path.name}: unknown ticket mention {tid}")
+        for problem in exception_problems(BASE, [t["file"] for t in tickets]):
+            require(False, problem)
         coverage = (BASE / "COVERAGE.md").read_text()
         for bug in bugs:
             owner = next((t for t in tickets if bug["id"] in t["source_bugs"]), None)
             if owner:
-                row = next((line for line in coverage.splitlines() if line.startswith(f"| [{bug['id']}]")), "")
+                row = next(
+                    (line for line in coverage.splitlines() if line.startswith(f"| [{bug['id']}]")),
+                    "",
+                )
                 require(f"[{owner['id']}]({owner['file']})" in row, f"coverage drift: {bug['id']}")
         for item in quality:
             require(f"| {item['id']} |" in coverage, f"missing quality row {item['id']}")
@@ -145,7 +225,9 @@ def main():
         for error in errors:
             print(f"FAIL: {error}", file=sys.stderr)
         return 1
-    print("PASS: 22 planned tickets; 40 findings uniquely mapped and source hashes preserved; 33 quality items; 12 decisions; acyclic complete closure; 29 Markdown files/links/acceptance IDs valid")
+    print(
+        "PASS: 22 implemented tickets; unchecked items all registered in EXCEPTIONS.md; 40 findings uniquely mapped and source hashes preserved; 33 quality items; 12 decisions; acyclic complete closure; 30 Markdown files/links/acceptance IDs valid"
+    )
     print("Scope: document integrity only; production implementation/tests/qualification NOT RUN")
     return 0
 

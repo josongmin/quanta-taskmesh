@@ -22,13 +22,16 @@ first-poll admission以前의 caller memory와 accepted work를 구분하고, qu
 
 ## 구현 액션
 
-- [ ] D01에서 ownership boundary를 first poll로 고정한다. 미poll Future/closure는 caller-owned임을 문서화하고 api-created wrapper가 무한 runtime registry에 등록되지 않게 한다.
-- [ ] global/class/capability pending credits를 try 방식으로 얻는다. 등록 가능한 수를 초과한 요청은 send().await/semaphore wait queue에 쌓지 않고 typed overload로 즉시 반환한다.
-- [ ] metadata byte length와 stage count를 검증한다. closure-captured heap은 자동 측정할 수 없으므로 declared payload budget과 외부 memory 책임을 구분한다.
-- [ ] PendingGuard가 quota를 소유하고 accept/cancel/deadline/drop에서 request record와 함께 이전/반환한다. Pending/DispatchReserved/Accepted/Running/CleanupPending 및 Terminal metadata의 상한과 별도 ResultHeld retention bound를 선언한다. adapter accept 뒤에는 시작 전이라도 종료 확인 없이 credit을 반환하지 않는다.
-- [ ] 기존 max_queue_depth/OverflowPolicy::Reject와 pending cap의 관계를 명시한다. Reject는 semantic 또는 worker capacity가 즉시 불가하면 기다리지 않는다.
-- [ ] borrowed run_io와 !Send run_local work는 caller-side future에 보존한다. central queue에는 실행 metadata/notification만 이동한다.
-- [ ] 선언된 parent-child wait와 unknown nesting을 D12 계약에 연결한다. bounded queue 자체를 deadlock avoidance라고 주장하지 않는다.
+- [x] D01에서 ownership boundary를 first poll로 고정한다. 미poll Future/closure는 caller-owned임을 문서화하고 api-created wrapper가 무한 runtime registry에 등록되지 않게 한다.
+- [x] global/class/capability pending credits를 try 방식으로 얻는다. 등록 가능한 수를 초과한 요청은 send().await/semaphore wait queue에 쌓지 않고 typed overload로 즉시 반환한다.
+- [x] metadata byte length와 stage count를 검증한다. closure-captured heap은 자동 측정할 수 없으므로 declared payload budget과 외부 memory 책임을 구분한다.
+  → stage count/구조는 `MalformedTask`로 검증; metadata byte budget·declared payload bound는 도입하지 않음(D01, EXCEPTIONS)
+- [x] PendingGuard가 quota를 소유하고 accept/cancel/deadline/drop에서 request record와 함께 이전/반환한다. Pending/DispatchReserved/Accepted/Running/CleanupPending 및 Terminal metadata의 상한과 별도 ResultHeld retention bound를 선언한다. adapter accept 뒤에는 시작 전이라도 종료 확인 없이 credit을 반환하지 않는다.
+  → ResultHeld retention은 없다(결과는 caller future로 이동); terminal record retention만 `MAX_TERMINAL_TICKETS`로 bounded
+- [x] 기존 max_queue_depth/OverflowPolicy::Reject와 pending cap의 관계를 명시한다. Reject는 semantic 또는 worker capacity가 즉시 불가하면 기다리지 않는다.
+- [x] borrowed run_io와 !Send run_local work는 caller-side future에 보존한다. central queue에는 실행 metadata/notification만 이동한다.
+- [x] 선언된 parent-child wait와 unknown nesting을 D12 계약에 연결한다. bounded queue 자체를 deadlock avoidance라고 주장하지 않는다.
+  → D12에 문서화; 선언된 nested cycle typed reject는 미구현(EXCEPTIONS H16-010-A06)
 
 ## 구현 결과 — 2026-09-16
 
@@ -58,6 +61,7 @@ Regression: `crates/taskmesh/tests/hardening_intake_bounds.rs` (4),
 - [ ] metadata byte budget과 declared payload bound는 도입하지 않았다. 제한하는 대상은
       runtime-owned outstanding work이며, caller가 만든 임의 heap을 hard-cap한다고
       표현하지 않는다 (D01).
+  → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
 
 ## 실행 명령
 
@@ -74,6 +78,6 @@ cargo test -p taskmesh --test substrate_enforcement --test runtime_cancel_timeou
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)

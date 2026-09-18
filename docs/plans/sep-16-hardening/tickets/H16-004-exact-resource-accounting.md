@@ -22,11 +22,12 @@ capacity check와 실제 ledger를 같은 정확한 수학으로 계산하고 sa
 
 ## 구현 액션
 
-- [ ] 원시 measured bytes와 reservation units, aggregate units를 분리한다. 권장 내부 폭은 per-request u64/aggregate checked u128이며 D06에서 확정한다.
-- [ ] grant/reconcile/release/root/class/global 합계를 공통 delta 함수로 바꾼다. capacity comparison 전에 widening하고 실패 시 부분 commit을 하지 않는다.
-- [ ] measured overage는 현실 사용량으로 기록하고 신규 admission을 차단한다. 합계가 표현되지 않는 경우 0/이전값 유지로 정상인 척하지 않고 accounting fault 상태로 fail-closed한다.
-- [ ] assert_consistent와 독립 oracle가 동일 saturation helper를 재사용하지 않도록 한다. pending/running/root projected sums와 reserve/active 구분을 검증한다.
-- [ ] SnapshotV2 또는 checked legacy conversion을 정의한다. u128을 JSON double로 내보내지 않고 decimal-string 등 정확한 wire representation을 명시한다.
+- [x] 원시 measured bytes와 reservation units, aggregate units를 분리한다. 권장 내부 폭은 per-request u64/aggregate checked u128이며 D06에서 확정한다.
+  → per-request `u32` / aggregate `u128`로 확정(D06)
+- [x] grant/reconcile/release/root/class/global 합계를 공통 delta 함수로 바꾼다. capacity comparison 전에 widening하고 실패 시 부분 commit을 하지 않는다.
+- [x] measured overage는 현실 사용량으로 기록하고 신규 admission을 차단한다. 합계가 표현되지 않는 경우 0/이전값 유지로 정상인 척하지 않고 accounting fault 상태로 fail-closed한다.
+- [x] assert_consistent와 독립 oracle가 동일 saturation helper를 재사용하지 않도록 한다. pending/running/root projected sums와 reserve/active 구분을 검증한다.
+- [x] SnapshotV2 또는 checked legacy conversion을 정의한다. u128을 JSON double로 내보내지 않고 decimal-string 등 정확한 wire representation을 명시한다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -70,7 +71,7 @@ cargo test -p taskmesh-contract --test contract_roundtrip
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

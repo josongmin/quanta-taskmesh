@@ -23,13 +23,14 @@
 
 ## 구현 액션
 
-- [ ] runtime/engine TM16 observation을 corrected-behavior production regression으로 옮긴다. tools/bench/PM finding은 해당 lane이 검증하고 전체 40건 취합은 H16-022에서 수행한다. audit harness의 bug-preserving assertions는 역사 자료로 남기고 green을 closure로 쓰지 않는다.
-- [ ] mixed soak에 substrate별 attempted/started/completed/typed outcome count와 live sweeper overlap barrier를 추가한다. zero ledger만으로 success를 판정하지 않는다.
-- [ ] repaired original test에 동일 all-disabled mutation만 적용하고 expected assertion failure를 확인한다. source extractor guard·compile failure·0 tests·timeout은 mutation kill로 인정하지 않는다.
-- [ ] production synchronization seam을 cfg로 교체하여 작은 lifecycle interleaving을 Loom에 연결한다. 별도 기존 toy model과 coverage를 구분하고 remaining uninstrumented APIs를 기록한다.
-- [ ] 독립 wide ledger/reference scheduler와 event sequence property test를 연결한다. cancel/drop/reap/start/complete/shutdown, callback reentry·stale effect·nested wait를 포함한다.
-- [ ] 행동 동기화에는 start/claim/drop barriers를 사용한다. scheduler fairness와 wall-clock SLA를 arbitrary sleeps로 단언하지 않는다.
-- [ ] hang 재현은 process isolation+deadline+kill+wait를 사용한다. negative control이 의도한 assertion까지 도달했다는 marker를 보존한다.
+- [x] runtime/engine TM16 observation을 corrected-behavior production regression으로 옮긴다. tools/bench/PM finding은 해당 lane이 검증하고 전체 40건 취합은 H16-022에서 수행한다. audit harness의 bug-preserving assertions는 역사 자료로 남기고 green을 closure로 쓰지 않는다.
+- [x] mixed soak에 substrate별 attempted/started/completed/typed outcome count와 live sweeper overlap barrier를 추가한다. zero ledger만으로 success를 판정하지 않는다.
+- [x] repaired original test에 동일 all-disabled mutation만 적용하고 expected assertion failure를 확인한다. source extractor guard·compile failure·0 tests·timeout은 mutation kill로 인정하지 않는다.
+- [x] production synchronization seam을 cfg로 교체하여 작은 lifecycle interleaving을 Loom에 연결한다. 별도 기존 toy model과 coverage를 구분하고 remaining uninstrumented APIs를 기록한다.
+- [x] 독립 wide ledger/reference scheduler와 event sequence property test를 연결한다. cancel/drop/reap/start/complete/shutdown, callback reentry·stale effect·nested wait를 포함한다.
+  → differential reference model(`differential_model.rs`) + 독립 DRR/WFQ reference; shutdown API 없음, nested wait는 D12 범위 밖
+- [x] 행동 동기화에는 start/claim/drop barriers를 사용한다. scheduler fairness와 wall-clock SLA를 arbitrary sleeps로 단언하지 않는다.
+- [x] hang 재현은 process isolation+deadline+kill+wait를 사용한다. negative control이 의도한 assertion까지 도달했다는 marker를 보존한다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -90,6 +91,6 @@ just shuttle
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)

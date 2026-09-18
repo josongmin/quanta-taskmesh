@@ -21,12 +21,14 @@
 
 ## 구현 액션
 
-- [ ] DECISIONS.md의 D01–D12에 owner 역할, 선택, rejected alternatives, 영향받는 API/consumer를 채운다. 현재 제안값은 승인된 제품 계약이 아니다.
-- [ ] 기존 raw PolicySet/Runtime/Clock/CpuExecutor 및 serde DTO 호출자를 rg/cargo metadata로 inventory화한다. 알려지지 않은 외부 소비자는 UNKNOWN으로 남긴다.
-- [ ] 원시 DTO→validated internal type을 기본 migration으로 선택한다. 기존 public field 제거·snapshot 폭·claim signature 변경은 additive adapter 또는 breaking release 중 하나를 명시한다.
-- [ ] 단일 request state와 caller response 상태를 분리한다. Pending quota, dispatch reservation, running/cleanup charge의 ownership 표를 승인한다.
-- [ ] 무제한을 0으로 표현하던 기존 설정과 strict profile의 positive bounds를 분리한다. 새로운 production capacity 수치를 트래픽 근거 없이 default로 정하지 않는다.
-- [ ] TM16-005는 contract decision으로 유지한다. stages/reduce/checkpoint 자동 실행, dedupe, process kill은 이번 hardening의 신규 기능으로 추가하지 않는다.
+- [x] DECISIONS.md의 D01–D12에 owner 역할, 선택, rejected alternatives, 영향받는 API/consumer를 채운다. 현재 제안값은 승인된 제품 계약이 아니다.
+- [x] 기존 raw PolicySet/Runtime/Clock/CpuExecutor 및 serde DTO 호출자를 rg/cargo metadata로 inventory화한다. 알려지지 않은 외부 소비자는 UNKNOWN으로 남긴다.
+- [x] 원시 DTO→validated internal type을 기본 migration으로 선택한다. 기존 public field 제거·snapshot 폭·claim signature 변경은 additive adapter 또는 breaking release 중 하나를 명시한다.
+  → breaking release(0.2.0)로 확정 — 전체 목록·migration은 CHANGELOG.md
+- [x] 단일 request state와 caller response 상태를 분리한다. Pending quota, dispatch reservation, running/cleanup charge의 ownership 표를 승인한다.
+- [x] 무제한을 0으로 표현하던 기존 설정과 strict profile의 positive bounds를 분리한다. 새로운 production capacity 수치를 트래픽 근거 없이 default로 정하지 않는다.
+  → 0==무제한 유지; strict positive bound 대신 admission 앞 무제한 대기 공간 제거(D01)
+- [x] TM16-005는 contract decision으로 유지한다. stages/reduce/checkpoint 자동 실행, dedupe, process kill은 이번 hardening의 신규 기능으로 추가하지 않는다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -65,7 +67,7 @@ cargo test -p taskmesh-contract
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

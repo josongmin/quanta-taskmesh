@@ -21,13 +21,13 @@ PM parse/validate/render-plan/apply를 분리해 lint가 실제 쓰일 파일을
 
 ## 구현 액션
 
-- [ ] duplicate YAML mapping key를 loader 단계에서 reject하고 unknown target/config fields를 명시적 schema 정책으로 처리한다. dictionary collapse 이후 검사는 금지한다.
-- [ ] target identity는 basename이 아닌 검증된 relative path다. nested path/template mapping/중복 normalized output 충돌을 검증한다.
-- [ ] lint와 apply가 동일 ValidatedRenderPlan을 소비하도록 한다. render-plan에는 exact target/template/source digest/expected output digest를 포함한다.
-- [ ] lint는 읽기 전용으로 만들고 fixture 및 실제 target의 전후 digest로 무변경을 검사한다. normalized path containment와 symlink 정책을 D11에서 확정한다; 기존 상태를 보안 사고로 단정하지 않는다.
-- [ ] 현재 AGENTS.md 등 사용자 소유 설정과 생성 target drift를 비교해 migration diff를 제시한다. 실제 target overwrite는 명시적 승인·복구본·원자적 replace 절차를 요구한다.
-- [ ] apply의 다중 파일 부분 실패와 concurrent edit를 감지하고 변경 전 digest 불일치 시 중단한다. 롤백 가능한 per-file 결과를 남긴다.
-- [ ] 이전 제품 branding/없는 source 경로/잘못된 template 선택을 expected content assertion으로 잡는다.
+- [x] duplicate YAML mapping key를 loader 단계에서 reject하고 unknown target/config fields를 명시적 schema 정책으로 처리한다. dictionary collapse 이후 검사는 금지한다.
+- [x] target identity는 basename이 아닌 검증된 relative path다. nested path/template mapping/중복 normalized output 충돌을 검증한다.
+- [x] lint와 apply가 동일 ValidatedRenderPlan을 소비하도록 한다. render-plan에는 exact target/template/source digest/expected output digest를 포함한다.
+- [x] lint는 읽기 전용으로 만들고 fixture 및 실제 target의 전후 digest로 무변경을 검사한다. normalized path containment와 symlink 정책을 D11에서 확정한다; 기존 상태를 보안 사고로 단정하지 않는다.
+- [x] 현재 AGENTS.md 등 사용자 소유 설정과 생성 target drift를 비교해 migration diff를 제시한다. 실제 target overwrite는 명시적 승인·복구본·원자적 replace 절차를 요구한다.
+- [x] apply의 다중 파일 부분 실패와 concurrent edit를 감지하고 변경 전 digest 불일치 시 중단한다. 롤백 가능한 per-file 결과를 남긴다.
+- [x] 이전 제품 branding/없는 source 경로/잘못된 template 선택을 expected content assertion으로 잡는다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -72,7 +72,7 @@ just py-lint
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

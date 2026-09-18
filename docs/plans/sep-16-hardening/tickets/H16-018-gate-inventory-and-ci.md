@@ -26,14 +26,15 @@
 
 ## 구현 액션
 
-- [ ] 현재 Justfile·CI·bench workflow에서 command/cwd/env/toolchain/features/platform/prerequisites/required 여부/timeout/artifact를 추출하여 stable gate id를 부여한다. 현행 명령을 임의 rename하지 않는다.
-- [ ] 필수 gate 집합은 별도 승인 목록과 비교한다. inventory 삭제만으로 required gate를 없앨 수 없고 unknown/duplicate/missing/skipped-required는 qualification 실패다.
-- [ ] local-only strict deny/Semgrep/Python 검사와 CI-only Rayon/rustdoc/bench smoke를 모두 분류한다. 플랫폼별 필수 집합은 달라도 qualification matrix의 합집합은 누락되지 않아야 한다.
-- [ ] architecture scanner는 workspace metadata에서 모든 package/dependency edge를 읽고 unknown package/rule/optional dependency/read error를 실패시킨다. 제품 의미 정책과 worker governance 경계를 별도 규칙으로 유지한다.
-- [ ] Semgrep 실제 integration fixtures를 test collection에 등록하고 fixture 양성·음성 control, rule id별 expected hit를 검사한다. 성공한 pytest 프로세스만으로 collection을 입증하지 않는다.
-- [ ] 기존 중복 Loom rail은 feature·model coverage가 같을 때만 합친다. PM 실제 target lint와 원본 mixed-soak negative, bench helper tests를 inventory에 등록한다.
-- [ ] 존재하지 않는 mutants-critical/cov-gate 문서 참조는 실제 gate 구현 및 등록 후 연결하거나 삭제한다. 문자열 grep·장난감 모델을 실행 증거로 승격하지 않는다.
-- [ ] runner는 gate별 exit/status/test count/환경/receipt를 기록하고 required gate 미실행을 실패 처리한다. branch protection 실제 적용 여부는 H16-022에서 별도 확인한다.
+- [x] 현재 Justfile·CI·bench workflow에서 command/cwd/env/toolchain/features/platform/prerequisites/required 여부/timeout/artifact를 추출하여 stable gate id를 부여한다. 현행 명령을 임의 rename하지 않는다.
+- [x] 필수 gate 집합은 별도 승인 목록과 비교한다. inventory 삭제만으로 required gate를 없앨 수 없고 unknown/duplicate/missing/skipped-required는 qualification 실패다.
+- [x] local-only strict deny/Semgrep/Python 검사와 CI-only Rayon/rustdoc/bench smoke를 모두 분류한다. 플랫폼별 필수 집합은 달라도 qualification matrix의 합집합은 누락되지 않아야 한다.
+- [x] architecture scanner는 workspace metadata에서 모든 package/dependency edge를 읽고 unknown package/rule/optional dependency/read error를 실패시킨다. 제품 의미 정책과 worker governance 경계를 별도 규칙으로 유지한다.
+- [x] Semgrep 실제 integration fixtures를 test collection에 등록하고 fixture 양성·음성 control, rule id별 expected hit를 검사한다. 성공한 pytest 프로세스만으로 collection을 입증하지 않는다.
+- [x] 기존 중복 Loom rail은 feature·model coverage가 같을 때만 합친다. PM 실제 target lint와 원본 mixed-soak negative, bench helper tests를 inventory에 등록한다.
+- [x] 존재하지 않는 mutants-critical/cov-gate 문서 참조는 실제 gate 구현 및 등록 후 연결하거나 삭제한다. 문자열 grep·장난감 모델을 실행 증거로 승격하지 않는다.
+- [x] runner는 gate별 exit/status/test count/환경/receipt를 기록하고 required gate 미실행을 실패 처리한다. branch protection 실제 적용 여부는 H16-022에서 별도 확인한다.
+  → gate별 exit/status/duration/status_line(self-report verdict) 기록; test count는 mutation receipt와 output tail에만 있음
 
 ## 구현 결과 — 2026-09-16
 
@@ -89,6 +90,6 @@ just py-lint
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)

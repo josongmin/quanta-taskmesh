@@ -23,13 +23,15 @@ executor 인계 전/후 실패를 구분하고 accepted work와 lease의 단독 
 
 ## 구현 액션
 
-- [ ] try_reserve→submit→Accepted→Started→Terminated protocol을 정의한다. job/token 반환 가능한 NotAccepted와 accepted-but-outcome-unknown을 구분한다.
-- [ ] enqueue 이후 panic을 not-started로 취급해 재제출하지 않는다. recovery가 불가능한 adapter는 fault/quarantine 상태에서 admission을 중단하고 original ownership을 유지한다.
-- [ ] 동일 Arc executor를 runtime 여러 개가 쓸 때 공유 capacity authority를 사용한다. default Tokio는 ambient pool의 외부 작업까지 통제하지 못한다는 managed-credit 한계를 노출한다.
-- [ ] legacy CpuExecutor adapter는 conservative capability profile을 선언한다. unknown capacity·blocking submit에서 strict guarantee를 허위 제공하지 않는다.
-- [ ] worker entry를 공통 wrapper로 통합하여 start timestamp/authorization, task error/panic, result delivery, termination receipt를 기록한다. 실제 adapter별 spawn/affinity 차이는 유지한다.
-- [ ] OS thread label은 class identity와 분리해 sanitize/size bound한다. stack conversion/name/build/spawn/setup 오류를 typed boundary로 반환한다.
-- [ ] public RunError::Task(E)는 원본을 유지한다. PolicyViolation 문자열 남발 대신 error kind+phase+safe context를 추가하며 normal receiver drop은 명시적 expected delivery outcome으로 다룬다.
+- [x] try_reserve→submit→Accepted→Started→Terminated protocol을 정의한다. job/token 반환 가능한 NotAccepted와 accepted-but-outcome-unknown을 구분한다.
+- [x] enqueue 이후 panic을 not-started로 취급해 재제출하지 않는다. recovery가 불가능한 adapter는 fault/quarantine 상태에서 admission을 중단하고 original ownership을 유지한다.
+  → quarantine 상태는 두지 않았다: adapter fault는 typed(`WorkerUnavailable`/`JobAbandoned`)로 그 제출에 보고되고 재제출하지 않는다
+- [x] 동일 Arc executor를 runtime 여러 개가 쓸 때 공유 capacity authority를 사용한다. default Tokio는 ambient pool의 외부 작업까지 통제하지 못한다는 managed-credit 한계를 노출한다.
+  → `two_runtimes_sharing_an_executor_each_govern_their_own_submissions`; ambient Tokio pool의 외부 작업 미통제는 README/ADR에 명시
+- [x] legacy CpuExecutor adapter는 conservative capability profile을 선언한다. unknown capacity·blocking submit에서 strict guarantee를 허위 제공하지 않는다.
+- [x] worker entry를 공통 wrapper로 통합하여 start timestamp/authorization, task error/panic, result delivery, termination receipt를 기록한다. 실제 adapter별 spawn/affinity 차이는 유지한다.
+- [x] OS thread label은 class identity와 분리해 sanitize/size bound한다. stack conversion/name/build/spawn/setup 오류를 typed boundary로 반환한다.
+- [x] public RunError::Task(E)는 원본을 유지한다. PolicyViolation 문자열 남발 대신 error kind+phase+safe context를 추가하며 normal receiver drop은 명시적 expected delivery outcome으로 다룬다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -83,7 +85,7 @@ cargo test -p taskmesh-rayon --test rayon_smoke
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

@@ -22,12 +22,13 @@ supported numeric domain에서 credit·서비스 비율·취소·idle 재진입�
 
 ## 구현 액션
 
-- [ ] 작은 입력용 독립 DRR/WFQ reference와 admission event trace를 먼저 만든다. production helper 복사만으로 oracle를 만들지 않는다.
-- [ ] DRR empty busy-period reset을 last-pop/last-abandon hook에 연결한다. nonempty capacity-blocked queue는 credit을 유지한다.
-- [ ] DRR empty rounds를 산술 skip하고 cursor partial-round 순서를 보존한다. visits는 active class 수에 대한 명시적 bound로 측정한다.
-- [ ] WFQ는 지원 weight 범위/scale/u128 tag/rebase 또는 fractional remainder 방식을 결정한다. max(1) 보정으로 모든 큰 weight를 동일화하지 않는다.
-- [ ] head/middle/tail cancellation의 미실행 debt를 제거한다. 재계산이 O(Q)라면 Q 상한·한 transition 작업 budget·continuation을 문서화한다.
-- [ ] retry-after zero/normalization을 scheduler domain과 일치시킨다. 기존 heuristic을 실제 service-time prediction이라고 부르지 않는다.
+- [x] 작은 입력용 독립 DRR/WFQ reference와 admission event trace를 먼저 만든다. production helper 복사만으로 oracle를 만들지 않는다.
+- [x] DRR empty busy-period reset을 last-pop/last-abandon hook에 연결한다. nonempty capacity-blocked queue는 credit을 유지한다.
+- [x] DRR empty rounds를 산술 skip하고 cursor partial-round 순서를 보존한다. visits는 active class 수에 대한 명시적 bound로 측정한다.
+- [x] WFQ는 지원 weight 범위/scale/u128 tag/rebase 또는 fractional remainder 방식을 결정한다. max(1) 보정으로 모든 큰 weight를 동일화하지 않는다.
+- [x] head/middle/tail cancellation의 미실행 debt를 제거한다. 재계산이 O(Q)라면 Q 상한·한 transition 작업 budget·continuation을 문서화한다.
+  → 재계산은 O(Q), Q ≤ `max_queue_depth`(construction 검증); 한 transition 안에서 끝나며 continuation 불필요
+- [x] retry-after zero/normalization을 scheduler domain과 일치시킨다. 기존 heuristic을 실제 service-time prediction이라고 부르지 않는다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -80,7 +81,7 @@ cargo test -p taskmesh-bench --test fairness_property
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

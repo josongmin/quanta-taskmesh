@@ -22,14 +22,16 @@ acquire/run/response/termination clock과 cancellation winner를 고정하고 cl
 
 ## 구현 액션
 
-- [ ] Acquire deadline은 queue 입장·promotion claim·worker start authorization에서 재검사한다. lock wait 후 immediate Admitted와 timeout last-chance claim도 우회하지 못한다.
-- [ ] ZERO acquire는 wait하지 않는 try operation으로 별도 처리한다. free capacity 즉시 실행 허용 여부를 D09에 고정하고 now+0 generic deadline 때문에 전부 거절하지 않는다.
-- [ ] RunFor 시작은 worker-entry timestamp로 보존하고 inline executor completion도 동일 authority로 판정한다. completion-at-deadline tie는 deadline wins를 권장한다.
-- [ ] normal/requested-stack blocking RunFor는 unsupported 사전 reject 또는 명시적 caller-wait deadline 중 D09 선택을 구현한다. CompleteBy unsupported 경로는 기존 사전 reject를 보존한다.
-- [ ] 정상 success/task-error 결과의 completion fence는 worker-owned runtime/context·지원 child cleanup·lease release 범위를 D10으로 고정한다.
-- [ ] deadline/cancel 응답은 cleanup 이전에 전달할 수 있으나 worker/cleanup owner가 semantic+dispatch credit을 유지한다. bounded cleanup count는 active execution 한도에 포함한다.
-- [ ] shutdown/drain timeout은 StillRunning/NotDrained로 보고한다. shutdown_timeout/background 반환을 termination receipt로 사용하지 않는다.
-- [ ] completion timestamp와 cleanup/response latency를 별도 기록한다. timely completion의 late delivery 처리와 CompleteBy 전체범위의 차이를 문서화한다.
+- [x] Acquire deadline은 queue 입장·promotion claim·worker start authorization에서 재검사한다. lock wait 후 immediate Admitted와 timeout last-chance claim도 우회하지 못한다.
+- [x] ZERO acquire는 wait하지 않는 try operation으로 별도 처리한다. free capacity 즉시 실행 허용 여부를 D09에 고정하고 now+0 generic deadline 때문에 전부 거절하지 않는다.
+- [x] RunFor 시작은 worker-entry timestamp로 보존하고 inline executor completion도 동일 authority로 판정한다. completion-at-deadline tie는 deadline wins를 권장한다.
+- [x] normal/requested-stack blocking RunFor는 unsupported 사전 reject 또는 명시적 caller-wait deadline 중 D09 선택을 구현한다. CompleteBy unsupported 경로는 기존 사전 reject를 보존한다.
+- [x] 정상 success/task-error 결과의 completion fence는 worker-owned runtime/context·지원 child cleanup·lease release 범위를 D10으로 고정한다.
+- [x] deadline/cancel 응답은 cleanup 이전에 전달할 수 있으나 worker/cleanup owner가 semantic+dispatch credit을 유지한다. bounded cleanup count는 active execution 한도에 포함한다.
+- [x] shutdown/drain timeout은 StillRunning/NotDrained로 보고한다. shutdown_timeout/background 반환을 termination receipt로 사용하지 않는다.
+  → shutdown/drain API 없음(N/A, EXCEPTIONS H16-012-A07)
+- [x] completion timestamp와 cleanup/response latency를 별도 기록한다. timely completion의 late delivery 처리와 CompleteBy 전체범위의 차이를 문서화한다.
+  → worker가 start/completion timestamp를 결과와 함께 보내 판정; 별도 latency metric은 두지 않았고 response≠custody는 D10에 문서화
 
 ## 구현 결과 — 2026-09-16
 
@@ -62,6 +64,7 @@ Regression: `crates/taskmesh/tests/hardening_deadline_custody.rs` (10),
 - [ ] `H16-012-A07` `shutdown`/`drain` API가 존재하지 않으므로 `NotDrained` 보고는
       구현하지 않았다. 현재 teardown은 runtime handle drop으로만 일어난다. shutdown
       계약은 별도 작업으로 남긴다.
+  → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
 
 ## 실행 명령
 
@@ -78,6 +81,6 @@ cargo test -p taskmesh --test deadline_cancel --test cancellation_policy --test 
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)

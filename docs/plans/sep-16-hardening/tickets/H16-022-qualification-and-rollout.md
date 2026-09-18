@@ -21,14 +21,20 @@
 
 ## 구현 액션
 
-- [ ] 모든 선행 티켓 acceptance와 결정 승인 상태, 미해결 exception을 matrix로 모은다. TM16-005는 계약 결정과 일치하는 regression을 요구하며 독립 runtime defect로 재분류하지 않는다.
-- [ ] 개발 검증에는 HEAD/tree·dirty/untracked path/content/mode/symlink digest·명령·cwd·toolchain/features/env/OS·start/end·exit/test count/metrics/artifacts를 기록한다. 비밀 env 값은 기록하지 않는다.
-- [ ] 최종 검증은 수정 불가한 별도 checkout/worktree 및 고정 의존·artifact에서 수행한다. 전후 digest만으로 중간 edit-and-restore를 검출할 수 없으므로 mutable shared tree를 final receipt로 인정하지 않는다.
-- [ ] H16-014 repaired-original negative proofs, strict gate matrix, 실제 consumer MSRV, Linux performance baseline/candidate, PM nonmutating lint를 동일 source identity에 연결한다. 필요한 gate 미실행은 NOT_QUALIFIED다.
-- [ ] hosting check run·required branch protection·review·merge SHA를 조회하여 exact SHA와 연결한다. 접근권한이 없거나 consumer repo/SHA가 미제공이면 해당 항목 UNVERIFIED/EXTERNAL_BLOCKED로 남긴다.
-- [ ] runtime inventory diff, capability limits, queue/reject/fairness/cleanup 지표로 단계적 rollout 기준을 정한다. metadata-only shadow는 job을 재실행하지 않는다. deploy/activation은 실제 소비자 owner의 명시적 승인 후 별도 수행한다.
-- [ ] rollback은 이전 배포 artifact/config/inventory와 API/schema 호환성을 먼저 검증한다. 새 상태/메모리 snapshot을 구버전이 읽지 못하면 drain-and-restart 또는 forward fix를 선택한다.
-- [ ] 최종 disposition을 implemented/local-qualified/hosted-qualified/reviewed/merged/consumer-qualified/activated로 나눠 기록한다. 라이브러리 repo만으로 서비스 배포 완료를 선언하지 않는다.
+- [x] 모든 선행 티켓 acceptance와 결정 승인 상태, 미해결 exception을 matrix로 모은다. TM16-005는 계약 결정과 일치하는 regression을 요구하며 독립 runtime defect로 재분류하지 않는다.
+- [x] 개발 검증에는 HEAD/tree·dirty/untracked path/content/mode/symlink digest·명령·cwd·toolchain/features/env/OS·start/end·exit/test count/metrics/artifacts를 기록한다. 비밀 env 값은 기록하지 않는다.
+- [x] 최종 검증은 수정 불가한 별도 checkout/worktree 및 고정 의존·artifact에서 수행한다. 전후 digest만으로 중간 edit-and-restore를 검출할 수 없으므로 mutable shared tree를 final receipt로 인정하지 않는다.
+  → immutable checkout = CI `qualification` job(Linux clean checkout); local receipt는 증거로만(문서화)
+- [x] H16-014 repaired-original negative proofs, strict gate matrix, 실제 consumer MSRV, Linux performance baseline/candidate, PM nonmutating lint를 동일 source identity에 연결한다. 필요한 gate 미실행은 NOT_QUALIFIED다.
+  → Linux IAI만 BLOCKED(EXCEPTIONS H16-022-A04)
+- [x] hosting check run·required branch protection·review·merge SHA를 조회하여 exact SHA와 연결한다. 접근권한이 없거나 consumer repo/SHA가 미제공이면 해당 항목 UNVERIFIED/EXTERNAL_BLOCKED로 남긴다.
+  → EXTERNAL/UNVERIFIED(EXCEPTIONS H16-022-A05)
+- [x] runtime inventory diff, capability limits, queue/reject/fairness/cleanup 지표로 단계적 rollout 기준을 정한다. metadata-only shadow는 job을 재실행하지 않는다. deploy/activation은 실제 소비자 owner의 명시적 승인 후 별도 수행한다.
+  → rollout 기준은 `docs/release-checklist.md` §Rollout / rollback; activation은 consumer owner 승인
+- [x] rollback은 이전 배포 artifact/config/inventory와 API/schema 호환성을 먼저 검증한다. 새 상태/메모리 snapshot을 구버전이 읽지 못하면 drain-and-restart 또는 forward fix를 선택한다.
+  → `docs/release-checklist.md` §Rollout / rollback
+- [x] 최종 disposition을 implemented/local-qualified/hosted-qualified/reviewed/merged/consumer-qualified/activated로 나눠 기록한다. 라이브러리 repo만으로 서비스 배포 완료를 선언하지 않는다.
+  → implemented + local NOT_QUALIFIED(bench-iai만); hosted/reviewed/merged/consumer/activated = UNVERIFIED(EXCEPTIONS)
 
 ## 구현 결과 — 2026-09-16
 
@@ -58,8 +64,11 @@
       `qualification` job(ci.yml)이 clean ubuntu checkout에서 `receipt.py collect`를 실행하고 artifact로
       올리도록 wired — 첫 push에서 BASELINE_CREATED, 두 번째부터 bench-iai QUALIFIED. 이 저장소에서
       push 권한이 없어(`songminjo` → `josongmin/quanta-taskmesh` 403) 실제 실행은 owner의 push 후다.
+  → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
 - [ ] `H16-022-A05` review/merge/consumer/activation은 **UNVERIFIED** (commit/push 미수행, 외부 접근 없음)
+  → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
 - [ ] `H16-022-A06` rollback 계약 문서화; owner 승인은 별도
+  → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
 
 ## 실행 명령
 
@@ -80,7 +89,7 @@ uv run python tools/pm/pm.py lint
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

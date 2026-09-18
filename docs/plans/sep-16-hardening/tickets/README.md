@@ -10,8 +10,8 @@
   최종 qualification은 CI `qualification` job(Linux clean checkout)이 낸다.
 - 구현된 계약: [ADR 0003](../../../adr/0003-sep-16-hardening-contracts.md). 로컬 증거:
   `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 415 green (contract 38 · engine 180 · host 138 · rayon 3 · bench 55 · doc-examples 1),
-  loom 5 / shuttle 6 green **on the production `Governor`**, mutation gate 63/63
-  (Python 도구 8건·shuttle 모델 2건·differential 모델 1건·객관 sweep 갭 13건 포함), consumer MSRV 1.81 PASS(default·rayon), allocation gate 3.0 allocs/op
+  loom 5 / shuttle 6 green **on the production `Governor`**, mutation gate 65/65
+  (Python 도구 10건·shuttle 모델 2건·differential 모델 1건·객관 sweep 갭 13건 포함), consumer MSRV 1.81 PASS(default·rayon), allocation gate 3.0 allocs/op
   (threshold = 측정값).
 - 구현 직후 3-track 적대적 감사(engine/runtime · 증명 강도 · tooling/CI/docs)를 실행했고 P0 3건·P1 12건·
   P2 다수를 모두 처리했다; 그 처리 위에 다시 2-track 감사(코드/주장 · 증명 표면)를 돌려 P1 4건·P2 8건을
@@ -31,6 +31,7 @@
 3. [병렬 lane·배타적 파일 소유권·실행 순서](EXECUTION.md)
 4. [40개 finding 및 33개 품질 항목 추적](COVERAGE.md)
 5. [실행·negative proof·qualification 계약](VERIFICATION.md)
+6. [예외 대장 — 미체크 acceptance 10건의 owner·사유·재검토 조건](EXCEPTIONS.md) (`validate_plan.py`가 티켓의 모든 `[ ]`이 이 대장에 있음을 강제; `just py-test`에 포함)
 
 ## 실행 티켓
 

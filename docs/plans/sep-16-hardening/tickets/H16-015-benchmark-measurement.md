@@ -24,12 +24,12 @@ setup/op/teardown과 실제 성공 작업 수를 명시해 오측정·no-op regr
 
 ## 구현 액션
 
-- [ ] 각 bench에 measurement definition/version, expected verdict, expected attempted/completed counts, post-ledger 조건을 선언한다.
-- [ ] 측정 branch 자체에서 unexpected Reject/Queue/TaskError를 실패시킨다. preflight만 정상이고 timed loop가 다른 branch를 타지 않도록 한다.
-- [ ] IAI input ownership을 함수 밖으로 반환하거나 명시적 entry point로 op-only 경계를 만든다. snapshot output drop과 input governor drop을 별도 단위로 다룬다.
-- [ ] Criterion iters를 quotient/remainder로 정확히 나누거나 requested-iters 기준 duration 보정식을 고정한다. iters<workers·nonmultiple·integer overflow를 포함한다.
-- [ ] holder fixture는 ready signal로 동기화한다. worker-key interning/setup/thread creation 포함 여부와 op fixture의 실제 outstanding state를 명시한다.
-- [ ] 측정 정의가 변경되면 measurement schema version을 올리고 H16-017의 이전 baseline compatibility를 끊는다. mem::forget로 fixture를 leak시키지 않는다.
+- [x] 각 bench에 measurement definition/version, expected verdict, expected attempted/completed counts, post-ledger 조건을 선언한다.
+- [x] 측정 branch 자체에서 unexpected Reject/Queue/TaskError를 실패시킨다. preflight만 정상이고 timed loop가 다른 branch를 타지 않도록 한다.
+- [x] IAI input ownership을 함수 밖으로 반환하거나 명시적 entry point로 op-only 경계를 만든다. snapshot output drop과 input governor drop을 별도 단위로 다룬다.
+- [x] Criterion iters를 quotient/remainder로 정확히 나누거나 requested-iters 기준 duration 보정식을 고정한다. iters<workers·nonmultiple·integer overflow를 포함한다.
+- [x] holder fixture는 ready signal로 동기화한다. worker-key interning/setup/thread creation 포함 여부와 op fixture의 실제 outstanding state를 명시한다.
+- [x] 측정 정의가 변경되면 measurement schema version을 올리고 H16-017의 이전 baseline compatibility를 끊는다. mem::forget로 fixture를 leak시키지 않는다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -59,6 +59,7 @@ mutation `contention-ops-rounded-to-thread-multiple`.
 - [x] `H16-015-A03` iters 1,t-1,t,t+1 × t=1/2/4/8 정확 분배
 - [x] `H16-015-A04` contention holder는 barrier ready 신호로 동기화
 - [ ] `H16-015-A05` Linux instruction-count proof는 macOS에서 미실행 → 별도 receipt 없음 (H16-022 BLOCKED)
+  → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
 
 ## 실행 명령
 
@@ -77,7 +78,7 @@ bash tools/bench-gate.sh
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

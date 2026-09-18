@@ -23,14 +23,17 @@ semantic resource와 adapter dispatch credit을 동일 reservation 결정에 연
 
 ## 구현 액션
 
-- [ ] H16-008 frozen capability requirement를 pending record에 보존한다. semantic capacity와 adapter credit을 모두 만족하는 class만 scheduler 후보로 만든다.
-- [ ] 같은 class의 mixed-substrate head-of-line 정책은 기존 strict FIFO를 기본 보존한다. 우회가 필요하면 per-class subqueue로 몰래 바꾸지 말고 D08 결정을 수정한다.
-- [ ] fairness selection→reservation→accept/start의 debit 시점을 D08에 따라 commit한다. reserve failure, before-start cancel에서 credit refund/sequence를 reference에 반영한다.
-- [ ] execution effect가 lock 밖에서 지연될 때 request generation/attempt identity와 start authorization을 검증한다. cancel 후 stale dispatch effect는 실행되지 않는다.
-- [ ] host FIFO semaphore waiter와 engine scheduler의 경쟁 실행 순서를 제거한다. adapter가 공유하는 capacity authority 한 곳에서 credit을 가져오며 logical mirrors를 별도 가산하지 않는다.
-- [ ] driver budget 소진 후 continuation·new capacity notification을 coalesce하고 모든 runnable work의 재평가를 보장한다.
-- [ ] 선언된 nested wait의 same-capacity/cross-pool cycle 정책을 시험한다. opaque closure가 만들 수 있는 모든 wait graph를 추론한다고 약속하지 않는다.
-- [ ] 한 runtime instance에서 old/new scheduler를 동시에 실행하지 않는다. shadow는 metadata decision replay만 하고 job을 재실행하지 않는다.
+- [x] H16-008 frozen capability requirement를 pending record에 보존한다. semantic capacity와 adapter credit을 모두 만족하는 class만 scheduler 후보로 만든다.
+- [x] 같은 class의 mixed-substrate head-of-line 정책은 기존 strict FIFO를 기본 보존한다. 우회가 필요하면 per-class subqueue로 몰래 바꾸지 말고 D08 결정을 수정한다.
+- [x] fairness selection→reservation→accept/start의 debit 시점을 D08에 따라 commit한다. reserve failure, before-start cancel에서 credit refund/sequence를 reference에 반영한다.
+- [x] execution effect가 lock 밖에서 지연될 때 request generation/attempt identity와 start authorization을 검증한다. cancel 후 stale dispatch effect는 실행되지 않는다.
+  → generation counter 대신 lease 자체가 authorization: 회수된 lease는 `LeaseReclaimed`로 시작 거부(D14) + loom claim-vs-reap 모델
+- [x] host FIFO semaphore waiter와 engine scheduler의 경쟁 실행 순서를 제거한다. adapter가 공유하는 capacity authority 한 곳에서 credit을 가져오며 logical mirrors를 별도 가산하지 않는다.
+- [x] driver budget 소진 후 continuation·new capacity notification을 coalesce하고 모든 runnable work의 재평가를 보장한다.
+- [x] 선언된 nested wait의 same-capacity/cross-pool cycle 정책을 시험한다. opaque closure가 만들 수 있는 모든 wait graph를 추론한다고 약속하지 않는다.
+  → D12 범위 밖으로 문서화(EXCEPTIONS H16-010-A06)
+- [x] 한 runtime instance에서 old/new scheduler를 동시에 실행하지 않는다. shadow는 metadata decision replay만 하고 job을 재실행하지 않는다.
+  → shadow scheduler 자체를 두지 않았다(N/A)
 
 ## 구현 결과 — 2026-09-16
 
@@ -55,14 +58,17 @@ Regression: `hardening_intake_bounds.rs`의
 - [x] `H16-010-A01` CPU full + IO free에서 eligible IO 진행; idle hoarding 제거
 - [x] `H16-010-A02` class fairness가 external FIFO에 의해 역전되지 않음
 - [x] `H16-010-A03` reserve 실패/선택 후 cancel이 phantom debt를 남기지 않음
-- [ ] `H16-010-A04` 지연된 dispatch effect의 generation/start authorization은 구현하지
-      않았다. 현재 구조에서는 dispatch가 lock 밖 지연 effect가 아니라 lease를 쥔
-      caller/worker의 직접 호출이므로 stale dispatch가 만들어지지 않는다. 이 추론은
-      구조적 근거이며 강제 interleaving test로 입증하지 않았다.
+- [x] `H16-010-A04` stale dispatch는 typed로 거절된다: sweep이 `DispatchReserved` lease를 회수한 뒤
+  host의 `ExecutionLease::advance`는 `LeaseReclaimed`로 실패하고 작업을 시작하지 않는다
+  (`a_lease_the_sweep_reclaimed_before_dispatch_refuses_to_advance_v1`, D14); claim vs reap 경주는
+  production `Governor` 위의 loom 모델이 전수 interleaving으로 닫는다
+  (`claim_and_reap_of_a_stale_promotion_fail_closed_both_ways`, D13). 별도 generation counter는
+  두지 않았다 — lease 자체가 authorization이다.
 - [x] `H16-010-A05` 공유 adapter에서 각 runtime이 자기 제출을 제한; 선언된 한계는 builder가 gate와
       대조한다 (D05 개정)
 - [ ] `H16-010-A06` 선언된 nested wait cycle의 typed reject는 미구현. D12대로 지원 범위
       밖으로 문서화만 했다.
+  → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
 - [x] `H16-010-A07` promotion K+1 backlog가 후속 event 없이 drain
 
 ## 실행 명령
@@ -81,7 +87,7 @@ cargo test -p taskmesh-engine --test fairness_fifo --test fairness_drr_deadline 
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

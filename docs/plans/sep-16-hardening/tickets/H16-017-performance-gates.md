@@ -22,13 +22,17 @@
 
 ## 구현 액션
 
-- [ ] B는 metric/baseline schema와 gate 구현을 소유하고 C는 Justfile·workflow 패치를 적용한다. 공유 파일 병렬 수정을 금지한다.
-- [ ] shell pipeline 전체에 실패 전파를 적용하고 producer 실패·tee 실패·parser 실패를 구별한다. remote baseline의 명시적 not-found와 인증·network·format 실패를 구분한다.
-- [ ] allocation 수치와 MAX_ALLOCS_PER_OP threshold 모두 전체 문자열을 엄격히 parse하고 malformed/NaN/inf/negative를 거절한다. metric 중복/누락, 단위·required metrics·schema version도 검증한다.
-- [ ] IAI threshold·comparison policy를 단일 config로 만들고 local/CI가 같은 config를 읽게 한다. benchmark id, harness/helper schema, config, lock digest, toolchain, target, runner, Valgrind compatibility fingerprint를 저장한다.
-- [ ] 초기 baseline 생성은 BASELINE_CREATED / NOT_QUALIFIED로 기록한다. incompatible baseline을 자동 PASS나 silent reset으로 바꾸지 않는다.
-- [ ] baseline과 candidate의 source identity를 각각 보존하고 Linux 지원 환경에서 정상 control·허용 경계·5% 초과 악화 negative를 실제 gate에 통과시킨다.
-- [ ] H16-015/016 측정 모델 변경 전후 수치를 동일 population의 성능 추이로 비교하지 않는다. baseline 재승인과 artifact retention을 명시한다.
+- [x] B는 metric/baseline schema와 gate 구현을 소유하고 C는 Justfile·workflow 패치를 적용한다. 공유 파일 병렬 수정을 금지한다.
+  → 단일 작업자 — 직렬 적용
+- [x] shell pipeline 전체에 실패 전파를 적용하고 producer 실패·tee 실패·parser 실패를 구별한다. remote baseline의 명시적 not-found와 인증·network·format 실패를 구분한다.
+  → fixture: `tools/bench/tests/test_history_branch.py`(ls-remote 0/2/128), `test_validate_bencher_output.py`(partial capture)
+- [x] allocation 수치와 MAX_ALLOCS_PER_OP threshold 모두 전체 문자열을 엄격히 parse하고 malformed/NaN/inf/negative를 거절한다. metric 중복/누락, 단위·required metrics·schema version도 검증한다.
+- [x] IAI threshold·comparison policy를 단일 config로 만들고 local/CI가 같은 config를 읽게 한다. benchmark id, harness/helper schema, config, lock digest, toolchain, target, runner, Valgrind compatibility fingerprint를 저장한다.
+- [x] 초기 baseline 생성은 BASELINE_CREATED / NOT_QUALIFIED로 기록한다. incompatible baseline을 자동 PASS나 silent reset으로 바꾸지 않는다.
+- [x] baseline과 candidate의 source identity를 각각 보존하고 Linux 지원 환경에서 정상 control·허용 경계·5% 초과 악화 negative를 실제 gate에 통과시킨다.
+  → Linux 실행은 BLOCKED(EXCEPTIONS H16-017-A05); fingerprint·source identity 보존은 구현·테스트됨
+- [x] H16-015/016 측정 모델 변경 전후 수치를 동일 population의 성능 추이로 비교하지 않는다. baseline 재승인과 artifact retention을 명시한다.
+  → `MEASUREMENT_SCHEMA = 2`로 이전 baseline 단절; baseline은 fingerprint별 CI cache, 재승인은 첫 Linux run(BASELINE_CREATED)
 
 ## 구현 결과 — 2026-09-16
 
@@ -59,6 +63,7 @@ nonzero.
       `tools/bench/iai_gate.py`가 `cargo install --list`/runner self-report로 버전을 읽고 모든 exit가
       진단을 낸다. allocation gate threshold는 측정값 3.0과 같다(4가 아님).
 - [ ] `H16-017-A05` Linux 실제 >5% injection FAIL / control PASS는 **미실행** (macOS) → BLOCKED
+  → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
 
 ## 실행 명령
 
@@ -76,6 +81,6 @@ just bench-iai
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)

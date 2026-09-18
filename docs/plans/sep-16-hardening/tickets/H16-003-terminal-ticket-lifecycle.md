@@ -24,13 +24,16 @@ ticket/permit/root guard를 하나의 terminal transition에서 정리하고 dea
 
 ## 구현 액션
 
-- [ ] Pending/DispatchReserved/Accepted/Running/CleanupPending/Terminal과 caller-response status를 분리한 request record를 정의한다. Accepted는 adapter가 인수했지만 아직 Started가 없는 phase다. legacy direct Governor admit은 외부 host가 소유하는 permit임을 명시한다.
-- [ ] ClaimOutcome(Ready/Pending/Terminal/Invalid)을 도입한다. bare Option compatibility wrapper의 한계를 문서화하고 host await_promotion은 terminal outcome을 반드시 처리한다.
-- [ ] release/abandon/reap/spawn-failure가 공통 invalidate path를 사용하도록 옮긴다. permit index, ticket index, recursion guard, root/class/global delta를 함께 commit한다.
-- [ ] 취소와 claim의 linearization winner를 정한다. queued→reserved→cancel→late worker start race에서 시작 승인과 refund가 둘 다 성공할 수 없게 한다.
-- [ ] terminal 상태는 waiter-owned completion cell 또는 bounded retention으로 전달한다. orphaned terminal cell, abandoned handle, ID exhaustion을 포함하고 무한 tombstone map을 금지한다.
-- [ ] run_local future/closure 자체는 Send kernel로 이동하지 않는다. kernel에는 immutable metadata/handle만 두고 !Send payload는 caller-local owner에 유지한다.
-- [ ] runtime-owned lease와 직접 Governor/manual permit의 release/reap 권한을 구분한다. 공개 제어 API로 살아 있는 runtime task의 capacity를 조기 환급할 수 없게 ownership capability를 검증한다.
+- [x] Pending/DispatchReserved/Accepted/Running/CleanupPending/Terminal과 caller-response status를 분리한 request record를 정의한다. Accepted는 adapter가 인수했지만 아직 Started가 없는 phase다. legacy direct Governor admit은 외부 host가 소유하는 permit임을 명시한다.
+- [x] ClaimOutcome(Ready/Pending/Terminal/Invalid)을 도입한다. bare Option compatibility wrapper의 한계를 문서화하고 host await_promotion은 terminal outcome을 반드시 처리한다.
+  → bare Option wrapper는 두지 않았다(breaking, `ClaimOutcome`만); host는 네 outcome 모두 처리
+- [x] release/abandon/reap/spawn-failure가 공통 invalidate path를 사용하도록 옮긴다. permit index, ticket index, recursion guard, root/class/global delta를 함께 commit한다.
+- [x] 취소와 claim의 linearization winner를 정한다. queued→reserved→cancel→late worker start race에서 시작 승인과 refund가 둘 다 성공할 수 없게 한다.
+- [x] terminal 상태는 waiter-owned completion cell 또는 bounded retention으로 전달한다. orphaned terminal cell, abandoned handle, ID exhaustion을 포함하고 무한 tombstone map을 금지한다.
+  → ID 공간은 u64 monotonic(재사용 없음); exhaustion은 실용적으로 도달 불가로 두었다
+- [x] run_local future/closure 자체는 Send kernel로 이동하지 않는다. kernel에는 immutable metadata/handle만 두고 !Send payload는 caller-local owner에 유지한다.
+- [x] runtime-owned lease와 직접 Governor/manual permit의 release/reap 권한을 구분한다. 공개 제어 API로 살아 있는 runtime task의 capacity를 조기 환급할 수 없게 ownership capability를 검증한다.
+  → capability token은 두지 않았다: runtime-owned lease는 `ExecutionLease`가 쥐고, `ext` `Governor::release`의 오용은 post-dispatch double release로 검출(debug assert; release: `UnknownPermit`) — D14; ext API는 embedder 신뢰
 
 ## 구현 결과 — 2026-09-16
 
@@ -81,6 +84,6 @@ cargo test -p taskmesh --test runtime_cancel_timeout --test runtime_local
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)

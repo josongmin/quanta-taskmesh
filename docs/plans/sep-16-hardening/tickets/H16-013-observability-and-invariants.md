@@ -21,12 +21,14 @@ snapshot·진단이 실제 lifecycle phase와 resource owner를 일관되게 보
 
 ## 구현 액션
 
-- [ ] Pending/DispatchReserved/Accepted/Running/CleanupPending/Terminal의 배타적 ownership phase와 별도 ResultHeld retention, class/global/capability usage를 authoritative state의 projection으로 제공한다. Accepted는 adapter 내부 start 대기를 숨기지 않는 gauge다.
-- [ ] caller completed와 execution terminated를 별도 counter로 둔다. deadline response가 live-worker gauge를 0으로 만들지 않는다.
-- [ ] admitted_total=sum(live ownership phases)+terminal_total, started_total=running+started_cleanup+terminated_after_start처럼 같은 scope의 보존식을 정의한다. adapter Accepted gauge와 누적 admission count를 구분하고 never-started terminal을 started 식에 넣지 않는다. ResultHeld는 execution phase와 직교하므로 live execution에 중복합산하지 않는다. retired terminal record도 누적 counter에는 보존하고 reserved/active units 중복합산을 금지한다.
-- [ ] queue wait, dispatch delay, run duration, cleanup duration, lock hold/selection visits를 구분한다. timeout phase·resolved class·adapter failure code를 safe context로 노출한다.
-- [ ] high-cardinality operation/root ID는 metric label로 사용하지 않는다. bounded diagnostic ring 또는 sampling을 사용하며 diagnostics drop을 별도 count로 표시한다.
-- [ ] legacy snapshot 의미 변경은 D06 버전 계약을 따른다. snapshot/read callback은 사용자 코드를 lock 안에서 실행하지 않는다.
+- [x] Pending/DispatchReserved/Accepted/Running/CleanupPending/Terminal의 배타적 ownership phase와 별도 ResultHeld retention, class/global/capability usage를 authoritative state의 projection으로 제공한다. Accepted는 adapter 내부 start 대기를 숨기지 않는 gauge다.
+- [x] caller completed와 execution terminated를 별도 counter로 둔다. deadline response가 live-worker gauge를 0으로 만들지 않는다.
+- [x] admitted_total=sum(live ownership phases)+terminal_total, started_total=running+started_cleanup+terminated_after_start처럼 같은 scope의 보존식을 정의한다. adapter Accepted gauge와 누적 admission count를 구분하고 never-started terminal을 started 식에 넣지 않는다. ResultHeld는 execution phase와 직교하므로 live execution에 중복합산하지 않는다. retired terminal record도 누적 counter에는 보존하고 reserved/active units 중복합산을 금지한다.
+- [x] queue wait, dispatch delay, run duration, cleanup duration, lock hold/selection visits를 구분한다. timeout phase·resolved class·adapter failure code를 safe context로 노출한다.
+  → queue wait/block 원인은 `pending_view`/`pending_block_reason`, selection visits는 `drr_ring_visits`(test-util), typed error에 phase/class context; lock hold time metric은 두지 않음
+- [x] high-cardinality operation/root ID는 metric label로 사용하지 않는다. bounded diagnostic ring 또는 sampling을 사용하며 diagnostics drop을 별도 count로 표시한다.
+  → high-cardinality label 없음; diagnostics ring 없음(N/A, EXCEPTIONS H16-013-A03)
+- [x] legacy snapshot 의미 변경은 D06 버전 계약을 따른다. snapshot/read callback은 사용자 코드를 lock 안에서 실행하지 않는다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -54,6 +56,7 @@ Regression: `crates/taskmesh-engine/tests/hardening_snapshot_projection.rs` (6).
 - [x] `H16-013-A01` 각 transition 후 snapshot과 독립 record projection 동일
 - [x] `H16-013-A02` hidden outstanding count 없음 (Accepted가 별도 gauge)
 - [ ] `H16-013-A03` diagnostics ring을 두지 않았으므로 해당 없음 — 넘칠 버퍼가 없다.
+  → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
 - [x] `H16-013-A04` 장기 운용 후 metric cardinality 및 terminal storage bounded
 - [x] `H16-013-A05` wide resource serialization 왕복 무손실
 - [x] `H16-013-A06` Accepted→Started 사이 cancel/shutdown에서 gauge·credit 유지
@@ -75,6 +78,6 @@ cargo test -p taskmesh --test e2e_proof
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)

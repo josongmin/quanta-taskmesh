@@ -24,12 +24,13 @@ dependency advisory와 consumer MSRV/developer toolchain 요구를 실제 graph�
 
 ## 구현 액션
 
-- [ ] cargo metadata와 reverse dependency graph로 crossbeam-epoch/proc-macro-error2 도입 경로를 기록한다. optional iai feature graph도 명시적으로 활성화하고 출력 부재를 dependency 제거 증거로 쓰지 않는다. advisory id·DB revision·조회 시각·대상 graph를 고정하며 exploit 가능성을 단정하지 않는다.
-- [ ] 호환 수정 버전·직접/간접 의존 변경을 최소 범위로 적용하고 Cargo.lock 단일 소유자 D가 갱신한다. 해결 불가 예외는 owner/근거/expiry/대체 통제를 갖춰 승인받는다.
-- [ ] declared consumer MSRV와 workspace 개발·test·bench toolchain floor를 별도 문서/CI matrix로 정의한다. dev-only dependency의 floor를 library consumer MSRV 위반으로 혼동하지 않는다.
-- [ ] workspace 밖 minimal consumer fixture를 별도 workspace로 구성하고 실제 선언된 MSRV toolchain에서 default 및 Rayon public surface를 compile한다. root workspace resolver/dev-deps가 fixture를 오염시키지 못한다.
-- [ ] 개발 toolchain 및 lockfile 버전과 fresh checkout/bootstrap 절차를 검증한다. 정확한 CI toolchain은 설치 가능성과 지원 정책에 맞춰 승인하고 floating latest에 의존하지 않는다.
-- [ ] 각 lane의 manifest/export/feature 변경 요청을 D가 직렬 적용하고 feature additive/optional dependency graph를 재확인한다.
+- [x] cargo metadata와 reverse dependency graph로 crossbeam-epoch/proc-macro-error2 도입 경로를 기록한다. optional iai feature graph도 명시적으로 활성화하고 출력 부재를 dependency 제거 증거로 쓰지 않는다. advisory id·DB revision·조회 시각·대상 graph를 고정하며 exploit 가능성을 단정하지 않는다.
+- [x] 호환 수정 버전·직접/간접 의존 변경을 최소 범위로 적용하고 Cargo.lock 단일 소유자 D가 갱신한다. 해결 불가 예외는 owner/근거/expiry/대체 통제를 갖춰 승인받는다.
+- [x] declared consumer MSRV와 workspace 개발·test·bench toolchain floor를 별도 문서/CI matrix로 정의한다. dev-only dependency의 floor를 library consumer MSRV 위반으로 혼동하지 않는다.
+- [x] workspace 밖 minimal consumer fixture를 별도 workspace로 구성하고 실제 선언된 MSRV toolchain에서 default 및 Rayon public surface를 compile한다. root workspace resolver/dev-deps가 fixture를 오염시키지 못한다.
+- [x] 개발 toolchain 및 lockfile 버전과 fresh checkout/bootstrap 절차를 검증한다. 정확한 CI toolchain은 설치 가능성과 지원 정책에 맞춰 승인하고 floating latest에 의존하지 않는다.
+  → fresh clone bootstrap은 확인(validator·workspace build·doc-examples); CI dev toolchain은 `stable` channel, 소비자 MSRV는 1.81 고정·별도 job
+- [x] 각 lane의 manifest/export/feature 변경 요청을 D가 직렬 적용하고 feature additive/optional dependency graph를 재확인한다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -72,6 +73,6 @@ cargo tree --locked -p taskmesh-bench --features iai -i proc-macro-error2
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)

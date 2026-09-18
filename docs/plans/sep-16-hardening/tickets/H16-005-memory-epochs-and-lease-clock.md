@@ -22,13 +22,14 @@ reservation 반환·measurement·heartbeat·reap가 합성될 때 자원이 부�
 
 ## 구현 액션
 
-- [ ] original_estimate/remaining_reservation/current_measurement/measurement_epoch를 분리한다. Estimated reconcile은 remaining reservation을 되살리지 않는다.
-- [ ] Measured reading은 현재 총 사용량으로 정의한다. stage reservation 반환을 실제 메모리 감소로 이중 차감하지 않는다. Hybrid floor는 D02의 remaining-reservation 계약을 따른다.
-- [ ] measurement/heartbeat epoch와 sequence를 검증해 stale update를 명시적으로 거부한다. accepted activity만 commit-time monotonic touch에 반영한다.
-- [ ] production clock은 내부 trusted monotonic read를 lock 획득 후 사용한다. arbitrary Clock callback을 lock 아래 호출하는 대안은 금지한다. custom Clock 호환은 D07 adapter로 격리한다.
-- [ ] strict runtime-owned running lease는 stale 시 Suspected/StopRequested로 두고 실제 termination 이전 reclaim 금지. unstarted reservation의 terminal cancellation 및 legacy direct-governor force-reclaim은 구분한다.
-- [ ] stage release 정책/override를 typed API로 정리한다. TM16-005는 D02 채택 후 enforcement 또는 trusted-override 문서화 중 선택한 계약을 구현한다.
-- [ ] stage release event에는 단일 소유권 또는 idempotency key/sequence 계약을 둔다. 중복·역순 delta와 오래된 measurement epoch를 accounting에 두 번 적용하지 않는다.
+- [x] original_estimate/remaining_reservation/current_measurement/measurement_epoch를 분리한다. Estimated reconcile은 remaining reservation을 되살리지 않는다.
+- [x] Measured reading은 현재 총 사용량으로 정의한다. stage reservation 반환을 실제 메모리 감소로 이중 차감하지 않는다. Hybrid floor는 D02의 remaining-reservation 계약을 따른다.
+- [x] measurement/heartbeat epoch와 sequence를 검증해 stale update를 명시적으로 거부한다. accepted activity만 commit-time monotonic touch에 반영한다.
+- [x] production clock은 내부 trusted monotonic read를 lock 획득 후 사용한다. arbitrary Clock callback을 lock 아래 호출하는 대안은 금지한다. custom Clock 호환은 D07 adapter로 격리한다.
+  → lock 안 trusted read 대신 lock 밖 sampling + commit-time monotonic watermark(D07)
+- [x] strict runtime-owned running lease는 stale 시 Suspected/StopRequested로 두고 실제 termination 이전 reclaim 금지. unstarted reservation의 terminal cancellation 및 legacy direct-governor force-reclaim은 구분한다.
+- [x] stage release 정책/override를 typed API로 정리한다. TM16-005는 D02 채택 후 enforcement 또는 trusted-override 문서화 중 선택한 계약을 구현한다.
+- [x] stage release event에는 단일 소유권 또는 idempotency key/sequence 계약을 둔다. 중복·역순 delta와 오래된 measurement epoch를 accounting에 두 번 적용하지 않는다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -73,7 +74,7 @@ cargo test -p taskmesh --test runtime_cancel_leak --test e2e_chaos
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

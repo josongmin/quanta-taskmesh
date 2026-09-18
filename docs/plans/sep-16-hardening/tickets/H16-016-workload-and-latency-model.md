@@ -22,13 +22,13 @@ parser뿐 아니라 직접 API 입력·가상 시간·MMPP event scheduling·his
 
 ## 구현 액션
 
-- [ ] ValidatedArrivals/SimulationConfig를 만들어 finite/nonnegative/nondecreasing time, ns 변환 범위, t+service overflow를 validate한다. raw slice 직접 simulate 경로도 검증을 우회하지 못한다.
-- [ ] rate/dwell/count/classes/Zipf 설정을 명시적으로 검사한다. zero/nonfinite dwell과 phase_end nonprogress는 loop 진입 전 또는 typed numeric failure로 종료한다.
-- [ ] MMPP는 arrival와 phase boundary 중 앞선 사건을 처리한다. integrated hazard/CTMC reference와 rate·occupancy·multiple seed 결과를 비교한다.
-- [ ] raw open-loop latency는 admitted/started request당 한 sample만 기록한다. synthetic correction은 별도 타입/모집단/metric label로 분리한다.
-- [ ] simulation leftovers와 offered conservation, queued terminal 정리를 검사한다. zero observations/undefined tail ratio를 'perfect fairness/flat tail'과 구별해 표시한다.
-- [ ] USL의 no finite peak를 near-linear로 자동 표시하지 않는다. alpha/beta/domain/empirical peak와 fit 실패 원인을 구분한다.
-- [ ] generator/trace schema version과 seed를 보존한다. generator 수정 후 기존 trace를 새 생성 알고리즘 결과로 오인하지 않는다.
+- [x] ValidatedArrivals/SimulationConfig를 만들어 finite/nonnegative/nondecreasing time, ns 변환 범위, t+service overflow를 validate한다. raw slice 직접 simulate 경로도 검증을 우회하지 못한다.
+- [x] rate/dwell/count/classes/Zipf 설정을 명시적으로 검사한다. zero/nonfinite dwell과 phase_end nonprogress는 loop 진입 전 또는 typed numeric failure로 종료한다.
+- [x] MMPP는 arrival와 phase boundary 중 앞선 사건을 처리한다. integrated hazard/CTMC reference와 rate·occupancy·multiple seed 결과를 비교한다.
+- [x] raw open-loop latency는 admitted/started request당 한 sample만 기록한다. synthetic correction은 별도 타입/모집단/metric label로 분리한다.
+- [x] simulation leftovers와 offered conservation, queued terminal 정리를 검사한다. zero observations/undefined tail ratio를 'perfect fairness/flat tail'과 구별해 표시한다.
+- [x] USL의 no finite peak를 near-linear로 자동 표시하지 않는다. alpha/beta/domain/empirical peak와 fit 실패 원인을 구분한다.
+- [x] generator/trace schema version과 seed를 보존한다. generator 수정 후 기존 trace를 새 생성 알고리즘 결과로 오인하지 않는다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -74,7 +74,7 @@ cargo test -p taskmesh-bench --lib
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

@@ -22,13 +22,13 @@
 
 ## 구현 액션
 
-- [ ] COVERAGE의 Q01–Q33을 각각 fixed/retained-by-contract/deferred-with-owner로 처분한다. source-linked rationale 없이 '품질 완료'로 묶지 않는다.
-- [ ] control lookup·worker handoff·built-in inventory 중복은 H16-002/008/011의 단일 권위로 통합한다. 단지 모양이 비슷한 서로 다른 semantic 함수를 generic helper로 합치지 않는다.
-- [ ] RequestKey/미사용 pending fields를 public/API/serde/test 소비자까지 검색하고 내부 dead data만 제거한다. reserved burst/DropBestEffort, DAG/reduce/checkpoint, root dedupe는 지원 계약을 명시하고 신규 엔진 기능으로 확장하지 않는다.
-- [ ] error handling은 expected receiver gone, optional ambient lookup, infrastructure fault를 나눠 annotation/error/metric을 선택한다. 무조건 로그·unwrap 제거를 품질 지표로 쓰지 않는다.
-- [ ] queue depth/admission phase/deadline start/cleanup/sweep/soft measured memory/retry hint/LocalSet affinity/unsupported nested wait를 구현 계약과 맞춘다.
-- [ ] generator/scheduler/gate 변경의 사용자 migration 예제와 실제 존재하는 command를 docs에 반영한다. PM 사용자 문서는 H16-020 승인 결과와 맞춘다.
-- [ ] unknown serde fields·빈 문자열/Unicode class identity 등 입력 호환성은 D01 및 별도 승인 결정대로 유지/변경한다. 증거 없는 신규 결함 수를 늘리지 않는다.
+- [x] COVERAGE의 Q01–Q33을 각각 fixed/retained-by-contract/deferred-with-owner로 처분한다. source-linked rationale 없이 '품질 완료'로 묶지 않는다.
+- [x] control lookup·worker handoff·built-in inventory 중복은 H16-002/008/011의 단일 권위로 통합한다. 단지 모양이 비슷한 서로 다른 semantic 함수를 generic helper로 합치지 않는다.
+- [x] RequestKey/미사용 pending fields를 public/API/serde/test 소비자까지 검색하고 내부 dead data만 제거한다. reserved burst/DropBestEffort, DAG/reduce/checkpoint, root dedupe는 지원 계약을 명시하고 신규 엔진 기능으로 확장하지 않는다.
+- [x] error handling은 expected receiver gone, optional ambient lookup, infrastructure fault를 나눠 annotation/error/metric을 선택한다. 무조건 로그·unwrap 제거를 품질 지표로 쓰지 않는다.
+- [x] queue depth/admission phase/deadline start/cleanup/sweep/soft measured memory/retry hint/LocalSet affinity/unsupported nested wait를 구현 계약과 맞춘다.
+- [x] generator/scheduler/gate 변경의 사용자 migration 예제와 실제 존재하는 command를 docs에 반영한다. PM 사용자 문서는 H16-020 승인 결과와 맞춘다.
+- [x] unknown serde fields·빈 문자열/Unicode class identity 등 입력 호환성은 D01 및 별도 승인 결정대로 유지/변경한다. 증거 없는 신규 결함 수를 늘리지 않는다.
 
 ## 구현 결과 — 2026-09-16
 
@@ -74,7 +74,7 @@ just py-test
 
 ## 인계 / 완료 증거
 
-- [ ] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다.
-- [ ] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다.
-- [ ] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다.
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
+- [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

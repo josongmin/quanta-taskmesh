@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 publish = false
-description = "Compiles every Rust example in the consumer-facing docs (README.md, docs/taskmesh-external-interface.md) against the shipped facade. Not a library."
+description = "Compiles every Rust example in the consumer-facing docs (README.md, docs/taskmesh-external-interface.md, CHANGELOG.md) against the shipped facade. Not a library."
 build = "build.rs"
 
 [lib]
@@ -19,3 +19,10 @@ doctest = false
 # the RayonCpuExecutor example compiles too.
 taskmesh = { path = "../../crates/taskmesh", features = ["rayon"] }
 tokio = { workspace = true }
+
+[dev-dependencies]
+# The CHANGELOG's topology migration example deserializes a `TopologyConfig`
+# from JSON, as a consumer checking untrusted input would. A dev-dependency:
+# the crate compiles its examples only under `cfg(test)`, and it is not part of
+# the shipped graph the architecture checker polices.
+serde_json = { workspace = true }

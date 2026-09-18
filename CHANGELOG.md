@@ -352,7 +352,7 @@ public surface and from the contract tests in `crates/*/tests/hardening_*.rs`.
 reclaimed"; a waiter treating the second as the first waited forever. All four
 outcomes are terminal-or-not by construction (`Invalid` is terminal).
 
-```rust
+```rust,ignore
 // 0.1.0
 loop {
     if let Some(permit) = governor.claim(ticket) {
@@ -360,7 +360,9 @@ loop {
     }
     waker.notified().await;
 }
+```
 
+```rust,body
 // 0.2.0 — the waker is the host adapter, registered at admission
 use std::sync::Arc;
 use taskmesh::ext::{AdmissionDecision, ClaimOutcome, PermitWaker, TokioPermitWaker};
@@ -403,10 +405,12 @@ reclaimed (a race the host must notice). `HeldByLease { phase }` is a release by
 id of a permit that has been dispatched: its `LeaseToken` owns it now (next
 section). A statement-form call now warns.
 
-```rust
+```rust,ignore
 // 0.1.0
 governor.release(permit);
+```
 
+```rust
 // 0.2.0
 use taskmesh::ext::ReleaseOutcome;
 match governor.release(permit) {
@@ -437,18 +441,23 @@ only `release_leased(token)` ends the permit. The token is not `Clone` and is
 sweep never reclaims a leased permit). Undispatched permits — a direct `admit`
 an embedder never advances — are still released by id.
 
-```rust
+```rust,ignore
 // 0.1.0
 assert!(governor.advance_phase(permit, ExecutionPhase::Running));
 run(job);
 governor.release(permit);
+```
 
+```rust
 // 0.2.0
 use taskmesh::ext::{AdvanceOutcome, ReleaseOutcome};
 let token = match governor.advance_phase(permit, ExecutionPhase::Running) {
     AdvanceOutcome::Leased(token) => token, // keep it with the work
     AdvanceOutcome::Advanced => unreachable!("a permit is leased on its first advance"),
-    AdvanceOutcome::Refused(refusal) => return Err(refusal), // reclaimed, or not later
+    AdvanceOutcome::Refused(refusal) => {
+        // reclaimed before dispatch, or a phase that is not later: not started
+        return Err(format!("not started: {refusal:?}").into());
+    }
 };
 run(job);
 assert_eq!(governor.release_leased(token), ReleaseOutcome::Released);
@@ -460,10 +469,12 @@ A policy refusal was folded into "freed 0 units". Stage release now requires the
 class to declare `MemoryReleasePolicy::OnStageBoundary` or `LeakDetecting`;
 `OnTaskCompletion` (the default) answers `PolicyForbids`.
 
-```rust
+```rust,ignore
 // 0.1.0
 let freed: u32 = governor.release_stage_memory(permit, 2);
+```
 
+```rust
 // 0.2.0
 use taskmesh::ext::StageReleaseOutcome;
 match governor.release_stage_memory(permit, 2) {
@@ -521,10 +532,12 @@ Conservation identities you may assert on any snapshot:
 `in_use <= limit` when `limit != 0`. `Snapshot::conservation_violation()` checks
 them all.
 
-```rust
+```rust,ignore
 // 0.1.0
 let held: u32 = snapshot.classes[&class].cpu_units_held;
+```
 
+```rust
 // 0.2.0
 assert_eq!(snapshot.schema_version, 2);
 let held: u128 = snapshot.classes[&class].cpu_units_held;
@@ -565,11 +578,13 @@ overflow, non-monotonic phase declaration, policy validation failures). A
 consumer that matched `PolicyViolation` to detect worker failure must add arms
 for the new variants:
 
-```rust
+```rust,ignore
 // 0.1.0 (the blocking pool said "spawn_blocking join failure", so this arm never
 // caught a blocking-pool panic — one more reason the strings were not a contract)
 Err(RunError::Governor(GovernorError::PolicyViolation(msg))) if msg.contains("panicked") => retry(),
+```
 
+```rust,arms
 // 0.2.0
 Err(RunError::Governor(GovernorError::WorkerPanicked { .. })) => { /* side effects unknown */ }
 Err(RunError::Governor(GovernorError::WorkerUnavailable { .. })) => retry(), // never started
@@ -587,7 +602,7 @@ work ran to completion returning `Ok`. In 0.2.0 the submission is refused before
 admission (nothing is admitted, nothing is charged). Either declare the policy
 or stop passing a deadline:
 
-```rust
+```rust,builder
 // 0.2.0 — the class must be able to enforce what the submission asks for
 .class_policy(
     TaskClass::new("fetch"),
@@ -595,6 +610,9 @@ or stop passing a deadline:
         .max_inflight(8)
         .cancellation_policy(CancellationPolicy::CooperativeWithDeadline),
 )
+```
+
+```rust
 // …
 match runtime.run_io_with(spec, SubmitOptions::unbounded().with_deadline(d), fut).await {
     Err(RunError::Governor(GovernorError::DeadlineUnsupported { class, policy })) => {
@@ -621,13 +639,15 @@ whose queue is *full* while blocked on a pool is also shed as
 `SubstrateSaturated` (not `QueueFull`): the verdict names the resource, and the
 full queue is why it could not wait for it.
 
-```rust
+```rust,body
 // 0.2.0 — keep the "eventually runs" behaviour by opting into a queue:
 ClassPolicy::new()
     .max_inflight(8)
     .max_queue_depth(64)
     .overflow_policy(OverflowPolicy::QueueWithinDepth)
+```
 
+```rust,arms
 // …and handle both verdicts:
 Err(RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstrateSaturated { retry_after_ms }))) => {
     // immediate shed: the pool is full and this class does not queue
@@ -704,11 +724,13 @@ constructing one to pass somewhere — it never had an effect.
 
 #### `PolicySet` substrate registry: field → accessor; no struct literal
 
-```rust
+```rust,ignore
 // 0.1.0
 let records = policy.substrates.values();
 let custom = PolicySet { resources, classes, substrates: my_map };
+```
 
+```rust
 // 0.2.0
 let records = policy.substrates().values();
 let custom = PolicySet::new(resources, classes)

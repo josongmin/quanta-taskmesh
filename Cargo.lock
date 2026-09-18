@@ -1296,6 +1296,7 @@ dependencies = [
 name = "taskmesh-doc-examples"
 version = "0.2.0"
 dependencies = [
+ "serde_json",
  "taskmesh",
  "tokio",
 ]

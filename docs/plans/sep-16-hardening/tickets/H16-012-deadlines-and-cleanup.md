@@ -29,7 +29,7 @@ acquire/run/response/termination clock과 cancellation winner를 고정하고 cl
 - [x] 정상 success/task-error 결과의 completion fence는 worker-owned runtime/context·지원 child cleanup·lease release 범위를 D10으로 고정한다.
 - [x] deadline/cancel 응답은 cleanup 이전에 전달할 수 있으나 worker/cleanup owner가 semantic+dispatch credit을 유지한다. bounded cleanup count는 active execution 한도에 포함한다.
 - [x] shutdown/drain timeout은 StillRunning/NotDrained로 보고한다. shutdown_timeout/background 반환을 termination receipt로 사용하지 않는다.
-  → shutdown/drain API 없음(N/A, EXCEPTIONS H16-012-A07)
+  → `TokioRuntime::drain(timeout)` → `Err(NotDrained { classes, elapsed })` (D17); drain은 reply가 아니라 engine custody gauge를 보고, timeout 반환은 termination receipt가 아니다(runtime은 draining으로 남는다)
 - [x] completion timestamp와 cleanup/response latency를 별도 기록한다. timely completion의 late delivery 처리와 CompleteBy 전체범위의 차이를 문서화한다.
   → worker가 start/completion timestamp를 결과와 함께 보내 판정; 별도 latency metric은 두지 않았고 response≠custody는 D10에 문서화
 
@@ -61,10 +61,10 @@ Regression: `crates/taskmesh/tests/hardening_deadline_custody.rs` (10),
       credit 유지, barrier 해제 후 refund 1회
 - [x] `H16-012-A05` requested-stack 성공 후 즉시 snapshot 및 연속 ZERO acquire fence
 - [x] `H16-012-A06` caller drop/worker panic/task error에서 무계상 실행 없음
-- [ ] `H16-012-A07` `shutdown`/`drain` API가 존재하지 않으므로 `NotDrained` 보고는
-      구현하지 않았다. 현재 teardown은 runtime handle drop으로만 일어난다. shutdown
-      계약은 별도 작업으로 남긴다.
-  → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
+- [x] `H16-012-A07` `TokioRuntime::drain(timeout)`이 timeout에 `NotDrained`를 클래스별
+      `inflight`/`queued`로 보고한다 (`a_held_blocking_worker_makes_drain_report_not_drained_and_stay_charged`,
+      `not_drained_lists_each_class_with_its_own_inflight_and_queued_counts`); 보고 뒤에도
+      worker는 charged 상태로 남고 runtime은 draining이다. teardown은 여전히 handle drop뿐 (ADR 0003 D17)
 
 ## 실행 명령
 

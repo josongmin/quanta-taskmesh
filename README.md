@@ -111,7 +111,7 @@ feature 플래그:
 함께 열거된다 (`Governor::claim → ClaimOutcome`, `Governor::release → ReleaseOutcome`,
 `Snapshot` wire schema 2, `DeadlineUnsupported`, `SubstrateSaturated`,
 `ExecutorCapabilities` 등). 각 변경의 계약과 근거는
-[ADR 0003](docs/adr/0003-sep-16-hardening-contracts.md)(D01–D16)에 있다. 소비자가 의존하는
+[ADR 0003](docs/adr/0003-sep-16-hardening-contracts.md)(D01–D17)에 있다. 소비자가 의존하는
 public surface는 `taskmesh` (+ `taskmesh::ext`)이며, 릴리스마다
 `cargo semver-checks check-release --baseline-rev <직전 릴리스>`와 MSRV(1.81) 소비자 fixture
 (`just consumer-msrv`, [tools/consumer-msrv](tools/consumer-msrv/src/main.rs))로 검증한다 —
@@ -338,6 +338,32 @@ worker 쪽 실패는 각각의 이름으로 온다: `WorkerPanicked { context }`
 permit은 — 즉시 승인이든, 큐 대기 중 timeout과 경합한 promotion이든 — 시작되지 않고 unwind되며
 `PermitAcquireTimedOut`(capability pool 대기였다면 `SubstratePoolTimedOut`)이 반환된다.
 `Duration::ZERO`는 "대기하지 말고 시도" 의미를 유지한다.
+
+**종료(drain).** 프로세스를 내리기 전에는 `drain`으로 새 작업을 막고 이미 받은 작업이 끝나기를 기다린다.
+`drain`은 engine 안에서 admission을 닫으므로(one-way) 이후 모든 제출은 admission 전에
+`Rejected(RuntimeUnavailable)`로 거절되고, queue·계상·total은 움직이지 않는다. 이미 queue·admit된
+작업은 취소하지 않는다. 기다림의 기준은 caller의 응답이 아니라 engine의 custody gauge
+(`inflight == 0 && queued == 0`, 모든 클래스)다.
+
+```rust
+use std::time::Duration;
+
+match runtime.drain(Duration::from_secs(30)).await {
+    Ok(report) => {
+        // 모든 클래스가 비었다: handle을 drop하면 남는 것이 없다.
+        let _ = report.elapsed;
+    }
+    Err(not_drained) => {
+        // 아직 charged된 작업이 있다 — 시작된 blocking 작업은 abort할 수 없다.
+        // runtime은 draining 상태로 남고, 다시 drain하면 같은 대기를 이어간다.
+        for (class, left) in &not_drained.classes {
+            eprintln!("{class}: inflight={} queued={}", left.inflight, left.queued);
+        }
+    }
+}
+```
+
+teardown은 여전히 runtime handle drop뿐이다.
 
 ### 7. 고급 통합 (`taskmesh::ext`)
 

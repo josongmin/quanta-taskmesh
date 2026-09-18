@@ -15,8 +15,10 @@ rules:
         - "**/crates/taskmesh/src/adapters/**"
         # The Clock port adapters (SystemClock/ManualClock) live in contract.
         - "**/crates/taskmesh-contract/src/ports.rs"
-        # Host adapter: tokio monotonic-timer deadlines for bounded acquire waits.
+        # Host adapter: tokio monotonic-timer deadlines for bounded acquire waits
+        # (`runtime.rs`) and the bounded drain wait (`runtime/drain.rs`, D17).
         - "**/crates/taskmesh/src/runtime.rs"
+        - "**/crates/taskmesh/src/runtime/drain.rs"
         - "**/tests/**"
         # Test-only modules that live in `src/` by necessity (they need
         # crate-private access). Named `*_tests.rs` by convention and gated

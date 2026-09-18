@@ -53,6 +53,10 @@ use crate::RuntimeConfig;
 
 #[cfg(test)]
 mod claim_acquisition_tests;
+mod drain;
+
+use drain::DrainSignal;
+pub use drain::{DrainReport, NotDrained, Outstanding};
 
 type BlockingJobV1<T, E> = Box<dyn FnOnce() -> Result<T, E> + Send + 'static>;
 type RequestedStackAsyncFutureV1<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + 'static>>;
@@ -70,6 +74,9 @@ pub struct TokioRuntime {
     pub(crate) config: RuntimeConfig,
     pub(crate) governor: Arc<Governor>,
     cpu: Arc<dyn CpuExecutor>,
+    /// The drain's wake-up (D17), shared with every lease this handle issues.
+    /// The refusal itself is the engine's (`Governor::close_admission`).
+    drain: Arc<DrainSignal>,
 }
 
 impl std::fmt::Debug for TokioRuntime {
@@ -80,6 +87,8 @@ impl std::fmt::Debug for TokioRuntime {
             .field("config", &self.config)
             .field("governor", &self.governor)
             .field("cpu_executor", &self.cpu.capabilities())
+            .field("draining", &self.is_draining())
+            .field("drain", &self.drain)
             .finish()
     }
 }
@@ -94,6 +103,7 @@ impl TokioRuntime {
             config,
             governor,
             cpu,
+            drain: Arc::new(DrainSignal::default()),
         }
     }
 
@@ -176,6 +186,7 @@ impl TokioRuntime {
                 // can never linger or strand a promoted-but-unclaimed permit.
                 let mut guard = TicketGuard {
                     governor: Arc::clone(&self.governor),
+                    drain: Arc::clone(&self.drain),
                     ticket: Some(ticket),
                 };
                 let result = self
@@ -273,6 +284,7 @@ impl TokioRuntime {
         match self.governor.release(permit_id) {
             ReleaseOutcome::Released | ReleaseOutcome::UnknownPermit => {}
         }
+        self.drain.settled();
     }
 
     /// Acquire the execution lease for a resolved plan.
@@ -317,6 +329,7 @@ impl TokioRuntime {
             .map_err(|error| absolute_acquire_error_v1(absolute_deadline, error))?;
         Ok(ExecutionLease {
             governor: Arc::clone(&self.governor),
+            drain: Arc::clone(&self.drain),
             permit_id: permit,
             permit: Some(permit),
             dispatched: false,
@@ -1183,6 +1196,9 @@ async fn acquisition_deadline_reached_v1(deadline: Option<Instant>) {
 /// actually terminated.
 struct ExecutionLease {
     governor: Arc<Governor>,
+    /// Pinged on drop: custody is back with the engine, so a drain waiting on
+    /// this lease re-reads the gauges (D17).
+    drain: Arc<DrainSignal>,
     permit_id: PermitId,
     /// `None` once the permit has been returned — or once the engine reported
     /// it gone, so a later drop does not release it a second time.
@@ -1246,6 +1262,10 @@ impl Drop for ExecutionLease {
                 }
             }
         }
+        // Whichever way the permit went — released here, or already reclaimed
+        // by the sweep and disarmed — the engine no longer charges this lease,
+        // and a drain waiting for that fact must hear it now, not at timeout.
+        self.drain.settled();
     }
 }
 
@@ -1255,6 +1275,9 @@ impl Drop for ExecutionLease {
 /// is successfully claimed (ownership then passes to an [`ExecutionLease`]).
 struct TicketGuard {
     governor: Arc<Governor>,
+    /// Pinged after an abandon: the queued (or promoted-but-unclaimed) request
+    /// is no longer counted, and a drain may be waiting on that (D17).
+    drain: Arc<DrainSignal>,
     ticket: Option<u64>,
 }
 
@@ -1268,6 +1291,7 @@ impl Drop for TicketGuard {
     fn drop(&mut self) {
         if let Some(ticket) = self.ticket {
             self.governor.abandon(ticket);
+            self.drain.settled();
         }
     }
 }

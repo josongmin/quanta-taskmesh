@@ -311,6 +311,112 @@ fn randomized_claim_versus_reap_fails_closed_both_ways() {
     );
 }
 
+// ---- D17: closing admission is decided under the admission lock --------------
+
+/// Schedules in which the closer must have beaten at least one admitter, and
+/// schedules in which at least one admitter must have beaten the closer (5% of
+/// the sample each): a model where only one side ever wins proves nothing
+/// about the race.
+const MIN_MIXED: usize = SCHEDULES / 20;
+
+/// Four admitters race one closer on the real engine. The property: the
+/// snapshot the closer takes right after `close_admission` returns is the last
+/// word — no admission that began before the close lands after it. A close
+/// decided outside the admission lock (or checked before the lock is taken)
+/// lets an admitter that passed the check before the close slip in after the
+/// closer's snapshot, and the final `admitted_total` exceeds it.
+#[test]
+fn randomized_close_admission_is_the_last_word_on_what_was_admitted() {
+    let closer_won_some = Arc::new(AtomicUsize::new(0));
+    let admitters_won_some = Arc::new(AtomicUsize::new(0));
+    let (closer_stat, admitter_stat) = (
+        Arc::clone(&closer_won_some),
+        Arc::clone(&admitters_won_some),
+    );
+    shuttle::check_random(
+        move || {
+            let g = governor(8, 8, Arc::new(ManualClock::new(1_000)));
+            let admitters: Vec<_> = (0..4)
+                .map(|i| {
+                    let g = Arc::clone(&g);
+                    thread::spawn(move || {
+                        let mut mine = Vec::new();
+                        let mut refused = 0usize;
+                        for round in 0..2 {
+                            match g.admit(&spec(&format!("t{i}r{round}"))) {
+                                AdmissionDecision::Admitted { permit_id } => mine.push(permit_id),
+                                AdmissionDecision::Rejected(
+                                    AdmissionVerdict::RuntimeUnavailable,
+                                ) => {
+                                    assert!(
+                                        g.admission_closed(),
+                                        "a refusal must mean the close already happened"
+                                    );
+                                    refused += 1;
+                                }
+                                other => panic!("unexpected {other:?}"),
+                            }
+                        }
+                        (mine, refused)
+                    })
+                })
+                .collect();
+            let closer = {
+                let g = Arc::clone(&g);
+                thread::spawn(move || {
+                    g.close_admission();
+                    g.snapshot().classes[&class()].admitted_total
+                })
+            };
+            let at_close = closer.join().unwrap();
+            let mut permits = Vec::new();
+            let mut refused = 0usize;
+            for h in admitters {
+                let (mine, r) = h.join().unwrap();
+                permits.extend(mine);
+                refused += r;
+            }
+            let end = g.snapshot().classes[&class()].admitted_total;
+            assert_eq!(
+                end, at_close,
+                "an admission landed after the closer's snapshot: the close is not the last word"
+            );
+            assert_eq!(
+                end,
+                u128::try_from(permits.len()).expect("fits"),
+                "every admission the callers saw is in the total"
+            );
+            assert_eq!(
+                permits.len() + refused,
+                8,
+                "every submission was admitted or refused"
+            );
+            if refused > 0 {
+                closer_stat.fetch_add(1, Ordering::SeqCst);
+            }
+            if !permits.is_empty() {
+                admitter_stat.fetch_add(1, Ordering::SeqCst);
+            }
+            for permit in permits {
+                assert_eq!(g.release(permit), ReleaseOutcome::Released);
+            }
+            assert_quiescent(&g);
+            assert!(g.admission_closed(), "draining to zero never reopens");
+        },
+        SCHEDULES,
+    );
+    let closer_won = closer_won_some.load(Ordering::SeqCst);
+    let admitters_won = admitters_won_some.load(Ordering::SeqCst);
+    assert!(
+        closer_won >= MIN_MIXED,
+        "only {closer_won} of {SCHEDULES} schedules had the closer beat an admitter"
+    );
+    assert!(
+        admitters_won >= MIN_MIXED,
+        "only {admitters_won} of {SCHEDULES} schedules had an admitter beat the closer"
+    );
+}
+
 // ---- D08: the promotion-gap rule under real concurrency ----------------------
 //
 // `hardening_fairness_reference.rs` proves the gap rule from one deterministic

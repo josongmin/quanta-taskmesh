@@ -44,7 +44,7 @@ mod runtime;
 
 pub use builder::Builder;
 pub use executor::{SubmissionDeadline, SubmitOptions};
-pub use runtime::{TokioRuntime, MAX_REQUESTED_STACK_BYTES};
+pub use runtime::{DrainReport, NotDrained, Outstanding, TokioRuntime, MAX_REQUESTED_STACK_BYTES};
 pub use tokio_util::sync::CancellationToken;
 
 pub use taskmesh_contract::{

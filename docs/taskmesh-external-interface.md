@@ -85,6 +85,14 @@ let out = runtime
    current-thread Tokio runtime을 만들고 그 안에서 future factory를 호출한다. root future는 `!Send`일 수
    있고 `tokio::spawn` child도 caller runtime으로 이탈하지 않는다. caller future drop은 worker root와
    runtime-owned child를 함께 종료한다.
+10. shutdown은 `drain(timeout)` 뒤 handle drop이다 (D17). `TokioRuntime::drain`은 engine의 admission을
+    **닫고**(one-way; 이후 모든 제출 경로와 `governor()`를 직접 모는 embedder는 admission 전에
+    `Rejected(RuntimeUnavailable)`로 거절 — queue·계상·total 변화 없음) 모든 클래스의 `inflight == 0 &&
+    queued == 0`을 engine gauge에서 기다린다. 이미 queue·admit된 작업은 취소하지 않는다. timeout이 먼저
+    오면 `Err(NotDrained { classes: {class → {inflight, queued}}, elapsed })`이며 runtime은 draining으로
+    남는다 — 이 보고는 종료 영수증이 아니다: 시작된 blocking 작업은 abort할 수 없으므로(D10) 그 worker는
+    여전히 charged다. `is_draining()`은 engine의 `admission_closed()`를 그대로 읽는다. teardown은 여전히
+    handle drop뿐이다.
 
 타입 규칙:
 

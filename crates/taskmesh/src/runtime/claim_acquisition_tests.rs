@@ -351,6 +351,7 @@ async fn a_lease_the_sweep_reclaimed_before_dispatch_refuses_to_advance_v1() {
     let permit = occupy(&runtime, &spec);
     let mut lease = ExecutionLease {
         governor: Arc::clone(&runtime.governor),
+        drain: Arc::clone(&runtime.drain),
         permit_id: permit,
         permit: Some(permit),
         dispatched: false,
@@ -380,6 +381,7 @@ async fn a_lease_the_sweep_reclaimed_before_dispatch_refuses_to_advance_v1() {
     let permit = occupy(&runtime, &spec);
     let mut lease = ExecutionLease {
         governor: Arc::clone(&runtime.governor),
+        drain: Arc::clone(&runtime.drain),
         permit_id: permit,
         permit: Some(permit),
         dispatched: false,
@@ -399,6 +401,7 @@ async fn a_phase_that_does_not_advance_is_reported_not_ignored_v1() {
     let permit = occupy(&runtime, &spec);
     let mut lease = ExecutionLease {
         governor: Arc::clone(&runtime.governor),
+        drain: Arc::clone(&runtime.drain),
         permit_id: permit,
         permit: Some(permit),
         dispatched: false,

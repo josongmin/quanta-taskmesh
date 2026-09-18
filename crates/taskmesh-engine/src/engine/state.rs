@@ -313,6 +313,12 @@ pub struct GovernedState {
     /// Set once an accounting invariant could not be represented. While set,
     /// admission is refused: the engine will not guess a total it cannot compute.
     pub accounting_fault: Option<&'static str>,
+    /// Set once by [`Self::close_admission`] and never cleared: the runtime is
+    /// draining. While set, admission is refused before anything is charged;
+    /// queued work is still promoted, claimed, and run, and every release is
+    /// still accounted. Checked under the same lock that admits, so the
+    /// snapshot taken after the close is the last word on what was let in.
+    pub admission_closed: bool,
     /// A promotion pass ran out of budget and its continuation has not run yet
     /// (the lock is released between passes). While set, capacity that opens
     /// belongs to the queue: a direct admit of a queueable class is placed in
@@ -686,6 +692,12 @@ impl GovernedState {
         if self.accounting_fault.is_none() {
             self.accounting_fault = Some(what);
         }
+    }
+
+    /// Stop admitting. One-way, idempotent; nothing already in the state is
+    /// touched (D17).
+    pub fn close_admission(&mut self) {
+        self.admission_closed = true;
     }
 
     /// Debug-only structural invariants. This is the *independent* recomputation

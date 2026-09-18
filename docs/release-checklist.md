@@ -53,8 +53,8 @@ The gate set is `tools/gates/inventory.json`; the required subset is
   promotion-gap rule under concurrent admits (shuttle, 5,000 schedules each).
 - `differential_model.rs`: the admission/promotion contract as a ~150-line
   executable specification, checked against the engine after every random op.
-- Mutation gate: 65 entries — 64 single-edit reintroductions of fixed defects
-  (54 cargo incl. 2 shuttle-model targets and 1 differential-model target, 10 pytest
+- Mutation gate: 74 entries — 73 single-edit reintroductions of fixed defects
+  (63 cargo incl. 2 shuttle-model targets and 1 differential-model target, 10 pytest
   against the Python tooling and the bench workflow scripts), each killed by its named regression for its named
   reason found in that test's own output, plus one behaviour-preserving control
   that must stay green

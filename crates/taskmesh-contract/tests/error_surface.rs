@@ -330,3 +330,144 @@ fn as_verdict_reaches_the_rejection_and_nothing_else() {
     assert_eq!(task.task(), Some(&"boom".to_string()));
     assert_eq!(task.governor(), None);
 }
+
+// ---- the `?` chain and the hint accessor -------------------------------------
+
+#[test]
+fn every_backpressure_verdict_carries_its_hint_and_no_other_verdict_does() {
+    // `retry_after_ms()` is what a caller's backoff reads. Every verdict that
+    // *has* a hint must surface it — a missing arm would tell a caller "no
+    // hint" for a rejection the engine sized a retry for — and no verdict
+    // without one may invent it.
+    let hinted = [
+        AdmissionVerdict::QueueFull {
+            retry_after_ms: Some(7),
+        },
+        AdmissionVerdict::CpuSaturated {
+            retry_after_ms: Some(7),
+        },
+        AdmissionVerdict::MemorySaturated {
+            retry_after_ms: Some(7),
+        },
+        AdmissionVerdict::PermitAcquireTimedOut {
+            retry_after_ms: Some(7),
+        },
+        AdmissionVerdict::SubstratePoolTimedOut {
+            retry_after_ms: Some(7),
+        },
+        AdmissionVerdict::SubstrateSaturated {
+            retry_after_ms: Some(7),
+        },
+    ];
+    for verdict in &hinted {
+        assert_eq!(
+            verdict.retry_after_ms(),
+            Some(7),
+            "{verdict:?} carries a retry hint and must surface it"
+        );
+        assert_eq!(
+            GovernorError::Rejected(verdict.clone()).retry_after_ms(),
+            Some(7),
+            "the hint must survive wrapping in GovernorError::Rejected"
+        );
+    }
+    let unhinted = [
+        AdmissionVerdict::UnknownClass {
+            class: TaskClass::new("x"),
+        },
+        AdmissionVerdict::SubstrateMismatch,
+        AdmissionVerdict::MalformedTask,
+        AdmissionVerdict::CancelledBeforeSubmit,
+        AdmissionVerdict::RuntimeUnavailable,
+    ];
+    for verdict in &unhinted {
+        assert_eq!(
+            verdict.retry_after_ms(),
+            None,
+            "{verdict:?} has no hint to give"
+        );
+    }
+}
+
+#[test]
+fn errors_convert_along_the_question_mark_chain_and_keep_their_source() {
+    // A consumer writes `topology.validate()?; runtime.run_io(..).await?` in a
+    // function returning `Result<_, RunError<E>>`. That compiles only through
+    // `From<TopologyError> for GovernorError` and `From<GovernorError> for
+    // RunError<E>`, and the original error must still be reachable through
+    // `source()` — otherwise `?` would flatten the diagnosis.
+    #[derive(Debug)]
+    struct MyErr;
+    impl std::fmt::Display for MyErr {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("boom")
+        }
+    }
+    impl Error for MyErr {}
+
+    fn validate_then_run() -> Result<(), RunError<MyErr>> {
+        let topology = TopologyConfig::new()
+            .cpu_fixed(4)
+            .min_workers(8)
+            .max_workers(2);
+        let checked: Result<(), GovernorError> = topology.validate().map_err(GovernorError::from);
+        checked?;
+        Ok(())
+    }
+    let error = validate_then_run().expect_err("an inverted worker window fails validation");
+    let RunError::Governor(GovernorError::InvalidTopology(topology_error)) = &error else {
+        panic!("`?` must keep the typed topology error, got {error:?}");
+    };
+    // source() chains: RunError -> GovernorError -> TopologyError.
+    let governor: &GovernorError = error
+        .source()
+        .and_then(|s| s.downcast_ref::<GovernorError>())
+        .expect("RunError::Governor exposes the governor error as its source");
+    let topology_source = governor
+        .source()
+        .and_then(|s| s.downcast_ref::<TopologyError>())
+        .expect("GovernorError::InvalidTopology exposes the topology error as its source");
+    assert_eq!(topology_source, topology_error);
+    // The task side of the accessor pair is empty for a governor error, and
+    // a governor error without an inner error has no source.
+    assert!(
+        error.task().is_none(),
+        "a governor error is not a task error"
+    );
+    assert!(!error.is_task(), "and is_task agrees");
+    let plain: RunError<MyErr> = RunError::Governor(GovernorError::Cancelled);
+    assert!(
+        plain.source().is_some(),
+        "Governor(_) always exposes the governor error"
+    );
+    assert!(
+        GovernorError::Cancelled.source().is_none(),
+        "a leaf governor error has no source"
+    );
+}
+
+#[test]
+fn execution_phases_render_as_their_snapshot_keys() {
+    // The phase names are wire-facing (dashboards key on them); pin the exact
+    // spelling of every variant so a rename cannot slip through as a
+    // "cosmetic" change.
+    let rendered: Vec<String> = [
+        ExecutionPhase::DispatchReserved,
+        ExecutionPhase::Accepted,
+        ExecutionPhase::Running,
+        ExecutionPhase::CleanupPending,
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .collect();
+    assert_eq!(
+        rendered,
+        [
+            "dispatch_reserved",
+            "accepted",
+            "running",
+            "cleanup_pending"
+        ],
+        "phase names are wire keys; every variant renders exactly"
+    );
+}

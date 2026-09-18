@@ -10,7 +10,7 @@
   최종 qualification은 CI `qualification` job(Linux clean checkout)이 낸다.
 - 구현된 계약: [ADR 0003](../../../adr/0003-sep-16-hardening-contracts.md). 로컬 증거:
   `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 415 green (contract 38 · engine 180 · host 138 · rayon 3 · bench 55 · doc-examples 1),
-  loom 5 / shuttle 6 green **on the production `Governor`**, mutation gate 65/65
+  loom 5 / shuttle 6 green **on the production `Governor`**, mutation gate 74/74
   (Python 도구 10건·shuttle 모델 2건·differential 모델 1건·객관 sweep 갭 13건 포함), consumer MSRV 1.81 PASS(default·rayon), allocation gate 3.0 allocs/op
   (threshold = 측정값).
 - 구현 직후 3-track 적대적 감사(engine/runtime · 증명 강도 · tooling/CI/docs)를 실행했고 P0 3건·P1 12건·

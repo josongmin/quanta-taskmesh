@@ -18,7 +18,7 @@
 
 mod harness;
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -43,6 +43,10 @@ struct ReferenceDrr {
     deficits: BTreeMap<String, u64>,
     queues: BTreeMap<String, VecDeque<u64>>,
     cursor: Option<String>,
+    /// Classes whose head cannot run right now (capacity-blocked). They are
+    /// not visited, and — a capacity block does not end a busy period — they
+    /// keep whatever credit they had.
+    blocked: BTreeSet<String>,
 }
 
 impl ReferenceDrr {
@@ -55,6 +59,15 @@ impl ReferenceDrr {
                 .collect(),
             quanta,
             cursor: None,
+            blocked: BTreeSet::new(),
+        }
+    }
+
+    fn set_blocked(&mut self, class: &str, blocked: bool) {
+        if blocked {
+            self.blocked.insert(class.to_string());
+        } else {
+            self.blocked.remove(class);
         }
     }
 
@@ -68,7 +81,7 @@ impl ReferenceDrr {
     fn candidates(&self) -> Vec<String> {
         self.queues
             .iter()
-            .filter(|(_, queue)| !queue.is_empty())
+            .filter(|(class, queue)| !queue.is_empty() && !self.blocked.contains(*class))
             .map(|(class, _)| class.clone())
             .collect()
     }
@@ -315,6 +328,106 @@ fn drr_selection_matches_the_reference_for_heterogeneous_costs() {
         };
         assert_eq!(g.release(permit), ReleaseOutcome::Released);
     }
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
+#[test]
+fn residual_credit_kept_through_a_capacity_block_is_spent_on_the_first_visit_back() {
+    // Every other DRR fixture has each class's deficit below its head cost
+    // whenever the ring is planned: a class is served the moment it can afford
+    // its head, and a drained queue resets its credit. The one way a runnable
+    // *non-cursor* class shows up already able to afford its head is a
+    // capacity block: `x` (quantum 4, cost 1, `max_inflight` 1) is served once,
+    // keeps a residual deficit of 3, is then excluded from the ring because its
+    // own quota is full, and comes back runnable when its permit releases. On
+    // that lap the planner must (a) not compute `cost - deficit` (it
+    // underflows) and (b) place `x` on its very first visit, ahead of the
+    // cursor's successor — exactly what the naive walk does.
+    let mut map: BTreeMap<TaskClass, ClassPolicy> = BTreeMap::new();
+    map.insert(
+        TaskClass::new("x"),
+        ClassPolicy::new()
+            .max_inflight(1)
+            .max_queue_depth(16)
+            .cpu_units(1)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth)
+            .fairness(FairnessPolicy::DeficitRoundRobin { quantum: 4 }),
+    );
+    map.insert(
+        TaskClass::new("y"),
+        ClassPolicy::new()
+            .max_inflight(16)
+            .max_queue_depth(16)
+            .cpu_units(1)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth)
+            .fairness(FairnessPolicy::DeficitRoundRobin { quantum: 1 }),
+    );
+    map.insert(
+        TaskClass::new("h"),
+        ClassPolicy::new()
+            .max_inflight(16)
+            .cpu_units(1)
+            .fairness(FairnessPolicy::DeficitRoundRobin { quantum: 1 }),
+    );
+    let g = Governor::new(
+        PolicySet::new(ResourceBudget::new().cpu_units(2), map),
+        Arc::new(ManualClock::new(0)),
+    )
+    .expect("valid policy");
+    let mut reference = ReferenceDrr::new(BTreeMap::from([
+        ("x".to_string(), 4u64),
+        ("y".to_string(), 1u64),
+    ]));
+
+    // Two holders fill the cpu budget; the backlog queues behind them.
+    let h1 = admit_one(&g, "h", "h1");
+    let h2 = admit_one(&g, "h", "h2");
+    let mut tickets: Vec<(u64, String)> = Vec::new();
+    for op in ["x0", "x1"] {
+        tickets.push((queue_one(&g, "x", op), "x".to_string()));
+        reference.enqueue("x", 1);
+    }
+    for op in ["y0", "y1", "y2"] {
+        tickets.push((queue_one(&g, "y", op), "y".to_string()));
+        reference.enqueue("y", 1);
+    }
+
+    // Lap 1: `x` is served first (deficit 0 + 4 ≥ 1 → residual 3) and is now
+    // at its inflight quota: blocked, credit kept.
+    let (served, x_permit) = serve_next(&g, &mut tickets, h1);
+    assert_eq!(served, "x");
+    assert_eq!(reference.select().as_deref(), Some("x"));
+    reference.set_blocked("x", true);
+
+    // Lap 2: with `x` blocked the ring is `y` alone.
+    let (served, y_permit) = serve_next(&g, &mut tickets, h2);
+    assert_eq!(served, "y");
+    assert_eq!(reference.select().as_deref(), Some("y"));
+
+    // `x` comes back runnable with deficit 3 ≥ cost 1 while the cursor sits on
+    // `y`. Releasing x's own permit both frees a unit and lifts the block; the
+    // freed unit must go to `x` on its first visit — not to `y`, which is what
+    // treating the residual as "needs another lap" (or a wrapped
+    // `cost - deficit`) would do.
+    reference.set_blocked("x", false);
+    let (served, x_permit_2) = serve_next(&g, &mut tickets, x_permit);
+    assert_eq!(
+        served, "x",
+        "a class whose kept credit already covers its head is served on its first visit back"
+    );
+    assert_eq!(reference.select().as_deref(), Some("x"));
+    reference.set_blocked("x", true);
+
+    // Drain the rest in lockstep with the reference; every remaining request
+    // is `y`, and the orders must agree to the end.
+    let mut holder = y_permit;
+    while !tickets.is_empty() {
+        let (served, permit) = serve_next(&g, &mut tickets, holder);
+        assert_eq!(Some(served.as_str()), reference.select().as_deref());
+        holder = permit;
+    }
+    assert_eq!(g.release(holder), ReleaseOutcome::Released);
+    assert_eq!(g.release(x_permit_2), ReleaseOutcome::Released);
     assert_eq!(g.snapshot().conservation_violation(), None);
 }
 

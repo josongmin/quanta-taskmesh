@@ -642,3 +642,40 @@ async fn run_cpu_escapes_stalled_executor_via_cancel() {
     .await
     .expect("permit must release after the executor drops the queued work");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_run_deadline_that_does_not_fit_the_clock_is_refused_before_the_work_is_polled() {
+    // `with_deadline(Duration::MAX)` reads like "no deadline" but is a bound
+    // the host cannot represent as an instant. The honest answers are a typed
+    // refusal or a real deadline — never a silent "unbounded", and never a
+    // panic from `Instant + Duration`. The refusal must happen before the work
+    // is polled, and must leave nothing charged.
+    let rt = rt(CancellationPolicy::CooperativeWithDeadline);
+    let polled = Arc::new(AtomicBool::new(false));
+    let spec = TaskSpec::io(TaskClass::new("c")).operation("op");
+    let opts = SubmitOptions::unbounded().with_deadline(Duration::MAX);
+    let error = bounded(
+        "a_run_deadline_that_does_not_fit_the_clock_is_refused_before_the_work_is_polled: no answer",
+        rt.run_io_with(spec, opts, {
+            let polled = Arc::clone(&polled);
+            async move {
+                polled.store(true, Ordering::SeqCst);
+                Ok::<(), ()>(())
+            }
+        }),
+    )
+    .await
+    .expect_err("an unrepresentable deadline is refused, not dropped");
+    let RunError::Governor(GovernorError::PolicyViolation(message)) = &error else {
+        panic!("expected a typed policy violation, got {error:?}");
+    };
+    assert!(
+        message.contains("exceeds Instant range"),
+        "the refusal names the reason: {message}"
+    );
+    assert!(
+        !polled.load(Ordering::SeqCst),
+        "a refused deadline must not have started the work"
+    );
+    assert_drains(&rt, "c", "unrepresentable deadline refusal").await;
+}

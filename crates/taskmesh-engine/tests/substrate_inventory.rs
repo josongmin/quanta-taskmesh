@@ -88,3 +88,20 @@ fn snapshot_substrates_are_name_ordered() {
     sorted.sort();
     assert_eq!(names, sorted);
 }
+
+#[test]
+fn a_substrate_with_an_empty_name_is_rejected() {
+    // A record keyed on "" (or whitespace) could never be addressed by a
+    // `TaskSpec` and would still count as an executing substrate for pool
+    // binding. Both the empty and the whitespace spelling are refused by name.
+    for name in ["", "   "] {
+        let bad = SubstrateRecord::new(name, SubstrateKind::CompetingExecution, Some("blocking"));
+        let Err(GovernorError::PolicyViolation(message)) = gov_with(vec![bad]) else {
+            panic!("a substrate named {name:?} must be refused");
+        };
+        assert!(
+            message.contains("substrate name must be non-empty"),
+            "the refusal must name the rule, got: {message}"
+        );
+    }
+}

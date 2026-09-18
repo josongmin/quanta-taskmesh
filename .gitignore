@@ -27,10 +27,13 @@ build/
 # Local benchmark / measurement output (regenerate via just bench-*)
 bench-results/
 
-# Profiling / coverage (local only)
+# Profiling / coverage OUTPUT (local only). Anchored: an unanchored `coverage/`
+# also matched tools/coverage/ and kept the coverage-report gate's script out of
+# git (CI could not run it). The gate validator now refuses any recipe script
+# git does not track.
 *.profraw
-coverage/
-llvm-cov/
+/coverage/
+/llvm-cov/
 
 # Optional local semgrep cache
 .semgrep/

@@ -420,3 +420,61 @@ def test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps(monkeypa
     assert "status=PASS msrv=1.81" not in result["output_tail"], (
         "the tail is not where the verdict survives; the status_line field is"
     )
+
+
+def test_a_recipe_script_git_does_not_track_is_reported(tmp_path: Path) -> None:
+    """`tools/coverage/report.sh` sat under an unanchored `coverage/` ignore
+    rule: present on the author's disk, absent from every clone, so the CI
+    coverage / qualification jobs would have failed on a missing file. The
+    check reads git's own view (`ls-files`), so untracked and ignored scripts
+    are both caught — a file's presence on disk proves nothing."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    tools = tmp_path / "tools"
+    (tools / "a").mkdir(parents=True)
+    (tools / "b").mkdir()
+    (tools / "c").mkdir()
+    (tools / "a" / "tracked.sh").write_text("echo tracked\n", encoding="utf-8")
+    (tools / "b" / "untracked.sh").write_text("echo untracked\n", encoding="utf-8")
+    (tools / "c" / "ignored.sh").write_text("echo ignored\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("c/\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "add", "tools/a/tracked.sh", ".gitignore"], check=True
+    )
+    justfile = (
+        "one:\n    bash tools/a/tracked.sh\n\n"
+        "two:\n    bash tools/b/untracked.sh\n\n"
+        "three:\n    bash tools/c/ignored.sh && bash tools/a/tracked.sh\n"
+    )
+    tracked = vi.tracked_files(tmp_path)
+    assert "tools/a/tracked.sh" in tracked
+    assert vi.untracked_recipe_scripts("one", tracked, justfile) == []
+    assert vi.untracked_recipe_scripts("two", tracked, justfile) == ["tools/b/untracked.sh"]
+    assert vi.untracked_recipe_scripts("three", tracked, justfile) == ["tools/c/ignored.sh"], (
+        "an ignored file is on disk and still not in any clone"
+    )
+
+    # Through validate(): the problem names the gate, the recipe and the file.
+    inventory, *_ = real_inputs()
+    problems = problems_with(
+        inventory=copy.deepcopy(inventory),
+        untracked_scripts={"coverage-report": ["tools/coverage/report.sh"]},
+    )
+    assert any(
+        "coverage-report" in p and "tools/coverage/report.sh" in p and "does not track" in p
+        for p in problems
+    ), f"a recipe script git does not track must be reported: {problems}"
+    assert problems_with(untracked_scripts={}) == []
+
+
+def test_the_committed_inventorys_scripts_are_all_tracked() -> None:
+    """The live check, on the real repository: every script every gate recipe
+    runs is in git. (This is the test that would have been red for the
+    coverage script from the day it was written.)"""
+    inventory, *_ = real_inputs()
+    tracked = vi.tracked_files()
+    missing = {
+        gate["id"]: vi.untracked_recipe_scripts(gate["recipe"], tracked)
+        for gate in inventory["gates"]
+    }
+    missing = {gate: scripts for gate, scripts in missing.items() if scripts}
+    assert missing == {}, f"gate scripts git does not track: {missing}"

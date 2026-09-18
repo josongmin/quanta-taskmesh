@@ -773,6 +773,18 @@
       "test_target": "tools/gates/tests/test_inventory.py::test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps",
       "expect_failing_test": "test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps",
       "expect_message": "the recipe's final status line is the verdict, not an earlier one"
+    },
+    {
+      "id": "a-gate-script-outside-git-is-still-a-gate",
+      "finding": "R3C-3",
+      "runner": "pytest",
+      "rationale": "tools/coverage/report.sh was never committed (an unanchored `coverage/` ignore rule swallowed tools/coverage/); local receipts passed because the file was on the author's disk while CI would have failed on a missing script. The validator must refuse a recipe script git does not track.",
+      "file": "tools/gates/validate_inventory.py",
+      "find": "            for script in untracked_scripts.get(recipe, []):",
+      "replace": "            for script in untracked_scripts.get(recipe, [])[:0]:",
+      "test_target": "tools/gates/tests/test_inventory.py::test_a_recipe_script_git_does_not_track_is_reported",
+      "expect_failing_test": "test_a_recipe_script_git_does_not_track_is_reported",
+      "expect_message": "a recipe script git does not track must be reported"
     }
   ]
 }

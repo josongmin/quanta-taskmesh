@@ -19,6 +19,10 @@ Fails closed on:
 - a workflow step that *invokes* an inventory gate but cannot *fail* on it
   (`continue-on-error`, an `if:` condition, `|| true`, `set +e`, `exit 0`):
   parity is about enforcement, and a masked gate is a green check over nothing,
+- a recipe script that git does not track (untracked, or swallowed by a
+  .gitignore pattern — `tools/coverage/report.sh` sat under an unanchored
+  `coverage/` rule and never reached CI): a gate whose script exists only on
+  one machine is local luck, not a gate,
 - a self-reporting recipe (its script prints `taskmesh-<gate> status=…`) whose
   gate declares no `status_line`, or a `status_line` whose marker no script of
   that recipe prints: the runner keeps the recipe's final marker line verbatim
@@ -106,12 +110,31 @@ SCRIPT_PATH = re.compile(r"\btools/[\w./-]+\.(?:sh|py)\b")
 STATUS_MARKER = re.compile(r"(taskmesh-[a-z0-9-]+) status=")
 
 
+def recipe_scripts(recipe: str, text: str | None = None) -> list[str]:
+    """The `tools/…` script paths named in the body of `just <recipe>`."""
+    return SCRIPT_PATH.findall(recipe_body(recipe, text))
+
+
+def tracked_files(root: Path = REPO) -> set[str]:
+    """Paths git tracks, relative to the repository root. Ignored and
+    untracked files are absent by construction."""
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"], capture_output=True, text=True, check=True, cwd=root
+    )
+    return {path for path in proc.stdout.split("\0") if path}
+
+
+def untracked_recipe_scripts(recipe: str, tracked: set[str], text: str | None = None) -> list[str]:
+    """Scripts `just <recipe>` runs that git does not track."""
+    return [script for script in recipe_scripts(recipe, text) if script not in tracked]
+
+
 def self_report_markers(recipe: str, text: str | None = None, root: Path = REPO) -> set[str]:
     """The status-line markers printed by the scripts `just <recipe>` runs
     (found by reading those scripts' sources). Empty for a recipe that runs
     cargo/uv directly."""
     markers: set[str] = set()
-    for script in SCRIPT_PATH.findall(recipe_body(recipe, text)):
+    for script in recipe_scripts(recipe, text):
         path = root / script
         if path.is_file():
             markers.update(STATUS_MARKER.findall(path.read_text(encoding="utf-8")))
@@ -225,6 +248,7 @@ def validate(
     proof_leaves: set[str] | None = None,
     enforcement_problems: list[str] | None = None,
     self_reports: dict[str, set[str]] | None = None,
+    untracked_scripts: dict[str, list[str]] | None = None,
 ) -> list[str]:
     problems: list[str] = list(enforcement_problems or [])
     gates = inventory.get("gates", [])
@@ -265,6 +289,12 @@ def validate(
                 f"{gate_id}: declared in workflow {gate['workflow']} "
                 f"but that file does not invoke `just {recipe}`"
             )
+        if untracked_scripts is not None:
+            for script in untracked_scripts.get(recipe, []):
+                problems.append(
+                    f"{gate_id}: `just {recipe}` runs {script}, which git does not track "
+                    "(untracked or ignored) — CI cannot run this gate"
+                )
         if self_reports is not None:
             printed = self_reports.get(recipe, set())
             spec = gate.get("status_line")
@@ -350,6 +380,12 @@ def main() -> int:
         self_reports = {
             recipe: self_report_markers(recipe) for recipe in inventory_recipes if recipe in recipes
         }
+        tracked = tracked_files()
+        untracked_scripts = {
+            recipe: untracked_recipe_scripts(recipe, tracked)
+            for recipe in inventory_recipes
+            if recipe in recipes
+        }
     except (
         OSError,
         json.JSONDecodeError,
@@ -369,6 +405,7 @@ def main() -> int:
         proof_leaves,
         enforcement,
         self_reports,
+        untracked_scripts,
     )
     if problems:
         print("gate inventory FAILED:", file=sys.stderr)

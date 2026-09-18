@@ -1,24 +1,24 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-09-17T21:04:42.551111+00:00",
-  "finished_at": "2026-09-17T21:26:26.373866+00:00",
+  "generated_at": "2026-09-18T08:46:28.450086+00:00",
+  "finished_at": "2026-09-18T08:57:13.140412+00:00",
   "source": {
-    "head": "6af51f0a4594505576bc13cc520ac175ee15e8c3",
-    "tree": "b49c48479af025fc47224c257c4ed08a48da8cae",
+    "head": "21db732f3ae17556052ed225faa6c391690ef44e",
+    "tree": "40087f6a51bf3db3d29fb58eb66d4a0518b04c3c",
     "dirty": false,
     "immutable": false,
-    "paths_digest": "921e6c6c245a9ba0ba470fc6efd17c86e9ee4f8397d021c08272fec830f86bbc",
-    "paths_counted": 298,
+    "paths_digest": "b3a8f5b00ca8bdb0f8e9f615cd6e6cd0eaa9c27c151123192f9ab55502996bde",
+    "paths_counted": 307,
     "status": []
   },
   "source_after": {
-    "paths_digest": "921e6c6c245a9ba0ba470fc6efd17c86e9ee4f8397d021c08272fec830f86bbc",
+    "paths_digest": "b3a8f5b00ca8bdb0f8e9f615cd6e6cd0eaa9c27c151123192f9ab55502996bde",
     "dirty": false
   },
   "environment": {
     "toolchain": "rustc 1.95.0 (59807616e 2026-04-14)",
     "rustc_verbose": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: aarch64-apple-darwin\nrelease: 1.95.0\nLLVM version: 22.1.2",
-    "lock_digest": "d7bbc8a783d7462a2084ab96c37f442e8bcf7e5c3a68b18d2174ac88e70bb277",
+    "lock_digest": "2250198c88db827208d4430ccaafec0f6ed9003865253d4bbaca54fe735a09d8",
     "os_target": "darwin-arm64",
     "runner": "Joui-MacBookPro.local",
     "python": "3.13.9"
@@ -26,7 +26,7 @@
   "gates": {
     "schema_version": 1,
     "platform": "macos",
-    "generated_at": "2026-09-17T21:10:08.565371+00:00",
+    "generated_at": "2026-09-18T08:50:29.305652+00:00",
     "qualified": false,
     "required_not_run": [
       "mutants-critical"
@@ -40,8 +40,8 @@
         "recipe": "fmt-check",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:04:42.888551+00:00",
-        "duration_s": 0.362,
+        "started_at": "2026-09-18T08:46:28.762645+00:00",
+        "duration_s": 0.429,
         "output_tail": "cargo fmt --all --check\n"
       },
       {
@@ -49,17 +49,17 @@
         "recipe": "clippy",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:04:43.250467+00:00",
-        "duration_s": 30.715,
-        "output_tail": "f_let_else -A clippy::unused_async -A clippy::cast_lossless -A clippy::future_not_send  -D clippy::unwrap_used -D clippy::panic -D clippy::todo -D clippy::unimplemented -D clippy::unreachable -D clippy::indexing_slicing -D clippy::string_slice -D clippy::cast_possible_truncation -D clippy::cast_sign_loss -D clippy::cast_possible_wrap -D clippy::lossy_float_literal -D clippy::float_cmp -D clippy::dbg_macro -D clippy::unwrap_or_default -D clippy::or_fun_call -D clippy::default_trait_access -D clippy::manual_assert -D clippy::question_mark -D clippy::mem_forget -D clippy::match_wild_err_arm -D clippy::map_err_ignore -D clippy::let_underscore_must_use -D clippy::missing_assert_message -D clippy::semicolon_if_nothing_returned -D clippy::implicit_clone -D clippy::inefficient_to_string -D clippy::str_to_string -D clippy::needless_pass_by_value -D clippy::as_conversions -D clippy::as_underscore -D clippy::undocumented_unsafe_blocks -D clippy::else_if_without_else -D clippy::useless_let_if_seq -D clippy::bool_to_int_with_if -D clippy::clone_on_ref_ptr -D clippy::empty_enums -D clippy::redundant_closure_for_method_calls -D clippy::manual_let_else -D clippy::ref_option -D clippy::explicit_iter_loop \n    Blocking waiting for file lock on package cache\n    Blocking waiting for file lock on package cache\n    Blocking waiting for file lock on package cache\n    Checking taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n    Checking taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n    Checking taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n    Checking taskmesh v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.44s\ncargo clippy -p taskmesh-bench --all-targets -- -D warnings\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.65s\n"
+        "started_at": "2026-09-18T08:46:29.191851+00:00",
+        "duration_s": 25.603,
+        "output_tail": "ificant_drop_tightening -A clippy::option_if_let_else -A clippy::unused_async -A clippy::cast_lossless -A clippy::future_not_send  -D clippy::unwrap_used -D clippy::panic -D clippy::todo -D clippy::unimplemented -D clippy::unreachable -D clippy::indexing_slicing -D clippy::string_slice -D clippy::cast_possible_truncation -D clippy::cast_sign_loss -D clippy::cast_possible_wrap -D clippy::lossy_float_literal -D clippy::float_cmp -D clippy::dbg_macro -D clippy::unwrap_or_default -D clippy::or_fun_call -D clippy::default_trait_access -D clippy::manual_assert -D clippy::question_mark -D clippy::mem_forget -D clippy::match_wild_err_arm -D clippy::map_err_ignore -D clippy::let_underscore_must_use -D clippy::missing_assert_message -D clippy::semicolon_if_nothing_returned -D clippy::implicit_clone -D clippy::inefficient_to_string -D clippy::str_to_string -D clippy::needless_pass_by_value -D clippy::as_conversions -D clippy::as_underscore -D clippy::undocumented_unsafe_blocks -D clippy::else_if_without_else -D clippy::useless_let_if_seq -D clippy::bool_to_int_with_if -D clippy::clone_on_ref_ptr -D clippy::empty_enums -D clippy::redundant_closure_for_method_calls -D clippy::manual_let_else -D clippy::ref_option -D clippy::explicit_iter_loop \n   Compiling taskmesh-doc-examples v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/tools/doc-examples)\n    Checking taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n    Checking taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n    Checking taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n    Checking taskmesh v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.13s\ncargo clippy -p taskmesh-bench --all-targets -- -D warnings\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s\n"
       },
       {
         "id": "test",
         "recipe": "test",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:05:13.965785+00:00",
-        "duration_s": 35.125,
+        "started_at": "2026-09-18T08:46:54.794723+00:00",
+        "duration_s": 14.103,
         "output_tail": "/deps/hardening_memory_epochs-25e5bfb52f3ad42b)\n     Running tests/hardening_policy_inventory.rs (target/debug/deps/hardening_policy_inventory-8183c58f2e185c0f)\n     Running tests/hardening_snapshot_projection.rs (target/debug/deps/hardening_snapshot_projection-e5dd655fa1ec5e97)\n     Running tests/leak_sweep.rs (target/debug/deps/leak_sweep-9e36ce00c5daa981)\n     Running tests/loom_governance.rs (target/debug/deps/loom_governance-4edab5374a277878)\n     Running tests/memory_modes.rs (target/debug/deps/memory_modes-a146d5170d9ea1c5)\n     Running tests/memory_overcommit.rs (target/debug/deps/memory_overcommit-f330be509f771163)\n     Running tests/permit_lifecycle.rs (target/debug/deps/permit_lifecycle-18e9474a972d7814)\n     Running tests/prop_invariants.rs (target/debug/deps/prop_invariants-42704b249058067f)\n     Running tests/provenance.rs (target/debug/deps/provenance-8566f5f8467960b8)\n     Running tests/provenance_preservation.rs (target/debug/deps/provenance_preservation-6d77c3cc225cff82)\n     Running tests/recursive_rejection.rs (target/debug/deps/recursive_rejection-830f8c901bddbc24)\n     Running tests/reduce_policy_validation.rs (target/debug/deps/reduce_policy_validation-8f3c2eb191bdb3e2)\n     Running tests/request_key_hot_path.rs (target/debug/deps/request_key_hot_path-2bfa76edc12d0369)\n     Running tests/retry_after.rs (target/debug/deps/retry_after-a629af137f93a098)\n     Running tests/retry_after_property.rs (target/debug/deps/retry_after_property-40f67b804785a39b)\n     Running tests/shuttle_governance.rs (target/debug/deps/shuttle_governance-1b621e3062c53d87)\n     Running tests/substrate_inventory.rs (target/debug/deps/substrate_inventory-9aaf5481683f07cb)\n     Running unittests src/lib.rs (target/debug/deps/taskmesh_rayon-b9220ce8b0e465fd)\n     Running tests/rayon_smoke.rs (target/debug/deps/rayon_smoke-13e74892ec0d1e65)\n   Doc-tests taskmesh\n   Doc-tests taskmesh_bench\n   Doc-tests taskmesh_contract\n   Doc-tests taskmesh_engine\n   Doc-tests taskmesh_rayon\n"
       },
       {
@@ -67,8 +67,8 @@
         "recipe": "deny",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:05:49.091255+00:00",
-        "duration_s": 2.274,
+        "started_at": "2026-09-18T08:47:08.897462+00:00",
+        "duration_s": 1.476,
         "output_tail": "advisories ok, bans ok, licenses ok, sources ok\ncargo deny check --config config/deny.toml\n"
       },
       {
@@ -76,8 +76,8 @@
         "recipe": "semgrep",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:05:51.365361+00:00",
-        "duration_s": 9.008,
+        "started_at": "2026-09-18T08:47:10.373492+00:00",
+        "duration_s": 3.371,
         "output_tail": "semgrep --config tools/semgrep/rules --error crates\n               \n               \n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502 Scan Status \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n  Scanning 127 files tracked by git with 38 Code rules:\n                                                                                                                        \n  Language      Rules   Files          Origin   Rules                                                                   \n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500        \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500                                                                  \n  rust             32     121          Custom      38                                                                   \n  <multilang>       5     121                                                                                           \n                                                                                                                        \n                \n                \n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502 Scan Summary \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\u2705 Scan completed successfully.\n \u2022 Findings: 0 (0 blocking)\n \u2022 Rules run: 37\n \u2022 Targets scanned: 121\n \u2022 Parsed lines: ~100.0%\n \u2022 Scan was limited to files tracked by git\n \u2022 For a detailed list of skipped files and lines, run semgrep with the --verbose flag\nRan 37 rules on 121 files: 0 findings.\n\nA new version of Semgrep is available. See https://semgrep.dev/docs/upgrading\nIf Semgrep missed a finding, please send us feedback to let us know!\nSee https://semgrep.dev/docs/reporting-false-negatives/\n"
       },
       {
@@ -85,8 +85,8 @@
         "recipe": "test-architecture",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:06:00.373243+00:00",
-        "duration_s": 0.247,
+        "started_at": "2026-09-18T08:47:13.744785+00:00",
+        "duration_s": 0.184,
         "output_tail": "crate-boundary check OK: no violations\nuv run python tools/arch/check_crate_boundaries.py\n"
       },
       {
@@ -94,8 +94,8 @@
         "recipe": "py-lint",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:06:00.620783+00:00",
-        "duration_s": 0.166,
+        "started_at": "2026-09-18T08:47:13.928594+00:00",
+        "duration_s": 0.112,
         "output_tail": "All checks passed!\nuv run ruff check tools\n"
       },
       {
@@ -103,17 +103,17 @@
         "recipe": "py-test",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:06:00.787314+00:00",
-        "duration_s": 41.652,
-        "output_tail": "........................................................................ [ 33%]\n........................................................................ [ 66%]\n........................................................................ [ 99%]\n.                                                                        [100%]\n217 passed in 41.14s\nuv run pytest tools -q\n"
+        "started_at": "2026-09-18T08:47:14.040664+00:00",
+        "duration_s": 32.86,
+        "output_tail": "........................................................................ [ 31%]\n........................................................................ [ 62%]\n........................................................................ [ 93%]\n..............                                                           [100%]\n230 passed in 32.62s\nuv run pytest tools -q\n"
       },
       {
         "id": "pm-lint",
         "recipe": "pm-lint",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:06:42.439855+00:00",
-        "duration_s": 0.173,
+        "started_at": "2026-09-18T08:47:46.900613+00:00",
+        "duration_s": 0.128,
         "output_tail": "pm lint OK: 0 target(s) up to date\nuv run python tools/pm/pm.py lint\n"
       },
       {
@@ -121,8 +121,8 @@
         "recipe": "bench-gate",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:06:42.612668+00:00",
-        "duration_s": 0.448,
+        "started_at": "2026-09-18T08:47:47.029124+00:00",
+        "duration_s": 0.432,
         "output_tail": "== allocation gate: admit+release allocs/op must be <= 3.0 (schema 2, 200000 ops) ==\nok: 3.0 allocs/op (<= baseline 3.0)\nbench-gate: allocation gate passed\nbash tools/bench-gate.sh\n(baseline characterization; 0-alloc is a separate storage-model goal \u2014 ADR 9000 / P2)\n"
       },
       {
@@ -130,8 +130,8 @@
         "recipe": "gates-inventory",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:06:43.060551+00:00",
-        "duration_s": 0.115,
+        "started_at": "2026-09-18T08:47:47.461650+00:00",
+        "duration_s": 0.118,
         "output_tail": "gate inventory OK: 22 gates, 22 required, parity with 22 workflow invocations\nuv run python tools/gates/validate_inventory.py\n"
       },
       {
@@ -139,44 +139,44 @@
         "recipe": "test-rayon",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:06:43.175163+00:00",
-        "duration_s": 86.451,
-        "output_tail": "ace.rs (target/debug/deps/hardening_consumer_surface-a899edec408e00e3)\n     Running tests/hardening_deadline_custody.rs (target/debug/deps/hardening_deadline_custody-3426df90415c5494)\n     Running tests/hardening_degrade_policy.rs (target/debug/deps/hardening_degrade_policy-3a4d6807136de00a)\n     Running tests/hardening_dispatch_resolution.rs (target/debug/deps/hardening_dispatch_resolution-50b56cb7cd68590b)\n     Running tests/hardening_executor_protocol.rs (target/debug/deps/hardening_executor_protocol-a6fc80b310e254d0)\n     Running tests/hardening_intake_bounds.rs (target/debug/deps/hardening_intake_bounds-776e9e65eb8c937a)\n     Running tests/host_inferno.rs (target/debug/deps/host_inferno-8f8b3b25683fc89c)\n     Running tests/local_runtime_guard.rs (target/debug/deps/local_runtime_guard-420a61f2fad5cf44)\n     Running tests/runtime_blocking.rs (target/debug/deps/runtime_blocking-e38a79c684126bd1)\n     Running tests/runtime_cancel_leak.rs (target/debug/deps/runtime_cancel_leak-bc09002541b4b539)\n     Running tests/runtime_cancel_timeout.rs (target/debug/deps/runtime_cancel_timeout-85a8c994dee90bd3)\n     Running tests/runtime_cpu.rs (target/debug/deps/runtime_cpu-7a3934439ab1299c)\n     Running tests/runtime_cpu_executor.rs (target/debug/deps/runtime_cpu_executor-2459a763ef57a2c8)\n     Running tests/runtime_io.rs (target/debug/deps/runtime_io-5172929996e5f53b)\n     Running tests/runtime_local.rs (target/debug/deps/runtime_local-fe13415a8e207524)\n     Running tests/substrate_enforcement.rs (target/debug/deps/substrate_enforcement-44775cd6795abda3)\n   Doc-tests taskmesh\ncargo test -p taskmesh-rayon\n   Compiling taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.30s\n     Running unittests src/lib.rs (target/debug/deps/taskmesh_rayon-e8583dcac963dc5b)\n     Running tests/rayon_smoke.rs (target/debug/deps/rayon_smoke-93fc6494f1a24a17)\n   Doc-tests taskmesh_rayon\n"
+        "started_at": "2026-09-18T08:47:47.579775+00:00",
+        "duration_s": 71.893,
+        "output_tail": "ace.rs (target/debug/deps/hardening_consumer_surface-a899edec408e00e3)\n     Running tests/hardening_deadline_custody.rs (target/debug/deps/hardening_deadline_custody-3426df90415c5494)\n     Running tests/hardening_degrade_policy.rs (target/debug/deps/hardening_degrade_policy-3a4d6807136de00a)\n     Running tests/hardening_dispatch_resolution.rs (target/debug/deps/hardening_dispatch_resolution-50b56cb7cd68590b)\n     Running tests/hardening_executor_protocol.rs (target/debug/deps/hardening_executor_protocol-a6fc80b310e254d0)\n     Running tests/hardening_intake_bounds.rs (target/debug/deps/hardening_intake_bounds-776e9e65eb8c937a)\n     Running tests/host_inferno.rs (target/debug/deps/host_inferno-8f8b3b25683fc89c)\n     Running tests/local_runtime_guard.rs (target/debug/deps/local_runtime_guard-420a61f2fad5cf44)\n     Running tests/runtime_blocking.rs (target/debug/deps/runtime_blocking-e38a79c684126bd1)\n     Running tests/runtime_cancel_leak.rs (target/debug/deps/runtime_cancel_leak-bc09002541b4b539)\n     Running tests/runtime_cancel_timeout.rs (target/debug/deps/runtime_cancel_timeout-85a8c994dee90bd3)\n     Running tests/runtime_cpu.rs (target/debug/deps/runtime_cpu-7a3934439ab1299c)\n     Running tests/runtime_cpu_executor.rs (target/debug/deps/runtime_cpu_executor-2459a763ef57a2c8)\n     Running tests/runtime_io.rs (target/debug/deps/runtime_io-5172929996e5f53b)\n     Running tests/runtime_local.rs (target/debug/deps/runtime_local-fe13415a8e207524)\n     Running tests/substrate_enforcement.rs (target/debug/deps/substrate_enforcement-44775cd6795abda3)\n   Doc-tests taskmesh\ncargo test -p taskmesh-rayon\n   Compiling taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.07s\n     Running unittests src/lib.rs (target/debug/deps/taskmesh_rayon-e8583dcac963dc5b)\n     Running tests/rayon_smoke.rs (target/debug/deps/rayon_smoke-93fc6494f1a24a17)\n   Doc-tests taskmesh_rayon\n"
       },
       {
         "id": "doctest",
         "recipe": "doctest",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:08:09.626137+00:00",
-        "duration_s": 5.161,
-        "output_tail": "\nrunning 1 test\ntest crates/taskmesh/src/lib.rs - (line 10) - compile ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.14s\n\ncargo test --doc -p taskmesh\n   Compiling taskmesh v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.94s\n   Doc-tests taskmesh\n"
+        "started_at": "2026-09-18T08:48:59.472407+00:00",
+        "duration_s": 3.194,
+        "output_tail": "\nrunning 1 test\ntest crates/taskmesh/src/lib.rs - (line 10) - compile ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s\n\ncargo test --doc -p taskmesh\n   Compiling taskmesh v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.36s\n   Doc-tests taskmesh\n"
       },
       {
         "id": "rustdoc",
         "recipe": "rustdoc",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:08:14.787586+00:00",
-        "duration_s": 8.051,
-        "output_tail": "RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps --workspace\n    Checking taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n Documenting taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n    Checking taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n Documenting taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n Documenting taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n    Checking taskmesh v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh)\n Documenting taskmesh v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh)\n Documenting taskmesh-bench v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-bench)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.94s\n   Generated /Users/songmin/Documents/code-new/quanta-taskmesh/target/doc/taskmesh/index.html and 4 other files\n"
+        "started_at": "2026-09-18T08:49:02.665997+00:00",
+        "duration_s": 5.116,
+        "output_tail": "RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps --workspace\n    Checking taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n Documenting taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n    Checking taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n    Checking taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n Documenting taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n Documenting taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n    Checking taskmesh v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh)\n Documenting taskmesh v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh)\n Documenting taskmesh-doc-examples v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/tools/doc-examples)\n Documenting taskmesh-bench v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-bench)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.07s\n   Generated /Users/songmin/Documents/code-new/quanta-taskmesh/target/doc/taskmesh/index.html and 5 other files\n"
       },
       {
         "id": "bench-smoke",
         "recipe": "bench-smoke",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:08:22.838249+00:00",
-        "duration_s": 14.812,
-        "output_tail": "un_io_deadline_zero_budget\nSuccess\nTesting host_deadline_failclosed/run_local_deadline_zero_budget\nSuccess\n\nTesting host_substrate_saturated_shed/large_stack_saturated_shed\nSuccess\nTesting host_substrate_saturated_shed/background_saturated_shed\nSuccess\nTesting host_substrate_saturated_shed/cpu_saturated_shed\nSuccess\nTesting host_substrate_saturated_shed/local_runtime_saturated_shed\nSuccess\n\nweighted windowed shares (heavy:light) = [40.0, 10.0]  windowed Jain = 0.7353\nTesting fairness_promotion_order\nSuccess\n\nTesting overload_stability_sim\nSuccess\n\nTesting retrieval_saturation_sim\nSuccess\n\ncargo bench -p taskmesh-bench -- --test\n   Compiling taskmesh-bench v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-bench)\n    Finished `bench` profile [optimized] target(s) in 11.19s\n     Running unittests src/lib.rs (target/release/deps/taskmesh_bench-e32ebc1df6b8bda0)\n     Running benches/admit_release.rs (target/release/deps/admit_release-206ae6fd05d8c5b6)\nGnuplot not found, using plotters backend\n     Running benches/composite_reduce.rs (target/release/deps/composite_reduce-357e0a0d21285bec)\nGnuplot not found, using plotters backend\n     Running benches/contention.rs (target/release/deps/contention-463d8b1ad824cea9)\nGnuplot not found, using plotters backend\n     Running benches/governance_tax.rs (target/release/deps/governance_tax-b8d40d736f47e7f2)\nGnuplot not found, using plotters backend\n     Running benches/host_edge_paths.rs (target/release/deps/host_edge_paths-411045dd3c49f903)\nGnuplot not found, using plotters backend\n     Running benches/multiclass_fairness.rs (target/release/deps/multiclass_fairness-c2ddcee129b6a308)\nGnuplot not found, using plotters backend\n     Running benches/overload_stability.rs (target/release/deps/overload_stability-61f4ecd80a426abd)\nGnuplot not found, using plotters backend\n     Running benches/retrieval_saturation.rs (target/release/deps/retrieval_saturation-3b0dbe39190e5eeb)\nGnuplot not found, using plotters backend\n"
+        "started_at": "2026-09-18T08:49:07.781732+00:00",
+        "duration_s": 8.971,
+        "output_tail": "run_io_deadline_zero_budget\nSuccess\nTesting host_deadline_failclosed/run_local_deadline_zero_budget\nSuccess\n\nTesting host_substrate_saturated_shed/large_stack_saturated_shed\nSuccess\nTesting host_substrate_saturated_shed/background_saturated_shed\nSuccess\nTesting host_substrate_saturated_shed/cpu_saturated_shed\nSuccess\nTesting host_substrate_saturated_shed/local_runtime_saturated_shed\nSuccess\n\nweighted windowed shares (heavy:light) = [40.0, 10.0]  windowed Jain = 0.7353\nTesting fairness_promotion_order\nSuccess\n\nTesting overload_stability_sim\nSuccess\n\nTesting retrieval_saturation_sim\nSuccess\n\ncargo bench -p taskmesh-bench -- --test\n   Compiling taskmesh-bench v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-bench)\n    Finished `bench` profile [optimized] target(s) in 6.17s\n     Running unittests src/lib.rs (target/release/deps/taskmesh_bench-e32ebc1df6b8bda0)\n     Running benches/admit_release.rs (target/release/deps/admit_release-206ae6fd05d8c5b6)\nGnuplot not found, using plotters backend\n     Running benches/composite_reduce.rs (target/release/deps/composite_reduce-357e0a0d21285bec)\nGnuplot not found, using plotters backend\n     Running benches/contention.rs (target/release/deps/contention-463d8b1ad824cea9)\nGnuplot not found, using plotters backend\n     Running benches/governance_tax.rs (target/release/deps/governance_tax-b8d40d736f47e7f2)\nGnuplot not found, using plotters backend\n     Running benches/host_edge_paths.rs (target/release/deps/host_edge_paths-411045dd3c49f903)\nGnuplot not found, using plotters backend\n     Running benches/multiclass_fairness.rs (target/release/deps/multiclass_fairness-c2ddcee129b6a308)\nGnuplot not found, using plotters backend\n     Running benches/overload_stability.rs (target/release/deps/overload_stability-61f4ecd80a426abd)\nGnuplot not found, using plotters backend\n     Running benches/retrieval_saturation.rs (target/release/deps/retrieval_saturation-3b0dbe39190e5eeb)\nGnuplot not found, using plotters backend\n"
       },
       {
         "id": "consumer-msrv",
         "recipe": "consumer-msrv",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:08:37.650517+00:00",
-        "duration_s": 0.966,
+        "started_at": "2026-09-18T08:49:16.753038+00:00",
+        "duration_s": 0.832,
         "output_tail": "taskmesh-consumer-msrv surface=default toolchain=1.81-aarch64-apple-darwin status=PASS\ntaskmesh-consumer-msrv surface=rayon toolchain=1.81-aarch64-apple-darwin status=PASS\ntaskmesh-consumer-msrv status=PASS msrv=1.81 toolchain=1.81-aarch64-apple-darwin\npython3 tools/consumer-msrv/check.py\n",
         "status_line": "taskmesh-consumer-msrv status=PASS msrv=1.81 toolchain=1.81-aarch64-apple-darwin"
       },
@@ -185,18 +185,18 @@
         "recipe": "loom",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:08:38.616363+00:00",
-        "duration_s": 4.561,
-        "output_tail": "\nrunning 5 tests\ntest a_pending_claim_is_always_followed_by_a_wake ... ok\ntest unordered_concurrent_reconciles_both_apply ... ok\ntest claim_and_reap_of_a_stale_promotion_fail_closed_both_ways ... ok\ntest promote_claim_abandon_three_way_is_exactly_once ... ok\ntest concurrent_admits_and_releases_conserve_capacity ... ok\n\ntest result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s\n\nRUSTFLAGS=\"--cfg loom\" cargo test -p taskmesh-engine --features loom --test loom_governance --release\n   Compiling taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n   Compiling taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n    Finished `release` profile [optimized] target(s) in 4.20s\n     Running tests/loom_governance.rs (target/release/deps/loom_governance-b532345b6d69b48b)\n"
+        "started_at": "2026-09-18T08:49:17.585594+00:00",
+        "duration_s": 3.692,
+        "output_tail": "\nrunning 5 tests\ntest unordered_concurrent_reconciles_both_apply ... ok\ntest a_pending_claim_is_always_followed_by_a_wake ... ok\ntest claim_and_reap_of_a_stale_promotion_fail_closed_both_ways ... ok\ntest promote_claim_abandon_three_way_is_exactly_once ... ok\ntest concurrent_admits_and_releases_conserve_capacity ... ok\n\ntest result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s\n\nRUSTFLAGS=\"--cfg loom\" cargo test -p taskmesh-engine --features loom --test loom_governance --release\n   Compiling taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n   Compiling taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n    Finished `release` profile [optimized] target(s) in 3.38s\n     Running tests/loom_governance.rs (target/release/deps/loom_governance-b532345b6d69b48b)\n"
       },
       {
         "id": "shuttle",
         "recipe": "shuttle",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:08:43.177438+00:00",
-        "duration_s": 6.492,
-        "output_tail": "\nrunning 6 tests\ntest randomized_claim_versus_reap_fails_closed_both_ways ... ok\ntest randomized_promote_claim_double_abandon_is_exactly_once ... ok\ntest randomized_waiters_are_never_parked_past_their_promotion ... ok\ntest randomized_admit_release_churn_conserves_capacity ... ok\ntest randomized_only_unqueueable_work_overtakes_in_the_gap ... ok\ntest randomized_gap_arrivals_queue_behind_runnable_heads ... ok\n\ntest result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.41s\n\nRUSTFLAGS=\"--cfg shuttle\" cargo test -p taskmesh-engine --features shuttle --test shuttle_governance --release\n   Compiling taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n   Compiling taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n    Finished `release` profile [optimized] target(s) in 4.78s\n     Running tests/shuttle_governance.rs (target/release/deps/shuttle_governance-457d21d8d8c2a929)\n"
+        "started_at": "2026-09-18T08:49:21.277304+00:00",
+        "duration_s": 4.261,
+        "output_tail": "\nrunning 6 tests\ntest randomized_claim_versus_reap_fails_closed_both_ways ... ok\ntest randomized_promote_claim_double_abandon_is_exactly_once ... ok\ntest randomized_waiters_are_never_parked_past_their_promotion ... ok\ntest randomized_admit_release_churn_conserves_capacity ... ok\ntest randomized_only_unqueueable_work_overtakes_in_the_gap ... ok\ntest randomized_gap_arrivals_queue_behind_runnable_heads ... ok\n\ntest result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s\n\nRUSTFLAGS=\"--cfg shuttle\" cargo test -p taskmesh-engine --features shuttle --test shuttle_governance --release\n   Compiling taskmesh-contract v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-contract)\n   Compiling taskmesh-engine v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-engine)\n    Finished `release` profile [optimized] target(s) in 2.95s\n     Running tests/shuttle_governance.rs (target/release/deps/shuttle_governance-457d21d8d8c2a929)\n"
       },
       {
         "id": "bench-iai",
@@ -210,9 +210,9 @@
         "recipe": "tsan",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:08:49.669313+00:00",
-        "duration_s": 21.768,
-        "output_tail": " in 3.33s\n     Running unittests src/lib.rs (target/aarch64-apple-darwin/debug/build/taskmesh/2170c38340f9e58a/out/taskmesh-2170c38340f9e58a)\n     Running tests/deadline_cancel.rs (target/aarch64-apple-darwin/debug/build/taskmesh/c0bdd6a153b45c1f/out/deadline_cancel-c0bdd6a153b45c1f)\n     Running tests/e2e_chaos.rs (target/aarch64-apple-darwin/debug/build/taskmesh/e620ae5fe634fffa/out/e2e_chaos-e620ae5fe634fffa)\n     Running tests/hardening_deadline_custody.rs (target/aarch64-apple-darwin/debug/build/taskmesh/3efcda1876865cf4/out/hardening_deadline_custody-3efcda1876865cf4)\n     Running tests/hardening_executor_protocol.rs (target/aarch64-apple-darwin/debug/build/taskmesh/0caf17f9c7d399de/out/hardening_executor_protocol-0caf17f9c7d399de)\n     Running tests/hardening_intake_bounds.rs (target/aarch64-apple-darwin/debug/build/taskmesh/d4876d77d6fa4609/out/hardening_intake_bounds-d4876d77d6fa4609)\n     Running tests/host_inferno.rs (target/aarch64-apple-darwin/debug/build/taskmesh/164fc0b6b313b218/out/host_inferno-164fc0b6b313b218)\n     Running tests/runtime_cancel_leak.rs (target/aarch64-apple-darwin/debug/build/taskmesh/e261d53bd4aabe0b/out/runtime_cancel_leak-e261d53bd4aabe0b)\n     Running tests/runtime_cancel_timeout.rs (target/aarch64-apple-darwin/debug/build/taskmesh/7f50235d23aaba2e/out/runtime_cancel_timeout-7f50235d23aaba2e)\n     Running tests/runtime_cpu_executor.rs (target/aarch64-apple-darwin/debug/build/taskmesh/97cb5e7310d8b7bf/out/runtime_cpu_executor-97cb5e7310d8b7bf)\n   Compiling taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.61s\n     Running unittests src/lib.rs (target/aarch64-apple-darwin/debug/build/taskmesh-rayon/af836c44f3369538/out/taskmesh_rayon-af836c44f3369538)\n     Running tests/rayon_smoke.rs (target/aarch64-apple-darwin/debug/build/taskmesh-rayon/d23c0a50605835a4/out/rayon_smoke-d23c0a50605835a4)\n   Doc-tests taskmesh_rayon\n",
+        "started_at": "2026-09-18T08:49:25.538645+00:00",
+        "duration_s": 18.181,
+        "output_tail": " in 3.27s\n     Running unittests src/lib.rs (target/aarch64-apple-darwin/debug/build/taskmesh/2170c38340f9e58a/out/taskmesh-2170c38340f9e58a)\n     Running tests/deadline_cancel.rs (target/aarch64-apple-darwin/debug/build/taskmesh/c0bdd6a153b45c1f/out/deadline_cancel-c0bdd6a153b45c1f)\n     Running tests/e2e_chaos.rs (target/aarch64-apple-darwin/debug/build/taskmesh/e620ae5fe634fffa/out/e2e_chaos-e620ae5fe634fffa)\n     Running tests/hardening_deadline_custody.rs (target/aarch64-apple-darwin/debug/build/taskmesh/3efcda1876865cf4/out/hardening_deadline_custody-3efcda1876865cf4)\n     Running tests/hardening_executor_protocol.rs (target/aarch64-apple-darwin/debug/build/taskmesh/0caf17f9c7d399de/out/hardening_executor_protocol-0caf17f9c7d399de)\n     Running tests/hardening_intake_bounds.rs (target/aarch64-apple-darwin/debug/build/taskmesh/d4876d77d6fa4609/out/hardening_intake_bounds-d4876d77d6fa4609)\n     Running tests/host_inferno.rs (target/aarch64-apple-darwin/debug/build/taskmesh/164fc0b6b313b218/out/host_inferno-164fc0b6b313b218)\n     Running tests/runtime_cancel_leak.rs (target/aarch64-apple-darwin/debug/build/taskmesh/e261d53bd4aabe0b/out/runtime_cancel_leak-e261d53bd4aabe0b)\n     Running tests/runtime_cancel_timeout.rs (target/aarch64-apple-darwin/debug/build/taskmesh/7f50235d23aaba2e/out/runtime_cancel_timeout-7f50235d23aaba2e)\n     Running tests/runtime_cpu_executor.rs (target/aarch64-apple-darwin/debug/build/taskmesh/97cb5e7310d8b7bf/out/runtime_cpu_executor-97cb5e7310d8b7bf)\n   Compiling taskmesh-rayon v0.2.0 (/Users/songmin/Documents/code-new/quanta-taskmesh/crates/taskmesh-rayon)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.55s\n     Running unittests src/lib.rs (target/aarch64-apple-darwin/debug/build/taskmesh-rayon/af836c44f3369538/out/taskmesh_rayon-af836c44f3369538)\n     Running tests/rayon_smoke.rs (target/aarch64-apple-darwin/debug/build/taskmesh-rayon/d23c0a50605835a4/out/rayon_smoke-d23c0a50605835a4)\n   Doc-tests taskmesh_rayon\n",
         "status_line": "taskmesh-tsan status=CLEAN target=aarch64-apple-darwin"
       },
       {
@@ -220,10 +220,10 @@
         "recipe": "coverage-report",
         "status": "PASS",
         "exit_code": 0,
-        "started_at": "2026-09-17T21:09:11.437695+00:00",
-        "duration_s": 57.127,
+        "started_at": "2026-09-18T08:49:43.720650+00:00",
+        "duration_s": 45.585,
         "output_tail": "t_projection-e323c0c771f1a6a0)\n     Running tests/leak_sweep.rs (target/llvm-cov-target/debug/deps/leak_sweep-a705c45d842194cb)\n     Running tests/loom_governance.rs (target/llvm-cov-target/debug/deps/loom_governance-7fe41d4ae66692bd)\n     Running tests/memory_modes.rs (target/llvm-cov-target/debug/deps/memory_modes-77024167235e6380)\n     Running tests/memory_overcommit.rs (target/llvm-cov-target/debug/deps/memory_overcommit-9b44d7886bcc7db0)\n     Running tests/permit_lifecycle.rs (target/llvm-cov-target/debug/deps/permit_lifecycle-faf4f7be38b487cb)\n     Running tests/prop_invariants.rs (target/llvm-cov-target/debug/deps/prop_invariants-6c5327222d6282fe)\n     Running tests/provenance.rs (target/llvm-cov-target/debug/deps/provenance-f096327197a50ccb)\n     Running tests/provenance_preservation.rs (target/llvm-cov-target/debug/deps/provenance_preservation-f360f6ec4c6c4d58)\n     Running tests/recursive_rejection.rs (target/llvm-cov-target/debug/deps/recursive_rejection-37ecea25a3894b3b)\n     Running tests/reduce_policy_validation.rs (target/llvm-cov-target/debug/deps/reduce_policy_validation-da6f74c6bb7e1f2d)\n     Running tests/request_key_hot_path.rs (target/llvm-cov-target/debug/deps/request_key_hot_path-40913f3b9df6e6d5)\n     Running tests/retry_after.rs (target/llvm-cov-target/debug/deps/retry_after-f1d346de65b40aa4)\n     Running tests/retry_after_property.rs (target/llvm-cov-target/debug/deps/retry_after_property-9bad73cbc27d7d43)\n     Running tests/shuttle_governance.rs (target/llvm-cov-target/debug/deps/shuttle_governance-69d5bbf0b684af2a)\n     Running tests/substrate_inventory.rs (target/llvm-cov-target/debug/deps/substrate_inventory-5daf9e6e457ca9a2)\n     Running unittests src/lib.rs (target/llvm-cov-target/debug/deps/taskmesh_rayon-e8583dcac963dc5b)\n     Running tests/rayon_smoke.rs (target/llvm-cov-target/debug/deps/rayon_smoke-93fc6494f1a24a17)\n\n    Finished report saved to target/coverage/summary.json\n\n    Finished report saved to target/coverage/lcov.info\n",
-        "status_line": "taskmesh-coverage status=REPORTED lines=93.85 regions=93.53 functions=95.76 report=target/coverage/summary.json"
+        "status_line": "taskmesh-coverage status=REPORTED lines=93.64 regions=93.31 functions=95.29 report=target/coverage/summary.json"
       },
       {
         "id": "mutants-critical",
@@ -239,7 +239,7 @@
     "inventory": "tools/verification/mutations.json",
     "dirty_tree": false,
     "dirty_paths": [],
-    "total": 62,
+    "total": 65,
     "problems": 0,
     "results": [
       {
@@ -251,7 +251,7 @@
         "observed_failures": [
           "abandoning_a_queued_request_retires_its_waker_outside_the_lock"
         ],
-        "duration_s": 76.229
+        "duration_s": 21.143
       },
       {
         "id": "wfq-scale-loses-precision",
@@ -263,7 +263,7 @@
           "extreme_weights_still_produce_a_non_zero_increment",
           "weighted_share_survives_uniform_rescaling_of_every_weight"
         ],
-        "duration_s": 26.377
+        "duration_s": 6.751
       },
       {
         "id": "drr-keeps-idle-credit",
@@ -274,7 +274,7 @@
         "observed_failures": [
           "an_idle_class_does_not_bank_credit_across_busy_periods"
         ],
-        "duration_s": 5.021
+        "duration_s": 3.112
       },
       {
         "id": "cancellation-leaves-service-debt",
@@ -285,7 +285,7 @@
         "observed_failures": [
           "cancelled_requests_leave_no_virtual_time_debt"
         ],
-        "duration_s": 5.292
+        "duration_s": 3.142
       },
       {
         "id": "dead-ticket-survives-unwind",
@@ -299,7 +299,7 @@
           "terminal_records_stay_bounded_under_repeated_churn",
           "terminal_retention_holds_exactly_the_bound_and_evicts_the_oldest_first"
         ],
-        "duration_s": 5.894
+        "duration_s": 2.892
       },
       {
         "id": "saturating-capacity-check",
@@ -311,7 +311,7 @@
           "the_budget_boundary_is_exact_on_both_sides",
           "two_half_max_cpu_requests_cannot_both_fit_a_max_budget"
         ],
-        "duration_s": 7.168
+        "duration_s": 3.267
       },
       {
         "id": "control-behaviour-preserving-max-zero",
@@ -320,7 +320,7 @@
         "detail": "suite stayed green across 14 tests",
         "expected_test": "",
         "observed_failures": [],
-        "duration_s": 6.128
+        "duration_s": 5.222
       },
       {
         "id": "stage-release-skips-the-lease-touch",
@@ -332,7 +332,7 @@
           "a_zero_unit_stage_release_still_counts_as_activity",
           "stage_activity_keeps_a_lease_alive_through_the_sweep"
         ],
-        "duration_s": 5.923
+        "duration_s": 5.417
       },
       {
         "id": "lease-timestamp-skips-the-watermark",
@@ -343,7 +343,7 @@
         "observed_failures": [
           "a_late_clock_sample_cannot_backdate_a_new_lease"
         ],
-        "duration_s": 8.965
+        "duration_s": 6.989
       },
       {
         "id": "thread-label-uses-raw-class",
@@ -355,7 +355,7 @@
           "an_awkward_class_never_panics_a_requested_stack_submission",
           "class_identity_is_not_rewritten_to_suit_an_os_label"
         ],
-        "duration_s": 15.503
+        "duration_s": 6.202
       },
       {
         "id": "acquisition-budget-ignored-on-immediate-admit",
@@ -366,7 +366,7 @@
         "observed_failures": [
           "an_expired_acquisition_budget_does_not_start_work_it_could_admit"
         ],
-        "duration_s": 6.208
+        "duration_s": 3.692
       },
       {
         "id": "stack-request-charged-to-the-declared-hint",
@@ -378,7 +378,7 @@
           "a_stack_request_consumes_the_large_stack_capability_whatever_the_hint_says",
           "the_requested_stack_async_path_shares_the_same_capability"
         ],
-        "duration_s": 10.189
+        "duration_s": 8.369
       },
       {
         "id": "run-deadline-judged-from-the-timer-only",
@@ -389,7 +389,7 @@
         "observed_failures": [
           "an_inline_executor_cannot_report_a_late_result_as_success"
         ],
-        "duration_s": 6.656
+        "duration_s": 5.122
       },
       {
         "id": "capability-not-checked-at-admission",
@@ -400,7 +400,7 @@
         "observed_failures": [
           "a_saturated_capability_pool_alone_is_enough_to_shed"
         ],
-        "duration_s": 6.846
+        "duration_s": 8.879
       },
       {
         "id": "mixed-soak-all-classes-disabled",
@@ -411,7 +411,7 @@
         "observed_failures": [
           "mixed_substrate_soak_with_concurrent_sweeper"
         ],
-        "duration_s": 5.881
+        "duration_s": 6.168
       },
       {
         "id": "mmpp-draws-at-the-old-rate",
@@ -423,7 +423,7 @@
           "workload::tests::asymmetric_dwells_weight_the_rate_by_occupancy",
           "workload::tests::fast_equal_dwell_switching_converges_to_the_stationary_rate"
         ],
-        "duration_s": 12.142
+        "duration_s": 24.214
       },
       {
         "id": "reversed-trace-accepted",
@@ -435,7 +435,7 @@
           "workload::tests::invalid_event_times_are_rejected_at_the_direct_api_too",
           "workload::tests::invalid_event_times_are_rejected_by_the_parser_with_the_line"
         ],
-        "duration_s": 6.138
+        "duration_s": 12.42
       },
       {
         "id": "open-loop-histogram-double-corrected",
@@ -447,7 +447,7 @@
           "loadgen::tests::open_loop_waits_are_recorded_exactly_once",
           "loadgen::tests::histogram_population_equals_started_requests_under_overload"
         ],
-        "duration_s": 3.728
+        "duration_s": 6.767
       },
       {
         "id": "contention-ops-rounded-to-thread-multiple",
@@ -459,7 +459,7 @@
           "loadgen::tests::ops_are_distributed_exactly",
           "loadgen::tests::a_contention_run_completes_exactly_the_requested_count"
         ],
-        "duration_s": 3.426
+        "duration_s": 10.238
       },
       {
         "id": "panicking-waker-aborts-the-wake-loop",
@@ -470,7 +470,7 @@
         "observed_failures": [
           "every_waiter_in_one_pass_is_woken_even_if_an_earlier_one_panics"
         ],
-        "duration_s": 4.412
+        "duration_s": 7.299
       },
       {
         "id": "estimated-reconcile-restores-reservation",
@@ -482,7 +482,7 @@
           "estimated_reconcile_does_not_restore_released_stage_units",
           "hybrid_floor_follows_the_remaining_reservation_not_the_original"
         ],
-        "duration_s": 4.371
+        "duration_s": 7.161
       },
       {
         "id": "promotion-budget-charges-an-unmade-dispatch",
@@ -493,7 +493,7 @@
         "observed_failures": [
           "drr_order_is_exact_across_the_promotion_budget_boundary"
         ],
-        "duration_s": 5.184
+        "duration_s": 5.318
       },
       {
         "id": "newcomer-overtakes-a-runnable-head",
@@ -504,7 +504,7 @@
         "observed_failures": [
           "the_capability_exception_holds_inside_the_continuation_gap_too"
         ],
-        "duration_s": 4.717
+        "duration_s": 3.797
       },
       {
         "id": "drr-walks-the-ring-visit-by-visit",
@@ -516,7 +516,7 @@
           "drr_examines_each_runnable_class_once_per_selection",
           "a_head_costing_many_quanta_is_served_without_walking_every_round"
         ],
-        "duration_s": 10.051
+        "duration_s": 9.44
       },
       {
         "id": "claim-does-not-touch-the-lease",
@@ -527,7 +527,7 @@
         "observed_failures": [
           "a_claim_restarts_the_lease_staleness_clock"
         ],
-        "duration_s": 8.214
+        "duration_s": 6.624
       },
       {
         "id": "degrade-to-disabled-fallback-accepted",
@@ -538,7 +538,7 @@
         "observed_failures": [
           "degrade_to_a_disabled_fallback_is_rejected"
         ],
-        "duration_s": 5.09
+        "duration_s": 3.203
       },
       {
         "id": "budget-ignored-on-a-racing-promotion",
@@ -549,7 +549,7 @@
         "observed_failures": [
           "runtime::claim_acquisition_tests::timeout_after_racing_promotion_unwinds_instead_of_starting_v1"
         ],
-        "duration_s": 5.39
+        "duration_s": 4.162
       },
       {
         "id": "executor-declaration-ignored",
@@ -560,7 +560,7 @@
         "observed_failures": [
           "a_cpu_gate_wider_than_the_executor_declares_is_refused_at_build"
         ],
-        "duration_s": 166.826
+        "duration_s": 5.074
       },
       {
         "id": "unsupported-deadline-silently-dropped",
@@ -571,7 +571,7 @@
         "observed_failures": [
           "deadline_on_a_class_that_cannot_enforce_it_is_refused_not_ignored"
         ],
-        "duration_s": 20.821
+        "duration_s": 8.137
       },
       {
         "id": "blocking-run-budget-not-applied",
@@ -582,7 +582,7 @@
         "observed_failures": [
           "a_blocking_run_budget_bounds_the_caller_and_keeps_the_worker_charged"
         ],
-        "duration_s": 14.808
+        "duration_s": 12.356
       },
       {
         "id": "terminal-reply-waits-for-teardown",
@@ -593,7 +593,7 @@
         "observed_failures": [
           "a_deadline_answer_is_not_delayed_by_a_blocking_child_teardown"
         ],
-        "duration_s": 12.345
+        "duration_s": 8.225
       },
       {
         "id": "panic-reply-waits-for-teardown",
@@ -604,7 +604,7 @@
         "observed_failures": [
           "a_panic_answer_is_not_delayed_by_a_blocking_child_teardown"
         ],
-        "duration_s": 9.518
+        "duration_s": 9.039
       },
       {
         "id": "alloc-gate-trusts-a-broken-counter",
@@ -615,7 +615,7 @@
         "observed_failures": [
           "test_a_counter_that_cannot_see_known_allocations_is_not_a_measurement"
         ],
-        "duration_s": 0.882
+        "duration_s": 0.885
       },
       {
         "id": "receipt-validator-trusts-the-receipts-dirty-flag",
@@ -626,7 +626,7 @@
         "observed_failures": [
           "test_a_receipt_claiming_a_clean_tree_over_a_dirty_one_is_caught"
         ],
-        "duration_s": 0.181
+        "duration_s": 0.209
       },
       {
         "id": "proof-parity-not-checked",
@@ -637,7 +637,7 @@
         "observed_failures": [
           "test_just_proof_skipping_a_required_gate_is_reported"
         ],
-        "duration_s": 0.247
+        "duration_s": 0.236
       },
       {
         "id": "iai-runner-self-report-ignored",
@@ -648,7 +648,7 @@
         "observed_failures": [
           "test_the_runner_version_is_accepted_from_its_own_error_report"
         ],
-        "duration_s": 1.052
+        "duration_s": 1.045
       },
       {
         "id": "arch-checker-trusts-the-test-module-naming-convention",
@@ -659,7 +659,7 @@
         "observed_failures": [
           "test_test_modules_inside_src_are_scanned_and_must_be_cfg_test"
         ],
-        "duration_s": 0.189
+        "duration_s": 0.154
       },
       {
         "id": "capability-blocked-head-holds-back-every-newcomer",
@@ -671,7 +671,7 @@
           "a_head_blocked_on_another_capability_pool_does_not_hold_back_a_newcomer",
           "the_capability_exception_holds_inside_the_continuation_gap_too"
         ],
-        "duration_s": 6.568
+        "duration_s": 8.481
       },
       {
         "id": "budget-ignored-on-a-promotion-found-on-wake",
@@ -682,7 +682,7 @@
         "observed_failures": [
           "runtime::claim_acquisition_tests::a_promotion_found_on_wake_after_the_budget_is_spent_is_unwound_v1"
         ],
-        "duration_s": 6.054
+        "duration_s": 6.769
       },
       {
         "id": "cross-class-newcomer-takes-the-continuation-gap",
@@ -694,7 +694,7 @@
           "a_reject_class_that_queues_on_memory_waits_for_the_pending_continuation_too",
           "a_newcomer_of_another_class_also_waits_for_the_pending_continuation"
         ],
-        "duration_s": 4.247
+        "duration_s": 5.607
       },
       {
         "id": "queued-behind-shed-by-overflow-policy",
@@ -706,7 +706,7 @@
           "a_reject_class_that_queues_on_memory_waits_for_the_pending_continuation_too",
           "a_reject_class_that_queues_on_memory_joins_its_queue_behind_a_runnable_head"
         ],
-        "duration_s": 3.849
+        "duration_s": 10.165
       },
       {
         "id": "executor-gate-boundary-off-by-one",
@@ -717,7 +717,7 @@
         "observed_failures": [
           "a_cpu_gate_wider_than_the_executor_declares_is_refused_at_build"
         ],
-        "duration_s": 5.228
+        "duration_s": 10.994
       },
       {
         "id": "absolute-deadline-accepted-on-a-blocking-stack-thread",
@@ -728,7 +728,7 @@
         "observed_failures": [
           "absolute_deadline_rejects_non_cancellable_blocking_work_v1"
         ],
-        "duration_s": 4.536
+        "duration_s": 5.857
       },
       {
         "id": "promotion-pending-is-sticky",
@@ -740,7 +740,7 @@
           "randomized_only_unqueueable_work_overtakes_in_the_gap",
           "randomized_gap_arrivals_queue_behind_runnable_heads"
         ],
-        "duration_s": 5.963
+        "duration_s": 3.907
       },
       {
         "id": "unqueueable-newcomer-queued-in-the-gap",
@@ -751,7 +751,7 @@
         "observed_failures": [
           "randomized_only_unqueueable_work_overtakes_in_the_gap"
         ],
-        "duration_s": 9.096
+        "duration_s": 4.207
       },
       {
         "id": "stage-release-never-promotes",
@@ -762,7 +762,7 @@
         "observed_failures": [
           "a_stage_release_promotes_work_queued_on_memory"
         ],
-        "duration_s": 63.588
+        "duration_s": 4.184
       },
       {
         "id": "leak-reclaim-never-promotes",
@@ -773,7 +773,7 @@
         "observed_failures": [
           "a_reclaimed_leak_promotes_work_queued_on_memory"
         ],
-        "duration_s": 41.849
+        "duration_s": 4.018
       },
       {
         "id": "per-request-memory-cap-inverted",
@@ -784,7 +784,7 @@
         "observed_failures": [
           "per_request_memory_limit_overflow_fails"
         ],
-        "duration_s": 61.56
+        "duration_s": 3.262
       },
       {
         "id": "every-class-can-queue-in-the-gap",
@@ -795,7 +795,7 @@
         "observed_failures": [
           "an_unqueueable_newcomer_is_admitted_in_the_continuation_gap"
         ],
-        "duration_s": 12.302
+        "duration_s": 3.345
       },
       {
         "id": "full-queue-loses-the-capability-cause",
@@ -806,7 +806,7 @@
         "observed_failures": [
           "a_full_queue_sheds_with_the_cause_that_blocked_the_request"
         ],
-        "duration_s": 29.064
+        "duration_s": 3.794
       },
       {
         "id": "drr-cursor-serves-the-wrong-class",
@@ -817,7 +817,7 @@
         "observed_failures": [
           "drr_selection_matches_the_reference_for_heterogeneous_costs"
         ],
-        "duration_s": 15.861
+        "duration_s": 3.176
       },
       {
         "id": "drr-visits-needed-adds-the-deficit",
@@ -828,7 +828,7 @@
         "observed_failures": [
           "drr_selection_matches_the_reference_for_heterogeneous_costs"
         ],
-        "duration_s": 16.405
+        "duration_s": 3.344
       },
       {
         "id": "drr-skipped-laps-credit-the-wrong-count",
@@ -839,7 +839,7 @@
         "observed_failures": [
           "drr_selection_matches_the_reference_for_heterogeneous_costs"
         ],
-        "duration_s": 13.779
+        "duration_s": 3.284
       },
       {
         "id": "drr-work-oracle-counts-nothing",
@@ -850,7 +850,7 @@
         "observed_failures": [
           "drr_examines_each_runnable_class_once_per_selection"
         ],
-        "duration_s": 13.144
+        "duration_s": 3.87
       },
       {
         "id": "absolute-deadline-mapping-inverted",
@@ -862,7 +862,7 @@
           "an_acquire_timeout_under_a_far_absolute_deadline_stays_an_acquisition_timeout_v1",
           "an_absolute_deadline_that_expires_while_queued_is_deadline_exceeded_v1"
         ],
-        "duration_s": 26.751
+        "duration_s": 7.948
       },
       {
         "id": "conservation-oracle-accepts-everything",
@@ -874,7 +874,7 @@
           "a_capability_pool_cannot_exceed_its_limit",
           "a_snapshot_reports_the_violating_class_by_name"
         ],
-        "duration_s": 27.03
+        "duration_s": 14.238
       },
       {
         "id": "degrade-chain-accepted",
@@ -885,7 +885,7 @@
         "observed_failures": [
           "a_degrade_chain_is_rejected"
         ],
-        "duration_s": 19.028
+        "duration_s": 9.332
       },
       {
         "id": "has-runnable-always-true",
@@ -896,7 +896,7 @@
         "observed_failures": [
           "no_continuation_is_owed_when_a_pass_ends_exactly_at_its_budget"
         ],
-        "duration_s": 27.715
+        "duration_s": 4.985
       },
       {
         "id": "class-can-queue-ignores-the-memory-queue",
@@ -907,7 +907,7 @@
         "observed_failures": [
           "a_reject_class_that_queues_on_memory_waits_for_the_pending_continuation_too"
         ],
-        "duration_s": 7.545
+        "duration_s": 3.862
       },
       {
         "id": "abandoning-a-queued-ticket-never-promotes",
@@ -918,7 +918,7 @@
         "observed_failures": [
           "engine_agrees_with_the_reference_model"
         ],
-        "duration_s": 54.043
+        "duration_s": 26.584
       },
       {
         "id": "self-reporting-gate-passes-on-exit-zero-alone",
@@ -929,7 +929,7 @@
         "observed_failures": [
           "test_every_self_reporting_recipe_declares_the_status_line_it_prints"
         ],
-        "duration_s": 0.72
+        "duration_s": 0.263
       },
       {
         "id": "an-earlier-status-line-stands-in-for-the-verdict",
@@ -940,7 +940,40 @@
         "observed_failures": [
           "test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps"
         ],
-        "duration_s": 0.234
+        "duration_s": 0.16
+      },
+      {
+        "id": "a-gate-script-outside-git-is-still-a-gate",
+        "finding": "R3C-3",
+        "status": "KILLED",
+        "detail": "'test_a_recipe_script_git_does_not_track_is_reported' failed as expected",
+        "expected_test": "test_a_recipe_script_git_does_not_track_is_reported",
+        "observed_failures": [
+          "test_a_recipe_script_git_does_not_track_is_reported"
+        ],
+        "duration_s": 0.354
+      },
+      {
+        "id": "an-auth-failure-reads-as-no-history-branch",
+        "finding": "TM16-019",
+        "status": "KILLED",
+        "detail": "'test_an_infrastructure_failure_is_not_a_missing_branch' failed as expected",
+        "expected_test": "test_an_infrastructure_failure_is_not_a_missing_branch",
+        "observed_failures": [
+          "test_an_infrastructure_failure_is_not_a_missing_branch"
+        ],
+        "duration_s": 0.423
+      },
+      {
+        "id": "a-partial-bench-capture-becomes-a-data-point",
+        "finding": "TM16-019",
+        "status": "KILLED",
+        "detail": "'test_a_partial_capture_missing_an_expected_group_is_refused' failed as expected",
+        "expected_test": "test_a_partial_capture_missing_an_expected_group_is_refused",
+        "observed_failures": [
+          "test_a_partial_capture_missing_an_expected_group_is_refused"
+        ],
+        "duration_s": 0.193
       }
     ]
   },

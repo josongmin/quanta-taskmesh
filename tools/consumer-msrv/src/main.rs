@@ -15,13 +15,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use taskmesh::ext::{
-    AdmissionDecision, ClaimOutcome, CpuExecutor, ExecutorCapabilities, Governor, ManualClock,
-    PolicySet, ReconcileOutcome, ReleaseOutcome, StageReleaseOutcome, BUILTIN_SUBSTRATES,
+    AdmissionDecision, AdvanceOutcome, AdvanceRefusal, ClaimOutcome, CpuExecutor,
+    ExecutorCapabilities, Governor, ManualClock, PolicySet, ReconcileOutcome, ReleaseOutcome,
+    StageReleaseOutcome, BUILTIN_SUBSTRATES,
 };
 use taskmesh::{
     AdmissionVerdict, Builder, CancellationPolicy, ClassPolicy, ExecutionPhase, GovernorError,
-    MemoryReleasePolicy, MemoryUnitScale, OverflowPolicy, ResourceBudget, RunError, Runtime,
-    SubmitOptions, TaskClass, TaskSpec, TokioRuntime, TopologyConfig, TopologyError,
+    HeldCapacity, MemoryReleasePolicy, MemoryUnitScale, OverflowPolicy, ResourceBudget, RunError,
+    Runtime, SubmitOptions, TaskClass, TaskScope, TaskSpec, TaskStage, TokioRuntime,
+    TopologyConfig, TopologyError,
 };
 
 /// The wire schema a 0.2.0 consumer must expect. The literal is the consumer's
@@ -157,6 +159,8 @@ async fn main() {
     topology_is_validated();
     governor_outcomes();
     memory_outcomes();
+    drain_is_the_shutdown_contract().await;
+    declared_nested_wait_is_refused();
     println!("taskmesh-consumer-msrv ok");
 }
 
@@ -556,7 +560,8 @@ fn topology_is_validated() {
 
 /// CHANGELOG: direct `Governor` embedding through `ext` — `claim` returns
 /// `ClaimOutcome`, `release` returns `ReleaseOutcome` (`#[must_use]`),
-/// `advance_phase`/`phase`, `PolicySet::default()` seeds the built-in inventory
+/// `advance_phase` returns `AdvanceOutcome` and a dispatched permit is released
+/// only by its `LeaseToken`, `PolicySet::default()` seeds the built-in inventory
 /// and its registry is reached through `substrates()`.
 fn governor_outcomes() {
     let policy = PolicySet::default();
@@ -587,8 +592,9 @@ fn governor_outcomes() {
         "release of a never-granted permit"
     );
     check!(
-        !governor.advance_phase(u64::MAX, ExecutionPhase::Running),
-        "phase of no permit"
+        governor.advance_phase(u64::MAX, ExecutionPhase::Running)
+            == AdvanceOutcome::Refused(AdvanceRefusal::UnknownPermit),
+        "phase of no permit is refused as unknown"
     );
     check!(
         governor.reap_leaks().retained_active == 0,
@@ -653,16 +659,25 @@ fn governor_outcomes() {
             unreachable!()
         }
     };
-    check!(
-        governor.advance_phase(second, ExecutionPhase::Running),
-        "advance to Running"
-    );
+    // The first advance out of DispatchReserved hands back the permit's one
+    // lease; from here only the token ends the permit.
+    let token = match governor.advance_phase(second, ExecutionPhase::Running) {
+        AdvanceOutcome::Leased(token) => token,
+        other => {
+            check!(false, "the first advance leases the permit, got {other:?}");
+            unreachable!()
+        }
+    };
+    check!(token.permit_id() == second, "the lease names its permit");
     check!(
         governor.phase(second) == Some(ExecutionPhase::Running),
         "phase reads back Running"
     );
     check!(
-        !governor.advance_phase(second, ExecutionPhase::Accepted),
+        governor.advance_phase(second, ExecutionPhase::Accepted)
+            == AdvanceOutcome::Refused(AdvanceRefusal::NotLater {
+                current: ExecutionPhase::Running
+            }),
         "phases are monotonic: a backwards declaration is refused"
     );
     let observed = governor.snapshot();
@@ -680,9 +695,21 @@ fn governor_outcomes() {
         observed.conservation_violation().is_none(),
         "engine snapshot conserves"
     );
+    // Naming a dispatched permit is not owning it.
     check!(
-        governor.release(second) == ReleaseOutcome::Released,
-        "second release"
+        governor.release(second)
+            == ReleaseOutcome::HeldByLease {
+                phase: ExecutionPhase::Running
+            },
+        "a plain release of a leased permit is refused"
+    );
+    check!(
+        governor.snapshot().classes[&retrieval()].inflight == 1,
+        "the refused release changed nothing"
+    );
+    check!(
+        governor.release_leased(token) == ReleaseOutcome::Released,
+        "the lease releases its permit"
     );
     check!(
         governor.release(second) == ReleaseOutcome::UnknownPermit,
@@ -691,6 +718,143 @@ fn governor_outcomes() {
     check!(
         governor.claim(ticket) == ClaimOutcome::Invalid,
         "a claimed ticket is Invalid afterwards"
+    );
+}
+
+/// CHANGELOG: `TokioRuntime::drain` (D17) — admission closes in the engine, the
+/// wait is on custody, a timeout is `NotDrained` per class, and the state is
+/// one-way.
+async fn drain_is_the_shutdown_contract() {
+    let runtime = build();
+    check!(!runtime.is_draining(), "a fresh runtime is not draining");
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    let holder = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move {
+            runtime
+                .run_blocking(
+                    TaskSpec::blocking(retrieval()).operation("held"),
+                    move || {
+                        let _released = hold.recv();
+                        Ok::<i32, ()>(1)
+                    },
+                )
+                .await
+        })
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while runtime.snapshot().classes[&retrieval()].inflight == 0 {
+        check!(
+            std::time::Instant::now() < deadline,
+            "the held job never started"
+        );
+        tokio::task::yield_now().await;
+    }
+    let not_drained = match runtime.drain(Duration::from_millis(20)).await {
+        Err(not_drained) => not_drained,
+        Ok(report) => {
+            check!(
+                false,
+                "a held worker must keep the drain waiting: {report:?}"
+            );
+            unreachable!()
+        }
+    };
+    check!(
+        not_drained
+            .classes
+            .get(&retrieval())
+            .map(|left| left.inflight)
+            == Some(1),
+        "NotDrained names the class holding the worker: {not_drained}"
+    );
+    check!(runtime.is_draining(), "a timed-out drain stays draining");
+    check!(
+        matches!(
+            runtime
+                .run_io(TaskSpec::io(retrieval()).operation("late"), async {
+                    Ok::<i32, ()>(2)
+                })
+                .await,
+            Err(RunError::Governor(GovernorError::Rejected(
+                AdmissionVerdict::RuntimeUnavailable
+            )))
+        ),
+        "a submission while draining is refused before admission"
+    );
+    release.send(()).expect("the held job is waiting");
+    check!(
+        matches!(holder.await, Ok(Ok(1))),
+        "the held job was not cancelled by the drain"
+    );
+    let report = match runtime.drain(Duration::from_secs(5)).await {
+        Ok(report) => report,
+        Err(not_drained) => {
+            check!(
+                false,
+                "with the worker gone the drain completes: {not_drained}"
+            );
+            unreachable!()
+        }
+    };
+    check!(report.classes_drained >= 1, "the report counts classes");
+    check!(
+        runtime.governor().admission_closed(),
+        "the engine's own flag is what refuses"
+    );
+}
+
+/// CHANGELOG: `TaskSpec::awaited_child_of` / `NestedWaitCycle` (D12) and the
+/// `TaskScope::Child { parent_stage, .. }` pattern.
+fn declared_nested_wait_is_refused() {
+    let mut classes = std::collections::BTreeMap::new();
+    classes.insert(
+        retrieval(),
+        ClassPolicy::new()
+            .max_inflight(1)
+            .max_queue_depth(4)
+            .cpu_units(1)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth),
+    );
+    let policy = PolicySet::new(ResourceBudget::new().cpu_units(8).memory_units(8), classes);
+    let governor =
+        Governor::new(policy, Arc::new(ManualClock::new(0))).expect("queueing policy builds");
+    let parent = match governor.admit(&TaskSpec::io(retrieval()).operation("parent")) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => {
+            check!(false, "the parent takes the slot, got {other:?}");
+            unreachable!()
+        }
+    };
+    let child = TaskSpec::io(retrieval()).awaited_child_of("parent", TaskStage::new("child"));
+    check!(
+        matches!(
+            &child.scope,
+            TaskScope::Child {
+                parent_awaits: true,
+                ..
+            }
+        ),
+        "awaited_child_of declares the wait"
+    );
+    match governor.admit(&child) {
+        AdmissionDecision::Rejected(AdmissionVerdict::NestedWaitCycle { held_by_root }) => check!(
+            held_by_root == HeldCapacity::ClassInflight { class: retrieval() },
+            "the verdict names the capacity: {held_by_root}"
+        ),
+        other => check!(false, "a declared cycle is refused, got {other:?}"),
+    }
+    let lineage_only = TaskSpec::io(retrieval()).child_of("parent", TaskStage::new("child"));
+    check!(
+        matches!(
+            governor.admit(&lineage_only),
+            AdmissionDecision::Queued { .. }
+        ),
+        "an undeclared wait is never inferred: the child queues"
+    );
+    check!(
+        governor.release(parent) == ReleaseOutcome::Released,
+        "parent release"
     );
 }
 
@@ -832,7 +996,10 @@ fn memory_outcomes() {
     check!(
         matches!(
             MemoryUnitScale { bytes_per_unit: 1 }.units_for(u64::MAX),
-            Err(taskmesh::ResourceConversionError::MemoryUnitsOverflow { bytes: u64::MAX, .. })
+            Err(taskmesh::ResourceConversionError::MemoryUnitsOverflow {
+                bytes: u64::MAX,
+                ..
+            })
         ),
         "a reading past the u32 unit domain is MemoryUnitsOverflow, not u32::MAX"
     );

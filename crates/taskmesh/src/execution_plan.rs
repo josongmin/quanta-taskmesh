@@ -151,4 +151,16 @@ impl ResolvedExecutionPlan {
             _ => None,
         }
     }
+
+    /// The relative run budget (`RunFor`), if any: the only deadline a
+    /// synchronous (detached) dispatch can carry. An absolute `CompleteBy` on
+    /// such a dispatch is refused before a lease exists
+    /// (`plan_supports_absolute_deadline`), so a detached worker never sees one
+    /// and needs no branch for it.
+    pub fn run_budget(&self) -> Option<std::time::Duration> {
+        match self.deadline {
+            Some(SubmissionDeadline::RunFor(budget)) => Some(budget),
+            _ => None,
+        }
+    }
 }

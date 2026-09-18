@@ -905,7 +905,7 @@ impl Governor {
     ///
     /// From the moment this returns, every `admit*` call — from the host or
     /// from an embedder driving the governor directly — is refused with
-    /// [`AdmissionVerdict::RuntimeUnavailable`] before anything is queued,
+    /// [`AdmissionVerdict::RuntimeUnavailable`](taskmesh_contract::AdmissionVerdict::RuntimeUnavailable) before anything is queued,
     /// charged, or counted. Work already admitted or queued is untouched:
     /// queued requests are still promoted and claimed, leases are still
     /// released, and the gauges still converge to zero. The flag is read and

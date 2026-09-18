@@ -444,7 +444,7 @@ impl TokioRuntime {
             started_rx,
             done_rx,
             plan.cancel.clone(),
-            plan.deadline,
+            plan.run_budget(),
             "blocking worker",
         )
         .await
@@ -486,7 +486,7 @@ impl TokioRuntime {
             started_rx,
             done_rx,
             plan.cancel.clone(),
-            plan.deadline,
+            plan.run_budget(),
             "large-stack worker",
         )
         .await
@@ -760,7 +760,7 @@ impl TokioRuntime {
             started_rx,
             done_rx,
             plan.cancel.clone(),
-            plan.deadline,
+            plan.run_budget(),
             "cpu worker",
         )
         .await
@@ -907,17 +907,21 @@ fn run_detached_job<T, E>(
 }
 
 /// Await a detached worker, racing its completion against cancellation and the
-/// run deadline.
+/// run budget.
 ///
-/// The deadline for `RunFor` is anchored to the worker's **own** start, reported
-/// by the worker itself. A completion that lands past that anchor is a deadline
-/// miss even if the timer has not fired yet, so an inline executor cannot return
-/// a late success as `Ok`. Ties go to the deadline.
+/// Only a relative `RunFor` budget reaches here: every detached dispatch
+/// (blocking pool, CPU executor, dedicated stack thread) is synchronous, and an
+/// absolute `CompleteBy` on one is refused before its lease exists
+/// (`plan_supports_absolute_deadline`). The budget is anchored to the worker's
+/// **own** start, reported by the worker itself. A completion that lands past
+/// that anchor is a deadline miss even if the timer has not fired yet, so an
+/// inline executor cannot return a late success as `Ok`. Ties go to the
+/// deadline.
 async fn await_detached<T, E>(
     started_rx: oneshot::Receiver<std::time::Instant>,
     done_rx: oneshot::Receiver<DetachedOutcome<T, E>>,
     cancel: Option<CancellationToken>,
-    deadline: Option<SubmissionDeadline>,
+    run_budget: Option<Duration>,
     context: &'static str,
 ) -> Result<T, RunError<E>> {
     let cancelled = async {
@@ -927,12 +931,9 @@ async fn await_detached<T, E>(
         }
     };
     let expiry = async {
-        match deadline {
+        match run_budget {
             None => std::future::pending::<()>().await,
-            Some(SubmissionDeadline::CompleteBy(instant)) => {
-                tokio::time::sleep_until(Instant::from_std(instant)).await;
-            }
-            Some(SubmissionDeadline::RunFor(budget)) => match started_rx.await {
+            Some(budget) => match started_rx.await {
                 // The budget starts when the work does.
                 Ok(started_at) => match started_at.checked_add(budget) {
                     Some(expires_at) => {
@@ -949,19 +950,15 @@ async fn await_detached<T, E>(
     tokio::select! {
         biased;
         () = cancelled, if cancel.is_some() => Err(RunError::Governor(GovernorError::Cancelled)),
-        () = expiry, if deadline.is_some() => Err(RunError::Governor(GovernorError::DeadlineExceeded)),
+        () = expiry, if run_budget.is_some() => Err(RunError::Governor(GovernorError::DeadlineExceeded)),
         received = &mut done_rx => match received {
             Ok(outcome) => {
-                let expired = match deadline {
-                    Some(SubmissionDeadline::RunFor(budget)) => outcome
+                let expired = run_budget.is_some_and(|budget| {
+                    outcome
                         .started_at
                         .checked_add(budget)
-                        .is_some_and(|expires_at| outcome.completed_at >= expires_at),
-                    Some(SubmissionDeadline::CompleteBy(instant)) => {
-                        outcome.completed_at >= instant
-                    }
-                    None => false,
-                };
+                        .is_some_and(|expires_at| outcome.completed_at >= expires_at)
+                });
                 let DetachedOutcome { result, lease, .. } = outcome;
                 // Release fence: drop custody before the caller is answered.
                 drop(lease);

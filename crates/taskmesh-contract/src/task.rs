@@ -72,7 +72,18 @@ pub enum ClassificationRationale {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskScope {
     Root,
-    Child { parent_stage: TaskStage },
+    Child {
+        parent_stage: TaskStage,
+        /// The parent's execution blocks on this child's result (declared with
+        /// [`TaskSpec::awaited_child_of`]). While the parent holds its permit
+        /// it cannot free capacity, so a child that could only wait for
+        /// capacity held entirely by its own root is refused with
+        /// [`crate::AdmissionVerdict::NestedWaitCycle`] instead of being queued
+        /// into a deadlock (ADR 0003 D12). A wait that is not declared is
+        /// never inferred: an undeclared child queues as any request does.
+        #[serde(default)]
+        parent_awaits: bool,
+    },
 }
 
 /// One stage in a task's execution plan.
@@ -174,13 +185,45 @@ impl TaskSpec {
 
     /// Reparents this task under an existing root. The child inherits the root's
     /// `root_operation_id` so its permits roll up to the root's accounting bucket.
+    ///
+    /// The relationship is lineage only: the engine does not assume the parent
+    /// waits for this child. If it does, say so with
+    /// [`Self::awaited_child_of`], which is what turns an otherwise certain
+    /// deadlock into a typed refusal.
     pub fn child_of(
         mut self,
         root_operation_id: impl Into<String>,
         parent_stage: TaskStage,
     ) -> Self {
         self.root_operation_id = root_operation_id.into();
-        self.scope = TaskScope::Child { parent_stage };
+        self.scope = TaskScope::Child {
+            parent_stage,
+            parent_awaits: false,
+        };
+        self
+    }
+
+    /// Like [`Self::child_of`], and declares that the parent's execution blocks
+    /// on this child's result.
+    ///
+    /// A parent that awaits its child keeps its own permit — and every unit of
+    /// capacity that permit holds — until the child has run. If the capacity
+    /// this child needs is held *entirely* by its own root, no release can ever
+    /// come: the child would wait on its parent, which waits on the child. The
+    /// engine refuses such a submission before admission with
+    /// [`crate::AdmissionVerdict::NestedWaitCycle`] (naming the capacity)
+    /// instead of queueing it. Capacity shared with other holders is not a
+    /// cycle — they can finish — and is queued for as usual (ADR 0003 D12).
+    pub fn awaited_child_of(
+        mut self,
+        root_operation_id: impl Into<String>,
+        parent_stage: TaskStage,
+    ) -> Self {
+        self.root_operation_id = root_operation_id.into();
+        self.scope = TaskScope::Child {
+            parent_stage,
+            parent_awaits: true,
+        };
         self
     }
 

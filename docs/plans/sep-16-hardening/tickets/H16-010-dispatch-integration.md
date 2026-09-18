@@ -31,7 +31,7 @@ semantic resource와 adapter dispatch credit을 동일 reservation 결정에 연
 - [x] host FIFO semaphore waiter와 engine scheduler의 경쟁 실행 순서를 제거한다. adapter가 공유하는 capacity authority 한 곳에서 credit을 가져오며 logical mirrors를 별도 가산하지 않는다.
 - [x] driver budget 소진 후 continuation·new capacity notification을 coalesce하고 모든 runnable work의 재평가를 보장한다.
 - [x] 선언된 nested wait의 same-capacity/cross-pool cycle 정책을 시험한다. opaque closure가 만들 수 있는 모든 wait graph를 추론한다고 약속하지 않는다.
-  → D12 범위 밖으로 문서화(EXCEPTIONS H16-010-A06)
+  → 처음엔 D12 범위 밖으로만 문서화했다가 마무리 검증에서 구현: `awaited_child_of`로 선언된 child가 자기 root의 permit만이 전부 쥔 capacity(class inflight·pool·cpu·memory)를 기다리게 되면 `NestedWaitCycle { held_by_root }`로 거절 (`hardening_nested_wait.rs` engine 9 / host 2); 미선언·stranger·sibling·degrade는 cycle이 아님 — 추론 없음. root 간 cross-pool cycle은 여전히 범위 밖 (ADR 0003 D12 개정)
 - [x] 한 runtime instance에서 old/new scheduler를 동시에 실행하지 않는다. shadow는 metadata decision replay만 하고 job을 재실행하지 않는다.
   → shadow scheduler 자체를 두지 않았다(N/A)
 
@@ -66,9 +66,11 @@ Regression: `hardening_intake_bounds.rs`의
   두지 않았다 — lease 자체가 authorization이다.
 - [x] `H16-010-A05` 공유 adapter에서 각 runtime이 자기 제출을 제한; 선언된 한계는 builder가 gate와
       대조한다 (D05 개정)
-- [ ] `H16-010-A06` 선언된 nested wait cycle의 typed reject는 미구현. D12대로 지원 범위
-      밖으로 문서화만 했다.
-  → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
+- [x] `H16-010-A06` 선언된 nested wait cycle의 typed reject: `awaited_child_of`로 선언된 child가
+      자기 root만이 쥔 capacity에 막히면 queue 대신 `AdmissionVerdict::NestedWaitCycle { held_by_root }`
+      (`an_awaited_child_blocked_only_by_its_own_root_is_refused_not_queued`,
+      `a_parent_that_awaits_a_declared_child_on_its_own_slot_is_told_so_at_once`); 미선언 wait는 추론하지
+      않는다 (`an_undeclared_child_queues_as_any_request_does`) — ADR 0003 D12 개정
 - [x] `H16-010-A07` promotion K+1 backlog가 후속 event 없이 drain
 
 ## 실행 명령

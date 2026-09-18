@@ -58,4 +58,4 @@ pub use topology::{
     CpuMode, CpuPoolConfig, SubstrateHint, SubstrateKind, SubstrateRecord, TopologyConfig,
     TopologyError, MAX_CAPABILITY_SLOTS,
 };
-pub use verdict::{AdmissionVerdict, GovernorError, RunError, TerminalReason};
+pub use verdict::{AdmissionVerdict, GovernorError, HeldCapacity, RunError, TerminalReason};

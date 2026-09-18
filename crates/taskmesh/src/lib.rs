@@ -67,6 +67,7 @@ pub use taskmesh_contract::{
     ExecutionPhase,
     FairnessPolicy,
     GovernorError,
+    HeldCapacity,
     MemoryOvercommitPolicy,
     MemoryPermitMode,
     MemoryReleasePolicy,

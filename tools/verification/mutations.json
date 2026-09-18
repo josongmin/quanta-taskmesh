@@ -1116,6 +1116,84 @@
       "test_target": "lib",
       "expect_failing_test": "runtime::claim_acquisition_tests::a_lease_taken_through_ext_is_refused_not_run_v1",
       "expect_message": "a runtime lease must not run under a lease it does not hold"
+    },
+    {
+      "id": "nested-wait-cycle-is-queued-anyway",
+      "finding": "B2-nested-wait",
+      "runner": "cargo",
+      "rationale": "D12: a child that declared its parent awaits it, blocked on capacity held only by that parent, is a deadlock by declaration. If the check never fires the child is queued behind a parent that will never release, and the caller hangs instead of hearing a typed verdict.",
+      "file": "crates/taskmesh-engine/src/features/composite/mod.rs",
+      "find": "    let TaskScope::Child {\n        parent_awaits: true,\n        ..\n    } = &spec.scope\n    else {\n        return None;\n    };",
+      "replace": "    let TaskScope::Child {\n        parent_awaits: true,\n        ..\n    } = &spec.scope\n    else {\n        return None;\n    };\n    return None;",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_nested_wait",
+      "expect_failing_test": "an_awaited_child_blocked_only_by_its_own_root_is_refused_not_queued",
+      "expect_message": "a declared cycle must be refused as NestedWaitCycle, not queued or shed"
+    },
+    {
+      "id": "nested-wait-inferred-for-undeclared-children",
+      "finding": "B2-nested-wait",
+      "runner": "cargo",
+      "rationale": "D12 promises no inference: lineage alone is not a wait. Treating every child as awaited refuses the legitimate follow-up pattern (a job enqueues same-class work and returns) as a cycle.",
+      "file": "crates/taskmesh-engine/src/features/composite/mod.rs",
+      "find": "    let TaskScope::Child {\n        parent_awaits: true,\n        ..\n    } = &spec.scope",
+      "replace": "    let TaskScope::Child { .. } = &spec.scope",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_nested_wait",
+      "expect_failing_test": "an_undeclared_child_queues_as_any_request_does",
+      "expect_message": "a wait that can end must queue"
+    },
+    {
+      "id": "nested-wait-counts-siblings-as-the-parent",
+      "finding": "B2-nested-wait",
+      "runner": "cargo",
+      "rationale": "Only root-scoped permits cannot end before the child. Counting a sibling child's slot as the parent's turns a wait that ends when the sibling finishes into a refused cycle.",
+      "file": "crates/taskmesh-engine/src/features/composite/mod.rs",
+      "find": "        if record.root_operation_id != spec.root_operation_id\n            || !matches!(record.scope, TaskScope::Root)\n        {",
+      "replace": "        if record.root_operation_id != spec.root_operation_id {",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_nested_wait",
+      "expect_failing_test": "capacity_shared_with_a_sibling_is_a_wait_not_a_cycle",
+      "expect_message": "a wait that can end must queue"
+    },
+    {
+      "id": "nested-wait-ignores-the-stranger-holding-a-slot",
+      "finding": "B2-nested-wait",
+      "runner": "cargo",
+      "rationale": "The whole block must be the root's. If the rule fires whenever the root holds any slot of the class, a child blocked partly by a stranger — who can release — is refused instead of queued.",
+      "file": "crates/taskmesh-engine/src/features/composite/mod.rs",
+      "find": "        CapacityBlock::Inflight => (in_class > 0 && state.inflight(class) == in_class).then(|| {",
+      "replace": "        CapacityBlock::Inflight => (in_class > 0).then(|| {",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_nested_wait",
+      "expect_failing_test": "capacity_shared_with_a_stranger_is_a_wait_not_a_cycle",
+      "expect_message": "a wait that can end must queue"
+    },
+    {
+      "id": "nested-wait-judged-before-degrade",
+      "finding": "B2-nested-wait",
+      "runner": "cargo",
+      "rationale": "A class that can degrade to a fallback with room is not waiting at all. Judging the cycle before the degrade refuses work the light class would have run.",
+      "file": "crates/taskmesh-engine/src/features/admission/mod.rs",
+      "find": "            if let MemoryOvercommitPolicy::DegradeToLight { fallback_class } =\n                &policy.memory_overcommit_policy\n            {\n                if degrade_allowed {",
+      "replace": "            if let MemoryOvercommitPolicy::DegradeToLight { fallback_class } =\n                &policy.memory_overcommit_policy\n            {\n                if degrade_allowed\n                    && composite::declared_wait_cycle(\n                        state,\n                        spec,\n                        class,\n                        request.capability.as_ref(),\n                        block,\n                    )\n                    .is_none()\n                {",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_nested_wait",
+      "expect_failing_test": "a_class_that_degrades_to_a_fallback_with_room_is_admitted_not_refused",
+      "expect_message": "expected admission, got Rejected(NestedWaitCycle"
+    },
+    {
+      "id": "awaited-child-of-does-not-declare-the-wait",
+      "finding": "B2-nested-wait",
+      "runner": "cargo",
+      "rationale": "The declaration is the whole mechanism. If the builder that promises to declare it sets nothing, a consumer who wrote `awaited_child_of` still deadlocks — silently, exactly what the API exists to prevent.",
+      "file": "crates/taskmesh-contract/src/task.rs",
+      "find": "        self.scope = TaskScope::Child {\n            parent_stage,\n            parent_awaits: true,\n        };",
+      "replace": "        self.scope = TaskScope::Child {\n            parent_stage,\n            parent_awaits: false,\n        };",
+      "package": "taskmesh",
+      "test_target": "hardening_nested_wait",
+      "expect_failing_test": "a_parent_that_awaits_a_declared_child_on_its_own_slot_is_told_so_at_once",
+      "expect_message": "parent awaiting a declared cycle: the caller was still waiting after"
     }
   ]
 }

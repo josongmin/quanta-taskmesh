@@ -88,6 +88,11 @@ mod prelude {
         let _ = job;
     }
 
+    /// Records a child's lineage point (CHANGELOG `TaskScope::Child` migration).
+    pub fn attribute(parent_stage: &TaskStage) {
+        let _ = parent_stage;
+    }
+
     /// The application's own CPU pool behind a custom `CpuExecutor` (CHANGELOG
     /// `ExecutorCapabilities` migration). The example writes the `impl`
     /// itself, so only the struct and the pool it wraps live here.

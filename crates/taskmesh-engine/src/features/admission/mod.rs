@@ -254,8 +254,22 @@ fn admit_class(
             state, policy, class, request, waker, ids, now_ms, block, effects,
         ),
         // Inflight, CPU, and capability saturation all obey the class's overflow
-        // policy: queue within depth, or shed with the cause.
+        // policy: queue within depth, or shed with the cause — unless the wait
+        // is a declared cycle (D12), which neither queueing nor a retry can
+        // ever satisfy.
         CapacityBlock::Inflight | CapacityBlock::Cpu | CapacityBlock::Capability => {
+            if let Some(held_by_root) = composite::declared_wait_cycle(
+                state,
+                spec,
+                class,
+                request.capability.as_ref(),
+                block,
+            ) {
+                retire(effects, waker);
+                return AdmissionDecision::Rejected(AdmissionVerdict::NestedWaitCycle {
+                    held_by_root,
+                });
+            }
             if policy.overflow_policy.is_queueable() {
                 enqueue_or_full(
                     state, policy, class, request, waker, ids, now_ms, block, effects,
@@ -265,28 +279,48 @@ fn admit_class(
                 AdmissionDecision::Rejected(verdict_for_block(block, retry(policy, state, class)))
             }
         }
-        CapacityBlock::Memory => match &policy.memory_overcommit_policy {
-            MemoryOvercommitPolicy::Queue => enqueue_or_full(
-                state, policy, class, request, waker, ids, now_ms, block, effects,
-            ),
-            MemoryOvercommitPolicy::DegradeToLight { fallback_class } if degrade_allowed => {
-                // D03: a fallback reclassifies the *resource* account only. The
-                // capability the work needs is a property of the work, so it is
-                // carried across unchanged.
-                let fallback = fallback_class.clone();
-                admit_class(
-                    state, policies, now_ms, request, &fallback, waker, ids, false, effects,
-                )
+        CapacityBlock::Memory => {
+            // Degrade first: a fallback with room is not a wait at all, and the
+            // fallback's own admission judges its own block. D03: a fallback
+            // reclassifies the *resource* account only; the capability the
+            // work needs is a property of the work and is carried across.
+            if let MemoryOvercommitPolicy::DegradeToLight { fallback_class } =
+                &policy.memory_overcommit_policy
+            {
+                if degrade_allowed {
+                    let fallback = fallback_class.clone();
+                    return admit_class(
+                        state, policies, now_ms, request, &fallback, waker, ids, false, effects,
+                    );
+                }
             }
-            // Reject, or a degrade that is no longer allowed (already degraded
-            // once): both shed with MemorySaturated.
-            MemoryOvercommitPolicy::Reject | MemoryOvercommitPolicy::DegradeToLight { .. } => {
+            // A queue or a shed: neither helps a declared cycle (D12).
+            if let Some(held_by_root) = composite::declared_wait_cycle(
+                state,
+                spec,
+                class,
+                request.capability.as_ref(),
+                block,
+            ) {
                 retire(effects, waker);
-                AdmissionDecision::Rejected(AdmissionVerdict::MemorySaturated {
-                    retry_after_ms: retry(policy, state, class),
-                })
+                return AdmissionDecision::Rejected(AdmissionVerdict::NestedWaitCycle {
+                    held_by_root,
+                });
             }
-        },
+            match &policy.memory_overcommit_policy {
+                MemoryOvercommitPolicy::Queue => enqueue_or_full(
+                    state, policy, class, request, waker, ids, now_ms, block, effects,
+                ),
+                // Reject, or a degrade that is no longer allowed (already
+                // degraded once): both shed with MemorySaturated.
+                MemoryOvercommitPolicy::Reject | MemoryOvercommitPolicy::DegradeToLight { .. } => {
+                    retire(effects, waker);
+                    AdmissionDecision::Rejected(AdmissionVerdict::MemorySaturated {
+                        retry_after_ms: retry(policy, state, class),
+                    })
+                }
+            }
+        }
     }
 }
 

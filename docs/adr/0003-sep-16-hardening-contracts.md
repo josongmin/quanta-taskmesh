@@ -303,6 +303,34 @@ scheduler는 별도 RFC다.
 task에 남는다. 중앙 kernel에는 metadata와 handle만 둔다 — 중앙화가 `Send + 'static`을
 강제하는 재작성이 되어서는 안 된다.
 
+**개정 (마무리 검증 B2) — 선언된 cycle은 typed로 거절한다.** "감지하지 않는다"는 유지하되,
+caller가 **선언한** 것은 판정한다. `TaskSpec::awaited_child_of(root, parent_stage)`는
+`TaskScope::Child { parent_awaits: true, .. }`로 "parent의 실행이 이 child의 결과를 기다린다"를
+선언한다(`child_of`는 lineage만; `parent_awaits: false`, serde default라 옛 payload도 파싱된다).
+그런 child가 capacity block(class inflight / capability pool / cpu budget / memory budget)에
+걸렸고 그 capacity가 **자기 root의 root-scoped permit들만으로** 전부 점유되어 있으면 — 즉 child가
+기다리는 것을 놓아줄 유일한 주체가 child를 기다리는 parent라면 — queue 대신 admission 전에
+`AdmissionVerdict::NestedWaitCycle { held_by_root: HeldCapacity }`로 거절한다(queue·계상·total
+변화 없음, retry hint 없음: 재시도로는 절대 풀리지 않는다). shed 클래스도 `CpuSaturated`+hint 대신
+같은 verdict를 받는다(hint가 거짓말이 되므로). `DegradeToLight`는 cycle 판정보다 먼저 시도한다 —
+여유 있는 fallback은 대기가 아니다.
+
+규칙은 **sound하되 complete하지 않다** (끝날 수 있는 대기는 절대 거절하지 않는다): 선언되지 않은
+child는 지금처럼 queue된다(opaque closure의 wait graph는 추론하지 않는다); 다른 root(stranger)가
+slot 하나라도 쥐고 있으면 대기다(그가 놓을 수 있다); 같은 root의 **sibling child**가 쥔 slot도
+대기다(sibling은 parent 없이 끝난다 — root-scoped permit만 "child보다 먼저 끝날 수 없는" 것으로
+센다); `QueuedBehind`(D08)는 순서만 빚진 것이지 cycle이 아니다. root 간 cross-pool cycle(R1이 A를
+쥐고 B를 기다리고 R2가 B를 쥐고 A를 기다림)은 wait-for graph가 필요하며 여전히 범위 밖이다. 판정은
+live permit 한 번 순회(O(inflight), H16-009로 bounded)이고 queue/shed 직전 경로에서만 일어난다.
+`root_operation_id`는 root 실행 하나를 식별한다 — 같은 id로 root를 둘 내면 두 번째 root-scoped
+permit도 "parent"로 센다(caller 오용). 증명: `crates/taskmesh-engine/tests/hardening_nested_wait.rs`(9:
+네 capacity 종류 각각의 cycle, shed 클래스, 그리고 cycle이 *아닌* 네 경우), host
+`hardening_nested_wait.rs`(2: parent 안에서 선언된 child가 즉시 verdict를 받음 / 미선언 child는
+queue되고 parent의 `acquire_timeout`이 typed로 끝냄), mutation `nested-wait-*` 5 +
+`awaited-child-of-does-not-declare-the-wait`. **breaking**: `TaskScope::Child`에 field 추가
+(exhaustive pattern), `AdmissionVerdict`에 arm 추가(`non_exhaustive`이므로 wildcard arm이 있는
+match는 그대로).
+
 ---
 
 ## D13 — 모델 검사는 replica가 아니라 production Governor를 돌린다
@@ -504,6 +532,7 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
 | custom `CpuExecutor` | `taskmesh-rayon`, host 기본 adapter, 6개 test adapter | additive: `capabilities()`는 default 구현이 있으므로 기존 impl은 그대로 컴파일된다. **단**, `declared_workers`를 선언하는 adapter가 topology의 `cpu` gate보다 작으면 `build()`가 거절한다 (D05 개정) |
 | `SubmitOptions::deadline` on non-`CooperativeWithDeadline` class | `deadline_cancel.rs` (test 1건) | **breaking**: `DeadlineUnsupported`로 거절 (D14). 이전에는 무시 |
 | `TokioRuntime::drain` / `Governor::close_admission` | 없음 (신규) | additive (D17). `RuntimeUnavailable`을 accounting fault로만 해석하던 코드는 `admission_closed()`도 봐야 한다 |
+| `TaskScope::Child` exhaustive pattern | engine `composite` 2곳 | **breaking** (D12 개정): `parent_awaits: bool` 추가 — `TaskScope::Child { parent_stage, .. }`로 쓴다; serde는 default |
 | `GovernorError` match arms | host tests 10곳 | additive (`non_exhaustive`): `DeadlineUnsupported`, `LeaseReclaimed`, `WorkerUnavailable`, `WorkerPanicked`, `JobAbandoned`; worker 실패가 더 이상 `PolicyViolation`이 아니다 |
 | `Governor::release` | engine/bench tests 145곳 | **breaking**: `ReleaseOutcome` (`#[must_use]`); 통계상 statement-form 호출은 `assert_eq!(…, Released)`로 바뀌었다. D14 개정: dispatch된 permit은 `HeldByLease`를 답한다 — `advance_phase`를 쓰는 embedder는 `Leased(token)`을 보관하고 `release_leased(token)`으로 끝낸다 |
 | `Governor::advance_phase` | host `ExecutionLease`, engine tests | **breaking** (D14 개정): `bool` → `AdvanceOutcome::{Leased(LeaseToken), Advanced, Refused(AdvanceRefusal)}` |

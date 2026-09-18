@@ -64,6 +64,42 @@ pub enum AdmissionVerdict {
     SubstrateSaturated {
         retry_after_ms: Option<u64>,
     },
+    /// A child that declared its parent awaits it
+    /// ([`crate::TaskSpec::awaited_child_of`]) could only wait for capacity
+    /// that is held entirely by its own root, whose permit cannot end before
+    /// the child runs. Queueing it would be a deadlock by declaration, so it
+    /// is refused before admission — nothing is queued, nothing is charged —
+    /// and `held_by_root` names the capacity (ADR 0003 D12). Not a
+    /// backpressure hint: retrying while the parent waits cannot succeed.
+    NestedWaitCycle {
+        held_by_root: HeldCapacity,
+    },
+}
+
+/// The capacity a [`AdmissionVerdict::NestedWaitCycle`] child was waiting for,
+/// all of it held by root-scoped permits of the child's own root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum HeldCapacity {
+    /// Every `max_inflight` slot of the class.
+    ClassInflight { class: TaskClass },
+    /// Every slot of the capability pool the child resolved to.
+    CapabilityPool { pool: String },
+    /// Every held cpu unit under the global cpu budget.
+    CpuBudget,
+    /// Every held memory unit under the global memory budget.
+    MemoryBudget,
+}
+
+impl fmt::Display for HeldCapacity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ClassInflight { class } => write!(f, "class {class} inflight"),
+            Self::CapabilityPool { pool } => write!(f, "capability pool {pool}"),
+            Self::CpuBudget => f.write_str("cpu budget"),
+            Self::MemoryBudget => f.write_str("memory budget"),
+        }
+    }
 }
 
 impl AdmissionVerdict {
@@ -103,6 +139,10 @@ impl fmt::Display for AdmissionVerdict {
             Self::SubstrateMismatch => f.write_str("substrate hint / run-path mismatch"),
             Self::SubstratePoolTimedOut { .. } => f.write_str("substrate pool acquire timed out"),
             Self::SubstrateSaturated { .. } => f.write_str("substrate capability pool saturated"),
+            Self::NestedWaitCycle { held_by_root } => write!(
+                f,
+                "declared nested wait cycle: {held_by_root} is held entirely by the child's own root"
+            ),
         }
     }
 }

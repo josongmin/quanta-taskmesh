@@ -67,6 +67,46 @@ fn child_of_inherits_root_id_and_sets_scope() {
 }
 
 #[test]
+fn only_awaited_child_of_declares_that_the_parent_waits() {
+    // D12: lineage (`child_of`) says nothing about who waits for whom; the
+    // wait is a separate, explicit declaration. Both re-root the child.
+    let lineage = TaskSpec::cpu(TaskClass::new("c")).child_of("root-7", TaskStage::new("fanout"));
+    assert_eq!(
+        lineage.scope,
+        TaskScope::Child {
+            parent_stage: TaskStage::new("fanout"),
+            parent_awaits: false,
+        },
+        "child_of must not declare a wait the caller did not"
+    );
+    let awaited =
+        TaskSpec::cpu(TaskClass::new("c")).awaited_child_of("root-7", TaskStage::new("fanout"));
+    assert_eq!(awaited.root_operation_id, "root-7");
+    assert_eq!(
+        awaited.scope,
+        TaskScope::Child {
+            parent_stage: TaskStage::new("fanout"),
+            parent_awaits: true,
+        }
+    );
+
+    // The declaration is on the wire, and a payload written before it existed
+    // still parses — as an undeclared wait, never as a declared one.
+    let json = serde_json::to_string(&awaited.scope).expect("serializes");
+    assert!(json.contains("\"parent_awaits\":true"), "{json}");
+    let legacy: TaskScope = serde_json::from_str(r#"{"Child":{"parent_stage":"fanout"}}"#)
+        .expect("legacy scope parses");
+    assert_eq!(
+        legacy,
+        TaskScope::Child {
+            parent_stage: TaskStage::new("fanout"),
+            parent_awaits: false,
+        },
+        "a scope without the field is an undeclared wait"
+    );
+}
+
+#[test]
 fn builder_defaults_smoke() {
     assert_eq!(ClassPolicy::new(), ClassPolicy::default());
     assert_eq!(ResourceBudget::new(), ResourceBudget::default());

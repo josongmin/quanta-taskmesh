@@ -37,7 +37,10 @@ let out = runtime
 고급 규칙:
 
 1. `.stage(...)`는 adapter/runtime owner용; `.reduce_stage(...)`는 fan-out + 결정적 reduce용
-2. `child_of(...)`는 composite permit attribution용 (root에 귀속)
+2. `child_of(...)`는 composite permit attribution용 (root에 귀속); parent가 결과를 기다리면
+   `awaited_child_of(...)`로 선언한다 — 자기 root의 permit만이 전부 쥔 capacity를 기다리게 될 child는
+   queue 대신 `AdmissionVerdict::NestedWaitCycle { held_by_root: HeldCapacity }`로 admission 전에
+   거절된다 (D12; 미선언 wait는 추론하지 않는다)
 3. unknown class는 `AdmissionVerdict::UnknownClass`로 reject
 4. CPU executor 교체: `Builder::cpu_executor(Arc::new(taskmesh::ext::RayonCpuExecutor::from_topology(&topo)))`
    (`features = ["rayon"]`; 직접 `taskmesh-rayon` 의존 불필요). adapter가 `declared_workers`를 topology의

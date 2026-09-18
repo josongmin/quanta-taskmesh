@@ -47,6 +47,18 @@ The public surface a downstream consumer depends on is the `taskmesh` crate
   shed because the capability pool is full and there is no room to wait — the
   class does not queue, or its queue is already full while its head waits on
   that pool. Its `retry_after_ms` is reported by `AdmissionVerdict::retry_after_ms()`.
+- `TaskSpec::awaited_child_of(root, parent_stage)` and
+  `TaskScope::Child { parent_awaits }` (D12 revision): declares that the
+  parent's execution blocks on this child. `AdmissionVerdict::NestedWaitCycle
+  { held_by_root: HeldCapacity }` is what such a child gets, before admission
+  and with nothing charged, when the capacity it would wait for — class
+  inflight, a capability pool, the cpu or memory budget — is held entirely by
+  its own root's permits: queueing it would be a deadlock by declaration, and
+  no retry can help (`retry_after_ms()` is `None`). `child_of` is unchanged:
+  lineage is not a wait, and undeclared waits are never inferred. Capacity
+  shared with another root or with a sibling child is a wait, not a cycle.
+  `HeldCapacity` (`ClassInflight { class }`, `CapabilityPool { pool }`,
+  `CpuBudget`, `MemoryBudget`; `#[non_exhaustive]`) names the capacity.
 - `TerminalReason` (`Reclaimed`, `Released`, `Abandoned`): why a queued ticket
   ended without its waiter taking ownership.
 - `GovernorError` variants (all additive; the enum was and is `#[non_exhaustive]`):
@@ -625,6 +637,29 @@ match runtime.run_io_with(spec, SubmitOptions::unbounded().with_deadline(d), fut
 
 Blocking-path `RunFor` now bounds the *caller's wait* (the started job is not
 aborted). `CompleteBy` on a blocking path is still `PolicyViolation`.
+
+#### `TaskScope::Child` gained `parent_awaits`
+
+An exhaustive pattern `TaskScope::Child { parent_stage }` no longer compiles;
+write `TaskScope::Child { parent_stage, .. }`. On the wire the field has a
+default, so a payload written before it existed still parses (as an undeclared
+wait). `child_of` still builds an undeclared child; `awaited_child_of` is new.
+
+```rust,ignore
+// 0.1.0
+match spec.scope {
+    TaskScope::Root => {}
+    TaskScope::Child { parent_stage } => attribute(parent_stage),
+}
+```
+
+```rust
+// 0.2.0
+match &spec.scope {
+    TaskScope::Root => {}
+    TaskScope::Child { parent_stage, .. } => attribute(parent_stage),
+}
+```
 
 #### `SubstrateSaturated` vs `SubstratePoolTimedOut`
 

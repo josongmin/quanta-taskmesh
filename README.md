@@ -488,6 +488,12 @@ lease를 돌려준다 — 그 뒤로는 `release_leased(token)`만 permit을 끝
 8. **child→root 귀속:** `child_of(root, parent_stage)`는 root를 유지하고 `parent_stage`가
    재귀 가드·attribution의 권위적 lineage 키다 (substrate가 아님). 같은 `(root, parent_stage)`
    재진입은 `RecursiveAdmission`. `operation(name)`은 root를 재설정하지 않는다.
+   **선언된 nested wait (D12):** parent가 child의 결과를 기다린다면 `awaited_child_of(root, parent_stage)`로
+   선언한다. 그 child가 기다릴 capacity(class inflight·capability pool·cpu/memory budget)를 자기 root의
+   permit만이 전부 쥐고 있으면 — 놓아줄 유일한 주체가 기다리는 parent라면 — queue 대신 admission 전에
+   `AdmissionVerdict::NestedWaitCycle { held_by_root }`로 거절된다(계상 없음, retry hint 없음). 선언하지
+   않은 child(`child_of`)는 추론 없이 지금처럼 queue된다; stranger나 sibling이 slot을 쥐면 대기이지
+   cycle이 아니다.
 9. `checkpoint_policy`는 host가 hook point에서 inspect하는 **메타데이터**다(엔진 강제 아님).
 
 문서:

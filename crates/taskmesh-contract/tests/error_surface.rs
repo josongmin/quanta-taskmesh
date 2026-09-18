@@ -264,6 +264,14 @@ fn admission_verdicts_and_terminal_reasons_render_one_line_each() {
             },
             "substrate capability pool saturated",
         ),
+        (
+            AdmissionVerdict::NestedWaitCycle {
+                held_by_root: HeldCapacity::CapabilityPool {
+                    pool: "blocking".to_string(),
+                },
+            },
+            "declared nested wait cycle: capability pool blocking is held entirely by the child's own root",
+        ),
     ];
     for (verdict, rendered) in verdicts {
         assert_eq!(format!("{verdict}"), rendered, "{verdict:?}");
@@ -379,6 +387,9 @@ fn every_backpressure_verdict_carries_its_hint_and_no_other_verdict_does() {
         AdmissionVerdict::MalformedTask,
         AdmissionVerdict::CancelledBeforeSubmit,
         AdmissionVerdict::RuntimeUnavailable,
+        AdmissionVerdict::NestedWaitCycle {
+            held_by_root: HeldCapacity::CpuBudget,
+        },
     ];
     for verdict in &unhinted {
         assert_eq!(

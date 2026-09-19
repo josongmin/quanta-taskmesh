@@ -9,8 +9,8 @@
   [H16-022](H16-022-qualification-and-rollout.md)와 receipt(`../receipts/local-2026-09-18.json`)에 명시되어 있다;
   최종 qualification은 CI `qualification` job(Linux clean checkout)이 낸다.
 - 구현된 계약: [ADR 0003](../../../adr/0003-sep-16-hardening-contracts.md). 로컬 증거:
-  `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 458 green (contract 42 · engine 205 · host 150 · rayon 3 · bench 55 · doc-examples 3),
-  loom 5 / shuttle 7 green **on the production `Governor`**, mutation gate 94/94
+  `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 461 green (contract 42 · engine 207 · host 151 · rayon 3 · bench 55 · doc-examples 3),
+  loom 5 / shuttle 7 green **on the production `Governor`**, mutation gate 100/100
   (Python 도구 10건·shuttle 모델 3건·differential 모델 1건·객관 sweep 갭 13건 포함), libFuzzer 3 target(`just fuzz`), consumer MSRV 1.81 PASS(default·rayon), allocation gate 3.0 allocs/op
   (threshold = 측정값).
 - 구현 직후 3-track 적대적 감사(engine/runtime · 증명 강도 · tooling/CI/docs)를 실행했고 P0 3건·P1 12건·

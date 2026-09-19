@@ -306,6 +306,100 @@ fn capacity_shared_with_a_stranger_is_a_wait_not_a_cycle() {
 }
 
 #[test]
+fn a_pool_cpu_or_memory_budget_shared_with_a_stranger_is_a_wait_not_a_cycle() {
+    // The class-inflight case above, on the three other kinds of capacity: the
+    // root holds part of what the child waits for, a stranger the rest. The
+    // stranger can release, so each child queues — and is promoted when it does.
+    let claim = |g: &Governor, ticket: u64, what: &str| {
+        let taskmesh_engine::ClaimOutcome::Ready(permit) = g.claim(ticket) else {
+            panic!("{what}: the stranger's release promotes the child")
+        };
+        permit
+    };
+
+    // Capability pool: two blocking slots, one each.
+    let g = governor(
+        vec![("p", Shape::queueing(4)), ("q", Shape::queueing(4))],
+        100,
+        100,
+        2,
+    );
+    let parent = admit(&g, &blocking_root("p", "parent"));
+    let stranger = admit(&g, &blocking_root("p", "stranger"));
+    let child = TaskSpec::blocking(class("q"))
+        .awaited_child_of("parent".to_string(), TaskStage::new("child"));
+    let ticket = queued("pool shared with a stranger", g.admit(&child));
+    assert_eq!(g.release(stranger), ReleaseOutcome::Released);
+    let child = claim(&g, ticket, "pool");
+    assert_eq!(g.release(child), ReleaseOutcome::Released);
+    assert_eq!(g.release(parent), ReleaseOutcome::Released);
+
+    // CPU budget 2: one unit each.
+    let g = governor(
+        vec![("h", Shape::queueing(4)), ("c", Shape::queueing(4))],
+        2,
+        100,
+        0,
+    );
+    let parent = admit(&g, &root("h", "parent"));
+    let stranger = admit(&g, &root("h", "stranger"));
+    let ticket = queued(
+        "cpu shared with a stranger",
+        g.admit(&awaited_child("c", "parent")),
+    );
+    assert_eq!(g.release(stranger), ReleaseOutcome::Released);
+    let child = claim(&g, ticket, "cpu");
+    assert_eq!(g.release(child), ReleaseOutcome::Released);
+    assert_eq!(g.release(parent), ReleaseOutcome::Released);
+
+    // Memory budget 2: one unit each; the child's class queues on overcommit.
+    let queue_on_memory = Shape {
+        overcommit: MemoryOvercommitPolicy::Queue,
+        ..Shape::queueing(4)
+    };
+    let g = governor(
+        vec![("h", Shape::queueing(4)), ("c", queue_on_memory)],
+        100,
+        2,
+        0,
+    );
+    let parent = admit(&g, &root("h", "parent"));
+    let stranger = admit(&g, &root("h", "stranger"));
+    let ticket = queued(
+        "memory shared with a stranger",
+        g.admit(&awaited_child("c", "parent")),
+    );
+    assert_eq!(g.release(stranger), ReleaseOutcome::Released);
+    let child = claim(&g, ticket, "memory");
+    assert_eq!(g.release(child), ReleaseOutcome::Released);
+    assert_eq!(g.release(parent), ReleaseOutcome::Released);
+}
+
+#[test]
+fn a_root_that_holds_none_of_the_pool_is_not_what_the_child_waits_for() {
+    // The root is async I/O (no pool); a stranger holds the only blocking slot.
+    // The child waits for the stranger, not for its parent: a wait. Counting
+    // the root's permit toward a pool it does not occupy would call it a cycle.
+    let g = governor(
+        vec![("p", Shape::queueing(4)), ("q", Shape::queueing(4))],
+        100,
+        100,
+        1,
+    );
+    let parent = admit(&g, &root("p", "parent"));
+    let stranger = admit(&g, &blocking_root("p", "stranger"));
+    let child = TaskSpec::blocking(class("q"))
+        .awaited_child_of("parent".to_string(), TaskStage::new("child"));
+    let ticket = queued("child behind a stranger's pool slot", g.admit(&child));
+    assert_eq!(g.release(stranger), ReleaseOutcome::Released);
+    let taskmesh_engine::ClaimOutcome::Ready(child) = g.claim(ticket) else {
+        panic!("the stranger's release promotes the child")
+    };
+    assert_eq!(g.release(child), ReleaseOutcome::Released);
+    assert_eq!(g.release(parent), ReleaseOutcome::Released);
+}
+
+#[test]
 fn capacity_shared_with_a_sibling_is_a_wait_not_a_cycle() {
     // Two slots: the root holds one, an earlier child of the same root the
     // other. Only root-scoped permits are "cannot end before this child": the

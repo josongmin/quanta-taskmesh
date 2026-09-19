@@ -20,7 +20,8 @@
 //!   a second drain after the worker ends succeeds.
 //! * **Event-driven.** The drain returns promptly when the last custody
 //!   returns — a lease released, or a promoted-but-unclaimed ticket abandoned —
-//!   not when its timeout elapses.
+//!   not when its timeout elapses; and while it waits it sleeps, so a task
+//!   sharing its thread keeps running.
 //! * **No admission after `is_draining()` is observable.** Submitters racing
 //!   the flag may be admitted before they saw it and are always refused after.
 //!
@@ -499,6 +500,74 @@ async fn a_held_blocking_worker_makes_drain_report_not_drained_and_stay_charged(
     assert_idle(&rt.snapshot(), "after the second drain");
 }
 
+// ---- the wait yields: a drain that is waiting costs its thread nothing ----
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_waiting_drain_yields_its_thread_instead_of_spinning() {
+    // Event-driven means the drain *sleeps* between custody returns. On a
+    // current-thread runtime a drain that re-polled instead of sleeping (a
+    // deadline future that resolves at once, a loop that never parks) would
+    // hold the only thread for its whole timeout: a ticker task sharing that
+    // thread would not run once. The result alone cannot tell the two apart —
+    // both return NotDrained after the timeout — so the ticker is the witness.
+    let rt = drain_runtime(2);
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    let release = ReleaseOnDrop(Some(release));
+    let rt_holder = rt.clone();
+    let holder = tokio::spawn(async move {
+        rt_holder
+            .run_blocking(
+                TaskSpec::blocking(class("c")).operation("hold"),
+                move || {
+                    let _released = hold.recv();
+                    Ok::<i32, ()>(1)
+                },
+            )
+            .await
+    });
+    until_snapshot(&rt, "holder running", |s| {
+        s.classes[&class("c")].inflight == 1
+    })
+    .await;
+
+    let ticks = Arc::new(AtomicUsize::new(0));
+    let ticker = {
+        let ticks = Arc::clone(&ticks);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                ticks.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+    };
+    let before = ticks.load(Ordering::SeqCst);
+    let not_drained = bounded(
+        "drain with a held worker",
+        rt.drain(Duration::from_millis(200)),
+    )
+    .await
+    .expect_err("the held worker keeps the drain from completing");
+    let during = ticks.load(Ordering::SeqCst) - before;
+    ticker.abort();
+    assert!(
+        not_drained.elapsed >= Duration::from_millis(200),
+        "the drain waited its whole budget"
+    );
+    // ~40 ticks fit in 200 ms; 3 is a floor a loaded machine still clears and a
+    // spinning drain (0) cannot.
+    assert!(
+        during >= 3,
+        "a waiting drain must yield its thread: a task sharing it ticked only {during} times in {:?}",
+        not_drained.elapsed
+    );
+
+    release.release();
+    assert_eq!(bounded("holder", holder).await.expect("join"), Ok(1));
+    bounded("second drain", rt.drain(Duration::from_secs(30)))
+        .await
+        .expect("with the worker gone the drain completes");
+}
+
 // ---- a promoted-but-unclaimed ticket abandoned mid-drain wakes it ---------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -711,7 +780,7 @@ async fn no_submission_is_admitted_after_is_draining_became_observable() {
                 .await;
             assert_eq!(warm, Ok(1), "submitter {id}: admitted before the drain");
             admitted.fetch_add(1, Ordering::SeqCst);
-            barrier.wait().await;
+            bounded("submitter at the start barrier", barrier.wait()).await;
             let mut rounds = 0usize;
             loop {
                 rounds += 1;
@@ -745,7 +814,10 @@ async fn no_submission_is_admitted_after_is_draining_became_observable() {
         }));
     }
 
-    barrier.wait().await;
+    // Bounded: a submitter that fails its positive control panics before the
+    // barrier, and an unbounded wait here would turn that named failure into a
+    // hung test binary.
+    bounded("every submitter reaches the start barrier", barrier.wait()).await;
     let report = bounded(
         "drain under racing submitters",
         rt.drain(Duration::from_secs(30)),

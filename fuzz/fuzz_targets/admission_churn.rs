@@ -20,6 +20,11 @@
 //! * every outcome the engine reports about a handle the harness holds agrees
 //!   with what the harness did with it (a permit it released is
 //!   `UnknownPermit` afterwards; a token spent twice is refused);
+//! * a declared nested wait (`awaited_child_of`, D12) is judged soundly: only
+//!   a submission that declared the wait is ever refused as `NestedWaitCycle`
+//!   (no inference), and the capacity the verdict names is — by the harness's
+//!   own bookkeeping of which root submitted which permit — held entirely by
+//!   root-scoped permits of the child's root;
 //! * after everything the harness holds is returned, the governor is quiescent:
 //!   every gauge zero, `admitted_total == terminated_total`, no ledger left.
 #![no_main]
@@ -30,7 +35,7 @@ use std::sync::Arc;
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use taskmesh_contract::{
-    AdmissionVerdict, ClassPolicy, ExecutionPhase, FairnessPolicy, ManualClock,
+    AdmissionVerdict, ClassPolicy, ExecutionPhase, FairnessPolicy, HeldCapacity, ManualClock,
     MemoryOvercommitPolicy, MemoryPermitMode, MemoryReleasePolicy, OverflowPolicy, ResourceBudget,
     TaskClass, TaskSpec, TaskStage,
 };
@@ -58,7 +63,10 @@ enum Op {
     Admit {
         class: u8,
         substrate: u8,
-        child_of: Option<u8>,
+        /// 0: a root; 1: `child_of` a root the harness created; 2:
+        /// `awaited_child_of` one (a declared nested wait).
+        scope: u8,
+        root: u8,
     },
     Claim(u8),
     Abandon(u8),
@@ -143,18 +151,67 @@ fn class_policy(shape: &ClassShape, fairness: FairnessPolicy, index: usize) -> C
         .memory_permit_mode(permit_mode)
 }
 
-fn spec(class: u8, substrate: u8, child_of: Option<u8>, seq: usize) -> TaskSpec {
+/// Who submitted a permit: the root it belongs to, and whether it is that
+/// root's own (root-scoped) permit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Origin {
+    root: String,
+    is_root: bool,
+}
+
+/// The spec for one `Admit`, and its origin. Roots are named `root<seq>`;
+/// children name a root the harness created earlier (or a fresh name when
+/// there is none yet), so a declared wait can actually meet its parent.
+fn spec(
+    class: u8,
+    substrate: u8,
+    scope: u8,
+    root: u8,
+    roots: &[String],
+    seq: usize,
+) -> (TaskSpec, Origin, bool) {
     let class = TaskClass::new(CLASSES[usize::from(class) % CLASSES.len()]);
-    let spec = match substrate % 4 {
+    let base = match substrate % 4 {
         0 => TaskSpec::io(class),
         1 => TaskSpec::blocking(class),
         2 => TaskSpec::cpu(class),
         _ => TaskSpec::local(class),
-    }
-    .operation(format!("op{seq}"));
-    match child_of {
-        Some(root) => spec.child_of(format!("root{}", root % 4), TaskStage::new("parent")),
-        None => spec,
+    };
+    let root_name = if roots.is_empty() {
+        format!("orphan{}", root % 4)
+    } else {
+        roots[usize::from(root) % roots.len()].clone()
+    };
+    match scope % 3 {
+        0 => {
+            let name = format!("root{seq}");
+            (
+                base.operation(name.clone()),
+                Origin {
+                    root: name,
+                    is_root: true,
+                },
+                false,
+            )
+        }
+        1 => (
+            base.operation(format!("op{seq}"))
+                .child_of(root_name.clone(), TaskStage::new(format!("stage{seq}"))),
+            Origin {
+                root: root_name,
+                is_root: false,
+            },
+            false,
+        ),
+        _ => (
+            base.operation(format!("op{seq}"))
+                .awaited_child_of(root_name.clone(), TaskStage::new(format!("stage{seq}"))),
+            Origin {
+                root: root_name,
+                is_root: false,
+            },
+            true,
+        ),
     }
 }
 
@@ -179,9 +236,54 @@ struct Harness {
     /// again.
     ended: Vec<PermitId>,
     closed: bool,
+    /// Every root name the harness has submitted.
+    roots: Vec<String>,
+    /// Who submitted each permit / ticket the harness knows of.
+    permit_origin: BTreeMap<PermitId, Origin>,
+    ticket_origin: BTreeMap<Ticket, Origin>,
 }
 
 impl Harness {
+    /// Independent check of a `NestedWaitCycle` verdict: every live permit
+    /// holding the named capacity is a root-scoped permit of `root`, and there
+    /// is at least one. Unclaimed promotions are attributed through the ticket
+    /// that owns them.
+    fn assert_cycle_is_real(&self, root: &str, held: &HeldCapacity) {
+        let mut origin = self.permit_origin.clone();
+        for (ticket, who) in &self.ticket_origin {
+            if let ClaimOutcome::Ready(permit) = self.governor.ticket_status(*ticket) {
+                origin.insert(permit, who.clone());
+            }
+        }
+        let holders: Vec<_> = self
+            .governor
+            .permit_ledgers()
+            .into_iter()
+            .filter(|ledger| match held {
+                HeldCapacity::ClassInflight { class } => ledger.class == *class,
+                HeldCapacity::CapabilityPool { pool } => {
+                    ledger.capability.as_deref() == Some(pool.as_str())
+                }
+                HeldCapacity::CpuBudget => ledger.cpu_units > 0,
+                HeldCapacity::MemoryBudget => ledger.effective_units > 0,
+                _ => panic!("unknown HeldCapacity {held:?}: extend the oracle"),
+            })
+            .collect();
+        assert!(
+            !holders.is_empty(),
+            "NestedWaitCycle names {held} but nothing holds it"
+        );
+        for ledger in holders {
+            let who = origin.get(&ledger.permit_id);
+            assert!(
+                who.is_some_and(|who| who.is_root && who.root == root),
+                "NestedWaitCycle for root {root} names {held}, but permit {} ({who:?}) holding it \
+                 is not a root-scoped permit of that root — a wait that could end was refused",
+                ledger.permit_id
+            );
+        }
+    }
+
     fn check(&self) {
         let snapshot = self.governor.snapshot();
         assert_eq!(snapshot.conservation_violation(), None);
@@ -241,9 +343,14 @@ impl Harness {
             Op::Admit {
                 class,
                 substrate,
-                child_of,
+                scope,
+                root,
             } => {
-                let spec = spec(class, substrate, child_of, seq);
+                let (spec, origin, declared) =
+                    spec(class, substrate, scope, root, &self.roots, seq);
+                if origin.is_root {
+                    self.roots.push(origin.root.clone());
+                }
                 let held_before = self
                     .governor
                     .snapshot()
@@ -273,10 +380,23 @@ impl Harness {
                             );
                         }
                         self.permits.push(permit_id);
+                        self.permit_origin.insert(permit_id, origin);
                     }
                     AdmissionDecision::Queued { ticket } => {
                         assert!(!self.closed, "ticket {ticket} queued after close_admission");
                         self.tickets.push(ticket);
+                        self.ticket_origin.insert(ticket, origin);
+                    }
+                    AdmissionDecision::Rejected(AdmissionVerdict::NestedWaitCycle {
+                        held_by_root,
+                    }) => {
+                        assert!(
+                            declared,
+                            "NestedWaitCycle for a submission that declared no wait: \
+                             an undeclared wait was inferred"
+                        );
+                        assert!(!self.closed, "a closed governor refuses as unavailable");
+                        self.assert_cycle_is_real(&origin.root, &held_by_root);
                     }
                     AdmissionDecision::Rejected(verdict) => {
                         if self.closed {
@@ -303,6 +423,9 @@ impl Harness {
                     ClaimOutcome::Ready(permit_id) => {
                         self.tickets.swap_remove(at);
                         self.permits.push(permit_id);
+                        if let Some(origin) = self.ticket_origin.remove(&ticket) {
+                            self.permit_origin.insert(permit_id, origin);
+                        }
                     }
                     ClaimOutcome::Pending => {}
                     ClaimOutcome::Terminal(_) => {
@@ -545,6 +668,9 @@ fuzz_target!(|scenario: Scenario| {
         tokens: Vec::new(),
         ended: Vec::new(),
         closed: false,
+        roots: Vec::new(),
+        permit_origin: BTreeMap::new(),
+        ticket_origin: BTreeMap::new(),
     };
     harness.check();
     for (seq, op) in scenario.ops.into_iter().enumerate().take(256) {

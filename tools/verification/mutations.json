@@ -1194,6 +1194,84 @@
       "test_target": "hardening_nested_wait",
       "expect_failing_test": "a_parent_that_awaits_a_declared_child_on_its_own_slot_is_told_so_at_once",
       "expect_message": "parent awaiting a declared cycle: the caller was still waiting after"
+    },
+    {
+      "id": "drain-spins-instead-of-sleeping",
+      "finding": "B1-drain",
+      "runner": "cargo",
+      "rationale": "D17 promises an event-driven wait. A deadline future that resolves at once turns the drain into a busy loop that re-reads the gauges until its timeout: the result is identical (NotDrained after the budget), so only a witness sharing the drain's thread can tell — on a current-thread runtime it never runs.",
+      "file": "crates/taskmesh/src/runtime/drain.rs",
+      "find": "        Some(deadline) => tokio::time::sleep_until(deadline).await,",
+      "replace": "        Some(_deadline) => {}",
+      "package": "taskmesh",
+      "test_target": "hardening_drain",
+      "expect_failing_test": "a_waiting_drain_yields_its_thread_instead_of_spinning",
+      "expect_message": "a waiting drain must yield its thread"
+    },
+    {
+      "id": "lease-token-nonce-accessor-lies",
+      "finding": "A5-lease-token",
+      "runner": "cargo",
+      "rationale": "Found by the objective delta sweep: the spent-lease test forges a twin from `nonce()`; if the accessor returned anything but the real proof, that test would be proving a different token is refused, and still pass. The twin must equal the token.",
+      "file": "crates/taskmesh-engine/src/engine/state.rs",
+      "find": "    pub fn nonce(&self) -> u64 {\n        self.nonce\n    }",
+      "replace": "    pub fn nonce(&self) -> u64 {\n        1\n    }",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_lease_token",
+      "expect_failing_test": "a_lease_releases_its_permit_exactly_once",
+      "expect_message": "forge(permit_id(), nonce()) must reproduce the token exactly"
+    },
+    {
+      "finding": "B2-nested-wait",
+      "runner": "cargo",
+      "file": "crates/taskmesh-engine/src/features/composite/mod.rs",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_nested_wait",
+      "id": "nested-wait-pool-shared-with-a-stranger-is-a-cycle",
+      "rationale": "Found by the objective delta sweep. Only the class-inflight stranger case was tested; if the pool check stops requiring the whole pool to be the root's, a child waiting on a slot a stranger can release is refused.",
+      "find": "            (in_pool > 0 && in_use == in_pool).then(|| HeldCapacity::CapabilityPool {",
+      "replace": "            (in_pool > 0 || in_use == in_pool).then(|| HeldCapacity::CapabilityPool {",
+      "expect_failing_test": "a_pool_cpu_or_memory_budget_shared_with_a_stranger_is_a_wait_not_a_cycle",
+      "expect_message": "pool shared with a stranger: a wait that can end must queue"
+    },
+    {
+      "finding": "B2-nested-wait",
+      "runner": "cargo",
+      "file": "crates/taskmesh-engine/src/features/composite/mod.rs",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_nested_wait",
+      "id": "nested-wait-cpu-shared-with-a-stranger-is-a-cycle",
+      "rationale": "Found by the objective delta sweep: the same whole-block rule on the cpu budget had no test.",
+      "find": "            (cpu_units > 0 && state.cpu_units_held == cpu_units).then_some(HeldCapacity::CpuBudget)",
+      "replace": "            (cpu_units > 0 || state.cpu_units_held == cpu_units).then_some(HeldCapacity::CpuBudget)",
+      "expect_failing_test": "a_pool_cpu_or_memory_budget_shared_with_a_stranger_is_a_wait_not_a_cycle",
+      "expect_message": "cpu shared with a stranger: a wait that can end must queue"
+    },
+    {
+      "finding": "B2-nested-wait",
+      "runner": "cargo",
+      "file": "crates/taskmesh-engine/src/features/composite/mod.rs",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_nested_wait",
+      "id": "nested-wait-memory-shared-with-a-stranger-is-a-cycle",
+      "rationale": "Found by the objective delta sweep: the same whole-block rule on the memory budget had no test.",
+      "find": "        CapacityBlock::Memory => (memory_units > 0 && state.memory_units_held == memory_units)",
+      "replace": "        CapacityBlock::Memory => (memory_units > 0 || state.memory_units_held == memory_units)",
+      "expect_failing_test": "a_pool_cpu_or_memory_budget_shared_with_a_stranger_is_a_wait_not_a_cycle",
+      "expect_message": "memory shared with a stranger: a wait that can end must queue"
+    },
+    {
+      "finding": "B2-nested-wait",
+      "runner": "cargo",
+      "file": "crates/taskmesh-engine/src/features/composite/mod.rs",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_nested_wait",
+      "id": "nested-wait-counts-the-root-toward-a-pool-it-does-not-hold",
+      "rationale": "Found by the objective delta sweep: counting every root permit toward the pool (not only those occupying it) turns 'a stranger fills the pool' into a cycle whenever the root runs anywhere else.",
+      "find": "        if capability.is_some() && record.capability.as_ref() == capability {",
+      "replace": "        if capability.is_some() || record.capability.as_ref() == capability {",
+      "expect_failing_test": "a_root_that_holds_none_of_the_pool_is_not_what_the_child_waits_for",
+      "expect_message": "child behind a stranger's pool slot: a wait that can end must queue"
     }
   ]
 }

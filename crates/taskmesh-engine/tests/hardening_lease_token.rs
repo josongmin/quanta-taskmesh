@@ -123,8 +123,14 @@ fn a_lease_releases_its_permit_exactly_once() {
     let token = lease(&g, permit, ExecutionPhase::Running);
     assert_eq!(token.permit_id(), permit);
     // A token is not `Clone`; a twin can only be forged. It stands in for the
-    // one way a lease could be presented twice: a caller that kept a copy.
+    // one way a lease could be presented twice: a caller that kept a copy. It
+    // must be an exact twin — the same proof — or "a spent lease is refused"
+    // below would be proving something about a different token.
     let twin = LeaseToken::forge(token.permit_id(), token.nonce());
+    assert_eq!(
+        twin, token,
+        "forge(permit_id(), nonce()) must reproduce the token exactly"
+    );
 
     assert_eq!(
         g.release_leased(token),

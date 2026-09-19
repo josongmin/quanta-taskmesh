@@ -54,7 +54,9 @@ cargo +nightly test -Zbuild-std --target "${target}" -p taskmesh-engine \
 # Host: the TicketGuard/lease handoff (in-crate unit tests), custom CpuExecutor
 # adapters and lease custody across threads, dedicated stack threads with
 # cancellation and deadlines, concurrent submitters against the intake gate,
-# the blocking pool, cancel-leak races, and the mixed soak.
+# the blocking pool, cancel-leak races, the drain's wake-ups racing
+# submitters and lease drops (D17), a parent submitting its own child from
+# inside a running job (D12), and the mixed soak.
 cargo +nightly test -Zbuild-std --target "${target}" -p taskmesh \
   --lib \
   --test runtime_cpu_executor \
@@ -65,6 +67,8 @@ cargo +nightly test -Zbuild-std --target "${target}" -p taskmesh \
   --test hardening_executor_protocol \
   --test hardening_deadline_custody \
   --test runtime_cancel_timeout \
+  --test hardening_drain \
+  --test hardening_nested_wait \
   --test host_inferno
 
 # The only work-stealing adapter.

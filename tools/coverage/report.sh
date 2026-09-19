@@ -25,6 +25,14 @@ fi
 
 out_dir="target/coverage"
 mkdir -p "${out_dir}"
+# Start from this build only. `cargo llvm-cov` reports every instrumented
+# object left in its target dir, and a test executable built from an older
+# source — here once a doc-examples binary from before that crate was
+# excluded — carries its own copy of the library with the *old* line mapping,
+# never executed. Merged in, it reported comment lines as uncovered and pulled
+# the totals down by 20 points. Cleaning the workspace's artifacts and
+# profiles (dependencies stay built) makes the report a function of the source.
+cargo llvm-cov clean --workspace
 # The bench harness measures and the doc-examples crate only type-checks the
 # README's fragments (never executed); neither is the library, and counting
 # them would move the numbers without a single library line changing.

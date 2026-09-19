@@ -64,7 +64,7 @@ The gate set is `tools/gates/inventory.json`; the required subset is
   against the Python tooling and the bench workflow scripts), each killed by its named regression for its named
   reason found in that test's own output, plus one behaviour-preserving control
   that must stay green
-  (`receipts/local-2026-09-18.mutations.json`).
+  (`receipts/local-2026-09-19.mutations.json`).
 
 ## Required proof scenarios
 

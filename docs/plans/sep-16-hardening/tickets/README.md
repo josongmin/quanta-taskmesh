@@ -6,7 +6,7 @@
 - 상태 (2026-09-19): **22개 티켓 IMPLEMENTED, branch `hardening/sep-16`에 commit (0.2.0)**; 4차(마무리)에서 예외 대장 결정 항목 2건(drain D17, nested wait D12)을 구현으로 닫았다. 원본 40개 finding 각각 corrected
   regression 연결, 품질 항목 33개 중 32개 처분 완료·1개 EXTERNAL(Q33). local(macOS, clean tree) qualification은
   **NOT_QUALIFIED**이며 사유는 하나, Linux-only `bench-iai` 미실행(SKIPPED_PLATFORM). 사유는
-  [H16-022](H16-022-qualification-and-rollout.md)와 receipt(`../receipts/local-2026-09-18.json`)에 명시되어 있다;
+  [H16-022](H16-022-qualification-and-rollout.md)와 receipt(`../receipts/local-2026-09-19.json`)에 명시되어 있다;
   최종 qualification은 CI `qualification` job(Linux clean checkout)이 낸다.
 - 구현된 계약: [ADR 0003](../../../adr/0003-sep-16-hardening-contracts.md). 로컬 증거:
   `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 461 green (contract 42 · engine 207 · host 151 · rayon 3 · bench 55 · doc-examples 3),

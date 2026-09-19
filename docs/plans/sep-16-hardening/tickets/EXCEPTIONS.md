@@ -17,9 +17,9 @@
 
 ## 인계 항목의 처리 (모든 티켓 공통 3줄)
 
-1. **acceptance ID별 exact-source receipt·정상/negative 결과** — `docs/plans/sep-16-hardening/receipts/local-2026-09-18.json`
-   (+ `.gates.json`, `.mutations.json`): clean committed tree의 source digest(전후 일치)·22 gate 결과·mutation
-   65 entry의 kill/control 결과(각 entry의 기대 실패 이유 포함). acceptance ID ↔ test 이름은 각 티켓의
+1. **acceptance ID별 exact-source receipt·정상/negative 결과** — `docs/plans/sep-16-hardening/receipts/local-2026-09-19.json`
+   (+ `.gates.json`, `.mutations.json`): clean committed tree(`cc5b256`)의 source digest(전후 일치)·24 gate 결과·mutation
+   100 entry의 kill/control 결과(각 entry의 기대 실패 이유 포함). acceptance ID ↔ test 이름은 각 티켓의
    "검증 / 완료 조건"에, test ↔ finding은 `COVERAGE.md`와 `tools/verification/mutations.json`의 `finding`에 있다.
 2. **lease 인계·production 통합·외부 소비자·activation 상태** — 단일 작업자라 lease 인계는 없었다.
    production 통합/외부 소비자/activation은 **UNVERIFIED**로 위 표(H16-022-A05)에 독립 표시했다.

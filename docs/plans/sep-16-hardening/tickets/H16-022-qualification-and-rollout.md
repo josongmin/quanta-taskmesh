@@ -45,8 +45,8 @@
   `validate`(schema, 현재 tree와 digest 대조, required gate 전부 PASS, mutation 0 problem, msrv PASS).
   dirty tree·SKIPPED_PLATFORM·NOT_RUN·mismatch는 모두 NOT_QUALIFIED 사유로 나열된다.
 - 22 ticket acceptance, 40 finding(COVERAGE 표), Q01–Q33 처분이 추적된다.
-- 실제 receipt: `docs/plans/sep-16-hardening/receipts/local-2026-09-18.json` (clean committed tree,
-  branch `hardening/sep-16`). verdict는 **NOT_QUALIFIED**이며 사유는 `bench-iai` SKIPPED_PLATFORM(macOS)
+- 실제 receipt: `docs/plans/sep-16-hardening/receipts/local-2026-09-19.json` (clean committed tree `cc5b256`,
+  branch `hardening/sep-16`; 24 gate 중 23 PASS, mutation 100/100, coverage 95.23/94.50/97.22, TSan·fuzz CLEAN). verdict는 **NOT_QUALIFIED**이며 사유는 `bench-iai` SKIPPED_PLATFORM(macOS)
   하나다 — 이 저장소의 상태를 정확히 말하는 것이며 숨기지 않는다. Linux에서 같은 collector를 도는 CI
   `qualification` job이 receipt of record다.
 - rollout/rollback: 새 snapshot schema(v2)는 구버전 reader가 읽지 못하므로 downgrade는
@@ -89,7 +89,7 @@ uv run python tools/pm/pm.py lint
 
 ## 인계 / 완료 증거
 
-- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-18.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
+- [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-19.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
 - [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
 - [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
 

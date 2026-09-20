@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789939362854,
+  "lastUpdate": 1789939388107,
   "repoUrl": "https://github.com/josongmin/quanta-taskmesh",
   "entries": {
     "taskmesh wall-clock": [
@@ -483,6 +483,78 @@ window.BENCHMARK_DATA = {
             "name": "governance_tax_blocking_noop/governed_substrate_saturated_shed",
             "value": 732,
             "range": "± 44",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "songmin.jo@twelvelabs.io",
+            "name": "Songmin Jo",
+            "username": "songminjo"
+          },
+          "committer": {
+            "email": "songmin.jo@twelvelabs.io",
+            "name": "Songmin Jo",
+            "username": "songminjo"
+          },
+          "distinct": true,
+          "id": "39690639f94f1c264dc40fbba6b6d9fcaea337c0",
+          "message": "proof: make fuzz and model evidence non-vacuous",
+          "timestamp": "2026-09-21T06:20:40+09:00",
+          "tree_id": "b1d9e28253afe4951299b558e30e377057d08818",
+          "url": "https://github.com/josongmin/quanta-taskmesh/commit/39690639f94f1c264dc40fbba6b6d9fcaea337c0"
+        },
+        "date": 1789939387596,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "admit_release_success",
+            "value": 974,
+            "range": "± 30",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "admit_unknown_class_reject",
+            "value": 255,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/governed",
+            "value": 36593,
+            "range": "± 2505",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/raw_spawn_blocking",
+            "value": 28405,
+            "range": "± 2136",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/semaphore_only",
+            "value": 26860,
+            "range": "± 2092",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/tower_concurrency_limit",
+            "value": 28277,
+            "range": "± 2226",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/governed_pre_submit_cancelled",
+            "value": 795,
+            "range": "± 6",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/governed_substrate_saturated_shed",
+            "value": 1107,
+            "range": "± 4",
             "unit": "ns/iter"
           }
         ]

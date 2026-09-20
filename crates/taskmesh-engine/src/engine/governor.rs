@@ -29,18 +29,20 @@ use std::sync::Arc;
 use taskmesh_contract::{
     CapabilityUsage, CheckpointPolicy, ClassSnapshot, Clock, ExecutionPhase, FairnessPolicy,
     GovernorError, MemoryOvercommitPolicy, MemoryPermitMode, OverflowPolicy, PermitWaker, Snapshot,
-    SubstrateKind, SubstrateRecord, TaskClass, TaskSpec, SNAPSHOT_SCHEMA_VERSION,
+    SubstrateKind, SubstrateRecord, TaskClass, TaskSpec, ValidatedTaskPlan,
+    SNAPSHOT_SCHEMA_VERSION,
 };
 
 use crate::engine::state::{
     AdvanceOutcome, CapacityBlock, ClaimOutcome, GovernedState, GrantRequest, LeaseToken,
     ReleaseOutcome, TerminalReason, TicketState, TransitionEffects,
 };
-use crate::features::memory::ReconcileOutcome;
+use crate::features::memory::{MeasurementSequence, ReconcileOutcome};
 use crate::features::{admission, composite, fairness, inventory, memory};
 use crate::shared::{
-    AdmissionDecision, CapabilityName, LeakSweepReport, PermitId, PolicySet, Provenance,
-    RootAttribution, StageReleaseOutcome, Ticket,
+    AdmissionDecision, CapabilityRequirementSet, CapabilityResolutionError, LeakSweepReport,
+    PermitId, PolicySet, Provenance, ResolvedCapability, RootAttribution, StageReleaseOutcome,
+    Ticket,
 };
 use crate::sync::{AtomicU64, Mutex, Ordering};
 
@@ -135,21 +137,18 @@ impl Governor {
     /// The capability pool a spec resolves to by its declared substrate hint.
     /// Hosts that resolve an execution plan (e.g. a stack request that must run
     /// on a dedicated worker) pass the resolved capability explicitly instead.
-    fn declared_capability(&self, spec: &TaskSpec) -> Option<CapabilityName> {
-        spec.primary_substrate_hint()
-            .capability_pool()
-            .map(|pool| self.intern_capability(pool))
-    }
-
-    /// Resolve a pool name to its interned `Arc`. A registered pool costs a
-    /// clone; an unregistered one (no substrate provides it, so it is ungated by
-    /// definition) is interned on the spot. That allocation only happens for
-    /// names the inventory does not know, which the built-in hint set never
-    /// produces.
-    fn intern_capability(&self, pool: &str) -> CapabilityName {
-        self.policy
-            .capability_name(pool)
-            .unwrap_or_else(|| CapabilityName::from(pool))
+    fn declared_requirements(&self, spec: &TaskSpec) -> CapabilityRequirementSet {
+        CapabilityRequirementSet::from_resolved(spec.stages.iter().map(|stage| {
+            stage
+                .substrate_hint
+                .capability_pool()
+                .map_or(ResolvedCapability::Ungated, |pool| {
+                    self.policy
+                        .resolve_capability(pool)
+                        .expect("built-in substrate capabilities are validated at construction")
+                })
+        }))
+        .expect("contract stage bound is below capability requirement bound")
     }
 
     // ---- admission --------------------------------------------------------
@@ -158,7 +157,15 @@ impl Governor {
     /// queue). The admission key is derived authoritatively from
     /// `spec.root_operation_id`; there is no caller-supplied key.
     pub fn admit(&self, spec: &TaskSpec) -> AdmissionDecision {
-        self.admit_inner(spec, self.declared_capability(spec), None)
+        let Ok(plan) = spec.validate() else {
+            return AdmissionDecision::Rejected(taskmesh_contract::AdmissionVerdict::MalformedTask);
+        };
+        self.admit_validated(&plan)
+    }
+
+    pub fn admit_validated(&self, plan: &ValidatedTaskPlan) -> AdmissionDecision {
+        let requirements = self.declared_requirements(plan.as_spec());
+        self.admit_inner(plan.as_spec(), requirements, None)
     }
 
     /// Admit a request, registering a waker that fires if the request is queued
@@ -168,7 +175,12 @@ impl Governor {
         spec: &TaskSpec,
         waker: Arc<dyn PermitWaker>,
     ) -> AdmissionDecision {
-        self.admit_inner(spec, self.declared_capability(spec), Some(waker))
+        let Ok(plan) = spec.validate() else {
+            drop(waker);
+            return AdmissionDecision::Rejected(taskmesh_contract::AdmissionVerdict::MalformedTask);
+        };
+        let requirements = self.declared_requirements(plan.as_spec());
+        self.admit_inner(plan.as_spec(), requirements, Some(waker))
     }
 
     /// Admit a request against an explicitly resolved capability pool.
@@ -180,30 +192,45 @@ impl Governor {
     pub fn admit_resolved(
         &self,
         spec: &TaskSpec,
-        capability: Option<&str>,
+        capability: ResolvedCapability,
         waker: Option<Arc<dyn PermitWaker>>,
-    ) -> AdmissionDecision {
-        let capability = capability.map(|pool| self.intern_capability(pool));
-        self.admit_inner(spec, capability, waker)
+    ) -> Result<AdmissionDecision, CapabilityResolutionError> {
+        if let Err(error) = self.policy.validate_resolved_capability(&capability) {
+            drop(waker);
+            return Err(error);
+        }
+        let Ok(plan) = spec.validate() else {
+            drop(waker);
+            return Ok(AdmissionDecision::Rejected(
+                taskmesh_contract::AdmissionVerdict::MalformedTask,
+            ));
+        };
+        let requirements = CapabilityRequirementSet::from_resolved([capability])?;
+        Ok(self.admit_inner(plan.as_spec(), requirements, waker))
+    }
+
+    pub fn admit_validated_requirements(
+        &self,
+        plan: &ValidatedTaskPlan,
+        requirements: CapabilityRequirementSet,
+        waker: Option<Arc<dyn PermitWaker>>,
+    ) -> Result<AdmissionDecision, CapabilityResolutionError> {
+        if let Err(error) = self.policy.validate_requirements(&requirements) {
+            drop(waker);
+            return Err(error);
+        }
+        Ok(self.admit_inner(plan.as_spec(), requirements, waker))
     }
 
     fn admit_inner(
         &self,
         spec: &TaskSpec,
-        capability: Option<CapabilityName>,
+        capabilities: CapabilityRequirementSet,
         waker: Option<Arc<dyn PermitWaker>>,
     ) -> AdmissionDecision {
-        // The spec's shape is a property of the spec alone; validating it under
-        // the state mutex would charge every other caller for it. A malformed
-        // spec never touches the state at all, and its waker (a host `Arc`) is
-        // dropped here, outside the lock, like any other retired reference.
-        if let Err(verdict) = admission::precheck(spec) {
-            drop(waker);
-            return AdmissionDecision::Rejected(verdict);
-        }
         let sampled = self.sample_clock_ms();
         let ids = self.fresh_ids();
-        let request = admission::AdmissionRequest { spec, capability };
+        let request = admission::AdmissionRequest { spec, capabilities };
         let mut effects = TransitionEffects::default();
         let decision = {
             let mut state = self.state.lock();
@@ -237,33 +264,76 @@ impl Governor {
     /// the leak sweep's staleness clock restarts here rather than at promotion.
     pub fn claim(&self, ticket: Ticket) -> ClaimOutcome {
         let sampled = self.sample_clock_ms();
+        let (permit_id, effects) = {
+            let mut state = self.state.lock();
+            state.commit_time(sampled);
+            match state.tickets.get(&ticket).cloned() {
+                Some(TicketState::Granted(permit_id)) => {
+                    let Some(record) = state.permits.get_mut(&permit_id) else {
+                        return ClaimOutcome::Terminal(TerminalReason::Released);
+                    };
+                    let mut effects = TransitionEffects::default();
+                    if let Some(waker) = record.claim_waker.take() {
+                        effects.retire.push(waker);
+                    }
+                    state
+                        .tickets
+                        .insert(ticket, TicketState::Claiming(permit_id));
+                    (permit_id, effects)
+                }
+                Some(TicketState::Queued { .. } | TicketState::Claiming(_)) => {
+                    return ClaimOutcome::Pending;
+                }
+                Some(TicketState::Terminal(reason)) => {
+                    state.forget_terminal_ticket(ticket);
+                    return ClaimOutcome::Terminal(reason);
+                }
+                None => return ClaimOutcome::Invalid,
+            }
+        };
+
+        if let Some(payload) = self.apply_effects(effects) {
+            // The caller never received custody. Compensate every charged
+            // ledger before propagating the host panic.
+            let mut compensation = TransitionEffects::default();
+            {
+                let mut state = self.state.lock();
+                let now = state.commit_time(sampled);
+                if matches!(state.tickets.get(&ticket), Some(TicketState::Claiming(id)) if *id == permit_id)
+                {
+                    state.unwind(
+                        permit_id,
+                        TerminalReason::ClaimDeliveryFailed,
+                        &mut compensation,
+                    );
+                    compensation.absorb(self.promote(&mut state, now));
+                }
+            }
+            let compensation_panic = self.drain_effects_captured(compensation, sampled);
+            drop(compensation_panic);
+            std::panic::resume_unwind(payload);
+        }
+
         let mut state = self.state.lock();
         let now = state.commit_time(sampled);
         match state.tickets.get(&ticket).cloned() {
-            Some(TicketState::Granted(permit_id)) => {
-                state.tickets.remove(&ticket);
-                if let Some(record) = state.permits.get_mut(&permit_id) {
-                    record.pending_ticket = None;
-                    record.ledger.last_touched_ms = record.ledger.last_touched_ms.max(now);
-                    // The waiter is here; its notifier has no further job. Drop
-                    // it outside the lock like every other host reference.
-                    let waker = record.claim_waker.take();
-                    drop(state);
-                    drop(waker);
-                } else {
-                    // Unreachable while `Granted` implies a live permit, and the
-                    // debug invariant asserts exactly that. Fail closed rather
-                    // than hand out an id with nothing behind it. The waiter is
-                    // being answered right now, so nothing is retained for it.
+            Some(TicketState::Claiming(id)) if id == permit_id => {
+                let Some(record) = state.permits.get_mut(&permit_id) else {
+                    state.record_terminal_ticket(ticket, TerminalReason::Released);
                     return ClaimOutcome::Terminal(TerminalReason::Released);
-                }
+                };
+                record.pending_ticket = None;
+                record.ledger.last_touched_ms = record.ledger.last_touched_ms.max(now);
+                state.tickets.remove(&ticket);
                 ClaimOutcome::Ready(permit_id)
             }
-            Some(TicketState::Queued { .. }) => ClaimOutcome::Pending,
             Some(TicketState::Terminal(reason)) => {
                 state.forget_terminal_ticket(ticket);
                 ClaimOutcome::Terminal(reason)
             }
+            Some(
+                TicketState::Granted(_) | TicketState::Queued { .. } | TicketState::Claiming(_),
+            ) => ClaimOutcome::Pending,
             None => ClaimOutcome::Invalid,
         }
     }
@@ -279,8 +349,8 @@ impl Governor {
         let state = self.state.lock();
         match state.tickets.get(&ticket) {
             Some(TicketState::Granted(permit_id)) => ClaimOutcome::Ready(*permit_id),
-            Some(TicketState::Queued { .. }) => ClaimOutcome::Pending,
-            Some(TicketState::Terminal(reason)) => ClaimOutcome::Terminal(*reason),
+            Some(TicketState::Queued { .. } | TicketState::Claiming(_)) => ClaimOutcome::Pending,
+            Some(TicketState::Terminal(reason)) => ClaimOutcome::Terminal(reason.clone()),
             None => ClaimOutcome::Invalid,
         }
     }
@@ -294,7 +364,7 @@ impl Governor {
             let mut state = self.state.lock();
             let now = state.commit_time(sampled);
             match state.tickets.get(&ticket).cloned() {
-                Some(TicketState::Granted(permit_id)) => {
+                Some(TicketState::Granted(permit_id) | TicketState::Claiming(permit_id)) => {
                     state.unwind(permit_id, TerminalReason::Abandoned, &mut effects);
                     // The abandoning waiter is the one that asked; it does not
                     // need to be told, and it will not claim.
@@ -433,6 +503,7 @@ impl Governor {
         let mut effects = TransitionEffects::default();
         let mut granted = 0usize;
         loop {
+            while self.terminalize_wait_cycle(state, &mut effects) {}
             if granted >= PROMOTION_BUDGET {
                 // Out of budget. Ask — without selecting — whether runnable work
                 // remains: `select` charges the chosen class (DRR deficit, ring
@@ -443,10 +514,11 @@ impl Governor {
                 effects.more_runnable = fairness::has_runnable(state, &self.policy);
                 break;
             }
-            let Some(class) = fairness::select(state, &self.policy) else {
+            let Some(selection) = fairness::select(state, &self.policy) else {
                 break;
             };
-            let Some(head) = state.class_mut(&class).queue.pop_front() else {
+            let class = selection.class;
+            let Some(head) = state.class_mut(&class).queue.remove(selection.queue_index) else {
                 break;
             };
             fairness::on_queue_changed(state, &class);
@@ -455,11 +527,12 @@ impl Governor {
             state.grant(GrantRequest {
                 permit_id,
                 class: &class,
+                operation: &head.operation,
                 root_operation_id: &head.root_operation_id,
                 scope: head.scope.clone(),
                 target_stage: head.target_stage.clone(),
                 provenance: head.provenance,
-                capability: head.capability.clone(),
+                capabilities: head.capabilities.clone(),
                 cost: head.cost,
                 reserved_units: head.cost.memory_units,
                 now_ms: now,
@@ -480,6 +553,55 @@ impl Governor {
         effects
     }
 
+    fn terminalize_wait_cycle(
+        &self,
+        state: &mut GovernedState,
+        effects: &mut TransitionEffects,
+    ) -> bool {
+        let candidate = state.classes.iter().find_map(|(class, cstate)| {
+            let policy = self.policy.class(class)?;
+            cstate
+                .queue
+                .iter()
+                .enumerate()
+                .find_map(|(index, request)| {
+                    match admission::pending::assess_pending(
+                        state,
+                        &self.policy,
+                        request,
+                        policy.max_inflight,
+                        false,
+                    ) {
+                        admission::pending::CapacityAssessment::IrreversibleWaitCycle(witness) => {
+                            Some((class.clone(), index, witness))
+                        }
+                        _ => None,
+                    }
+                })
+        });
+        let Some((class, index, witness)) = candidate else {
+            return false;
+        };
+        let Some(request) = state.class_mut(&class).queue.remove(index) else {
+            return false;
+        };
+        fairness::on_queue_changed(state, &class);
+        state.vacate_recursion_guard(&request.root_operation_id, &request.target_stage);
+        let held_by_parent = witness
+            .held
+            .into_iter()
+            .next()
+            .expect("cycle witness has held capacity");
+        state.record_terminal_ticket(
+            request.ticket,
+            TerminalReason::IrreversibleWaitCycle { held_by_parent },
+        );
+        if let Some(waker) = request.waker {
+            effects.wake.push(waker);
+        }
+        true
+    }
+
     /// Fire and retire host references collected by a transition, then resume
     /// promotion if the budget cut a pass short.
     ///
@@ -487,7 +609,17 @@ impl Governor {
     /// after the whole drain has finished: every waiter in every continuation
     /// pass is notified first. Aborting the drain on the first panic would leave
     /// runnable work queued with no event left to promote it.
-    fn drain_effects(&self, mut effects: TransitionEffects, sampled: u64) {
+    fn drain_effects(&self, effects: TransitionEffects, sampled: u64) {
+        if let Some(payload) = self.drain_effects_captured(effects, sampled) {
+            std::panic::resume_unwind(payload);
+        }
+    }
+
+    fn drain_effects_captured(
+        &self,
+        mut effects: TransitionEffects,
+        sampled: u64,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
         let mut first_panic: Option<Box<dyn std::any::Any + Send>> = None;
         loop {
             let more = effects.more_runnable;
@@ -501,9 +633,7 @@ impl Governor {
             let now = state.commit_time(sampled);
             effects = self.promote(&mut state, now);
         }
-        if let Some(payload) = first_panic {
-            std::panic::resume_unwind(payload);
-        }
+        first_panic
     }
 
     /// Run the host-visible part of a transition with the mutex released.
@@ -518,6 +648,11 @@ impl Governor {
             if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 waker.wake();
             })) {
+                first_panic.get_or_insert(payload);
+            }
+            if let Err(payload) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(waker)))
+            {
                 first_panic.get_or_insert(payload);
             }
         }
@@ -551,9 +686,8 @@ impl Governor {
     /// epoch in one critical section and applying under another would let two
     /// unordered reporters pick the same "next" epoch and have the later commit
     /// rejected as stale — a lost measurement dressed up as ordering.
-    pub fn reconcile_memory(&self, permit_id: PermitId, measured_bytes: u64) -> bool {
+    pub fn reconcile_memory(&self, permit_id: PermitId, measured_bytes: u64) -> ReconcileOutcome {
         self.reconcile_memory_inner(permit_id, measured_bytes, None)
-            .is_applied()
     }
 
     /// Reconcile with an explicit measurement epoch.
@@ -587,14 +721,20 @@ impl Governor {
             let Some(policy) = self.policy.class(&record.class) else {
                 return ReconcileOutcome::UnknownPermit;
             };
-            let epoch = epoch.unwrap_or_else(|| record.ledger.measurement_epoch.wrapping_add(1));
+            let sequence = match epoch {
+                Some(epoch) => MeasurementSequence::from_raw(epoch),
+                None => match record.ledger.measurement_sequence.checked_next() {
+                    Ok(sequence) => sequence,
+                    Err(outcome) => return outcome,
+                },
+            };
             let mode = policy.memory_permit_mode;
             let scale = self.policy.resources.memory_unit_scale;
             let outcome = memory::reconcile(
                 &mut state,
                 permit_id,
                 measured_bytes,
-                epoch,
+                sequence,
                 mode,
                 scale,
                 now,
@@ -726,7 +866,7 @@ impl Governor {
             .lock()
             .permits
             .get(&permit_id)
-            .map(|r| r.provenance)
+            .map(|r| r.provenance.clone())
     }
 
     /// The (preserved) checkpoint policy for a class.
@@ -775,36 +915,17 @@ impl Governor {
                 });
             classes.entry(class).or_insert(projection);
         }
-        // Every registered pool is always present — gated (`limit > 0`) or
-        // ungated (`limit == 0`) — so a consumer can index `capabilities["x"]`
-        // and a dashboard never sees a key appear and vanish with occupancy.
+        // Every authority record is always present. The same record supplies
+        // both the capacity decision and this projection.
         let mut capabilities: BTreeMap<String, CapabilityUsage> = BTreeMap::new();
-        for record in self.policy.substrates().values() {
-            if let Some(pool) = record.capability_pool.as_deref() {
-                capabilities
-                    .entry(pool.to_owned())
-                    .or_insert_with(|| CapabilityUsage {
-                        in_use: state.capability_in_use(pool),
-                        limit: 0,
-                    });
-            }
-        }
-        for (pool, limit) in self.policy.capability_limits() {
+        for record in self.policy.capability_records() {
             capabilities.insert(
-                pool.clone(),
+                record.name().to_owned(),
                 CapabilityUsage {
-                    in_use: state.capability_in_use(pool),
-                    limit: *limit,
+                    in_use: state.capability_in_use(record.id()),
+                    limit: record.capacity().limit(),
                 },
             );
-        }
-        for (pool, in_use) in &state.capability_in_use {
-            capabilities
-                .entry(pool.to_string())
-                .or_insert(CapabilityUsage {
-                    in_use: *in_use,
-                    limit: 0,
-                });
         }
         Snapshot {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
@@ -814,37 +935,60 @@ impl Governor {
         }
     }
 
-    /// Diagnostic view of a queued ticket: why it is waiting and since when.
-    ///
-    /// The blocking cause is preserved from intake so an acquire timeout can
-    /// report what the caller was actually waiting on — a saturated capability
-    /// pool and a saturated class budget are different operational problems and
-    /// a single generic timeout hides which one occurred.
+    /// Diagnostic view of a queued ticket using the same current-state
+    /// assessment as admission and promotion.
     pub fn pending_view(&self, ticket: Ticket) -> Option<PendingView> {
         let state = self.state.lock();
         let TicketState::Queued { class } = state.tickets.get(&ticket)? else {
             return None;
         };
         let cstate = state.classes.get(class)?;
-        let request = cstate.queue.iter().find(|r| r.ticket == ticket)?;
+        let (index, request) = cstate
+            .queue
+            .iter()
+            .enumerate()
+            .find(|(_, request)| request.ticket == ticket)?;
+        let policy = self.policy.class(class)?;
+        let assessment = admission::pending::assess_pending(
+            &state,
+            &self.policy,
+            request,
+            policy.max_inflight,
+            state.promotion_pending
+                || admission::pending::queued_behind_index(&cstate.queue, index),
+        );
+        let blocked_on = match &assessment {
+            admission::pending::CapacityAssessment::Runnable => CapacityBlock::Ok,
+            admission::pending::CapacityAssessment::ReversiblyBlocked(blockers) => {
+                blockers.primary()
+            }
+            admission::pending::CapacityAssessment::IrreversibleWaitCycle(_) => request.blocked_on,
+        };
         Some(PendingView {
             class: request.class.clone(),
             request_key: request.request_key.clone(),
-            blocked_on: request.blocked_on,
+            blocked_on,
+            assessment,
             enqueued_at_ms: request.enqueued_at_ms,
             queue_wait_ms: state
                 .commit_watermark_ms
                 .saturating_sub(request.enqueued_at_ms),
-            capability: request.capability.clone(),
+            capabilities: request.capabilities.clone(),
         })
     }
 
-    /// Why a queued ticket was blocked **at intake**, or `None` if it is not
-    /// queued. A diagnostic, not state: the reason is frozen when the request
-    /// is enqueued and is not rewritten if a later transition leaves the head
-    /// waiting on a different limit.
+    /// The primary current blocker for a queued ticket, or `None` if it is not
+    /// queued. Use [`Self::pending_assessment`] when every simultaneous blocker
+    /// or an irreversible-cycle witness is required.
     pub fn pending_block_reason(&self, ticket: Ticket) -> Option<CapacityBlock> {
         self.pending_view(ticket).map(|view| view.blocked_on)
+    }
+
+    pub fn pending_assessment(
+        &self,
+        ticket: Ticket,
+    ) -> Option<admission::pending::CapacityAssessment> {
+        self.pending_view(ticket).map(|view| view.assessment)
     }
 
     /// Full ledger view of a live permit.
@@ -859,14 +1003,14 @@ impl Governor {
         Some(PermitLedgerView {
             permit_id,
             class: record.class.clone(),
-            capability: record.capability.clone(),
+            capabilities: record.capabilities.clone(),
             phase: record.phase,
             cpu_units: record.ledger.cpu_units,
             original_estimate_units: record.ledger.original_estimate_units,
             remaining_reservation_units: record.ledger.remaining_reservation_units,
             effective_units: record.ledger.effective_units,
             measured_bytes: record.ledger.measured_bytes,
-            measurement_epoch: record.ledger.measurement_epoch,
+            measurement_epoch: record.ledger.measurement_sequence.get(),
             leased_at_ms: record.ledger.leased_at_ms,
             last_touched_ms: record.ledger.last_touched_ms,
         })
@@ -881,14 +1025,14 @@ impl Governor {
             .map(|record| PermitLedgerView {
                 permit_id: record.permit_id,
                 class: record.class.clone(),
-                capability: record.capability.clone(),
+                capabilities: record.capabilities.clone(),
                 phase: record.phase,
                 cpu_units: record.ledger.cpu_units,
                 original_estimate_units: record.ledger.original_estimate_units,
                 remaining_reservation_units: record.ledger.remaining_reservation_units,
                 effective_units: record.ledger.effective_units,
                 measured_bytes: record.ledger.measured_bytes,
-                measurement_epoch: record.ledger.measurement_epoch,
+                measurement_epoch: record.ledger.measurement_sequence.get(),
                 leased_at_ms: record.ledger.leased_at_ms,
                 last_touched_ms: record.ledger.last_touched_ms,
             })
@@ -1124,17 +1268,29 @@ impl Governor {
                 )));
             }
         }
-        for (pool, limit) in policy.capability_limits() {
-            if *limit == 0 {
-                continue;
-            }
+        for capability in policy.capability_records() {
             let bound = registry.values().any(|record| {
                 record.kind != SubstrateKind::AuthorityOnly
-                    && record.capability_pool.as_deref() == Some(pool.as_str())
+                    && record.capability_pool.as_deref() == Some(capability.name())
             });
             if !bound {
                 return Err(violation(format!(
-                    "capability limit declared for pool {pool}, which no executing substrate provides"
+                    "capability authority declared for pool {}, which no executing substrate provides",
+                    capability.name()
+                )));
+            }
+        }
+        for record in registry.values() {
+            if record.kind == SubstrateKind::AuthorityOnly {
+                continue;
+            }
+            let Some(pool) = record.capability_pool.as_deref() else {
+                continue;
+            };
+            if policy.resolve_capability(pool).is_err() {
+                return Err(violation(format!(
+                    "executing substrate {} has no capability authority for pool {pool}",
+                    record.name
                 )));
             }
         }
@@ -1153,12 +1309,13 @@ pub struct PendingView {
     pub request_key: crate::shared::RequestKey,
     /// The limit that forced this request to queue.
     pub blocked_on: CapacityBlock,
+    pub assessment: admission::pending::CapacityAssessment,
     /// Logical commit time at which the request entered the queue.
     pub enqueued_at_ms: u64,
     /// Logical time spent queued so far.
     pub queue_wait_ms: u64,
     /// The capability pool frozen at intake.
-    pub capability: Option<CapabilityName>,
+    pub capabilities: CapabilityRequirementSet,
 }
 
 /// Diagnostic projection of one live permit ledger.
@@ -1166,7 +1323,7 @@ pub struct PendingView {
 pub struct PermitLedgerView {
     pub permit_id: PermitId,
     pub class: TaskClass,
-    pub capability: Option<CapabilityName>,
+    pub capabilities: CapabilityRequirementSet,
     pub phase: ExecutionPhase,
     pub cpu_units: u32,
     /// What the class policy originally reserved. Provenance, not a live claim.

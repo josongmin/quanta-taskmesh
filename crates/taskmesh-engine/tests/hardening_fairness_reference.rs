@@ -30,6 +30,16 @@ use taskmesh_engine::{
     AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome,
 };
 
+fn admit_on(governor: &Governor, spec: &TaskSpec, pool: &str) -> AdmissionDecision {
+    let capability = governor
+        .policy()
+        .resolve_capability(pool)
+        .expect("test pool is registered");
+    governor
+        .admit_resolved(spec, capability, None)
+        .expect("resolved capability belongs to this governor")
+}
+
 // ---- an independent DRR reference ------------------------------------------
 
 /// A deliberately naive deficit round-robin: it credits one quantum per visit
@@ -668,12 +678,12 @@ fn a_head_blocked_on_another_capability_pool_does_not_hold_back_a_newcomer() {
     .expect("valid policy");
 
     let AdmissionDecision::Admitted { permit_id: holder } =
-        g.admit_resolved(&spec("c", "holder"), Some("large_stack"), None)
+        admit_on(&g, &spec("c", "holder"), "large_stack")
     else {
         panic!("the single large-stack slot is free");
     };
     let AdmissionDecision::Queued { ticket: head } =
-        g.admit_resolved(&spec("c", "head"), Some("large_stack"), None)
+        admit_on(&g, &spec("c", "head"), "large_stack")
     else {
         panic!("the second large-stack request waits for the slot");
     };
@@ -685,7 +695,7 @@ fn a_head_blocked_on_another_capability_pool_does_not_hold_back_a_newcomer() {
     // Same class, different pool: not held back.
     let AdmissionDecision::Admitted {
         permit_id: newcomer,
-    } = g.admit_resolved(&spec("c", "newcomer"), Some("blocking"), None)
+    } = admit_on(&g, &spec("c", "newcomer"), "blocking")
     else {
         panic!("a newcomer on an unrelated pool must not wait for a capability-blocked head");
     };
@@ -700,6 +710,72 @@ fn a_head_blocked_on_another_capability_pool_does_not_hold_back_a_newcomer() {
     for permit in [newcomer, head_permit] {
         assert_eq!(g.release(permit), ReleaseOutcome::Released);
     }
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
+#[test]
+fn an_earlier_cross_pool_follower_runs_before_a_later_same_pool_newcomer() {
+    let mut map: BTreeMap<TaskClass, ClassPolicy> = BTreeMap::new();
+    map.insert(
+        TaskClass::new("c"),
+        ClassPolicy::new()
+            .max_inflight(8)
+            .max_queue_depth(8)
+            .cpu_units(1)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth),
+    );
+    map.insert(
+        TaskClass::new("heavy"),
+        ClassPolicy::new().max_inflight(1).cpu_units(2),
+    );
+    let g = Governor::new(
+        PolicySet::new(ResourceBudget::new().cpu_units(3), map)
+            .with_capability_limits(BTreeMap::from([
+                ("large_stack".to_owned(), 1),
+                ("blocking".to_owned(), 2),
+            ]))
+            .expect("built-in pools"),
+        Arc::new(ManualClock::new(0)),
+    )
+    .expect("valid policy");
+
+    let AdmissionDecision::Admitted { permit_id: pool_a } =
+        admit_on(&g, &spec("c", "pool-a-holder"), "large_stack")
+    else {
+        panic!("pool A is initially free");
+    };
+    let heavy = admit_one(&g, "heavy", "cpu-holder");
+    let AdmissionDecision::Queued { ticket: a1 } = admit_on(&g, &spec("c", "a1"), "large_stack")
+    else {
+        panic!("A1 waits for pool A");
+    };
+    let AdmissionDecision::Queued { ticket: b1 } = admit_on(&g, &spec("c", "b1"), "blocking")
+    else {
+        panic!("B1 initially waits for global CPU");
+    };
+
+    assert_eq!(g.release(heavy), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(b1_permit) = g.claim(b1) else {
+        panic!("bounded scan must select runnable B1 behind blocked A1");
+    };
+    assert!(matches!(g.ticket_status(a1), ClaimOutcome::Pending));
+
+    let AdmissionDecision::Admitted { permit_id: b2 } = admit_on(&g, &spec("c", "b2"), "blocking")
+    else {
+        panic!("pool B and one CPU unit remain free");
+    };
+    assert!(
+        b1_permit < b2,
+        "the earlier queued B1 must be granted before later B2"
+    );
+
+    assert_eq!(g.release(b2), ReleaseOutcome::Released);
+    assert_eq!(g.release(b1_permit), ReleaseOutcome::Released);
+    assert_eq!(g.release(pool_a), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(a1_permit) = g.claim(a1) else {
+        panic!("A1 runs when its own pool becomes free");
+    };
+    assert_eq!(g.release(a1_permit), ReleaseOutcome::Released);
     assert_eq!(g.snapshot().conservation_violation(), None);
 }
 
@@ -1180,10 +1256,10 @@ impl taskmesh_contract::PermitWaker for PoolSubmittingWaker {
         if slot.is_some() {
             return;
         }
-        *slot = Some(self.governor.admit_resolved(
+        *slot = Some(admit_on(
+            &self.governor,
             &spec(self.class, "newcomer"),
-            Some(self.pool),
-            None,
+            self.pool,
         ));
     }
 }
@@ -1232,13 +1308,13 @@ fn the_capability_exception_holds_inside_the_continuation_gap_too() {
     );
     // Occupy the single large-stack slot, then queue a `c` head on it.
     let AdmissionDecision::Admitted { permit_id: slot } =
-        g.admit_resolved(&spec("c", "slot"), Some("large_stack"), None)
+        admit_on(&g, &spec("c", "slot"), "large_stack")
     else {
         panic!("slot free");
     };
     let AdmissionDecision::Queued {
         ticket: blocked_head,
-    } = g.admit_resolved(&spec("c", "blocked-head"), Some("large_stack"), None)
+    } = admit_on(&g, &spec("c", "blocked-head"), "large_stack")
     else {
         panic!("second large-stack request waits for the slot");
     };

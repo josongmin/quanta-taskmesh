@@ -22,7 +22,12 @@ fn gov(list: Vec<(&'static str, ClassPolicy)>) -> Governor {
 
 fn child(class: &str, root: &str, stage: &str) -> TaskSpec {
     TaskSpec::blocking(TaskClass::new(class.to_string()))
-        .child_of(root.to_string(), TaskStage::new(stage.to_string()))
+        .child_of(
+            root.to_string(),
+            root.to_string(),
+            TaskStage::new(stage.to_string()),
+        )
+        .operation(format!("child-{stage}"))
 }
 
 #[test]
@@ -36,9 +41,12 @@ fn child_permit_rolls_into_root_accounting() {
     )]);
 
     // Two children of the same root on distinct declared lineage stages.
-    let c1 =
-        TaskSpec::blocking(TaskClass::new("worker")).child_of("root-1", TaskStage::new("stage-a"));
-    let c2 = TaskSpec::cpu(TaskClass::new("worker")).child_of("root-1", TaskStage::new("stage-b"));
+    let c1 = TaskSpec::blocking(TaskClass::new("worker"))
+        .child_of("root-1", "root-1", TaskStage::new("stage-a"))
+        .operation("child-a");
+    let c2 = TaskSpec::cpu(TaskClass::new("worker"))
+        .child_of("root-1", "root-1", TaskStage::new("stage-b"))
+        .operation("child-b");
 
     assert!(matches!(g.admit(&c1), AdmissionDecision::Admitted { .. }));
     assert!(matches!(g.admit(&c2), AdmissionDecision::Admitted { .. }));
@@ -57,11 +65,14 @@ fn child_saturation_bubbles_to_root_verdict() {
         ClassPolicy::new().max_inflight(1).cpu_units(1),
     )]);
     // First child occupies the "stage-a" lineage point.
-    let c1 =
-        TaskSpec::blocking(TaskClass::new("worker")).child_of("root-2", TaskStage::new("stage-a"));
+    let c1 = TaskSpec::blocking(TaskClass::new("worker"))
+        .child_of("root-2", "root-2", TaskStage::new("stage-a"))
+        .operation("child-a");
     // Second child declares a distinct stage ("stage-b"), so it is not recursive —
     // it instead saturates the class cap, and that verdict bubbles up.
-    let c2 = TaskSpec::cpu(TaskClass::new("worker")).child_of("root-2", TaskStage::new("stage-b"));
+    let c2 = TaskSpec::cpu(TaskClass::new("worker"))
+        .child_of("root-2", "root-2", TaskStage::new("stage-b"))
+        .operation("child-b");
     assert!(matches!(g.admit(&c1), AdmissionDecision::Admitted { .. }));
     assert!(matches!(
         g.admit(&c2),
@@ -94,7 +105,7 @@ fn an_upward_child_reconcile_is_attributed_to_the_root() {
     );
     // The harness scale is one byte per unit: 8 bytes measured is 8 units,
     // above the 3-unit reservation, so `Hybrid` follows the measurement.
-    assert!(g.reconcile_memory(permit, 8));
+    assert!(g.reconcile_memory(permit, 8).is_applied());
     assert_eq!(
         g.root_attribution("R").expect("root tracked").memory_units,
         8,

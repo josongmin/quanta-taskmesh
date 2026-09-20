@@ -15,16 +15,16 @@ fn gov(policy: ClassPolicy) -> Governor {
     )
 }
 
-fn spec() -> TaskSpec {
-    TaskSpec::blocking(TaskClass::new("c")).operation("op")
+fn spec(operation: &str) -> TaskSpec {
+    TaskSpec::blocking(TaskClass::new("c")).operation(operation.to_owned())
 }
 
 fn saturate_then_reject(g: &Governor) -> AdmissionVerdict {
     assert!(matches!(
-        g.admit(&spec()),
+        g.admit(&spec("first")),
         AdmissionDecision::Admitted { .. }
     ));
-    match g.admit(&spec()) {
+    match g.admit(&spec("second")) {
         AdmissionDecision::Rejected(v) => v,
         other => panic!("expected rejection, got {other:?}"),
     }

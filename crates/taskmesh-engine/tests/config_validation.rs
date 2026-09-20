@@ -1,7 +1,6 @@
 //! T02: fail-closed configuration validation.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use taskmesh_contract::*;
 use taskmesh_engine::*;
@@ -228,7 +227,7 @@ fn a_capability_limit_on_an_authority_only_pool_is_rejected() {
     // (it may name a pool), the limit lookup finds a provider, and only the
     // whole-inventory validation at construction sees that the provider can
     // never occupy a slot.
-    let policy = PolicySet::new(
+    let error = PolicySet::new(
         ResourceBudget::new(),
         classes(vec![("c", ClassPolicy::new())]),
     )
@@ -239,12 +238,9 @@ fn a_capability_limit_on_an_authority_only_pool_is_rejected() {
     )])
     .expect("an authority-only record may name a pool")
     .with_capability_limits(BTreeMap::from([("gpu".to_string(), 2)]))
-    .expect("the registry knows the pool by name");
-    let Err(error) = Governor::new(policy, Arc::new(ManualClock::new(0))) else {
-        panic!("a limit on a pool only an authority-only substrate provides must be rejected");
-    };
+    .expect_err("authority-only substrates cannot own execution capacity");
     assert!(
-        matches!(&error, GovernorError::PolicyViolation(message) if message.contains("no executing substrate provides")),
+        matches!(&error, GovernorError::PolicyViolation(message) if message.contains("unregistered pool")),
         "the rejection says the pool has no executing provider, got {error:?}"
     );
 }

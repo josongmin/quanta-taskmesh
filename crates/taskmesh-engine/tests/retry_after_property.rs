@@ -33,15 +33,16 @@ fn hint(fairness: FairnessPolicy, n: u32, d: u32) -> u64 {
         PolicySet::new(ResourceBudget::new(), classes),
         Arc::new(ManualClock::new(1000)),
     );
-    let spec = TaskSpec::blocking(TaskClass::new("c")).operation("op");
-
-    for _ in 0..n {
+    for index in 0..n {
+        let spec = TaskSpec::blocking(TaskClass::new("c")).operation(format!("inflight-{index}"));
         assert!(matches!(g.admit(&spec), AdmissionDecision::Admitted { .. }));
     }
-    for _ in 0..d {
+    for index in 0..d {
+        let spec = TaskSpec::blocking(TaskClass::new("c")).operation(format!("queued-{index}"));
         assert!(matches!(g.admit(&spec), AdmissionDecision::Queued { .. }));
     }
-    match g.admit(&spec) {
+    let rejected = TaskSpec::blocking(TaskClass::new("c")).operation("rejected");
+    match g.admit(&rejected) {
         AdmissionDecision::Rejected(v) => v.retry_after_ms().expect("adaptive yields a hint"),
         o => panic!("expected a full-queue rejection at n={n} d={d}, got {o:?}"),
     }

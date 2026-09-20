@@ -78,12 +78,12 @@ fn estimated_reconcile_does_not_restore_released_stage_units() {
 
     // The reconcile is accounting-neutral for `Estimated`: it reports a
     // measurement, and the reservation still held is 2 — not the original 8.
-    assert!(g.reconcile_memory(permit, 2));
+    assert!(g.reconcile_memory(permit, 2).is_applied());
     assert_eq!(held(&g), 2, "reconcile must not re-reserve returned units");
 
     // Repeating it stays stable rather than ratcheting back up.
     for _ in 0..5 {
-        assert!(g.reconcile_memory(permit, 2));
+        assert!(g.reconcile_memory(permit, 2).is_applied());
         assert_eq!(held(&g), 2);
     }
 
@@ -114,10 +114,10 @@ fn hybrid_floor_follows_the_remaining_reservation_not_the_original() {
     assert_eq!(held(&g), 2);
 
     // Measured below the remaining reservation: the floor is 2, not 8.
-    assert!(g.reconcile_memory(permit, 1));
+    assert!(g.reconcile_memory(permit, 1).is_applied());
     assert_eq!(held(&g), 2);
     // Measured above it: measurement wins, as `Hybrid` promises.
-    assert!(g.reconcile_memory(permit, 5));
+    assert!(g.reconcile_memory(permit, 5).is_applied());
     assert_eq!(held(&g), 5);
     assert_eq!(g.release(permit), ReleaseOutcome::Released);
 }
@@ -130,14 +130,14 @@ fn measured_mode_tracks_the_reading_across_a_stage_release() {
         .memory_permit_mode(MemoryPermitMode::Measured)
         .memory_release_policy(MemoryReleasePolicy::OnStageBoundary));
     let permit = admit(&g, "op");
-    assert!(g.reconcile_memory(permit, 6));
+    assert!(g.reconcile_memory(permit, 6).is_applied());
     assert_eq!(held(&g), 6);
     assert_eq!(
         g.release_stage_memory(permit, 4),
         StageReleaseOutcome::Released { freed_units: 4 }
     );
     assert_eq!(held(&g), 2);
-    assert!(g.reconcile_memory(permit, 2));
+    assert!(g.reconcile_memory(permit, 2).is_applied());
     assert_eq!(held(&g), 2);
     assert_eq!(g.release(permit), ReleaseOutcome::Released);
 }
@@ -319,7 +319,7 @@ fn stage_release_outcomes_report_their_freed_units() {
 fn reconciling_an_unknown_permit_applies_nothing() {
     let (g, _clock) = gov(ClassPolicy::new().max_inflight(4).memory_units(4));
     assert!(
-        !g.reconcile_memory(u64::MAX, 1),
+        !g.reconcile_memory(u64::MAX, 1).is_applied(),
         "a reconcile against a permit that does not exist is not applied"
     );
     assert_eq!(
@@ -476,7 +476,10 @@ fn an_unordered_reconcile_takes_the_epoch_after_whatever_is_recorded() {
         g.reconcile_memory_at(permit, 3, 5),
         ReconcileOutcome::Applied { held_units: 3 }
     );
-    assert!(g.reconcile_memory(permit, 2), "auto epoch 6 follows 5");
+    assert!(
+        g.reconcile_memory(permit, 2).is_applied(),
+        "auto epoch 6 follows 5"
+    );
     let ledger = g.permit_ledger(permit).expect("live");
     assert_eq!(ledger.measurement_epoch, 6);
     assert_eq!(ledger.effective_units, 2);
@@ -485,9 +488,61 @@ fn an_unordered_reconcile_takes_the_epoch_after_whatever_is_recorded() {
         g.reconcile_memory_at(permit, 7, 6),
         ReconcileOutcome::StaleEpoch { current_epoch: 6 }
     );
-    assert!(g.reconcile_memory(permit, 1), "auto epoch 7 follows 6");
+    assert!(
+        g.reconcile_memory(permit, 1).is_applied(),
+        "auto epoch 7 follows 6"
+    );
     assert_eq!(g.permit_ledger(permit).expect("live").measurement_epoch, 7);
     assert_eq!(g.release(permit), ReleaseOutcome::Released);
+}
+
+#[test]
+fn terminal_measurement_sequence_never_wraps_or_mutates_on_exhaustion() {
+    let (g, _clock) = gov(ClassPolicy::new()
+        .max_inflight(4)
+        .cpu_units(1)
+        .memory_units(8)
+        .memory_permit_mode(MemoryPermitMode::Measured));
+    let permit = admit(&g, "terminal-sequence");
+
+    assert_eq!(
+        g.reconcile_memory_at(permit, 3, u64::MAX - 1),
+        ReconcileOutcome::Applied { held_units: 3 }
+    );
+    assert_eq!(
+        g.reconcile_memory(permit, 4),
+        ReconcileOutcome::Applied { held_units: 4 },
+        "checked implicit successor accepts the terminal value exactly once"
+    );
+    let ledger_at_max = g.permit_ledger(permit).expect("live permit");
+    let snapshot_at_max = g.snapshot();
+    assert_eq!(ledger_at_max.measurement_epoch, u64::MAX);
+
+    for outcome in [
+        g.reconcile_memory(permit, 1),
+        g.reconcile_memory_at(permit, 9, u64::MAX),
+        g.reconcile_memory_at(permit, 9, 1),
+    ] {
+        assert_eq!(
+            outcome,
+            ReconcileOutcome::EpochExhausted {
+                current_epoch: u64::MAX
+            }
+        );
+        assert_eq!(
+            g.permit_ledger(permit),
+            Some(ledger_at_max.clone()),
+            "ledger, measurement and activity remain unchanged"
+        );
+        assert_eq!(
+            g.snapshot(),
+            snapshot_at_max,
+            "class, capability and global aggregates remain unchanged"
+        );
+    }
+
+    assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    assert_eq!(held(&g), 0, "terminal sequence never prevents release");
 }
 
 #[test]

@@ -1,6 +1,6 @@
 # SEP21-E03 — Non-wrapping memory measurement sequence
 
-- 상태: PLANNED
+- 상태: LOCALLY_VERIFIED
 - 우선순위: P1
 - 포함 finding: TM21-016
 - 선행: 없음
@@ -73,3 +73,24 @@ protocol로 만든다.
 cargo test --locked -p taskmesh-engine --test hardening_memory_epochs
 just loom
 ```
+
+## Closure evidence (2026-09-21)
+
+- source: `main@32189ab0bbd44aad83921167eeb076223fbfe230`
+- sequence API: `MeasurementSequence::checked_next`; no production epoch path uses wrapping or
+  saturating reset. Explicit and implicit reporters converge on `memory::reconcile`.
+- typed outcomes: `Applied`, `UnknownPermit`, `StaleEpoch`, `EpochExhausted`, and
+  `ConversionFailed`.
+
+| Acceptance | Local evidence |
+| --- | --- |
+| SEP21-E03-A01 | Source audit plus clippy confirms the implicit path uses `checked_next`; `terminal_measurement_sequence_never_wraps_or_mutates_on_exhaustion` covers `MAX-1`, implicit `MAX`, and subsequent explicit/implicit attempts. |
+| SEP21-E03-A02 | The terminal-sequence fixture compares the full permit ledger and snapshot before/after each exhausted update; conversion/stale/unknown tests likewise apply no aggregate or activity change. |
+| SEP21-E03-A03 | Loom `unordered_concurrent_reconciles_both_apply` exhaustively checks two unordered reporters; both apply and the committed ledger reaches epoch 2. |
+| SEP21-E03-A04 | Exhaustion cannot wrap into a newer low epoch or change the held charge; normal release still clears the terminal-sequence permit and all memory accounting. |
+| SEP21-E03-A05 | Stale, exhausted, unknown-permit, and conversion failure use exact distinct variants. |
+| SEP21-E03-A06 | `last_touched_ms` advances only on an applied measurement and remains monotonic under late samples. |
+
+R01 documentation delta: `reconcile_memory` now returns `ReconcileOutcome` rather than `bool`;
+`MeasurementSequence` and `EpochExhausted` are public engine API; epoch exhaustion is non-retryable
+for that permit and release remains required to end its capacity custody.

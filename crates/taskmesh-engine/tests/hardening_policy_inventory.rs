@@ -21,7 +21,9 @@ use taskmesh_contract::{
     ClassPolicy, GovernorError, ManualClock, ResourceBudget, SubstrateKind, SubstrateRecord,
     TaskClass,
 };
-use taskmesh_engine::{builtin_records, Governor, PolicySet, BUILTIN_SUBSTRATES};
+use taskmesh_engine::{
+    builtin_records, CapabilityCapacity, Governor, PolicySet, BUILTIN_SUBSTRATES,
+};
 
 fn classes() -> BTreeMap<TaskClass, ClassPolicy> {
     let mut classes = BTreeMap::new();
@@ -156,9 +158,10 @@ fn the_canonical_registry_is_accepted() {
 }
 
 #[test]
-fn extra_substrates_stay_tracking_only() {
-    // Deployment additions are inventory, not run targets: they appear in the
-    // snapshot and do not displace or shadow a built-in.
+fn extra_executing_substrates_require_explicit_capability_authority() {
+    // An executing deployment addition cannot become an implicit-unbounded run
+    // target merely by entering inventory. Its pool needs an explicit capacity
+    // record before the governor can become live.
     let policy = PolicySet::new(ResourceBudget::new(), classes())
         .with_substrates(vec![SubstrateRecord::new(
             "external-gpu",
@@ -166,8 +169,24 @@ fn extra_substrates_stay_tracking_only() {
             Some("external-gpu"),
         )])
         .expect("an additional substrate registers");
-    let governor =
-        Governor::new(policy, Arc::new(ManualClock::new(0))).expect("still a valid policy");
+    let error = Governor::new(policy, Arc::new(ManualClock::new(0)))
+        .expect_err("missing capability authority must fail closed");
+    assert!(
+        matches!(&error, GovernorError::PolicyViolation(message) if message.contains("no capability authority")),
+        "unexpected error: {error:?}"
+    );
+
+    let policy = PolicySet::new(ResourceBudget::new(), classes())
+        .with_substrates(vec![SubstrateRecord::new(
+            "external-gpu",
+            SubstrateKind::CompetingExecution,
+            Some("external-gpu"),
+        )])
+        .expect("an additional substrate registers")
+        .with_capability_limits(BTreeMap::from([("external-gpu".to_owned(), 0)]))
+        .expect("explicit-unbounded is still explicit authority");
+    let governor = Governor::new(policy, Arc::new(ManualClock::new(0)))
+        .expect("explicit authority makes the policy valid");
     let names: Vec<String> = governor
         .substrates()
         .into_iter()
@@ -222,29 +241,37 @@ fn the_readable_limit_is_the_limit_admission_enforces_and_zero_means_ungated() {
         .with_capability_limits(BTreeMap::from([("cpu".to_string(), 2)]))
         .expect("cpu is a registered pool");
     assert_eq!(
-        policy.capability_limit("cpu"),
-        2,
+        policy.capability_capacity("cpu"),
+        Some(CapabilityCapacity::Bounded(
+            std::num::NonZeroU32::new(2).unwrap()
+        )),
         "the declared limit reads back"
     );
     assert_eq!(
-        policy.capability_limit("blocking"),
-        0,
-        "a pool with no declared limit reads as 0 = ungated"
+        policy.capability_capacity("blocking"),
+        Some(CapabilityCapacity::ExplicitUnbounded),
+        "the pool carries explicit-unbounded authority"
     );
 
     let governor = Governor::new(policy, Arc::new(ManualClock::new(0))).expect("valid policy");
-    let cpu = || TaskSpec::cpu(TaskClass::new("c")).operation("cpu");
-    let blocking = || TaskSpec::blocking(TaskClass::new("c")).operation("blocking");
-
     // Exactly the read-back limit is admitted on the declared pool; the next
     // arrival is shed on that pool, not on the class.
-    for _ in 0..governor.policy().capability_limit("cpu") {
+    for index in 0..governor
+        .policy()
+        .capability_capacity("cpu")
+        .expect("cpu authority")
+        .limit()
+    {
         assert!(
-            matches!(governor.admit(&cpu()), AdmissionDecision::Admitted { .. }),
+            matches!(
+                governor
+                    .admit(&TaskSpec::cpu(TaskClass::new("c")).operation(format!("cpu-{index}"))),
+                AdmissionDecision::Admitted { .. }
+            ),
             "the declared cpu limit admits up to the number it reads back"
         );
     }
-    let third = governor.admit(&cpu());
+    let third = governor.admit(&TaskSpec::cpu(TaskClass::new("c")).operation("cpu-third"));
     assert!(
         matches!(
             third,
@@ -255,10 +282,12 @@ fn the_readable_limit_is_the_limit_admission_enforces_and_zero_means_ungated() {
 
     // The pool that reads as 0 admits past any number that would have been a
     // limit: 0 is "ungated", not "closed".
-    for _ in 0..4 {
+    for index in 0..4 {
         assert!(
             matches!(
-                governor.admit(&blocking()),
+                governor.admit(
+                    &TaskSpec::blocking(TaskClass::new("c")).operation(format!("blocking-{index}"))
+                ),
                 AdmissionDecision::Admitted { .. }
             ),
             "a pool whose limit reads as 0 is ungated"

@@ -2,7 +2,10 @@
 //! every feature shares. No feature logic lives here.
 
 use std::borrow::Cow;
+use std::cmp::Ordering as CmpOrdering;
 use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher};
+use std::num::NonZeroU32;
 #[cfg(feature = "test-util")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -14,6 +17,176 @@ pub type PermitId = u64;
 /// Name of a capability pool, shared cheaply between pending requests, permits,
 /// and the occupancy ledger.
 pub type CapabilityName = std::sync::Arc<str>;
+
+/// Registry-issued identity of a capability pool. The inner name is private so
+/// admission cannot turn an arbitrary string into a capability handle.
+#[derive(Debug)]
+struct CapabilityAuthority;
+
+#[derive(Debug, Clone)]
+pub struct CapabilityId {
+    name: CapabilityName,
+    authority: std::sync::Arc<CapabilityAuthority>,
+}
+
+impl CapabilityId {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.name
+    }
+}
+
+impl PartialEq for CapabilityId {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && std::sync::Arc::ptr_eq(&self.authority, &other.authority)
+    }
+}
+
+impl Eq for CapabilityId {}
+
+impl PartialOrd for CapabilityId {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CapabilityId {
+    fn cmp(&self, other: &Self) -> CmpOrdering {
+        self.name.cmp(&other.name).then_with(|| {
+            std::sync::Arc::as_ptr(&self.authority).cmp(&std::sync::Arc::as_ptr(&other.authority))
+        })
+    }
+}
+
+impl Hash for CapabilityId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        std::sync::Arc::as_ptr(&self.authority).hash(state);
+    }
+}
+
+impl std::fmt::Display for CapabilityId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Capability selected by a validated execution plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedCapability {
+    Ungated,
+    Registered(CapabilityId),
+}
+
+/// Capacity policy attached to every registered capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityCapacity {
+    Bounded(NonZeroU32),
+    ExplicitUnbounded,
+}
+
+impl CapabilityCapacity {
+    pub fn limit(self) -> u32 {
+        match self {
+            Self::Bounded(limit) => limit.get(),
+            Self::ExplicitUnbounded => 0,
+        }
+    }
+}
+
+/// Single authority record used by name resolution, capacity, and snapshots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityRecord {
+    id: CapabilityId,
+    capacity: CapabilityCapacity,
+}
+
+impl CapabilityRecord {
+    pub fn id(&self) -> &CapabilityId {
+        &self.id
+    }
+
+    pub fn name(&self) -> &str {
+        self.id.as_str()
+    }
+
+    pub fn capacity(&self) -> CapabilityCapacity {
+        self.capacity
+    }
+}
+
+/// Raw pool-name resolution failed before admission state was touched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapabilityResolutionError {
+    EmptyName,
+    UnknownName { name: String },
+    ForeignId,
+    TooManyRequirements { max: usize },
+}
+
+impl std::fmt::Display for CapabilityResolutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyName => f.write_str("capability name must be non-empty"),
+            Self::UnknownName { name } => write!(f, "unknown capability: {name}"),
+            Self::ForeignId => f.write_str("capability id is not registered by this policy"),
+            Self::TooManyRequirements { max } => {
+                write!(
+                    f,
+                    "capability requirement count exceeds bounded maximum {max}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for CapabilityResolutionError {}
+
+pub const MAX_CAPABILITY_REQUIREMENTS: usize = 32;
+
+/// Bounded, canonical set of capability slots charged atomically by one permit.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CapabilityRequirementSet(Vec<CapabilityId>);
+
+impl CapabilityRequirementSet {
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn from_resolved(
+        capabilities: impl IntoIterator<Item = ResolvedCapability>,
+    ) -> Result<Self, CapabilityResolutionError> {
+        let mut ids = Vec::new();
+        for capability in capabilities {
+            if let ResolvedCapability::Registered(id) = capability {
+                match ids.binary_search(&id) {
+                    Ok(_) => {}
+                    Err(index) => ids.insert(index, id),
+                }
+                if ids.len() > MAX_CAPABILITY_REQUIREMENTS {
+                    return Err(CapabilityResolutionError::TooManyRequirements {
+                        max: MAX_CAPABILITY_REQUIREMENTS,
+                    });
+                }
+            }
+        }
+        Ok(Self(ids))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &CapabilityId> {
+        self.0.iter()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn intersects(&self, other: &Self) -> bool {
+        if self.is_empty() && other.is_empty() {
+            return true;
+        }
+        self.0.iter().any(|id| other.0.binary_search(id).is_ok())
+    }
+}
 
 /// Identity of a queued request awaiting promotion.
 pub type Ticket = u64;
@@ -90,12 +263,8 @@ pub struct PolicySet {
     pub resources: ResourceBudget,
     pub classes: BTreeMap<TaskClass, ClassPolicy>,
     substrates: BTreeMap<String, SubstrateRecord>,
-    capability_limits: BTreeMap<String, u32>,
-    /// Every registered capability-pool name, interned once. Admission clones
-    /// an `Arc` from here instead of allocating a fresh name per request: the
-    /// per-op allocation count is a gated metric, and resolving a capability
-    /// must not cost one.
-    capability_names: BTreeMap<String, CapabilityName>,
+    capabilities: BTreeMap<CapabilityId, CapabilityRecord>,
+    capability_authority: std::sync::Arc<CapabilityAuthority>,
 }
 
 impl Default for PolicySet {
@@ -123,13 +292,14 @@ impl PolicySet {
             crate::features::inventory::register(&mut substrates, record)
                 .expect("built-in substrate records are valid and unique");
         }
-        let capability_names = intern_capability_names(&substrates);
+        let capability_authority = std::sync::Arc::new(CapabilityAuthority);
+        let capabilities = builtin_capability_records(&substrates, &capability_authority);
         Self {
             resources,
             classes,
             substrates,
-            capability_limits: BTreeMap::new(),
-            capability_names,
+            capabilities,
+            capability_authority,
         }
     }
 
@@ -143,7 +313,6 @@ impl PolicySet {
         for record in substrates {
             crate::features::inventory::register(&mut self.substrates, record)?;
         }
-        self.capability_names = intern_capability_names(&self.substrates);
         Ok(self)
     }
 
@@ -152,8 +321,8 @@ impl PolicySet {
     /// This is the **single** physical-capacity authority: the engine checks it
     /// in the same transition as class inflight and the resource budget, so
     /// there is no second queue in front of admission for work to pile up in. A
-    /// missing or `0` limit means the pool is ungated, matching the published
-    /// `0 == no limit` convention.
+    /// `0` is explicit-unbounded. Missing authority is never interpreted as
+    /// ungated and is rejected when the policy becomes live.
     ///
     /// Rejects a limit for a pool no registered substrate provides — a limit
     /// nothing consults is a silent misconfiguration.
@@ -161,18 +330,37 @@ impl PolicySet {
         mut self,
         limits: BTreeMap<String, u32>,
     ) -> Result<Self, taskmesh_contract::GovernorError> {
-        for pool in limits.keys() {
-            if !self
-                .substrates
-                .values()
-                .any(|record| record.capability_pool.as_deref() == Some(pool.as_str()))
-            {
+        for (pool, limit) in limits {
+            if pool.trim().is_empty() {
+                return Err(taskmesh_contract::GovernorError::PolicyViolation(
+                    "capability name must be non-empty".into(),
+                ));
+            }
+            let executing = self.substrates.values().any(|record| {
+                record.kind != taskmesh_contract::SubstrateKind::AuthorityOnly
+                    && record.capability_pool.as_deref() == Some(pool.as_str())
+            });
+            if !executing {
                 return Err(taskmesh_contract::GovernorError::PolicyViolation(
                     format!("capability limit for unregistered pool: {pool}").into(),
                 ));
             }
+            let id = self
+                .capabilities
+                .keys()
+                .find(|id| id.as_str() == pool)
+                .cloned()
+                .unwrap_or_else(|| CapabilityId {
+                    name: CapabilityName::from(pool.as_str()),
+                    authority: self.capability_authority.clone(),
+                });
+            let capacity = NonZeroU32::new(limit).map_or(
+                CapabilityCapacity::ExplicitUnbounded,
+                CapabilityCapacity::Bounded,
+            );
+            self.capabilities
+                .insert(id.clone(), CapabilityRecord { id, capacity });
         }
-        self.capability_limits = limits;
         Ok(self)
     }
 
@@ -187,15 +375,80 @@ impl PolicySet {
     #[cfg(feature = "test-util")]
     #[doc(hidden)]
     pub fn forge_substrates(mut self, substrates: BTreeMap<String, SubstrateRecord>) -> Self {
-        self.capability_names = intern_capability_names(&substrates);
         self.substrates = substrates;
         self
     }
 
-    /// The interned name for a capability pool, if a registered substrate
-    /// provides it. Cloning the returned `Arc` does not allocate.
+    /// The interned name for an authority-backed capability pool.
     pub fn capability_name(&self, pool: &str) -> Option<CapabilityName> {
-        self.capability_names.get(pool).cloned()
+        self.capabilities
+            .keys()
+            .find(|id| id.as_str() == pool)
+            .map(|id| id.name.clone())
+    }
+
+    /// Resolve a raw name before admission. Unknown and empty names never
+    /// allocate ids or touch governed state.
+    pub fn resolve_capability(
+        &self,
+        pool: &str,
+    ) -> Result<ResolvedCapability, CapabilityResolutionError> {
+        if pool.trim().is_empty() {
+            return Err(CapabilityResolutionError::EmptyName);
+        }
+        self.capabilities
+            .keys()
+            .find(|id| id.as_str() == pool)
+            .cloned()
+            .map(ResolvedCapability::Registered)
+            .ok_or_else(|| CapabilityResolutionError::UnknownName {
+                name: pool.to_owned(),
+            })
+    }
+
+    pub(crate) fn validate_resolved_capability(
+        &self,
+        capability: &ResolvedCapability,
+    ) -> Result<(), CapabilityResolutionError> {
+        match capability {
+            ResolvedCapability::Ungated => Ok(()),
+            ResolvedCapability::Registered(id) if self.capabilities.contains_key(id) => Ok(()),
+            ResolvedCapability::Registered(_) => Err(CapabilityResolutionError::ForeignId),
+        }
+    }
+
+    pub(crate) fn validate_requirements(
+        &self,
+        requirements: &CapabilityRequirementSet,
+    ) -> Result<(), CapabilityResolutionError> {
+        if requirements
+            .iter()
+            .all(|id| self.capabilities.contains_key(id))
+        {
+            Ok(())
+        } else {
+            Err(CapabilityResolutionError::ForeignId)
+        }
+    }
+
+    pub fn resolved_capability_name<'a>(
+        &'a self,
+        capability: &ResolvedCapability,
+    ) -> Option<&'a str> {
+        match capability {
+            ResolvedCapability::Ungated => None,
+            ResolvedCapability::Registered(id) => {
+                self.capabilities.get(id).map(CapabilityRecord::name)
+            }
+        }
+    }
+
+    pub(crate) fn capability_record(&self, id: &CapabilityId) -> Option<&CapabilityRecord> {
+        self.capabilities.get(id)
+    }
+
+    pub fn capability_records(&self) -> impl Iterator<Item = &CapabilityRecord> {
+        self.capabilities.values()
     }
 
     pub fn class(&self, class: &TaskClass) -> Option<&ClassPolicy> {
@@ -207,20 +460,39 @@ impl PolicySet {
         &self.substrates
     }
 
-    /// Declared capability-pool limits, keyed by capability-pool name.
-    pub fn capability_limits(&self) -> &BTreeMap<String, u32> {
-        &self.capability_limits
+    /// Missing is distinct from [`CapabilityCapacity::ExplicitUnbounded`].
+    pub fn capability_capacity(&self, pool: &str) -> Option<CapabilityCapacity> {
+        self.capabilities
+            .values()
+            .find(|record| record.name() == pool)
+            .map(CapabilityRecord::capacity)
     }
+}
 
-    /// The configured slot limit for `pool`; `0` means ungated.
-    pub fn capability_limit(&self, pool: &str) -> u32 {
-        self.capability_limits.get(pool).copied().unwrap_or(0)
+fn builtin_capability_records(
+    substrates: &BTreeMap<String, SubstrateRecord>,
+    authority: &std::sync::Arc<CapabilityAuthority>,
+) -> BTreeMap<CapabilityId, CapabilityRecord> {
+    let mut capabilities = BTreeMap::new();
+    for record in substrates.values() {
+        let Some(pool) = record.capability_pool.as_deref() else {
+            continue;
+        };
+        let id = CapabilityId {
+            name: CapabilityName::from(pool),
+            authority: authority.clone(),
+        };
+        capabilities.entry(id.clone()).or_insert(CapabilityRecord {
+            id,
+            capacity: CapabilityCapacity::ExplicitUnbounded,
+        });
     }
+    capabilities
 }
 
 /// Classification provenance carried through admission so "why this class" stays
 /// auditable in runtime state after submit, not just on the inbound `TaskSpec`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Provenance {
     pub source: taskmesh_contract::PlanSource,
     pub reason: taskmesh_contract::ClassificationRationale,
@@ -229,7 +501,7 @@ pub struct Provenance {
 impl Provenance {
     pub fn of(spec: &taskmesh_contract::TaskSpec) -> Self {
         Self {
-            source: spec.source,
+            source: spec.source.clone(),
             reason: spec.reason,
         }
     }
@@ -258,16 +530,6 @@ pub struct LeakSweepReport {
     /// executor. Stale is not dead: reclaiming these would double-book capacity
     /// a live worker still holds.
     pub retained_active: u32,
-}
-
-fn intern_capability_names(
-    substrates: &BTreeMap<String, SubstrateRecord>,
-) -> BTreeMap<String, CapabilityName> {
-    substrates
-        .values()
-        .filter_map(|record| record.capability_pool.as_deref())
-        .map(|pool| (pool.to_owned(), CapabilityName::from(pool)))
-        .collect()
 }
 
 /// What a stage-boundary memory release did.

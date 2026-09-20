@@ -1,6 +1,6 @@
 # SEP21-E04 — Unified pending-admission resolver
 
-- 상태: PLANNED
+- 상태: LOCALLY_VERIFIED
 - 우선순위: P0
 - 포함 finding: TM21-001, TM21-002, TM21-009, TM21-023
 - 선행: C01, E01, E02
@@ -111,4 +111,48 @@ cargo test --locked -p taskmesh-engine --test pending_resolver --test hardening_
 cargo test --locked -p taskmesh --test hardening_nested_wait --test runtime_cancel_timeout
 just loom
 just shuttle
+```
+
+## Closure evidence (2026-09-21)
+
+- source: `main@32189ab0bbd44aad83921167eeb076223fbfe230`
+- resolver API: `CapacityAssessment::{Runnable, ReversiblyBlocked,
+  IrreversibleWaitCycle}`, `BlockerSet`, `CycleWitness`, `Governor::pending_assessment`, and
+  `Governor::pending_view`.
+- topology: active permit identity is indexed as root -> operation -> permit. A witness includes
+  only the validated immediate parent's capacity and never sibling/stranger capacity.
+- scan/reduce: each class scans at most its configured `max_queue_depth`; earliest fully runnable
+  request is selected, same-capability FIFO is preserved, and the existing class fairness policy
+  deterministically orders eligible candidates.
+
+| Acceptance | Local evidence |
+| --- | --- |
+| SEP21-E04-A01 | Four descendant parent-held dimensions reject immediately; `promotion_reassessment_terminalizes_a_newly_formed_parent_cycle` publishes and wakes an exact typed terminal result. |
+| SEP21-E04-A02 | Sibling capacity and same parent text under another root remain reversible; mixed stranger blockers do not false-cycle. |
+| SEP21-E04-A03 | `an_earlier_cross_pool_follower_runs_before_a_later_same_pool_newcomer`, same-pool FIFO fixtures, and Shuttle gap-arrival models. |
+| SEP21-E04-A04 | Intake, `pending_assessment`, scheduler eligibility, promotion terminalization, and timeout-facing pending view all call the same `assess`/`assess_pending` owner. |
+| SEP21-E04-A05 | Cancel/abandon/release fixtures plus Loom/Shuttle exactly-once models finish with zero residual accounting and deterministic fairness state. |
+| SEP21-E04-A06 | `pending_diagnostics_recompute_the_full_current_blocker_set` proves capability removal changes the current projection while the class blocker remains. |
+| SEP21-E04-A07 | `invalid_duplicate_stage_is_rejected_before_ids_or_state_change` and duplicate active operation identity fixtures preserve ids, tickets, permits, scheduler, and snapshot state. |
+| SEP21-E04-A08 | `multiple_capability_requirements_charge_and_release_atomically` proves two registered pools charge, queue, promote, and return in one transition. |
+
+Intentional negative fixtures cover duplicate same/conflicting stage validation, root spoofing,
+sibling/stranger false cycles, simultaneous blocker masking, newly formed promotion cycles,
+same-domain overtaking, and multi-capability partial charge. Host timeout/error projection remains
+H02; workspace/release qualification remains R01.
+
+Validation evidence:
+
+```text
+CARGO_TARGET_DIR=target/sep21/engine-core cargo test --locked -p taskmesh-engine
+exit 0; selected 224, executed 224, passed 224
+
+CARGO_TARGET_DIR=target/sep21/engine-core cargo clippy --locked -p taskmesh-engine --all-targets -- -D warnings
+exit 0
+
+CARGO_TARGET_DIR=target/sep21/engine-core-loom RUSTFLAGS='--cfg loom' cargo test --locked -p taskmesh-engine --features loom --test loom_governance --release
+exit 0; 5 passed
+
+CARGO_TARGET_DIR=target/sep21/engine-core-shuttle RUSTFLAGS='--cfg shuttle' cargo test --locked -p taskmesh-engine --features shuttle --test shuttle_governance --release
+exit 0; 7 passed; 10,000 schedules requested/completed per model
 ```

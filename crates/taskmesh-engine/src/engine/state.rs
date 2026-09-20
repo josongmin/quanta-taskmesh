@@ -22,7 +22,11 @@ use std::sync::Arc;
 
 use taskmesh_contract::{ExecutionPhase, PermitWaker, TaskClass, TaskScope, TaskStage};
 
-use crate::shared::{CapabilityName, PermitId, Provenance, RequestKey, ResolvedCost, Seq, Ticket};
+use crate::features::memory::MeasurementSequence;
+use crate::shared::{
+    CapabilityId, CapabilityRequirementSet, PermitId, Provenance, RequestKey, ResolvedCost, Seq,
+    Ticket,
+};
 
 /// How many terminal ticket outcomes are retained for late claimers.
 ///
@@ -39,6 +43,7 @@ pub struct PendingRequest {
     pub class: TaskClass,
     /// Admission key derived from the root operation id; audit/diagnostics only.
     pub request_key: RequestKey,
+    pub operation: String,
     pub root_operation_id: String,
     pub scope: TaskScope,
     pub target_stage: TaskStage,
@@ -47,7 +52,7 @@ pub struct PendingRequest {
     pub cost: ResolvedCost,
     /// The capability pool this request must occupy to run. Frozen at intake so
     /// promotion can never re-resolve it to a cheaper pool.
-    pub capability: Option<CapabilityName>,
+    pub capabilities: CapabilityRequirementSet,
     pub enqueued_at_ms: u64,
     /// Absolute deadline used by `DeadlineAware`; `u64::MAX` when unset.
     pub deadline_ms: u64,
@@ -131,7 +136,7 @@ pub struct PermitLedger {
     pub measured_bytes: u64,
     /// Monotonic per-permit measurement sequence. A reading that arrives with a
     /// stale epoch is rejected instead of overwriting a newer one.
-    pub measurement_epoch: u64,
+    pub measurement_sequence: MeasurementSequence,
     /// Monotonic per-permit stage-release sequence. A duplicate or out-of-order
     /// stage delta is rejected rather than applied twice.
     pub stage_sequence: u64,
@@ -146,13 +151,14 @@ pub struct PermitLedger {
 pub struct PermitRecord {
     pub permit_id: PermitId,
     pub class: TaskClass,
+    pub operation: String,
     pub root_operation_id: String,
     pub scope: TaskScope,
     pub target_stage: TaskStage,
     /// Classification provenance (source/reason), auditable post-intake.
     pub provenance: Provenance,
     /// The capability pool this permit occupies while live.
-    pub capability: Option<CapabilityName>,
+    pub capabilities: CapabilityRequirementSet,
     /// Current ownership phase. Advances monotonically.
     pub phase: ExecutionPhase,
     /// The custody proof minted when the permit left `DispatchReserved`, or
@@ -179,7 +185,7 @@ pub struct RootExecutionState {
 }
 
 /// Which limit, if any, blocks an admission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CapacityBlock {
     Ok,
     Inflight,
@@ -196,20 +202,38 @@ pub enum CapacityBlock {
     AccountingFault,
 }
 
-pub use taskmesh_contract::TerminalReason;
+/// Engine-owned reason a queued acquisition ended without custody transfer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalReason {
+    Reclaimed,
+    Released,
+    Abandoned,
+    /// The promoted permit could not be handed to its waiter because retiring
+    /// the final host notifier panicked. The engine compensated every charge
+    /// before publishing this outcome.
+    ClaimDeliveryFailed,
+    IrreversibleWaitCycle {
+        held_by_parent: taskmesh_contract::HeldCapacity,
+    },
+}
 
 /// Lifecycle position of a ticket. Exactly one variant holds at any time.
 #[derive(Debug, Clone)]
 pub enum TicketState {
-    Queued { class: TaskClass },
+    Queued {
+        class: TaskClass,
+    },
     Granted(PermitId),
+    /// Claim has started retiring the final notifier outside the mutex. The
+    /// permit is not caller-owned until this state is finalized.
+    Claiming(PermitId),
     Terminal(TerminalReason),
 }
 
 /// The result of claiming a ticket. `Pending` and `Terminal` are *different*
 /// answers: conflating them (as a bare `None` does) is what turns a reclaimed
 /// permit into a waiter that parks forever.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use = "a Ready permit that is dropped is leaked capacity; handle every arm"]
 pub enum ClaimOutcome {
     /// Ownership transferred to the caller.
@@ -382,11 +406,12 @@ impl TransitionEffects {
 pub struct GrantRequest<'a> {
     pub permit_id: PermitId,
     pub class: &'a TaskClass,
+    pub operation: &'a str,
     pub root_operation_id: &'a str,
     pub scope: TaskScope,
     pub target_stage: TaskStage,
     pub provenance: Provenance,
-    pub capability: Option<CapabilityName>,
+    pub capabilities: CapabilityRequirementSet,
     pub cost: ResolvedCost,
     pub reserved_units: u32,
     pub now_ms: u64,
@@ -399,6 +424,7 @@ pub struct GrantRequest<'a> {
 pub struct GovernedState {
     pub classes: BTreeMap<TaskClass, ClassState>,
     pub permits: BTreeMap<PermitId, PermitRecord>,
+    pub operation_permits: BTreeMap<String, BTreeMap<String, BTreeSet<PermitId>>>,
     pub roots: BTreeMap<String, RootExecutionState>,
     /// The `(root, stage)` pairs a child currently occupies — queued or granted.
     /// Keyed by root so the admit-path lookup borrows the spec's strings instead
@@ -418,7 +444,7 @@ pub struct GovernedState {
     pub memory_units_held: u128,
     /// Live occupancy per capability pool, keyed by the interned name so a
     /// grant costs a clone of an `Arc`, not a `String`.
-    pub capability_in_use: BTreeMap<CapabilityName, u32>,
+    pub capability_in_use: BTreeMap<CapabilityId, u32>,
     /// WFQ global virtual time, advanced on each dispatch.
     pub virtual_time: u128,
     /// DRR active-class ring cursor.
@@ -469,89 +495,28 @@ impl GovernedState {
         committed
     }
 
-    pub fn capability_in_use(&self, capability: &str) -> u32 {
+    pub fn capability_in_use(&self, capability: &CapabilityId) -> u32 {
         self.capability_in_use.get(capability).copied().unwrap_or(0)
     }
 
-    /// Pure capacity check: would a permit of `cost` for `class` fit right now,
-    /// given the class inflight cap, the capability-pool limit, and the global
-    /// resource budget?
-    ///
-    /// Every comparison is checked and widened before comparing. A total that
-    /// cannot be represented is [`CapacityBlock::AccountingFault`], never a
-    /// saturated value that compares as "fits".
-    pub fn capacity_for(
+    pub fn permits_for_operation(
         &self,
-        class: &TaskClass,
-        max_inflight: u32,
-        cost: ResolvedCost,
-        capability: Option<&str>,
-        budget: &taskmesh_contract::ResourceBudget,
-        capability_limits: &BTreeMap<String, u32>,
-    ) -> CapacityBlock {
-        if self.accounting_fault.is_some() {
-            return CapacityBlock::AccountingFault;
-        }
-        if self.inflight(class) >= max_inflight {
-            return CapacityBlock::Inflight;
-        }
-        if let Some(name) = capability {
-            // An absent or zero limit means "ungated", matching the published
-            // `0 == no limit` convention used by resource budgets.
-            let limit = capability_limits.get(name).copied().unwrap_or(0);
-            if limit != 0 && self.capability_in_use(name) >= limit {
-                return CapacityBlock::Capability;
-            }
-        }
-        if budget.max_cpu_units != 0 {
-            let Some(next) = self.cpu_units_held.checked_add(u128::from(cost.cpu_units)) else {
-                return CapacityBlock::AccountingFault;
-            };
-            if next > u128::from(budget.max_cpu_units) {
-                return CapacityBlock::Cpu;
-            }
-        }
-        if budget.max_memory_units != 0 {
-            let Some(next) = self
-                .memory_units_held
-                .checked_add(u128::from(cost.memory_units))
-            else {
-                return CapacityBlock::AccountingFault;
-            };
-            if next > u128::from(budget.max_memory_units) {
-                return CapacityBlock::Memory;
-            }
-        }
-        CapacityBlock::Ok
+        root_operation_id: &str,
+        operation: &str,
+    ) -> Option<&BTreeSet<PermitId>> {
+        self.operation_permits
+            .get(root_operation_id)?
+            .get(operation)
     }
 
-    /// D08 in-class FIFO: does a queued head of `class` — one that is runnable
-    /// right now and only waiting for a promotion pass — stand ahead of a new
-    /// arrival that itself fits?
-    ///
-    /// The one head that does *not* block a newcomer is one waiting on a
-    /// capability pool the newcomer does not need: same class, different
-    /// physical pool, and holding the newcomer back would let one saturated
-    /// pool idle every other pool the class can use. That exception is the
-    /// only way a later arrival of a class overtakes an earlier one.
-    pub fn queued_head_blocks(
-        &self,
-        class: &TaskClass,
-        max_inflight: u32,
-        budget: &taskmesh_contract::ResourceBudget,
-        capability_limits: &BTreeMap<String, u32>,
-    ) -> bool {
-        let Some(head) = self.classes.get(class).and_then(|c| c.queue.front()) else {
-            return false;
-        };
-        self.capacity_for(
-            class,
-            max_inflight,
-            head.cost,
-            head.capability.as_deref(),
-            budget,
-            capability_limits,
-        ) == CapacityBlock::Ok
+    pub fn has_operation_identity(&self, root_operation_id: &str, operation: &str) -> bool {
+        self.permits_for_operation(root_operation_id, operation)
+            .is_some_and(|permits| !permits.is_empty())
+            || self.classes.values().any(|class| {
+                class.queue.iter().any(|request| {
+                    request.root_operation_id == root_operation_id && request.operation == operation
+                })
+            })
     }
 
     /// Commit a granted permit: bump inflight, global held, capability
@@ -560,11 +525,12 @@ impl GovernedState {
         let GrantRequest {
             permit_id,
             class,
+            operation,
             root_operation_id,
             scope,
             target_stage,
             provenance,
-            capability,
+            capabilities,
             cost,
             reserved_units,
             now_ms,
@@ -582,13 +548,16 @@ impl GovernedState {
         }
         self.cpu_units_held += u128::from(cost.cpu_units);
         self.memory_units_held += u128::from(cost.memory_units);
-        if let Some(name) = capability.as_ref() {
-            let slot = self
-                .capability_in_use
-                .entry(CapabilityName::clone(name))
-                .or_insert(0);
+        for id in capabilities.iter() {
+            let slot = self.capability_in_use.entry(id.clone()).or_insert(0);
             *slot = slot.saturating_add(1);
         }
+        self.operation_permits
+            .entry(root_operation_id.to_owned())
+            .or_default()
+            .entry(operation.to_owned())
+            .or_default()
+            .insert(permit_id);
 
         // Recursion guard and root attribution are CHILD-only. A root must never
         // occupy `(root, stage)` itself, else its own first child — which targets
@@ -611,11 +580,12 @@ impl GovernedState {
             PermitRecord {
                 permit_id,
                 class: class.clone(),
+                operation: operation.to_owned(),
                 root_operation_id: root_operation_id.to_owned(),
                 scope,
                 target_stage,
                 provenance,
-                capability,
+                capabilities,
                 phase: ExecutionPhase::DispatchReserved,
                 lease_nonce: None,
                 pending_ticket,
@@ -625,7 +595,7 @@ impl GovernedState {
                     original_estimate_units: reserved_units,
                     remaining_reservation_units: reserved_units,
                     measured_bytes: 0,
-                    measurement_epoch: 0,
+                    measurement_sequence: MeasurementSequence::INITIAL,
                     stage_sequence: 0,
                     effective_units: cost.memory_units,
                     leased_at_ms: now_ms,
@@ -790,12 +760,23 @@ impl GovernedState {
         self.memory_units_held = self
             .memory_units_held
             .saturating_sub(u128::from(record.ledger.effective_units));
-        if let Some(name) = record.capability.as_ref() {
-            if let Some(slot) = self.capability_in_use.get_mut(name.as_ref()) {
+        for id in record.capabilities.iter() {
+            if let Some(slot) = self.capability_in_use.get_mut(id) {
                 *slot = slot.saturating_sub(1);
                 if *slot == 0 {
-                    self.capability_in_use.remove(name.as_ref());
+                    self.capability_in_use.remove(id);
                 }
+            }
+        }
+        if let Some(operations) = self.operation_permits.get_mut(&record.root_operation_id) {
+            if let Some(ids) = operations.get_mut(&record.operation) {
+                ids.remove(&permit_id);
+                if ids.is_empty() {
+                    operations.remove(&record.operation);
+                }
+            }
+            if operations.is_empty() {
+                self.operation_permits.remove(&record.root_operation_id);
             }
         }
 
@@ -874,13 +855,13 @@ impl GovernedState {
         let mut permit_cpu: u128 = 0;
         let mut permit_mem: u128 = 0;
         let mut inflight_by_class: BTreeMap<&TaskClass, u32> = BTreeMap::new();
-        let mut capability_by_pool: BTreeMap<&str, u32> = BTreeMap::new();
+        let mut capability_by_pool: BTreeMap<&CapabilityId, u32> = BTreeMap::new();
         for record in self.permits.values() {
             permit_cpu += u128::from(record.ledger.cpu_units);
             permit_mem += u128::from(record.ledger.effective_units);
             *inflight_by_class.entry(&record.class).or_default() += 1;
-            if let Some(name) = record.capability.as_ref() {
-                *capability_by_pool.entry(name.as_ref()).or_default() += 1;
+            for id in record.capabilities.iter() {
+                *capability_by_pool.entry(id).or_default() += 1;
             }
             debug_assert_eq!(
                 record.lease_nonce.is_some(),
@@ -922,14 +903,15 @@ impl GovernedState {
             );
         }
         for (pool, in_use) in &self.capability_in_use {
-            let from_permits = capability_by_pool.get(pool.as_ref()).copied().unwrap_or(0);
+            let from_permits = capability_by_pool.get(pool).copied().unwrap_or(0);
             debug_assert_eq!(
                 *in_use, from_permits,
                 "capability {pool} in_use {in_use} != live permit count {from_permits}"
             );
         }
         for (ticket, ticket_state) in &self.tickets {
-            if let TicketState::Granted(permit_id) = ticket_state {
+            if let TicketState::Granted(permit_id) | TicketState::Claiming(permit_id) = ticket_state
+            {
                 debug_assert!(
                     self.permits.contains_key(permit_id),
                     "granted ticket {ticket} maps to a permit that no longer exists"

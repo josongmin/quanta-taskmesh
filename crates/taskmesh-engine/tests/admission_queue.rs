@@ -21,6 +21,10 @@ fn spec(class: &str) -> TaskSpec {
     TaskSpec::blocking(TaskClass::new(class.to_string())).operation(format!("op:{class}"))
 }
 
+fn named_spec(class: &str, operation: &str) -> TaskSpec {
+    TaskSpec::blocking(TaskClass::new(class.to_string())).operation(operation.to_owned())
+}
+
 #[test]
 fn unknown_class_rejects() {
     let g = gov(ResourceBudget::new(), vec![("known", ClassPolicy::new())]);
@@ -39,7 +43,7 @@ fn disabled_class_rejects() {
         vec![("c", ClassPolicy::new().max_inflight(0))],
     );
     assert!(matches!(
-        g.admit(&spec("c")),
+        g.admit(&named_spec("c", "first")),
         AdmissionDecision::Rejected(AdmissionVerdict::ClassDisabled)
     ));
 }
@@ -51,7 +55,7 @@ fn inflight_below_cap_admits() {
         vec![("c", ClassPolicy::new().max_inflight(2))],
     );
     assert!(matches!(
-        g.admit(&spec("c")),
+        g.admit(&named_spec("c", "second")),
         AdmissionDecision::Admitted { .. }
     ));
 }
@@ -69,11 +73,11 @@ fn inflight_at_cap_queueable_queues() {
         )],
     );
     assert!(matches!(
-        g.admit(&spec("c")),
+        g.admit(&named_spec("c", "first")),
         AdmissionDecision::Admitted { .. }
     ));
     assert!(matches!(
-        g.admit(&spec("c")),
+        g.admit(&named_spec("c", "second")),
         AdmissionDecision::Queued { .. }
     ));
     assert_eq!(g.snapshot().classes[&TaskClass::new("c")].queued, 1);
@@ -86,11 +90,11 @@ fn inflight_at_cap_non_queueable_rejects() {
         vec![("c", ClassPolicy::new().max_inflight(1))],
     );
     assert!(matches!(
-        g.admit(&spec("c")),
+        g.admit(&named_spec("c", "first")),
         AdmissionDecision::Admitted { .. }
     ));
     assert!(matches!(
-        g.admit(&spec("c")),
+        g.admit(&named_spec("c", "second")),
         AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated { .. })
     ));
 }
@@ -108,15 +112,15 @@ fn queue_depth_exceeded_returns_queue_full() {
         )],
     );
     assert!(matches!(
-        g.admit(&spec("c")),
+        g.admit(&named_spec("c", "first")),
         AdmissionDecision::Admitted { .. }
     ));
     assert!(matches!(
-        g.admit(&spec("c")),
+        g.admit(&named_spec("c", "second")),
         AdmissionDecision::Queued { .. }
     ));
     assert!(matches!(
-        g.admit(&spec("c")),
+        g.admit(&named_spec("c", "third")),
         AdmissionDecision::Rejected(AdmissionVerdict::QueueFull { .. })
     ));
 }
@@ -144,17 +148,18 @@ fn a_full_queue_sheds_with_the_cause_that_blocked_the_request() {
         Arc::new(ManualClock::new(0)),
     )
     .expect("valid policy");
-    let AdmissionDecision::Admitted { permit_id: holder } = g.admit(&spec("c")) else {
+    let AdmissionDecision::Admitted { permit_id: holder } = g.admit(&named_spec("c", "cap-holder"))
+    else {
         panic!("the single blocking slot is free");
     };
-    let AdmissionDecision::Queued { ticket } = g.admit(&spec("c")) else {
+    let AdmissionDecision::Queued { ticket } = g.admit(&named_spec("c", "cap-second")) else {
         panic!("the second request waits for the slot");
     };
     assert_eq!(
         g.pending_block_reason(ticket),
         Some(CapacityBlock::Capability)
     );
-    let third = g.admit(&spec("c"));
+    let third = g.admit(&named_spec("c", "cap-third"));
     assert!(
         matches!(
             third,
@@ -179,14 +184,16 @@ fn a_full_queue_sheds_with_the_cause_that_blocked_the_request() {
         Arc::new(ManualClock::new(0)),
     )
     .expect("valid policy");
-    let AdmissionDecision::Admitted { permit_id: holder } = g.admit(&spec("m")) else {
+    let AdmissionDecision::Admitted { permit_id: holder } =
+        g.admit(&named_spec("m", "memory-holder"))
+    else {
         panic!("the whole memory budget is free");
     };
-    let AdmissionDecision::Queued { ticket } = g.admit(&spec("m")) else {
+    let AdmissionDecision::Queued { ticket } = g.admit(&named_spec("m", "memory-second")) else {
         panic!("the second request queues on memory");
     };
     assert_eq!(g.pending_block_reason(ticket), Some(CapacityBlock::Memory));
-    let third = g.admit(&spec("m"));
+    let third = g.admit(&named_spec("m", "memory-third"));
     assert!(
         matches!(
             third,
@@ -209,11 +216,11 @@ fn release_promotes_queued_work() {
                 .overflow_policy(OverflowPolicy::QueueWithinDepth),
         )],
     );
-    let permit = match g.admit(&spec("c")) {
+    let permit = match g.admit(&named_spec("c", "holder")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("expected admit, got {other:?}"),
     };
-    let ticket = match g.admit(&spec("c")) {
+    let ticket = match g.admit(&named_spec("c", "queued")) {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected queue, got {other:?}"),
     };
@@ -244,16 +251,16 @@ fn queued_tickets_are_stably_ordered() {
         )],
     );
     // Occupy the single inflight slot so the next two admissions queue.
-    let occupied = g.admit(&spec("c"));
+    let occupied = g.admit(&named_spec("c", "occupied"));
     assert!(
         matches!(occupied, AdmissionDecision::Admitted { .. }),
         "the first admission takes the only slot, got {occupied:?}"
     );
-    let t1 = match g.admit(&spec("c")) {
+    let t1 = match g.admit(&named_spec("c", "queued-1")) {
         AdmissionDecision::Queued { ticket } => ticket,
         o => panic!("{o:?}"),
     };
-    let t2 = match g.admit(&spec("c")) {
+    let t2 = match g.admit(&named_spec("c", "queued-2")) {
         AdmissionDecision::Queued { ticket } => ticket,
         o => panic!("{o:?}"),
     };

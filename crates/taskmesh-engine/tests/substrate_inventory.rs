@@ -105,3 +105,136 @@ fn a_substrate_with_an_empty_name_is_rejected() {
         );
     }
 }
+
+#[test]
+fn capability_resolution_is_typed_and_state_neutral_for_empty_unknown_and_typo_names() {
+    let g = gov_with(vec![]).expect("valid built-ins");
+    let before = g.snapshot();
+    assert_eq!(
+        g.policy().resolve_capability(""),
+        Err(CapabilityResolutionError::EmptyName)
+    );
+    for name in ["missing", "blockng"] {
+        assert_eq!(
+            g.policy().resolve_capability(name),
+            Err(CapabilityResolutionError::UnknownName {
+                name: name.to_owned(),
+            })
+        );
+    }
+    assert_eq!(g.snapshot(), before);
+    assert!(g.permit_ledgers().is_empty());
+}
+
+#[test]
+fn a_registered_id_from_another_policy_is_rejected_before_admission() {
+    let mut source_classes = BTreeMap::new();
+    source_classes.insert(TaskClass::new("c"), ClassPolicy::new());
+    let source_policy = PolicySet::new(ResourceBudget::new(), source_classes)
+        .with_substrates(vec![SubstrateRecord::new(
+            "custom-executor",
+            SubstrateKind::CompetingExecution,
+            Some("custom-pool"),
+        )])
+        .expect("valid custom substrate")
+        .with_capability_limits(BTreeMap::from([("custom-pool".to_owned(), 1)]))
+        .expect("custom capability has an executing substrate");
+    let source =
+        Governor::new(source_policy, Arc::new(ManualClock::new(0))).expect("source governor");
+    let target = gov_with(vec![]).expect("target governor");
+    let foreign = source
+        .policy()
+        .resolve_capability("custom-pool")
+        .expect("source custom capability");
+    let before = target.snapshot();
+    assert_eq!(
+        target.admit_resolved(
+            &TaskSpec::blocking(TaskClass::new("c")).operation("foreign"),
+            foreign,
+            None,
+        ),
+        Err(CapabilityResolutionError::ForeignId)
+    );
+    assert_eq!(target.snapshot(), before);
+    assert!(target.permit_ledgers().is_empty());
+}
+
+#[test]
+fn same_name_with_a_different_policy_authority_is_foreign() {
+    let policy = |limit| {
+        let mut classes = BTreeMap::new();
+        classes.insert(TaskClass::new("c"), ClassPolicy::new());
+        PolicySet::new(ResourceBudget::new(), classes)
+            .with_capability_limits(BTreeMap::from([("blocking".to_owned(), limit)]))
+            .expect("built-in capability")
+    };
+    let source_policy = policy(1);
+    let source_id = source_policy
+        .resolve_capability("blocking")
+        .expect("source authority");
+    let target = Governor::new(policy(2), Arc::new(ManualClock::new(0))).expect("target governor");
+    let before = target.snapshot();
+    assert_eq!(
+        target.admit_resolved(
+            &TaskSpec::blocking(TaskClass::new("c")).operation("foreign-policy"),
+            source_id,
+            None,
+        ),
+        Err(CapabilityResolutionError::ForeignId)
+    );
+    assert_eq!(target.snapshot(), before);
+}
+
+#[test]
+fn executing_substrate_without_capacity_authority_fails_closed() {
+    let mut classes = BTreeMap::new();
+    classes.insert(TaskClass::new("c"), ClassPolicy::new());
+    let policy = PolicySet::new(ResourceBudget::new(), classes)
+        .with_substrates(vec![SubstrateRecord::new(
+            "custom-executor",
+            SubstrateKind::CompetingExecution,
+            Some("custom-pool"),
+        )])
+        .expect("record shape is valid but authority is absent");
+    let Err(GovernorError::PolicyViolation(message)) =
+        Governor::new(policy, Arc::new(ManualClock::new(0)))
+    else {
+        panic!("missing capability authority must reject governor construction");
+    };
+    assert!(message.contains("custom-pool"));
+    assert!(message.contains("no capability authority"));
+}
+
+#[test]
+fn snapshot_and_admission_share_the_same_capacity_record() {
+    let mut classes = BTreeMap::new();
+    classes.insert(
+        TaskClass::new("c"),
+        ClassPolicy::new()
+            .max_inflight(4)
+            .max_queue_depth(4)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth),
+    );
+    let policy = PolicySet::new(ResourceBudget::new(), classes)
+        .with_capability_limits(BTreeMap::from([("blocking".to_owned(), 1)]))
+        .expect("built-in authority");
+    let capability = policy
+        .resolve_capability("blocking")
+        .expect("registered capability");
+    let g = Governor::new(policy, Arc::new(ManualClock::new(0))).expect("valid policy");
+    let spec = TaskSpec::blocking(TaskClass::new("c")).operation("one");
+    let AdmissionDecision::Admitted { permit_id } = g
+        .admit_resolved(&spec, capability.clone(), None)
+        .expect("local resolved id")
+    else {
+        panic!("the one registered slot is free");
+    };
+    assert_eq!(g.snapshot().capabilities["blocking"].limit, 1);
+    assert_eq!(g.snapshot().capabilities["blocking"].in_use, 1);
+    assert!(matches!(
+        g.admit_resolved(&spec.clone().operation("two"), capability, None)
+            .expect("same registered id"),
+        AdmissionDecision::Queued { .. }
+    ));
+    assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
+}

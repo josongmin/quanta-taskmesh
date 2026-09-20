@@ -46,7 +46,7 @@ fn direct_admit_preserves_provenance_and_clears_on_release() {
     let g = governor(4, 0);
     let spec = spec_with(
         "x",
-        PlanSource::SearchAdapter,
+        PlanSource::new("search-adapter").expect("valid source"),
         ClassificationRationale::DerivedFromStageMap,
     );
     let permit = match g.admit(&spec) {
@@ -74,7 +74,7 @@ fn promotion_preserves_each_requests_own_provenance() {
 
     let filler = match g.admit(&spec_with(
         "filler",
-        PlanSource::Internal,
+        PlanSource::INTERNAL,
         ClassificationRationale::ExplicitMapping,
     )) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
@@ -84,17 +84,17 @@ fn promotion_preserves_each_requests_own_provenance() {
     let tagged = [
         (
             "q0",
-            PlanSource::PublicSdk,
+            PlanSource::new("public-sdk").expect("valid source"),
             ClassificationRationale::ExplicitMapping,
         ),
         (
             "q1",
-            PlanSource::Warmup,
+            PlanSource::new("warmup").expect("valid source"),
             ClassificationRationale::DerivedFromRequestKind,
         ),
         (
             "q2",
-            PlanSource::Indexing,
+            PlanSource::new("indexing").expect("valid source"),
             ClassificationRationale::DerivedFromStageMap,
         ),
     ];
@@ -117,7 +117,7 @@ fn promotion_preserves_each_requests_own_provenance() {
         for (idx, (ticket, prov)) in queued.iter().enumerate() {
             match g.claim(*ticket) {
                 ClaimOutcome::Ready(permit) => {
-                    found = Some((idx, permit, *prov));
+                    found = Some((idx, permit, prov.clone()));
                     break;
                 }
                 ClaimOutcome::Pending => {}

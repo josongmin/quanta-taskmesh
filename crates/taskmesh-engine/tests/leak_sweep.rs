@@ -27,8 +27,8 @@ fn gov() -> (Governor, Arc<ManualClock>, TaskClass) {
     )
 }
 
-fn admit(g: &Governor) -> PermitId {
-    let spec = TaskSpec::blocking(TaskClass::new("c")).operation("op");
+fn admit(g: &Governor, operation: &str) -> PermitId {
+    let spec = TaskSpec::blocking(TaskClass::new("c")).operation(operation.to_owned());
     match g.admit(&spec) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("{o:?}"),
@@ -38,7 +38,7 @@ fn admit(g: &Governor) -> PermitId {
 #[test]
 fn leak_sweep_reclaims_stale_permits() {
     let (g, clock, c) = gov();
-    let _p = admit(&g);
+    let _p = admit(&g, "op");
     assert_eq!(g.snapshot().classes[&c].inflight, 1);
 
     // Not yet stale.
@@ -65,7 +65,7 @@ fn the_default_sweep_window_is_exclusive_at_its_boundary() {
     // is "untouched for *longer than* the window": a lease exactly the window
     // old is not yet stale, one millisecond older is.
     let (g, clock, c) = gov();
-    let permit = admit(&g);
+    let permit = admit(&g, "op");
     clock.advance(DEFAULT_LEAK_STALE_MS);
     let at_boundary = g.reap_leaks();
     assert_eq!(
@@ -113,8 +113,8 @@ fn a_reclaimed_leak_promotes_work_queued_on_memory() {
         clock.clone(),
     )
     .expect("valid policy");
-    let leaked = admit(&g);
-    let running = admit(&g);
+    let leaked = admit(&g, "leaked");
+    let running = admit(&g, "running");
     let AdvanceOutcome::Leased(running_lease) = g.advance_phase(running, ExecutionPhase::Running)
     else {
         panic!("the first advance of a live permit leases it");
@@ -154,7 +154,7 @@ fn a_reclaimed_leak_promotes_work_queued_on_memory() {
 #[test]
 fn stage_boundary_release_returns_units_but_keeps_permit() {
     let (g, _clock, c) = gov();
-    let p = admit(&g);
+    let p = admit(&g, "op");
     assert_eq!(g.snapshot().classes[&c].memory_units_held, 10);
 
     let freed = g.release_stage_memory(p, 4);

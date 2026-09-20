@@ -34,6 +34,32 @@ use crate::shared::{LeakSweepReport, PermitId, StageReleaseOutcome};
 /// Default staleness threshold for the leak sweep (startup-set default).
 pub const DEFAULT_LEAK_STALE_MS: u64 = 60_000;
 
+/// Monotonic memory-measurement domain. Its successor is checked; exhaustion
+/// is a state, never a wrap to zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct MeasurementSequence(u64);
+
+impl MeasurementSequence {
+    pub const INITIAL: Self = Self(0);
+
+    pub const fn from_raw(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    pub fn checked_next(self) -> Result<Self, ReconcileOutcome> {
+        self.0
+            .checked_add(1)
+            .map(Self)
+            .ok_or(ReconcileOutcome::EpochExhausted {
+                current_epoch: self.0,
+            })
+    }
+}
+
 // ---- domain (pure) --------------------------------------------------------
 
 /// The effective memory units a permit should hold once `measured_bytes` are
@@ -87,6 +113,9 @@ pub enum ReconcileOutcome {
     UnknownPermit,
     /// A newer reading has already been applied; this one is discarded.
     StaleEpoch { current_epoch: u64 },
+    /// The accepted sequence reached its terminal value. No ledger, aggregate,
+    /// or activity timestamp changed.
+    EpochExhausted { current_epoch: u64 },
     /// The reading cannot be expressed in memory units.
     ConversionFailed(ResourceConversionError),
 }
@@ -106,7 +135,7 @@ pub fn reconcile(
     state: &mut GovernedState,
     permit_id: PermitId,
     measured_bytes: u64,
-    epoch: u64,
+    sequence: MeasurementSequence,
     mode: MemoryPermitMode,
     scale: MemoryUnitScale,
     now_ms: u64,
@@ -114,9 +143,14 @@ pub fn reconcile(
     let Some(record) = state.permits.get(&permit_id) else {
         return ReconcileOutcome::UnknownPermit;
     };
-    if epoch <= record.ledger.measurement_epoch {
+    if record.ledger.measurement_sequence.get() == u64::MAX {
+        return ReconcileOutcome::EpochExhausted {
+            current_epoch: u64::MAX,
+        };
+    }
+    if sequence <= record.ledger.measurement_sequence {
         return ReconcileOutcome::StaleEpoch {
-            current_epoch: record.ledger.measurement_epoch,
+            current_epoch: record.ledger.measurement_sequence.get(),
         };
     }
     let new_effective = match effective_units(
@@ -135,7 +169,7 @@ pub fn reconcile(
         .expect("permit presence checked above");
     let old_effective = record.ledger.effective_units;
     record.ledger.measured_bytes = measured_bytes;
-    record.ledger.measurement_epoch = epoch;
+    record.ledger.measurement_sequence = sequence;
     record.ledger.effective_units = new_effective;
     // A late arrival must not drag a lease's activity backwards in time.
     record.ledger.last_touched_ms = record.ledger.last_touched_ms.max(now_ms);

@@ -24,11 +24,11 @@ The commit is a source checkpoint, not implementation or qualification proof.
 | packet | tickets | owner | state | dependency signal |
 | --- | --- | --- | --- | --- |
 | contract | C01 | `sep21_contract` | LOCALLY_VERIFIED | `C01_CONTRACT_READY` accepted |
-| engine-core | E01,E02,E03,E04 | `sep21_engine` | IN_PROGRESS | E04 waits for C01 |
-| proof-envelope | V01 | `sep21_v01` | IN_PROGRESS | phase A emits `V01_SCHEMA_READY` |
-| host | H01,H03,H02 | unassigned | PLANNED | waits for C01/E04 |
-| mutation | V02 | unassigned | PLANNED | waits for V01 schema |
-| concurrency | V03 | unassigned | PLANNED | waits for V01 schema |
+| engine-core | E01,E02,E03,E04 | `sep21_engine` | LOCALLY_VERIFIED | `E04_RESOLVER_READY` accepted; checkpoint pending |
+| proof-envelope | V01 | `sep21_v01` | IN_PROGRESS | phase A ready; phase B waits for V02/V03 |
+| host | H01,H03,H02 | `sep21_host` | H01 checkpoint verified | H03/H02 wait for E04 |
+| mutation | V02 | `sep21_v02` | IN_PROGRESS | V01 schema consumed |
+| concurrency | V03 | `sep21_v03` | IN_PROGRESS | V01 schema consumed |
 | release | R01 | unassigned | PLANNED | waits for all closures |
 
 ## Checkpoints
@@ -37,6 +37,12 @@ The commit is a source checkpoint, not implementation or qualification proof.
 | --- | --- | --- | --- |
 | CP0 audit baseline | `48aa209` | strict plan validator was PASS on pre-commit equivalent source; baseline metadata re-frozen after commit | pending push |
 | CP1 C01 contract | `eab2ceb` | contract tests 56/56, adversarial 11/11, clippy `-D warnings`, structure validator and diff check PASS | pushed to `origin/main` |
+| CP2 V01 phase A | `32189ab` | full V01 suite 130 PASS; independent targeted 86 PASS; ruff, 24/24 inventory parity, structure and diff check PASS; real Linux IAI NOT_RUN | pushed to `origin/main`; phase B open |
+| CP3 E01-E04 engine core | pending | engine default 224/224, Loom 5/5, Shuttle 7/7 at 10,000 schedules/model, clippy `-D warnings`, structure validator and diff check PASS; capacity conservation zero residuals | checkpoint commit/push pending |
+
+H01 has an uncommitted verified checkpoint: focused 21/21, default 154/154 and rayon 154/154
+passed in a detached verification worktree with only the E01-owned three-line `PlanSource` clone
+compatibility delta. H03/H02 have not started; H01 is not independently mergeable until E04 lands.
 
 CP0 local checkpoint commit is `3da26491997c81435c969bd05b8a20438e360f99`. It was
 fast-forwarded into local `main` and observed at `origin/main`; direct push to

@@ -119,7 +119,7 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
                                 if !held.is_empty() {
                                     let i = (lcg.next() as usize) % held.len();
                                     let bytes = lcg.next() % 256;
-                                    g.reconcile_memory(held[i].0, bytes);
+                                    let _ = g.reconcile_memory(held[i].0, bytes);
                                 }
                             }
                             // stage-boundary partial memory release on a held permit

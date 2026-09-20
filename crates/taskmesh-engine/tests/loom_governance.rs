@@ -30,6 +30,33 @@ use taskmesh_engine::{
 };
 
 const CLASS: &str = "c";
+const LOOM_MAX_THREADS: usize = 5;
+const LOOM_MAX_BRANCHES: usize = 1_000;
+
+fn check_loom_model<F>(model_id: &'static str, model: F)
+where
+    F: Fn() + Sync + Send + 'static,
+{
+    let completed = Arc::new(AtomicUsize::new(0));
+    let completed_in_model = Arc::clone(&completed);
+    let mut builder = loom::model::Builder::new();
+    builder.max_threads = LOOM_MAX_THREADS;
+    builder.max_branches = LOOM_MAX_BRANCHES;
+    builder.max_permutations = None;
+    builder.max_duration = None;
+    builder.preemption_bound = None;
+    builder.check(move || {
+        model();
+        completed_in_model.fetch_add(1, Ordering::SeqCst);
+    });
+    let completed = completed.load(Ordering::SeqCst);
+    assert!(completed > 0, "loom model {model_id} explored no permutations");
+    println!(
+        "taskmesh-model-witness checker=loom model_id={model_id} \
+         max_threads={LOOM_MAX_THREADS} max_branches={LOOM_MAX_BRANCHES} \
+         max_permutations=exhaustive preemption_bound=unbounded completed={completed}"
+    );
+}
 
 fn class() -> TaskClass {
     TaskClass::new(CLASS)
@@ -111,7 +138,7 @@ fn assert_quiescent(g: &Governor) {
 
 #[test]
 fn concurrent_admits_and_releases_conserve_capacity() {
-    loom::model(|| {
+    check_loom_model("loom.concurrent_admits_releases.v1", || {
         let g = governor(2, Arc::new(ManualClock::new(1_000)));
         let handles: Vec<_> = (0..2)
             .map(|i| {
@@ -137,7 +164,7 @@ fn concurrent_admits_and_releases_conserve_capacity() {
 /// never both believe they own it.
 #[test]
 fn promote_claim_abandon_three_way_is_exactly_once() {
-    loom::model(|| {
+    check_loom_model("loom.promote_claim_abandon.v1", || {
         let g = governor(1, Arc::new(ManualClock::new(1_000)));
         let holder = admit(&g, "holder");
         let (ticket, _waker) = queue_with_waker(&g, "queued");
@@ -191,7 +218,7 @@ fn promote_claim_abandon_three_way_is_exactly_once() {
 /// there is no interleaving in which `Pending` is followed by silence.
 #[test]
 fn a_pending_claim_is_always_followed_by_a_wake() {
-    loom::model(|| {
+    check_loom_model("loom.pending_claim_wakeup.v1", || {
         let g = governor(1, Arc::new(ManualClock::new(1_000)));
         let holder = admit(&g, "holder");
         let (ticket, waker) = queue_with_waker(&g, "queued");
@@ -238,7 +265,7 @@ fn a_pending_claim_is_always_followed_by_a_wake() {
 /// truth through typed outcomes, and the accounting closes either way.
 #[test]
 fn claim_and_reap_of_a_stale_promotion_fail_closed_both_ways() {
-    loom::model(|| {
+    check_loom_model("loom.claim_reap_stale_promotion.v1", || {
         let clock = Arc::new(ManualClock::new(1_000));
         let g = governor(1, clock.clone());
         let holder = admit(&g, "holder");
@@ -299,7 +326,7 @@ fn claim_and_reap_of_a_stale_promotion_fail_closed_both_ways() {
 /// under an earlier lock.
 #[test]
 fn unordered_concurrent_reconciles_both_apply() {
-    loom::model(|| {
+    check_loom_model("loom.concurrent_reconcile.v1", || {
         let g = governor(2, Arc::new(ManualClock::new(1_000)));
         let permit = admit(&g, "measured");
         let reporters: Vec<_> = [2u64, 3]
@@ -310,7 +337,10 @@ fn unordered_concurrent_reconciles_both_apply() {
             })
             .collect();
         for reporter in reporters {
-            assert!(reporter.join().unwrap(), "every reading is applied");
+            assert!(
+                reporter.join().unwrap().is_applied(),
+                "every reading is applied"
+            );
         }
         let ledger = g.permit_ledger(permit).expect("live");
         assert_eq!(ledger.measurement_epoch, 2, "two readings, two epochs");

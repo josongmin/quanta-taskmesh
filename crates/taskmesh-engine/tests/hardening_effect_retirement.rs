@@ -23,6 +23,7 @@ use taskmesh_contract::{
 };
 use taskmesh_engine::{
     AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome,
+    ResolvedCapability, TerminalReason,
 };
 
 /// A waker that re-enters the governor from its destructor — the exact shape a
@@ -114,7 +115,10 @@ fn abandoning_a_queued_request_retires_its_waker_outside_the_lock() {
         completed: Arc::clone(&completed),
         woke: Arc::clone(&woke),
     });
-    let ticket = match governor.admit_resolved(&spec("queued"), None, Some(waker)) {
+    let ticket = match governor
+        .admit_resolved(&spec("queued"), ResolvedCapability::Ungated, Some(waker))
+        .expect("ungated is always valid")
+    {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected a queued ticket, got {other:?}"),
     };
@@ -163,7 +167,9 @@ fn a_rejected_admission_retires_its_waker_outside_the_lock() {
     let rejecting = Arc::clone(&governor);
     with_deadline("rejected admission with a re-entrant waker", move || {
         let unknown = TaskSpec::io(TaskClass::new("ghost")).operation("x");
-        let decision = rejecting.admit_resolved(&unknown, None, Some(waker));
+        let decision = rejecting
+            .admit_resolved(&unknown, ResolvedCapability::Ungated, Some(waker))
+            .expect("ungated is always valid");
         assert!(matches!(decision, AdmissionDecision::Rejected(_)));
     });
     assert_eq!(completed.load(Ordering::SeqCst), 1);
@@ -183,7 +189,10 @@ fn promotion_wakes_a_reentrant_waker_outside_the_lock() {
         completed: Arc::new(AtomicUsize::new(0)),
         woke: Arc::clone(&woke),
     });
-    let ticket = match governor.admit_resolved(&spec("queued"), None, Some(waker)) {
+    let ticket = match governor
+        .admit_resolved(&spec("queued"), ResolvedCapability::Ungated, Some(waker))
+        .expect("ungated is always valid")
+    {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected a queued ticket, got {other:?}"),
     };
@@ -298,6 +307,87 @@ impl PermitWaker for CountingWaker {
     }
 }
 
+struct DropPanickingWaker {
+    woke: Arc<AtomicUsize>,
+    dropped: Arc<AtomicUsize>,
+}
+
+impl PermitWaker for DropPanickingWaker {
+    fn wake(&self) {
+        self.woke.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl Drop for DropPanickingWaker {
+    fn drop(&mut self) {
+        self.dropped.fetch_add(1, Ordering::SeqCst);
+        panic!("final host reference destructor failed");
+    }
+}
+
+#[test]
+fn claim_final_drop_panic_compensates_and_promotes_the_next_waiter() {
+    let governor = single_slot_governor();
+    let holder = match governor.admit(&spec("holder")) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("expected admission, got {other:?}"),
+    };
+
+    let bad_woke = Arc::new(AtomicUsize::new(0));
+    let bad_dropped = Arc::new(AtomicUsize::new(0));
+    let bad: Arc<dyn PermitWaker> = Arc::new(DropPanickingWaker {
+        woke: Arc::clone(&bad_woke),
+        dropped: Arc::clone(&bad_dropped),
+    });
+    let bad_ticket = match governor
+        .admit_resolved(&spec("bad"), ResolvedCapability::Ungated, Some(bad))
+        .expect("ungated is always valid")
+    {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("expected queued bad ticket, got {other:?}"),
+    };
+    let good_woke = Arc::new(AtomicUsize::new(0));
+    let good: Arc<dyn PermitWaker> = Arc::new(CountingWaker(Arc::clone(&good_woke)));
+    let good_ticket = match governor
+        .admit_resolved(&spec("good"), ResolvedCapability::Ungated, Some(good))
+        .expect("ungated is always valid")
+    {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("expected queued good ticket, got {other:?}"),
+    };
+
+    assert_eq!(governor.release(holder), ReleaseOutcome::Released);
+    assert_eq!(bad_woke.load(Ordering::SeqCst), 1);
+    assert_eq!(bad_dropped.load(Ordering::SeqCst), 0);
+
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = governor.claim(bad_ticket);
+    }));
+    assert!(panic.is_err(), "the first host panic remains observable");
+    assert_eq!(bad_dropped.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        governor.claim(bad_ticket),
+        ClaimOutcome::Terminal(TerminalReason::ClaimDeliveryFailed),
+        "failed custody transfer publishes a terminal answer"
+    );
+    assert_eq!(
+        good_woke.load(Ordering::SeqCst),
+        1,
+        "compensation immediately promotes and notifies the next waiter"
+    );
+    let ClaimOutcome::Ready(good_permit) = governor.claim(good_ticket) else {
+        panic!("the next waiter must own the compensated slot");
+    };
+    assert_eq!(governor.release(good_permit), ReleaseOutcome::Released);
+
+    let snapshot = governor.snapshot();
+    assert_eq!(snapshot.classes[&TaskClass::new("c")].inflight, 0);
+    assert_eq!(snapshot.classes[&TaskClass::new("c")].queued, 0);
+    assert_eq!(governor.permit_ledgers().len(), 0);
+    assert_eq!(governor.retained_terminal_tickets(), 0);
+    assert_eq!(snapshot.conservation_violation(), None);
+}
+
 #[test]
 fn a_panicking_waker_does_not_starve_the_other_waiters() {
     // Two queued requests are promoted by one release. The first waker panics.
@@ -326,11 +416,17 @@ fn a_panicking_waker_does_not_starve_the_other_waiters() {
     let woken = Arc::new(AtomicUsize::new(0));
     let bad: Arc<dyn PermitWaker> = Arc::new(PanickingWaker);
     let good: Arc<dyn PermitWaker> = Arc::new(CountingWaker(Arc::clone(&woken)));
-    let bad_ticket = match governor.admit_resolved(&spec("bad"), None, Some(bad)) {
+    let bad_ticket = match governor
+        .admit_resolved(&spec("bad"), ResolvedCapability::Ungated, Some(bad))
+        .expect("ungated is always valid")
+    {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected a queued ticket, got {other:?}"),
     };
-    let good_ticket = match governor.admit_resolved(&spec("good"), None, Some(good)) {
+    let good_ticket = match governor
+        .admit_resolved(&spec("good"), ResolvedCapability::Ungated, Some(good))
+        .expect("ungated is always valid")
+    {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected a queued ticket, got {other:?}"),
     };
@@ -395,16 +491,24 @@ fn every_waiter_in_one_pass_is_woken_even_if_an_earlier_one_panics() {
     let small = |op: &str| TaskSpec::io(TaskClass::new("small")).operation(op.to_string());
     let woken = Arc::new(AtomicUsize::new(0));
     let bad: Arc<dyn PermitWaker> = Arc::new(PanickingWaker);
-    let mut tickets = vec![
-        match governor.admit_resolved(&small("bad"), None, Some(bad)) {
-            AdmissionDecision::Queued { ticket } => ticket,
-            other => panic!("{other:?}"),
-        },
-    ];
+    let mut tickets = vec![match governor
+        .admit_resolved(&small("bad"), ResolvedCapability::Ungated, Some(bad))
+        .expect("ungated is always valid")
+    {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("{other:?}"),
+    }];
     for i in 0..3 {
         let good: Arc<dyn PermitWaker> = Arc::new(CountingWaker(Arc::clone(&woken)));
         tickets.push(
-            match governor.admit_resolved(&small(&format!("good{i}")), None, Some(good)) {
+            match governor
+                .admit_resolved(
+                    &small(&format!("good{i}")),
+                    ResolvedCapability::Ungated,
+                    Some(good),
+                )
+                .expect("ungated is always valid")
+            {
                 AdmissionDecision::Queued { ticket } => ticket,
                 other => panic!("{other:?}"),
             },

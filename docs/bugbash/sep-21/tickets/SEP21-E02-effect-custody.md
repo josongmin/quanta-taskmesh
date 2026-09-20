@@ -1,6 +1,6 @@
 # SEP21-E02 — Atomic state commit and effect custody
 
-- 상태: PLANNED
+- 상태: LOCALLY_VERIFIED
 - 우선순위: P1
 - 포함 finding: TM21-004
 - 선행: 없음
@@ -78,3 +78,24 @@ state transition과 host-owned waker/callback retirement 사이에 명시적 com
 ```sh
 cargo test --locked -p taskmesh-engine --test hardening_effect_retirement --test hardening_lifecycle
 ```
+
+## Closure evidence (2026-09-21)
+
+- source: `main@32189ab0bbd44aad83921167eeb076223fbfe230`
+- state/effect boundary: mutex-held transitions move host references only into
+  `TransitionEffects`; `apply_effects` separately contains `wake()` and final `Arc` destruction and
+  drains the batch before resuming the first panic.
+- claim custody: `TicketState::Claiming` is not caller custody. Final notifier retirement failure
+  exactly-once unwinds the permit/ticket/capability/CPU/memory/root ledgers, promotes successors,
+  and publishes `TerminalReason::ClaimDeliveryFailed`.
+
+| Acceptance | Local evidence |
+| --- | --- |
+| SEP21-E02-A01 | `claim_final_drop_panic_compensates_and_promotes_the_next_waiter` ends with 0 live permits, 0 queued entries, 0 retained terminal tickets, and no conservation violation. |
+| SEP21-E02-A02 | `every_waiter_in_one_pass_is_woken_even_if_an_earlier_one_panics` and `a_panicking_waker_does_not_starve_the_other_waiters`. |
+| SEP21-E02-A03 | Reentrant wake/drop tests call `snapshot` outside the mutex; Loom claim/reap and claim/abandon models pass without timeout as an oracle. |
+| SEP21-E02-A04 | The first host panic remains observable; the failed claimant deterministically observes `ClaimDeliveryFailed` after compensation. |
+| SEP21-E02-A05 | `ownership_transfers_exactly_once_across_claim_abandon_release_orders` and the claim-drop negative fixture prove one handoff/unwind. |
+
+No background cleanup worker, unbounded retirement queue, panic swallowing, or `mem::forget` was
+introduced. Host `TicketGuard` integration remains H02 work.

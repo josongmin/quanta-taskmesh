@@ -18,6 +18,8 @@
 //! the pending record. Promotion never re-derives it, so a request cannot enter
 //! the queue needing a scarce pool and leave it charged against a cheap one.
 
+pub mod pending;
+
 use std::sync::Arc;
 
 use taskmesh_contract::{
@@ -30,7 +32,8 @@ use crate::engine::state::{
 };
 use crate::features::{composite, fairness};
 use crate::shared::{
-    AdmissionDecision, CapabilityName, PermitId, PolicySet, Provenance, ResolvedCost, Seq, Ticket,
+    AdmissionDecision, CapabilityRequirementSet, PermitId, PolicySet, Provenance, ResolvedCost,
+    Seq, Ticket,
 };
 
 // ---- domain (pure) --------------------------------------------------------
@@ -76,23 +79,9 @@ pub struct Ids {
 /// One intake request: the spec plus the capability the host resolved for it.
 pub struct AdmissionRequest<'a> {
     pub spec: &'a TaskSpec,
-    /// The capability pool this work will actually occupy. `None` for an ungated
-    /// substrate (async I/O concurrency is unbounded by design).
-    pub capability: Option<CapabilityName>,
-}
-
-/// The stateless part of admission: fail closed on a malformed plan before any
-/// capacity — or the state mutex — is touched.
-///
-///  - zero-stage / inconsistent per-stage class (`validate_shape`), and
-///  - a fan-out stage without a complete deterministic reduce policy (T06).
-///
-/// Either makes the spec unshippable, so it must never be admitted.
-pub fn precheck(spec: &TaskSpec) -> Result<(), AdmissionVerdict> {
-    if composite::validate_shape(spec).is_err() || composite::reduce::validate_spec(spec).is_err() {
-        return Err(AdmissionVerdict::MalformedTask);
-    }
-    Ok(())
+    /// The registry-issued capability this work will occupy, or explicit
+    /// ungated execution.
+    pub capabilities: CapabilityRequirementSet,
 }
 
 /// Whether the class has any path into a queue: a queueable overflow policy or
@@ -103,9 +92,9 @@ pub fn class_can_queue(policy: &ClassPolicy) -> bool {
 }
 
 /// Admit `request`. Fail-closed throughout: unknown/disabled classes and
-/// recursive loops reject before any capacity is considered. The caller must
-/// have run [`precheck`] outside the lock; it is not repeated here (a
-/// malformed spec never reaches this transition — see `Governor::admit_inner`).
+/// recursive loops reject before any capacity is considered. The caller owns a
+/// [`taskmesh_contract::ValidatedTaskPlan`], so malformed wire input cannot
+/// reach this transition.
 pub fn admit(
     state: &mut GovernedState,
     policies: &PolicySet,
@@ -116,10 +105,6 @@ pub fn admit(
     effects: &mut TransitionEffects,
 ) -> AdmissionDecision {
     let spec = request.spec;
-    debug_assert!(
-        precheck(spec).is_ok(),
-        "precheck runs before the lock is taken"
-    );
     // D17: a closed runtime is the outermost fact about a submission. Decided
     // under the admission lock, before the class is even looked up, so nothing
     // is queued, charged, or counted — and the waker (host code) is retired
@@ -176,54 +161,78 @@ fn admit_class(
         retire(effects, waker);
         return AdmissionDecision::Rejected(AdmissionVerdict::ClassDisabled);
     }
+    if state.has_operation_identity(&spec.root_operation_id, &spec.operation) {
+        retire(effects, waker);
+        return AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission);
+    }
     if composite::is_recursive(state, spec) {
         retire(effects, waker);
         return AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission);
     }
 
     let cost = resolve_cost(policy);
-    let mut block = state.capacity_for(
-        class,
-        policy.max_inflight,
-        cost,
-        request.capability.as_deref(),
-        &policies.resources,
-        policies.capability_limits(),
-    );
-    // D08: capacity that opened while a promotion pass is still owed belongs to
-    // the queue. Two shapes:
-    //  * an earlier arrival of *this* class is queued and runnable — only
-    //    waiting for the continuation pass (`queued_head_blocks`);
-    //  * a continuation is pending (`promotion_pending`), this class can queue,
-    //    and its own queue is empty — the newcomer becomes its class's head and
-    //    the pass, not arrival luck in the lock gap, orders it against the
-    //    other classes. With a non-empty own queue the first rule decides: a
-    //    runnable head is waited for, a head blocked on another capability pool
-    //    is not (queueing behind it would pin this request to that pool's
-    //    saturation — the head-of-line loss the exception exists to prevent).
-    // A class that cannot queue has nowhere to wait and is admitted; the gap is
-    // the only moment a runnable head can be overtaken, and only by work that
-    // could not have waited.
-    if block == CapacityBlock::Ok
-        && (state.queued_head_blocks(
+    let queued_behind =
+        state.classes.get(class).is_some_and(|cstate| {
+            cstate
+                .queue
+                .iter()
+                .any(|earlier| earlier.capabilities.intersects(&request.capabilities))
+        }) || (state.promotion_pending && class_can_queue(policy) && state.queued(class) == 0);
+    let assessment = pending::assess(
+        state,
+        policies,
+        pending::AssessmentRequest {
+            spec,
             class,
-            policy.max_inflight,
-            &policies.resources,
-            policies.capability_limits(),
-        ) || (state.promotion_pending && class_can_queue(policy) && state.queued(class) == 0))
-    {
-        block = CapacityBlock::QueuedBehind;
-    }
+            max_inflight: policy.max_inflight,
+            cost,
+            capabilities: &request.capabilities,
+            queued_behind,
+        },
+    );
+    let block = match &assessment {
+        pending::CapacityAssessment::Runnable => CapacityBlock::Ok,
+        pending::CapacityAssessment::ReversiblyBlocked(blockers) => blockers.primary(),
+        pending::CapacityAssessment::IrreversibleWaitCycle(witness) => {
+            // Memory degradation is a capacity transformation, so assess the
+            // fallback before declaring a memory-only wait irreversible. The
+            // fallback runs through this same resolver; any capability, CPU,
+            // class, or remaining memory cycle is still rejected there.
+            if degrade_allowed
+                && witness
+                    .held
+                    .iter()
+                    .any(|held| matches!(held, taskmesh_contract::HeldCapacity::MemoryBudget))
+            {
+                if let MemoryOvercommitPolicy::DegradeToLight { fallback_class } =
+                    &policy.memory_overcommit_policy
+                {
+                    let fallback = fallback_class.clone();
+                    return admit_class(
+                        state, policies, now_ms, request, &fallback, waker, ids, false, effects,
+                    );
+                }
+            }
+            let held_by_root = witness
+                .held
+                .first()
+                .cloned()
+                .expect("cycle witness has held capacity");
+            retire(effects, waker);
+            return AdmissionDecision::Rejected(AdmissionVerdict::NestedWaitCycle { held_by_root });
+        }
+    };
     match block {
         CapacityBlock::Ok => {
             state.grant(GrantRequest {
                 permit_id: ids.permit_id,
                 class,
+                operation: &spec.operation,
                 root_operation_id: &spec.root_operation_id,
                 scope: spec.scope.clone(),
                 target_stage: composite::target_stage(spec),
                 provenance: Provenance::of(spec),
-                capability: request.capability.clone(),
+                capabilities: request.capabilities.clone(),
                 cost,
                 reserved_units: cost.memory_units,
                 now_ms,
@@ -258,18 +267,6 @@ fn admit_class(
         // is a declared cycle (D12), which neither queueing nor a retry can
         // ever satisfy.
         CapacityBlock::Inflight | CapacityBlock::Cpu | CapacityBlock::Capability => {
-            if let Some(held_by_root) = composite::declared_wait_cycle(
-                state,
-                spec,
-                class,
-                request.capability.as_ref(),
-                block,
-            ) {
-                retire(effects, waker);
-                return AdmissionDecision::Rejected(AdmissionVerdict::NestedWaitCycle {
-                    held_by_root,
-                });
-            }
             if policy.overflow_policy.is_queueable() {
                 enqueue_or_full(
                     state, policy, class, request, waker, ids, now_ms, block, effects,
@@ -293,19 +290,6 @@ fn admit_class(
                         state, policies, now_ms, request, &fallback, waker, ids, false, effects,
                     );
                 }
-            }
-            // A queue or a shed: neither helps a declared cycle (D12).
-            if let Some(held_by_root) = composite::declared_wait_cycle(
-                state,
-                spec,
-                class,
-                request.capability.as_ref(),
-                block,
-            ) {
-                retire(effects, waker);
-                return AdmissionDecision::Rejected(AdmissionVerdict::NestedWaitCycle {
-                    held_by_root,
-                });
             }
             match &policy.memory_overcommit_policy {
                 MemoryOvercommitPolicy::Queue => enqueue_or_full(
@@ -362,12 +346,13 @@ fn enqueue_or_full(
         // Queue/audit only: direct admit and terminal reject paths must not pay
         // this allocation on the governance hot path.
         request_key: crate::shared::RequestKey::from_root(&spec.root_operation_id),
+        operation: spec.operation.clone(),
         root_operation_id: spec.root_operation_id.clone(),
         scope: spec.scope.clone(),
         target_stage: target_stage.clone(),
         provenance: Provenance::of(spec),
         cost,
-        capability: request.capability.clone(),
+        capabilities: request.capabilities.clone(),
         enqueued_at_ms: now_ms,
         deadline_ms,
         finish_tag,

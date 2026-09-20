@@ -1,6 +1,6 @@
 # SEP21-E01 — Fail-closed capability authority
 
-- 상태: PLANNED
+- 상태: LOCALLY_VERIFIED
 - 우선순위: P1
 - 포함 finding: TM21-008
 - 선행: 없음
@@ -77,3 +77,25 @@ missing limit을 unlimited capacity로 해석하지 못하게 한다.
 ```sh
 cargo test --locked -p taskmesh-engine --test substrate_inventory --test config_validation
 ```
+
+## Closure evidence (2026-09-21)
+
+- source: `main@32189ab0bbd44aad83921167eeb076223fbfe230`
+- engine-core diff digest excluding V03-owned Loom/Shuttle evidence hunks:
+  `sha256:3ffdcc2483307af36cb1b1af73d8f12a9478ba43e1fe3cbb5bfcb3ea5a0db4b8`
+- authority API: `CapabilityId` is registry-issued and bound to one `PolicySet`; admission accepts
+  `ResolvedCapability::{Ungated, Registered}` or a bounded `CapabilityRequirementSet`.
+- capacity API: every `CapabilityRecord` owns `CapabilityCapacity::{Bounded,
+  ExplicitUnbounded}`; admission and snapshot read the same record.
+
+| Acceptance | Local evidence |
+| --- | --- |
+| SEP21-E01-A01 | `capability_resolution_is_typed_and_state_neutral_for_empty_unknown_and_typo_names` and `a_registered_id_from_another_policy_is_rejected_before_admission`. |
+| SEP21-E01-A02 | Empty, unknown, typo, explicit `Ungated`, and registry-issued `Registered` are distinct typed paths in `substrate_inventory.rs`. |
+| SEP21-E01-A03 | `snapshot_and_admission_share_the_same_capacity_record` plus capability conservation in the full engine suite. |
+| SEP21-E01-A04 | `PendingRequest.capabilities` freezes the validated requirement set; promotion consumes it without name resolution. |
+| SEP21-E01-A05 | Public `Governor::admit_resolved` no longer accepts `Option<&str>`; foreign IDs return `CapabilityResolutionError::ForeignId` before ids/state. |
+
+Intentional negative fixtures cover empty/typo/unknown names, foreign policy IDs, authority-only
+providers, executing substrates without capacity authority, and registered capacity/snapshot drift.
+Host/facade migration and release qualification remain H03/R01 work.

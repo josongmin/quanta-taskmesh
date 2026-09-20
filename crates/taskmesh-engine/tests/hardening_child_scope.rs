@@ -51,7 +51,12 @@ fn governor(max_inflight: u32) -> (Governor, Arc<ManualClock>) {
 
 fn child(root: &str, stage: &str) -> TaskSpec {
     TaskSpec::blocking(TaskClass::new("worker"))
-        .child_of(root.to_string(), TaskStage::new(stage.to_string()))
+        .child_of(
+            root.to_string(),
+            root.to_string(),
+            TaskStage::new(stage.to_string()),
+        )
+        .operation(format!("child-{stage}"))
 }
 
 fn root(op: &str) -> TaskSpec {

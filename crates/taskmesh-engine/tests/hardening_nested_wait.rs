@@ -91,11 +91,23 @@ fn blocking_root(class_name: &'static str, op: &str) -> TaskSpec {
 }
 
 fn awaited_child(class_name: &'static str, root_op: &str) -> TaskSpec {
-    TaskSpec::io(class(class_name)).awaited_child_of(root_op.to_string(), TaskStage::new("child"))
+    TaskSpec::io(class(class_name))
+        .awaited_child_of(
+            root_op.to_string(),
+            root_op.to_string(),
+            TaskStage::new("child"),
+        )
+        .operation("child")
 }
 
 fn undeclared_child(class_name: &'static str, root_op: &str) -> TaskSpec {
-    TaskSpec::io(class(class_name)).child_of(root_op.to_string(), TaskStage::new("child"))
+    TaskSpec::io(class(class_name))
+        .child_of(
+            root_op.to_string(),
+            root_op.to_string(),
+            TaskStage::new("child"),
+        )
+        .operation("child")
 }
 
 fn admit(g: &Governor, spec: &TaskSpec) -> PermitId {
@@ -166,7 +178,12 @@ fn a_capability_pool_held_only_by_the_root_is_a_cycle_across_classes() {
     );
     let parent = admit(&g, &blocking_root("p", "parent"));
     let child = TaskSpec::blocking(class("q"))
-        .awaited_child_of("parent".to_string(), TaskStage::new("child"));
+        .awaited_child_of(
+            "parent".to_string(),
+            "parent".to_string(),
+            TaskStage::new("child"),
+        )
+        .operation("child");
     refused_as_cycle(
         "pool child",
         g.admit(&child),
@@ -327,7 +344,12 @@ fn a_pool_cpu_or_memory_budget_shared_with_a_stranger_is_a_wait_not_a_cycle() {
     let parent = admit(&g, &blocking_root("p", "parent"));
     let stranger = admit(&g, &blocking_root("p", "stranger"));
     let child = TaskSpec::blocking(class("q"))
-        .awaited_child_of("parent".to_string(), TaskStage::new("child"));
+        .awaited_child_of(
+            "parent".to_string(),
+            "parent".to_string(),
+            TaskStage::new("child"),
+        )
+        .operation("child");
     let ticket = queued("pool shared with a stranger", g.admit(&child));
     assert_eq!(g.release(stranger), ReleaseOutcome::Released);
     let child = claim(&g, ticket, "pool");
@@ -389,7 +411,12 @@ fn a_root_that_holds_none_of_the_pool_is_not_what_the_child_waits_for() {
     let parent = admit(&g, &root("p", "parent"));
     let stranger = admit(&g, &blocking_root("p", "stranger"));
     let child = TaskSpec::blocking(class("q"))
-        .awaited_child_of("parent".to_string(), TaskStage::new("child"));
+        .awaited_child_of(
+            "parent".to_string(),
+            "parent".to_string(),
+            TaskStage::new("child"),
+        )
+        .operation("child");
     let ticket = queued("child behind a stranger's pool slot", g.admit(&child));
     assert_eq!(g.release(stranger), ReleaseOutcome::Released);
     let taskmesh_engine::ClaimOutcome::Ready(child) = g.claim(ticket) else {
@@ -409,7 +436,13 @@ fn capacity_shared_with_a_sibling_is_a_wait_not_a_cycle() {
     let parent = admit(&g, &root("c", "parent"));
     let sibling = admit(
         &g,
-        &TaskSpec::io(class("c")).awaited_child_of("parent".to_string(), TaskStage::new("first")),
+        &TaskSpec::io(class("c"))
+            .awaited_child_of(
+                "parent".to_string(),
+                "parent".to_string(),
+                TaskStage::new("first"),
+            )
+            .operation("sibling"),
     );
     let ticket = queued(
         "child behind a sibling",

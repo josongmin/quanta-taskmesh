@@ -106,7 +106,14 @@ fn a_closed_governor_refuses_before_the_class_is_looked_up_and_charges_nothing()
     refused("admit (other)", g.admit(&spec("other", "b")));
     refused(
         "admit_resolved",
-        g.admit_resolved(&spec("c", "c"), Some("blocking"), None),
+        g.admit_resolved(
+            &spec("c", "c"),
+            g.policy()
+                .resolve_capability("blocking")
+                .expect("registered blocking pool"),
+            None,
+        )
+        .expect("validated capability"),
     );
     refused("admit (unknown class)", g.admit(&spec("nobody", "d")));
     let drops = Arc::new(AtomicUsize::new(0));

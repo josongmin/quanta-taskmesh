@@ -117,7 +117,7 @@ impl Limit {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum TicketState {
     Queued(Limit),
     Ready(ModelPermit),
@@ -268,7 +268,7 @@ impl Model {
     /// `Ready` transfers the permit and consumes the ticket; `Terminal` is
     /// reported once and then forgotten; anything unknown is `Invalid`.
     fn claim(&mut self, ticket: ModelTicket) -> ClaimOutcome {
-        match self.tickets.get(&ticket).copied() {
+        match self.tickets.get(&ticket).cloned() {
             Some(TicketState::Queued(_)) => ClaimOutcome::Pending,
             Some(TicketState::Ready(permit)) => {
                 self.tickets.remove(&ticket);
@@ -319,24 +319,41 @@ impl Model {
         ReleaseOutcome::Released
     }
 
-    /// Promote until no queued head fits: the earliest-arrived head that fits,
-    /// every time. Heads only — in-class order is strict.
+    /// Promote until no eligible request fits. An earlier request only preserves
+    /// order inside the same capability domain; unrelated blocked work cannot
+    /// stall the entire class queue.
     fn promote(&mut self) {
         loop {
             let next = (0..self.queues.len())
                 .filter_map(|class| {
-                    let head = self.queues[class].front()?;
-                    self.exceeded(class, head.pool)
-                        .is_none()
-                        .then_some((head.arrival, class))
+                    self.queues[class]
+                        .iter()
+                        .enumerate()
+                        .find(|(index, request)| {
+                            self.exceeded(class, request.pool).is_none()
+                                && !self.queues[class]
+                                    .iter()
+                                    .take(*index)
+                                    .any(|earlier| earlier.pool == request.pool)
+                        })
+                        .map(|(index, request)| (request.arrival, class, index))
                 })
                 .min();
-            let Some((_, class)) = next else {
+            let Some((_, class, index)) = next else {
                 return;
             };
-            let head = self.queues[class].pop_front().expect("head exists");
-            self.grant(class, head.pool, Some(head.ticket));
+            let request = self.queues[class].remove(index).expect("candidate exists");
+            self.grant(class, request.pool, Some(request.ticket));
         }
+    }
+
+    fn current_limit(&self, ticket: ModelTicket) -> Option<Limit> {
+        self.queues.iter().enumerate().find_map(|(class, queue)| {
+            queue
+                .iter()
+                .find(|request| request.ticket == ticket)
+                .and_then(|request| self.exceeded(class, request.pool))
+        })
     }
 
     fn queued(&self, class: usize) -> u32 {
@@ -581,13 +598,13 @@ fn check_agreement(
         .map(|(model_ticket, engine_ticket)| (*model_ticket, *engine_ticket))
         .collect();
     for (model_ticket, engine_ticket) in issued {
-        let expected = model.tickets.get(&model_ticket).copied();
+        let expected = model.tickets.get(&model_ticket).cloned();
         let observed = g.ticket_status(engine_ticket);
         match (expected, observed) {
-            (Some(TicketState::Queued(limit)), ClaimOutcome::Pending) => {
+            (Some(TicketState::Queued(_)), ClaimOutcome::Pending) => {
                 prop_assert_eq!(
                     g.pending_block_reason(engine_ticket),
-                    Some(limit.block()),
+                    model.current_limit(model_ticket).map(Limit::block),
                     "step {}: ticket {} block reason",
                     step,
                     model_ticket
@@ -637,7 +654,11 @@ fn check_agreement(
             model_permit
         );
         prop_assert_eq!(
-            ledger.capability.as_deref(),
+            ledger.capabilities.iter().next().and_then(|id| {
+                g.policy().resolved_capability_name(
+                    &taskmesh_engine::ResolvedCapability::Registered(id.clone()),
+                )
+            }),
             live.pool.name(),
             "step {}: permit {} pool",
             step,
@@ -688,7 +709,16 @@ fn apply(
         Op::Admit { class, pool } => {
             let spec =
                 TaskSpec::io(TaskClass::new(CLASS_NAMES[class])).operation(format!("op{step}"));
-            let engine = g.admit_resolved(&spec, pool.name(), None);
+            let capability =
+                pool.name()
+                    .map_or(taskmesh_engine::ResolvedCapability::Ungated, |name| {
+                        g.policy()
+                            .resolve_capability(name)
+                            .expect("registered test pool")
+                    });
+            let engine = g
+                .admit_resolved(&spec, capability, None)
+                .expect("validated capability handle");
             let expected = model.admit(class, pool);
             match (&engine, &expected) {
                 (AdmissionDecision::Admitted { permit_id }, Verdict::Admitted(model_permit)) => {

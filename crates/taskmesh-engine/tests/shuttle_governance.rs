@@ -19,17 +19,40 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use shuttle::thread;
+use shuttle::{Config as ShuttleConfig, FailurePersistence, MaxSteps, Runner};
 use taskmesh_contract::{
     AdmissionVerdict, ClassPolicy, ExecutionPhase, FairnessPolicy, ManualClock,
     MemoryReleasePolicy, OverflowPolicy, PermitWaker, ResourceBudget, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
     AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome,
-    TerminalReason, Ticket, PROMOTION_BUDGET,
+    ResolvedCapability, TerminalReason, Ticket, PROMOTION_BUDGET,
 };
 
 const SCHEDULES: usize = 10_000;
 const CLASS: &str = "c";
+const SHUTTLE_MAX_STEPS: usize = 1_000_000;
+
+fn check_seeded_model<F>(model_id: &'static str, seed: u64, schedules: usize, model: F)
+where
+    F: Fn() + Sync + Send + 'static,
+{
+    assert!(schedules > 0, "shuttle model {model_id} requested zero schedules");
+    let mut config = ShuttleConfig::new();
+    config.max_steps = MaxSteps::FailAfter(SHUTTLE_MAX_STEPS);
+    config.failure_persistence = std::env::var_os("TASKMESH_MODEL_FAILURE_DIR").map_or(
+        FailurePersistence::Print,
+        |directory| FailurePersistence::File(Some(directory.into())),
+    );
+    let scheduler = shuttle::scheduler::RandomScheduler::new_from_seed(seed, schedules);
+    let completed = Runner::new(scheduler, config).run(model);
+    assert_eq!(completed, schedules, "shuttle model {model_id} stopped early");
+    println!(
+        "taskmesh-model-witness checker=shuttle model_id={model_id} \
+         scheduler=random seed={seed} requested={schedules} completed={completed} \
+         max_steps={SHUTTLE_MAX_STEPS}"
+    );
+}
 
 fn class() -> TaskClass {
     TaskClass::new(CLASS)
@@ -112,7 +135,10 @@ fn assert_quiescent(g: &Governor) {
 /// admissions queue, releases promote, and the ledgers must close.
 #[test]
 fn randomized_admit_release_churn_conserves_capacity() {
-    shuttle::check_random(
+    check_seeded_model(
+        "shuttle.admit_release_churn.v1",
+        0x5a17_0001,
+        SCHEDULES,
         || {
             let g = governor(2, 8, Arc::new(ManualClock::new(1_000)));
             let handles: Vec<_> = (0..4)
@@ -153,7 +179,6 @@ fn randomized_admit_release_churn_conserves_capacity() {
             }
             assert_quiescent(&g);
         },
-        SCHEDULES,
     );
 }
 
@@ -163,7 +188,10 @@ fn randomized_admit_release_churn_conserves_capacity() {
 /// a claimer that won ownership is never robbed of it.
 #[test]
 fn randomized_promote_claim_double_abandon_is_exactly_once() {
-    shuttle::check_random(
+    check_seeded_model(
+        "shuttle.promote_claim_double_abandon.v1",
+        0x5a17_0002,
+        SCHEDULES,
         || {
             let g = governor(1, 4, Arc::new(ManualClock::new(1_000)));
             let holder = admit(&g, "holder");
@@ -199,7 +227,6 @@ fn randomized_promote_claim_double_abandon_is_exactly_once() {
             ));
             assert_quiescent(&g);
         },
-        SCHEDULES,
     );
 }
 
@@ -208,7 +235,10 @@ fn randomized_promote_claim_double_abandon_is_exactly_once() {
 /// look is woken afterwards; every promotion is claimed exactly once.
 #[test]
 fn randomized_waiters_are_never_parked_past_their_promotion() {
-    shuttle::check_random(
+    check_seeded_model(
+        "shuttle.waiter_promotion_wakeup.v1",
+        0x5a17_0003,
+        SCHEDULES,
         || {
             let g = governor(3, 8, Arc::new(ManualClock::new(1_000)));
             let holders: Vec<PermitId> = (0..3).map(|i| admit(&g, &format!("h{i}"))).collect();
@@ -265,7 +295,6 @@ fn randomized_waiters_are_never_parked_past_their_promotion() {
             }
             assert_quiescent(&g);
         },
-        SCHEDULES,
     );
 }
 
@@ -273,7 +302,10 @@ fn randomized_waiters_are_never_parked_past_their_promotion() {
 /// exactly one wins, both are told, the books close.
 #[test]
 fn randomized_claim_versus_reap_fails_closed_both_ways() {
-    shuttle::check_random(
+    check_seeded_model(
+        "shuttle.claim_reap.v1",
+        0x5a17_0004,
+        SCHEDULES,
         || {
             let clock = Arc::new(ManualClock::new(1_000));
             let g = governor(1, 4, clock.clone());
@@ -318,7 +350,6 @@ fn randomized_claim_versus_reap_fails_closed_both_ways() {
             );
             assert_quiescent(&g);
         },
-        SCHEDULES,
     );
 }
 
@@ -344,7 +375,10 @@ fn randomized_close_admission_is_the_last_word_on_what_was_admitted() {
         Arc::clone(&closer_won_some),
         Arc::clone(&admitters_won_some),
     );
-    shuttle::check_random(
+    check_seeded_model(
+        "shuttle.close_admission.v1",
+        0x5a17_0005,
+        SCHEDULES,
         move || {
             let g = governor(8, 8, Arc::new(ManualClock::new(1_000)));
             let admitters: Vec<_> = (0..4)
@@ -414,7 +448,6 @@ fn randomized_close_admission_is_the_last_word_on_what_was_admitted() {
             assert_quiescent(&g);
             assert!(g.admission_closed(), "draining to zero never reopens");
         },
-        SCHEDULES,
     );
     let closer_won = closer_won_some.load(Ordering::SeqCst);
     let admitters_won = admitters_won_some.load(Ordering::SeqCst);
@@ -492,15 +525,29 @@ fn gap_governor(extra: Vec<(&str, ClassPolicy)>, limits: BTreeMap<String, u32>) 
     Arc::new(Governor::new(policy, Arc::new(ManualClock::new(1_000))).expect("valid policy"))
 }
 
+fn resolved(g: &Governor, pool: Option<&str>) -> ResolvedCapability {
+    pool.map_or(ResolvedCapability::Ungated, |name| {
+        g.policy()
+            .resolve_capability(name)
+            .expect("fixture pool is registered")
+    })
+}
+
 fn admit_on(g: &Governor, class: &str, op: &str, pool: Option<&str>) -> PermitId {
-    match g.admit_resolved(&spec_of(class, op), pool, None) {
+    match g
+        .admit_resolved(&spec_of(class, op), resolved(g, pool), None)
+        .expect("fixture capability belongs to this policy")
+    {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("expected {class}/{op} to be admitted, got {other:?}"),
     }
 }
 
 fn queue_on(g: &Governor, class: &str, op: &str, pool: Option<&str>) -> Ticket {
-    match g.admit_resolved(&spec_of(class, op), pool, None) {
+    match g
+        .admit_resolved(&spec_of(class, op), resolved(g, pool), None)
+        .expect("fixture capability belongs to this policy")
+    {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected {class}/{op} to queue, got {other:?}"),
     }
@@ -533,7 +580,9 @@ fn spawn_newcomer(
 ) -> thread::JoinHandle<(AdmissionDecision, Option<CapacityBlock>)> {
     let g = Arc::clone(g);
     thread::spawn(move || {
-        let decision = g.admit_resolved(&spec, pool, None);
+        let decision = g
+            .admit_resolved(&spec, resolved(&g, pool), None)
+            .expect("fixture capability belongs to this policy");
         let blocked_on = match &decision {
             AdmissionDecision::Queued { ticket } => g.pending_block_reason(*ticket),
             _ => None,
@@ -594,7 +643,10 @@ fn assert_nothing_owed(g: &Governor, class: &str) {
 fn randomized_gap_arrivals_queue_behind_runnable_heads() {
     static SAME_CLASS_IN_GAP: AtomicUsize = AtomicUsize::new(0);
     static CROSS_CLASS_IN_GAP: AtomicUsize = AtomicUsize::new(0);
-    shuttle::check_random(
+    check_seeded_model(
+        "shuttle.gap_arrivals.v1",
+        0x5a17_0006,
+        GAP_SCHEDULES,
         || {
             let g = gap_governor(
                 vec![("b", queueable_fifo(1)), ("c", queueable_fifo(0))],
@@ -683,7 +735,6 @@ fn randomized_gap_arrivals_queue_behind_runnable_heads() {
             assert_nothing_owed(&g, "b");
             assert_quiescent(&g);
         },
-        GAP_SCHEDULES,
     );
     // The sample must actually have put newcomers inside the gap; a run that
     // only ever saw `Cpu` proved nothing about the rule. Measured hit rate is
@@ -711,7 +762,10 @@ fn randomized_gap_arrivals_queue_behind_runnable_heads() {
 #[test]
 fn randomized_only_unqueueable_work_overtakes_in_the_gap() {
     static OVERTOOK_IN_GAP: AtomicUsize = AtomicUsize::new(0);
-    shuttle::check_random(
+    check_seeded_model(
+        "shuttle.unqueueable_overtake.v1",
+        0x5a17_0007,
+        GAP_SCHEDULES,
         || {
             let g = gap_governor(
                 vec![("r", ClassPolicy::new().max_inflight(1_000).cpu_units(1))],
@@ -781,7 +835,6 @@ fn randomized_only_unqueueable_work_overtakes_in_the_gap() {
             assert_nothing_owed(&g, "a");
             assert_quiescent(&g);
         },
-        GAP_SCHEDULES,
     );
     let overtook = OVERTOOK_IN_GAP.load(Ordering::SeqCst);
     assert!(

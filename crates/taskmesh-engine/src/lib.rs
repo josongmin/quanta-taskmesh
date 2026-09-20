@@ -32,15 +32,18 @@ pub use engine::state::{
     TerminalReason, MAX_TERMINAL_TICKETS,
 };
 pub use engine::Governor;
+pub use features::admission::pending::{BlockerSet, CapacityAssessment, CycleWitness};
 #[cfg(feature = "test-util")]
 pub use shared::{request_key_derive_count, reset_request_key_derive_count};
 pub use shared::{
-    AdmissionDecision, CapabilityName, LeakSweepReport, PermitId, PolicySet, Provenance,
-    RequestKey, ResolvedCost, RootAttribution, Seq, StageReleaseOutcome, Ticket,
+    AdmissionDecision, CapabilityCapacity, CapabilityId, CapabilityName, CapabilityRecord,
+    CapabilityRequirementSet, CapabilityResolutionError, LeakSweepReport, PermitId, PolicySet,
+    Provenance, RequestKey, ResolvedCapability, ResolvedCost, RootAttribution, Seq,
+    StageReleaseOutcome, Ticket, MAX_CAPABILITY_REQUIREMENTS,
 };
 
 /// Outcome of a memory reconcile (T05).
-pub use features::memory::ReconcileOutcome;
+pub use features::memory::{MeasurementSequence, ReconcileOutcome};
 
 /// Default staleness window used by [`Governor::reap_leaks`].
 pub use features::memory::DEFAULT_LEAK_STALE_MS;

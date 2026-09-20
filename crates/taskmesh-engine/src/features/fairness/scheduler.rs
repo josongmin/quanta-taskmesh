@@ -33,9 +33,10 @@
 //!   through twenty busy periods returns holding twenty quanta of credit and
 //!   runs its whole backlog ahead of a peer that was queued the entire time.
 
-use taskmesh_contract::{ClassPolicy, FairnessPolicy, ResourceBudget, TaskClass};
+use taskmesh_contract::{ClassPolicy, FairnessPolicy, TaskClass};
 
-use crate::engine::state::{CapacityBlock, GovernedState};
+use crate::engine::state::GovernedState;
+use crate::features::admission::pending::{self, CapacityAssessment};
 use crate::shared::PolicySet;
 
 /// Fixed-point scale for weighted-fair virtual finish tags.
@@ -143,6 +144,7 @@ pub fn on_queue_changed(state: &mut GovernedState, class: &TaskClass) {
 /// A runnable class and the head request driving its dispatch key.
 struct Candidate {
     class: TaskClass,
+    queue_index: usize,
     fairness: FairnessPolicy,
     best_effort: bool,
     head_seq: u64,
@@ -151,20 +153,26 @@ struct Candidate {
     head_cost_cpu: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Selection {
+    pub class: TaskClass,
+    pub queue_index: usize,
+}
+
 /// Whether any class could be promoted right now. Pure: unlike [`select`] it
 /// moves no DRR deficit, no ring cursor, and no WFQ virtual time, so a caller
 /// that has run out of promotion budget can ask "is there more?" without
 /// charging a class for a dispatch that will not happen in this pass.
 pub fn has_runnable(state: &GovernedState, policies: &PolicySet) -> bool {
-    !runnable_candidates(state, policies, &policies.resources).is_empty()
+    !runnable_candidates(state, policies).is_empty()
 }
 
 /// Pick the next class to promote, or `None` if nothing is runnable under the
 /// current budget. Mutates DRR deficits / WFQ virtual time as a side effect of
 /// the dispatch decision, so it must only be called for a dispatch that will
 /// actually happen.
-pub fn select(state: &mut GovernedState, policies: &PolicySet) -> Option<TaskClass> {
-    let candidates = runnable_candidates(state, policies, &policies.resources);
+pub fn select(state: &mut GovernedState, policies: &PolicySet) -> Option<Selection> {
+    let candidates = runnable_candidates(state, policies);
     if candidates.is_empty() {
         return None;
     }
@@ -187,7 +195,7 @@ pub fn select(state: &mut GovernedState, policies: &PolicySet) -> Option<TaskCla
         FairnessPolicy::DeadlineAware { .. } => pick_min(&pool, |c| {
             (u128::from(c.head_deadline_ms), u128::from(c.head_seq))
         }),
-        FairnessPolicy::DeficitRoundRobin { .. } => return drr_select(state, &pool),
+        FairnessPolicy::DeficitRoundRobin { .. } => drr_select(state, &pool)?,
     };
 
     // WFQ: advance global virtual time past the dispatched request's tag.
@@ -196,37 +204,34 @@ pub fn select(state: &mut GovernedState, policies: &PolicySet) -> Option<TaskCla
             state.virtual_time = state.virtual_time.max(c.head_finish_tag);
         }
     }
-    Some(chosen_class)
+    let queue_index = candidates
+        .iter()
+        .find(|candidate| candidate.class == chosen_class)?
+        .queue_index;
+    Some(Selection {
+        class: chosen_class,
+        queue_index,
+    })
 }
 
-fn runnable_candidates(
-    state: &GovernedState,
-    policies: &PolicySet,
-    budget: &ResourceBudget,
-) -> Vec<Candidate> {
+fn runnable_candidates(state: &GovernedState, policies: &PolicySet) -> Vec<Candidate> {
     let mut out = Vec::new();
     for (class, cstate) in &state.classes {
-        let Some(head) = cstate.queue.front() else {
-            continue;
-        };
         let Some(policy) = policies.class(class) else {
             continue;
         };
-        // Both authorities, one check: semantic capacity and the physical
-        // capability the head froze at intake.
-        if state.capacity_for(
-            class,
-            policy.max_inflight,
-            head.cost,
-            head.capability.as_deref(),
-            budget,
-            policies.capability_limits(),
-        ) != CapacityBlock::Ok
-        {
+        let Some((queue_index, head)) = cstate.queue.iter().enumerate().find(|(index, request)| {
+            !pending::queued_behind_index(&cstate.queue, *index)
+                && matches!(
+                    pending::assess_pending(state, policies, request, policy.max_inflight, false),
+                    CapacityAssessment::Runnable
+                )
+        }) else {
             continue;
-        }
+        };
         out.push(Candidate {
             class: class.clone(),
+            queue_index,
             fairness: policy.fairness,
             best_effort: policy.best_effort,
             head_seq: head.seq_no,

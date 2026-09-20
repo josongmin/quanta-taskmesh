@@ -236,8 +236,7 @@ fn capability_occupancy_is_reported_against_its_limit() {
     )
     .expect("valid policy");
 
-    let blocking_spec = TaskSpec::blocking(TaskClass::new("c")).operation("op");
-    let first = match g.admit(&blocking_spec) {
+    let first = match g.admit(&TaskSpec::blocking(TaskClass::new("c")).operation("op-1")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("{other:?}"),
     };
@@ -246,13 +245,15 @@ fn capability_occupancy_is_reported_against_its_limit() {
     assert_eq!(snapshot.capabilities["blocking"].limit, 2);
     assert_eq!(snapshot.conservation_violation(), None);
 
-    let second = match g.admit(&blocking_spec) {
+    let second = match g.admit(&TaskSpec::blocking(TaskClass::new("c")).operation("op-2")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("{other:?}"),
     };
     assert_eq!(g.snapshot().capabilities["blocking"].in_use, 2);
     // The third has to wait for the pool, not for the class.
-    let AdmissionDecision::Queued { ticket } = g.admit(&blocking_spec) else {
+    let AdmissionDecision::Queued { ticket } =
+        g.admit(&TaskSpec::blocking(TaskClass::new("c")).operation("op-3"))
+    else {
         panic!("the third must queue on the pool");
     };
     assert_eq!(

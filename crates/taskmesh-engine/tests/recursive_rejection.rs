@@ -21,7 +21,8 @@ fn gov() -> Governor {
 // A blocking child occupies stage "blocking" under its root.
 fn child(root: &str) -> TaskSpec {
     TaskSpec::blocking(TaskClass::new("worker"))
-        .child_of(root.to_string(), TaskStage::new("parent"))
+        .child_of(root.to_string(), root.to_string(), TaskStage::new("parent"))
+        .operation("child")
 }
 
 #[test]
@@ -54,8 +55,12 @@ fn root_tasks_never_trip_recursion_guard() {
 #[test]
 fn distinct_stages_under_same_root_are_allowed() {
     let g = gov();
-    let a = TaskSpec::blocking(TaskClass::new("worker")).child_of("root-x", TaskStage::new("p1"));
-    let b = TaskSpec::cpu(TaskClass::new("worker")).child_of("root-x", TaskStage::new("p2"));
+    let a = TaskSpec::blocking(TaskClass::new("worker"))
+        .child_of("root-x", "root-x", TaskStage::new("p1"))
+        .operation("child-a");
+    let b = TaskSpec::cpu(TaskClass::new("worker"))
+        .child_of("root-x", "root-x", TaskStage::new("p2"))
+        .operation("child-b");
     assert!(matches!(g.admit(&a), AdmissionDecision::Admitted { .. }));
     assert!(matches!(g.admit(&b), AdmissionDecision::Admitted { .. }));
 }

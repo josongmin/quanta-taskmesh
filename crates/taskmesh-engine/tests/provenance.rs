@@ -36,7 +36,7 @@ fn provenance_is_auditable_for_an_admitted_permit() {
     let spec = spec_with(
         "c",
         "op",
-        PlanSource::SearchAdapter,
+        PlanSource::new("search-adapter").expect("valid source"),
         ClassificationRationale::DerivedFromRequestKind,
     );
     let permit = match g.admit(&spec) {
@@ -44,7 +44,7 @@ fn provenance_is_auditable_for_an_admitted_permit() {
         o => panic!("{o:?}"),
     };
     let prov = g.permit_provenance(permit).expect("provenance recorded");
-    assert_eq!(prov.source, PlanSource::SearchAdapter);
+    assert_eq!(prov.source.as_str(), "search-adapter");
     assert_eq!(prov.reason, ClassificationRationale::DerivedFromRequestKind);
 
     // Gone after release (no longer a live permit).
@@ -65,7 +65,7 @@ fn provenance_survives_the_queue_promotion_path() {
     let occupy = match g.admit(&spec_with(
         "c",
         "occ",
-        PlanSource::Internal,
+        PlanSource::INTERNAL,
         ClassificationRationale::ExplicitMapping,
     )) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
@@ -75,7 +75,7 @@ fn provenance_survives_the_queue_promotion_path() {
     let queued_spec = spec_with(
         "c",
         "q",
-        PlanSource::Indexing,
+        PlanSource::new("indexing").expect("valid source"),
         ClassificationRationale::DerivedFromStageMap,
     );
     let ticket = match g.admit(&queued_spec) {
@@ -90,6 +90,6 @@ fn provenance_survives_the_queue_promotion_path() {
     let prov = g
         .permit_provenance(permit)
         .expect("provenance preserved through promotion");
-    assert_eq!(prov.source, PlanSource::Indexing);
+    assert_eq!(prov.source.as_str(), "indexing");
     assert_eq!(prov.reason, ClassificationRationale::DerivedFromStageMap);
 }

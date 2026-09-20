@@ -140,7 +140,7 @@ fn downward_reconcile_memory_promotes_queued_work() {
     assert_eq!(g.snapshot().classes[&TaskClass::new("m")].queued, 1);
 
     // Downward reconcile: measured 2 bytes -> 2 units; held 8 -> 2, frees 6.
-    assert!(g.reconcile_memory(p1, 2));
+    assert!(g.reconcile_memory(p1, 2).is_applied());
     assert!(
         matches!(g.claim(ticket), ClaimOutcome::Ready(_)),
         "downward reconcile must promote queued work"
@@ -182,9 +182,12 @@ fn same_parent_stage_different_substrate_is_recursive() {
         "worker",
         ClassPolicy::new().max_inflight(8).cpu_units(1),
     )]);
-    let c1 =
-        TaskSpec::blocking(TaskClass::new("worker")).child_of("root", TaskStage::new("fanout"));
-    let c2 = TaskSpec::cpu(TaskClass::new("worker")).child_of("root", TaskStage::new("fanout"));
+    let c1 = TaskSpec::blocking(TaskClass::new("worker"))
+        .child_of("root", "root", TaskStage::new("fanout"))
+        .operation("child-1");
+    let c2 = TaskSpec::cpu(TaskClass::new("worker"))
+        .child_of("root", "root", TaskStage::new("fanout"))
+        .operation("child-2");
     assert!(matches!(g.admit(&c1), AdmissionDecision::Admitted { .. }));
     assert!(
         matches!(
@@ -204,10 +207,12 @@ fn different_parent_stage_same_substrate_admits_both() {
         "worker",
         ClassPolicy::new().max_inflight(8).cpu_units(1),
     )]);
-    let a =
-        TaskSpec::blocking(TaskClass::new("worker")).child_of("root", TaskStage::new("stage-a"));
-    let b =
-        TaskSpec::blocking(TaskClass::new("worker")).child_of("root", TaskStage::new("stage-b"));
+    let a = TaskSpec::blocking(TaskClass::new("worker"))
+        .child_of("root", "root", TaskStage::new("stage-a"))
+        .operation("child-a");
+    let b = TaskSpec::blocking(TaskClass::new("worker"))
+        .child_of("root", "root", TaskStage::new("stage-b"))
+        .operation("child-b");
     assert!(matches!(g.admit(&a), AdmissionDecision::Admitted { .. }));
     assert!(
         matches!(g.admit(&b), AdmissionDecision::Admitted { .. }),

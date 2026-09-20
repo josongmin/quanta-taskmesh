@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "producer_id": "taskmesh-fuzz-v03",
+  "envelope_schema": "tools/qualification/evidence-envelope-v1.schema.json",
+  "required_targets": {
+    "admission_churn": [
+      "target_entry",
+      "governor_valid",
+      "transition_step",
+      "quiescent"
+    ],
+    "policy_topology": [
+      "target_entry",
+      "policy_valid",
+      "topology_valid"
+    ],
+    "wire_formats": [
+      "target_entry",
+      "snapshot_valid",
+      "topology_valid",
+      "class_policy_valid"
+    ]
+  },
+  "corpus_manifest": "fuzz/corpus-manifest.json",
+  "receipt": "target/sep21/v03/fuzz/local/fuzz-receipt.json",
+  "evidence_envelope": "target/sep21/v03/fuzz/local/evidence-envelope.json"
+}

@@ -1,0 +1,1 @@
+{"schema_version":2,"classes":{"boundary":{"inflight":1,"queued":0,"cpu_units_held":"4294967296","memory_units_held":"18446744073709551616","dispatch_reserved":0,"accepted":0,"running":1,"cleanup_pending":0,"admitted_total":"2","started_total":"1","terminated_total":"1"}},"substrates":[],"capabilities":{"cpu":{"in_use":1,"limit":1}}}

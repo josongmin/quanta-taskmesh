@@ -1,6 +1,7 @@
 # SEP21-V03 — Search-budget and semantic-checkpoint authority
 
-- 상태: PLANNED
+- 상태: LOCALLY_VERIFIED
+- producer state: integrated local fuzz/model evidence complete; hosted qualification remains V01-owned
 - 우선순위: P1 release blocker
 - 포함 finding: TM21-018, TM21-021
 - 선행: V01
@@ -87,3 +88,46 @@ FUZZ_SECONDS=60 just fuzz
 just loom
 just shuttle
 ```
+
+## Producer evidence (2026-09-21)
+
+- integrated source: `main@ba643a130dfdaf091099bb11099962198d0e5981` plus the V03-owned
+  patch. V03 did not modify production semantic files or shared orchestration.
+- producer contracts:
+  `tools/fuzz/producer-manifest.json`, `fuzz/corpus-manifest.json`,
+  `tools/modelcheck/producer-manifest.json`; all consume
+  `tools/qualification/evidence-envelope-v1.schema.json` v1.
+- parser/negative fixtures: `uv run pytest -q tools/fuzz/tests tools/modelcheck/tests` passed
+  18/18. Zero duration/run/schedule, missing target/model/seed/corpus, decode-all-fail,
+  no-op witness, partial completion, source drift, unsafe output/delete paths, symlink escapes,
+  missing/tampered replay schedules, and manifest drift remain non-pass.
+- integrated model run: `python3 tools/modelcheck/run.py all` PASS, 12/12 required models.
+  Loom completed 1,611 permutations across 5 explicit model IDs with `max_threads=5`,
+  `max_branches=1000`, exhaustive permutations and unbounded preemption. Shuttle completed
+  60,000/60,000 requested schedules across 7 explicit model IDs, stable seeds
+  `1511456769..1511456775`, and `max_steps=1000000`.
+- replay: one process generated exactly one `shuttle.replay_fixture.v1` failure schedule; a
+  separate process consumed only that persisted schedule and reproduced the same
+  `taskmesh-v03-replay-sentinel` failure. Generation/replay have separate raw logs, and the
+  runner rejects missing or digest-changed schedules. Artifact:
+  `target/modelcheck/replay/schedule000.txt`.
+- both producers capture source identity before execution and require the same HEAD/tree digest/
+  dirty state afterward. Fuzz output, raw logs, and disposable corpus are restricted to named
+  runs below `target/sep21/v03/fuzz/`; the root itself and resolved symlink escapes reject before
+  directory creation or recursive deletion.
+- model subprocesses have a producer-manifest-owned 600-second bound. Each command runs in its
+  own process group; timeout performs TERM then KILL cleanup and records exit code, signal, and
+  `timed_out` in the receipt. The negative fixture confirms a sleeping process cannot hang the gate.
+- exact recipes: `just fuzz-check` passed stable check plus pedantic Clippy; `just loom` passed
+  5/5; `just shuttle` passed 7/7; structure-only plan validation and `git diff --check` passed.
+- integrated fuzz exploration: `FUZZ_SECONDS=2 just fuzz` PASS. All three required targets
+  (`admission_churn`, `policy_topology`, `wire_formats`) executed positive runs, at least one
+  valid input, and every declared target-specific semantic checkpoint. The first integrated run
+  rejected a drifted `policy_topology` corpus seed despite positive aggregate runs; the tracked
+  seed and corpus digest were repaired before the passing rerun.
+- fuzz and model receipts both report source stability across execution and bind the same
+  integrated HEAD/tree digest/dirty state. This satisfies A01-A06 locally; hosted qualification
+  and producer registration remain outside V03.
+- shared registration remains V01-owned. Register both producer IDs, their manifest/config
+  digests, raw/summary/replay artifact roles, selected/executed parity, and producer status without
+  reinterpreting logs.

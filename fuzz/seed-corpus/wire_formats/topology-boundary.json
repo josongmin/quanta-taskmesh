@@ -1,0 +1,1 @@
+{"cpu":{"mode":{"Fixed":1},"reserve_cores":0,"min_workers":1,"max_workers":1},"blocking_threads":1,"large_stack_slots":1,"maintenance_workers":1,"local_runtime_slots":1}

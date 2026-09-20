@@ -13,17 +13,22 @@
 //! * a `ClassPolicy` that parses round-trips and answers `is_disabled()`.
 #![no_main]
 
+mod support;
+
 use libfuzzer_sys::fuzz_target;
 use taskmesh_contract::{ClassPolicy, Snapshot, TopologyConfig};
 
 fuzz_target!(|data: &[u8]| {
+    support::checkpoint("wire_formats", "target_entry");
     if let Ok(snapshot) = serde_json::from_slice::<Snapshot>(data) {
+        support::checkpoint("wire_formats", "snapshot_valid");
         let _ = snapshot.conservation_violation();
         let json = serde_json::to_string(&snapshot).expect("a parsed snapshot serializes");
         let again: Snapshot = serde_json::from_str(&json).expect("serialized snapshot parses");
         assert_eq!(again, snapshot, "Snapshot round trip must be lossless");
     }
     if let Ok(topology) = serde_json::from_slice::<TopologyConfig>(data) {
+        support::checkpoint("wire_formats", "topology_valid");
         let verdict = topology.validate();
         let _ = topology.declared_slots();
         for available in [0usize, 1, 2, 7, 64, usize::MAX] {
@@ -45,6 +50,7 @@ fuzz_target!(|data: &[u8]| {
         );
     }
     if let Ok(policy) = serde_json::from_slice::<ClassPolicy>(data) {
+        support::checkpoint("wire_formats", "class_policy_valid");
         let _ = policy.is_disabled();
         let json = serde_json::to_string(&policy).expect("a parsed policy serializes");
         let again: ClassPolicy = serde_json::from_str(&json).expect("serialized policy parses");

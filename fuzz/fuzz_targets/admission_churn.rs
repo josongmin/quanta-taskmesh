@@ -29,6 +29,8 @@
 //!   every gauge zero, `admitted_total == terminated_total`, no ledger left.
 #![no_main]
 
+mod support;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -41,7 +43,7 @@ use taskmesh_contract::{
 };
 use taskmesh_engine::{
     AdmissionDecision, AdvanceOutcome, ClaimOutcome, Governor, LeaseToken, PermitId, PolicySet,
-    ReleaseOutcome, Ticket,
+    ReleaseOutcome, ResolvedCapability, Ticket,
 };
 
 const CLASSES: [&str; 3] = ["alpha", "beta", "gamma"];
@@ -195,8 +197,11 @@ fn spec(
             )
         }
         1 => (
-            base.operation(format!("op{seq}"))
-                .child_of(root_name.clone(), TaskStage::new(format!("stage{seq}"))),
+            base.operation(format!("op{seq}")).child_of(
+                root_name.clone(),
+                root_name.clone(),
+                TaskStage::new(format!("stage{seq}")),
+            ),
             Origin {
                 root: root_name,
                 is_root: false,
@@ -204,8 +209,11 @@ fn spec(
             false,
         ),
         _ => (
-            base.operation(format!("op{seq}"))
-                .awaited_child_of(root_name.clone(), TaskStage::new(format!("stage{seq}"))),
+            base.operation(format!("op{seq}")).awaited_child_of(
+                root_name.clone(),
+                root_name.clone(),
+                TaskStage::new(format!("stage{seq}")),
+            ),
             Origin {
                 root: root_name,
                 is_root: false,
@@ -262,7 +270,14 @@ impl Harness {
             .filter(|ledger| match held {
                 HeldCapacity::ClassInflight { class } => ledger.class == *class,
                 HeldCapacity::CapabilityPool { pool } => {
-                    ledger.capability.as_deref() == Some(pool.as_str())
+                    ledger
+                        .capabilities
+                        .iter()
+                        .any(|capability| {
+                            self.governor.policy().resolved_capability_name(
+                                &ResolvedCapability::Registered(capability.clone()),
+                            ) == Some(pool.as_str())
+                        })
                 }
                 HeldCapacity::CpuBudget => ledger.cpu_units > 0,
                 HeldCapacity::MemoryBudget => ledger.effective_units > 0,
@@ -615,6 +630,7 @@ impl Harness {
 }
 
 fuzz_target!(|scenario: Scenario| {
+    support::checkpoint("admission_churn", "target_entry");
     let fairness_tier = scenario.fairness;
     let mut classes = BTreeMap::new();
     let mut limits = BTreeMap::new();
@@ -655,6 +671,7 @@ fuzz_target!(|scenario: Scenario| {
     let Ok(governor) = Governor::new(policy, clock.clone()) else {
         return;
     };
+    support::checkpoint("admission_churn", "governor_valid");
     let mut harness = Harness {
         governor,
         clock,
@@ -675,7 +692,9 @@ fuzz_target!(|scenario: Scenario| {
     harness.check();
     for (seq, op) in scenario.ops.into_iter().enumerate().take(256) {
         harness.step(op, seq);
+        support::checkpoint("admission_churn", "transition_step");
         harness.check();
     }
     harness.finish();
+    support::checkpoint("admission_churn", "quiescent");
 });

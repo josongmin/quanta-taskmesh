@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "taskmesh-fuzz-corpus-v1",
+  "targets": {
+    "admission_churn": [
+      {
+        "path": "fuzz/seed-corpus/admission_churn/minimal-transition.bin",
+        "sha256": "dd756a7dfe6c9cca314b81999375a6f9215e0bc2f374d63b8d166a6d061a04fe"
+      }
+    ],
+    "policy_topology": [
+      {
+        "path": "fuzz/seed-corpus/policy_topology/minimal-valid.bin",
+        "sha256": "1c18636e986900f7295024a48c22a2ad7800e420742bc9ee3b2c09da4405dfc3"
+      }
+    ],
+    "wire_formats": [
+      {
+        "path": "fuzz/seed-corpus/wire_formats/class-policy-minimal.json",
+        "sha256": "9095945faa6ef7b838ce5be9d70ab4a6d66b483cce62cb92998464111099997a"
+      },
+      {
+        "path": "fuzz/seed-corpus/wire_formats/snapshot-boundary.json",
+        "sha256": "d7bdfed5a2795d47c901b12fe46964705dc19a721eb117a8e9c5b5185d62e901"
+      },
+      {
+        "path": "fuzz/seed-corpus/wire_formats/topology-boundary.json",
+        "sha256": "a6fa0f5ffb8d97d96ae800df39ecd04a1cf2d8108c93aaedbc0df7004c134ba4"
+      }
+    ]
+  },
+  "digest": "46ce0acdaeaa8ba72fce9b5dbc80b7ea1210df0c5f1c3a7a9d28309e500b1abc"
+}

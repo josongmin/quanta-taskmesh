@@ -16,6 +16,8 @@
 //!   readable at once (nothing is spawned by `build`).
 #![no_main]
 
+mod support;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -155,6 +157,7 @@ fn topology(config: &Config) -> TopologyConfig {
 }
 
 fuzz_target!(|config: Config| {
+    support::checkpoint("policy_topology", "target_entry");
     let resources = ResourceBudget::new()
         .cpu_units(config.budget_cpu)
         .memory_units(config.budget_memory)
@@ -193,6 +196,7 @@ fuzz_target!(|config: Config| {
             Ok(()) => {
                 let governor = Governor::new(policy, Arc::new(ManualClock::new(0)))
                     .expect("validated policy builds");
+                support::checkpoint("policy_topology", "policy_valid");
                 let snapshot = governor.snapshot();
                 assert_eq!(
                     snapshot.classes.keys().cloned().collect::<Vec<_>>(),
@@ -235,6 +239,7 @@ fuzz_target!(|config: Config| {
     }
     match builder.build() {
         Ok(runtime) => {
+            support::checkpoint("policy_topology", "topology_valid");
             assert!(
                 topology_verdict.is_ok(),
                 "build accepted a topology validate() refuses: {topology_verdict:?}"

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "producer_id": "taskmesh-modelcheck-v03",
+  "envelope_schema": "tools/qualification/evidence-envelope-v1.schema.json",
+  "command_timeout_seconds": 600,
+  "checkers": {
+    "loom": {
+      "scheduler": "exhaustive",
+      "bounds": {
+        "max_threads": 5,
+        "max_branches": 1000,
+        "max_permutations": "exhaustive",
+        "preemption_bound": "unbounded"
+      },
+      "required_models": [
+        "loom.claim_reap_stale_promotion.v1",
+        "loom.concurrent_admits_releases.v1",
+        "loom.concurrent_reconcile.v1",
+        "loom.pending_claim_wakeup.v1",
+        "loom.promote_claim_abandon.v1"
+      ]
+    },
+    "shuttle": {
+      "scheduler": "random",
+      "max_steps": 1000000,
+      "required_models": {
+        "shuttle.admit_release_churn.v1": {"seed": 1511456769, "requested": 10000},
+        "shuttle.claim_reap.v1": {"seed": 1511456772, "requested": 10000},
+        "shuttle.close_admission.v1": {"seed": 1511456773, "requested": 10000},
+        "shuttle.gap_arrivals.v1": {"seed": 1511456774, "requested": 5000},
+        "shuttle.promote_claim_double_abandon.v1": {"seed": 1511456770, "requested": 10000},
+        "shuttle.unqueueable_overtake.v1": {"seed": 1511456775, "requested": 5000},
+        "shuttle.waiter_promotion_wakeup.v1": {"seed": 1511456771, "requested": 10000}
+      }
+    }
+  },
+  "replay": {
+    "model_id": "shuttle.replay_fixture.v1",
+    "seed": 1511520785,
+    "result": "same_failure",
+    "artifact_glob": "target/modelcheck/replay/schedule*.txt"
+  },
+  "receipt": "target/modelcheck/model-receipt.json",
+  "evidence_envelope": "target/modelcheck/evidence-envelope.json"
+}

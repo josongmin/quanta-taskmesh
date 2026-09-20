@@ -15,7 +15,7 @@
 # cannot rot between fuzzing runs.
 #
 # Outcomes (one machine-readable line on stdout):
-#   taskmesh-fuzz status=CLEAN targets=<n> seconds_per_target=<s> runs=<total>
+#   taskmesh-fuzz status=PASS targets=<n> corpus_sha256=<sha> receipt=<path>
 #   taskmesh-fuzz status=NOT_RUN reason=<why>                       (exit 2)
 # A crash makes `cargo fuzz run` exit non-zero, so the gate fails with the
 # reproducer path on stderr.
@@ -42,6 +42,10 @@ seconds="${FUZZ_SECONDS:-30}"
 case "${seconds}" in
   ''|*[!0-9]*) echo "fuzz: FUZZ_SECONDS must be a whole number of seconds, got '${seconds}'" >&2; exit 1 ;;
 esac
+if [ "${seconds}" -eq 0 ]; then
+  echo "fuzz: FUZZ_SECONDS must be greater than zero" >&2
+  exit 1
+fi
 
 cd fuzz
 # One target name per line; macOS ships bash 3.2, so no `mapfile`.
@@ -50,22 +54,58 @@ if [ -z "${targets}" ]; then
   echo "fuzz: no fuzz targets found — the harness is broken, not the code" >&2
   exit 1
 fi
-target_count="$(printf '%s\n' "${targets}" | wc -l | tr -d ' ')"
+verify_args=""
+for target in ${targets}; do
+  verify_args="${verify_args} --actual-target ${target}"
+done
+# Target names are constrained by Cargo and the producer manifest. Deliberate
+# word splitting keeps this compatible with macOS bash 3.2.
+# shellcheck disable=SC2086
+python3 ../tools/fuzz/evidence.py verify ${verify_args}
 
-total_runs=0
+output_dir="${TASKMESH_FUZZ_OUTPUT_DIR:-../target/sep21/v03/fuzz/local}"
+logs_dir="${output_dir}/raw"
+seed_dir="${output_dir}/seed-corpus"
+python3 ../tools/fuzz/evidence.py validate-paths \
+  --output-dir "${output_dir}" \
+  --logs-dir "${logs_dir}" \
+  --corpus-dir "${seed_dir}"
+mkdir -p "${logs_dir}"
+python3 ../tools/fuzz/evidence.py prepare-corpus \
+  --output-dir "${output_dir}" \
+  --destination "${seed_dir}"
+started_at="$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())')"
+
+process_exit=0
+for target in ${targets}; do
+  : >"${logs_dir}/${target}.log"
+done
+source_before="${output_dir}/source-before.json"
+python3 ../tools/fuzz/evidence.py capture-source \
+  --output-dir "${output_dir}" \
+  --destination "${source_before}"
 for target in ${targets}; do
   echo "fuzz: ${target} for ${seconds}s" >&2
-  log="$(mktemp)"
+  log="${logs_dir}/${target}.log"
   # `-max_total_time` bounds the campaign; a crash exits non-zero and
-  # `set -e` ends the gate with libFuzzer's report and reproducer path.
-  cargo +nightly fuzz run "${target}" -- -max_total_time="${seconds}" 2>&1 | tee "${log}" >&2
-  runs="$(sed -n 's/^Done \([0-9]*\) runs in .*/\1/p' "${log}" | tail -n 1)"
-  rm -f "${log}"
-  if [ -z "${runs}" ]; then
-    echo "fuzz: ${target} finished without libFuzzer's run summary — refusing to report CLEAN" >&2
-    exit 1
+  # is retained as a raw artifact before semantic validation.
+  set +e
+  TASKMESH_FUZZ_WITNESS=1 cargo +nightly fuzz run "${target}" "${seed_dir}/${target}" -- -max_total_time="${seconds}" 2>&1 | tee "${log}" >&2
+  target_exit="${PIPESTATUS[0]}"
+  set -e
+  if [ "${target_exit}" -ne 0 ]; then
+    process_exit="${target_exit}"
+    break
   fi
-  total_runs=$((total_runs + runs))
 done
 
-echo "taskmesh-fuzz status=CLEAN targets=${target_count} seconds_per_target=${seconds} runs=${total_runs}"
+finished_at="$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())')"
+cd ..
+python3 tools/fuzz/evidence.py collect \
+  --logs-dir "${logs_dir#../}" \
+  --output-dir "${output_dir#../}" \
+  --source-before "${source_before#../}" \
+  --duration-seconds "${seconds}" \
+  --started-at "${started_at}" \
+  --finished-at "${finished_at}" \
+  --process-exit "${process_exit}"

@@ -27,9 +27,11 @@ Fails closed on:
   gate declares no `status_line`, or a `status_line` whose marker no script of
   that recipe prints: the runner keeps the recipe's final marker line verbatim
   in the receipt and requires the declared token on it, so a missing
-  declaration makes exit 0 alone a PASS and loses the verdict line (the
-  bounded output tail does not reliably contain it), while a wrong marker
-  makes every run NOT_RUN.
+    declaration makes exit 0 alone a PASS and loses the verdict line (the
+    bounded output tail does not reliably contain it), while a wrong marker
+    makes every run NOT_RUN.
+- an action ref that is not a full commit SHA, a workflow default token that
+  is not read-only, or a write-capable job reachable outside trusted main.
 
 Workflow invocations are read from the parsed YAML: every `run:` script of
 every step, whatever its shape (`- run: just x`, a `|` block, `cd d && just x`,
@@ -108,6 +110,7 @@ SCRIPT_PATH = re.compile(r"\btools/[\w./-]+\.(?:sh|py)\b")
 # receipt keeps only a bounded tail of a gate's output, so this line is the one
 # thing about a run that must survive verbatim.
 STATUS_MARKER = re.compile(r"(taskmesh-[a-z0-9-]+) status=")
+FULL_ACTION_REF = re.compile(r"^[^\s@]+@[0-9a-f]{40}$")
 
 
 def recipe_scripts(recipe: str, text: str | None = None) -> list[str]:
@@ -235,6 +238,59 @@ def workflow_enforcement_problems(workflows_dir: Path, recipes_of_interest: set[
         problems.extend(
             f"{path.name}: {p}" for p in unenforced_gate_steps(document, recipes_of_interest)
         )
+    return problems
+
+
+def workflow_trust_problems(path: Path, document: object) -> list[str]:
+    """Validate immutable action identity and least-privilege token boundaries."""
+    if not isinstance(document, dict):
+        return [f"{path.name}: workflow is not an object"]
+    problems: list[str] = []
+    if document.get("permissions") != {"contents": "read"}:
+        problems.append(f"{path.name}: top-level permissions must be exactly contents: read")
+    jobs = document.get("jobs", {})
+    if not isinstance(jobs, dict):
+        return [*problems, f"{path.name}: jobs is not an object"]
+    for job_id, job in jobs.items():
+        if not isinstance(job, dict):
+            continue
+        condition = str(job.get("if", ""))
+        permissions = job.get("permissions", {})
+        writes = (
+            [key for key, value in permissions.items() if value == "write"]
+            if isinstance(permissions, dict)
+            else []
+        )
+        trusted_main = (
+            "github.event_name == 'push'" in condition
+            and "github.ref == 'refs/heads/main'" in condition
+        )
+        if writes and not trusted_main:
+            problems.append(
+                f"{path.name}:{job_id}: write permissions {writes} are not restricted to "
+                "a trusted main push"
+            )
+        for step in job.get("steps", []) or []:
+            if not isinstance(step, dict):
+                continue
+            action = step.get("uses")
+            if (
+                isinstance(action, str)
+                and not action.startswith("./")
+                and not FULL_ACTION_REF.fullmatch(action)
+            ):
+                problems.append(f"{path.name}:{job_id}: mutable action ref {action!r}")
+            with_values = step.get("with", {})
+            if isinstance(with_values, dict) and "github-token" in with_values and not trusted_main:
+                problems.append(f"{path.name}:{job_id}: PR-reachable action receives github-token")
+    return problems
+
+
+def all_workflow_trust_problems(workflows_dir: Path) -> list[str]:
+    problems: list[str] = []
+    for path in sorted(workflows_dir.glob("*.yml")):
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        problems.extend(workflow_trust_problems(path, document))
     return problems
 
 
@@ -376,7 +432,10 @@ def main() -> int:
         matrix_deps = recipe_dependencies("matrix")
         proof_leaves = expand_recipe("proof")
         inventory_recipes = {g.get("recipe") for g in inventory.get("gates", []) if g.get("recipe")}
-        enforcement = workflow_enforcement_problems(WORKFLOWS, inventory_recipes)
+        enforcement = [
+            *workflow_enforcement_problems(WORKFLOWS, inventory_recipes),
+            *all_workflow_trust_problems(WORKFLOWS),
+        ]
         self_reports = {
             recipe: self_report_markers(recipe) for recipe in inventory_recipes if recipe in recipes
         }

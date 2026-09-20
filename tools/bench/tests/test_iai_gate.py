@@ -10,6 +10,7 @@ on PATH, and assert the diagnostic each path prints.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
@@ -195,9 +196,26 @@ class Harness:
         self._bench_ok = ok
         self._write_cargo()
 
+    def bench_emits_summary(self, emits: bool) -> None:
+        self._emits_summary = emits
+        self._write_cargo()
+
+    def bench_comparison_complete(self, complete: bool) -> None:
+        self._comparison_complete = complete
+        self._write_cargo()
+
     def _write_cargo(self) -> None:
         listing = getattr(self, "_listing", "")
         ok = getattr(self, "_bench_ok", True)
+        emits_summary = getattr(self, "_emits_summary", True)
+        comparison_complete = getattr(self, "_comparison_complete", True)
+        comparison_flag = 1 if comparison_complete else 0
+        summary_command = (
+            "  printf '"
+            '{"version":"3","callgrind_summary":{"callgrind_run":{"total":'
+            '{"summary":{"Ir":{"metrics":%s}},"regressions":[]}}}}'
+            '\\n\' "$metrics" >target/iai/fake/summary.json\n'
+        )
         _shim(
             self.bin,
             "cargo",
@@ -207,7 +225,18 @@ class Harness:
             "  exit 0\n"
             "fi\n"
             'if [[ "$1" == "bench" ]]; then\n'
-            f"  exit {0 if ok else 1}\n"
+            f"  if [[ {0 if ok else 1} -ne 0 ]]; then echo 'benchmark failed'; exit 1; fi\n"
+            "  mkdir -p target/iai/fake\n"
+            "  if [[ -f target/iai/fake/callgrind.fake.out "
+            f"&& {comparison_flag} -eq 1 ]]; then\n"
+            "    metrics='{\"Both\":[101,100]}'\n"
+            "  else\n"
+            "    metrics='{\"Left\":101}'\n"
+            "  fi\n"
+            "  echo 'events: Ir' >target/iai/fake/callgrind.fake.out\n"
+            + (summary_command if emits_summary else "")
+            + "  echo 'Iai-Callgrind result: Ok; 1 benchmark finished'\n"
+            "  exit 0\n"
             "fi\n"
             "exit 0\n",
         )
@@ -232,8 +261,16 @@ class Harness:
         )
 
     @property
-    def stamp(self) -> Path:
-        return self.root / "target" / "iai" / "taskmesh-fingerprint"
+    def baseline_manifest(self) -> Path:
+        return self.root / "target" / "iai" / "baseline-manifest.json"
+
+    @property
+    def comparison_manifest(self) -> Path:
+        return self.root / "target" / "iai" / "comparison-manifest.json"
+
+    @property
+    def fingerprint(self) -> str:
+        return json.loads(self.baseline_manifest.read_text())["fingerprint"]
 
 
 @pytest.fixture
@@ -257,7 +294,7 @@ def test_a_runner_whose_version_cannot_be_read_says_so_instead_of_dying_silently
     assert proc.returncode == 1
     assert "cannot determine the iai-callgrind-runner version" in proc.stderr
     assert "config requires" in proc.stderr
-    assert not harness.stamp.exists()
+    assert not harness.baseline_manifest.exists()
 
 
 def test_the_runner_version_is_accepted_from_its_own_error_report(harness: Harness) -> None:
@@ -282,7 +319,7 @@ def test_first_run_records_a_baseline_and_second_run_qualifies(harness: Harness)
     assert first.returncode == 0, first.stderr
     assert "status=BASELINE_CREATED" in first.stdout
     assert "NOT regression-qualified" in first.stderr
-    fingerprint = harness.stamp.read_text().strip()
+    fingerprint = harness.fingerprint
     assert len(fingerprint) == 64
 
     second = harness.run()
@@ -291,7 +328,52 @@ def test_first_run_records_a_baseline_and_second_run_qualifies(harness: Harness)
     assert "NOT regression-qualified" not in second.stderr
 
 
-def test_the_fingerprint_subcommand_matches_the_stamp_and_runs_no_benchmark(
+def test_stamp_only_cache_never_qualifies(harness: Harness) -> None:
+    stamp = harness.root / "target" / "iai" / "taskmesh-fingerprint"
+    stamp.parent.mkdir(parents=True)
+    stamp.write_text("0" * 64 + "\n")
+    proc = harness.run()
+    assert proc.returncode == 0, proc.stderr
+    assert "status=BASELINE_CREATED" in proc.stdout
+    assert "status=QUALIFIED" not in proc.stdout
+    assert "baseline manifest is missing" in proc.stderr
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_missing_or_corrupt_raw_baseline_restarts_without_qualifying(
+    harness: Harness, damage: str
+) -> None:
+    assert harness.run().returncode == 0
+    raw = harness.root / "target" / "iai" / "fake" / "callgrind.fake.out"
+    if damage == "missing":
+        raw.unlink()
+    else:
+        raw.write_text("forged\n")
+    proc = harness.run()
+    assert proc.returncode == 0, proc.stderr
+    assert "status=BASELINE_CREATED" in proc.stdout
+    assert "status=QUALIFIED" not in proc.stdout
+
+
+def test_exit_zero_without_summary_is_not_evidence(harness: Harness) -> None:
+    harness.bench_emits_summary(False)
+    proc = harness.run()
+    assert proc.returncode == 1
+    assert "runner produced no summary.json artifacts" in proc.stderr
+    assert "status=QUALIFIED" not in proc.stdout
+
+
+def test_exit_zero_without_old_vs_new_metrics_is_not_qualified(harness: Harness) -> None:
+    assert harness.run().returncode == 0
+    harness.bench_comparison_complete(False)
+    proc = harness.run()
+    assert proc.returncode == 1
+    assert "verified old-vs-new comparison is incomplete" in proc.stderr
+    comparison = json.loads(harness.comparison_manifest.read_text())
+    assert comparison["status"] == "NOT_RUN"
+
+
+def test_the_fingerprint_subcommand_matches_the_manifest_and_runs_no_benchmark(
     harness: Harness,
 ) -> None:
     printed = harness.run("fingerprint")
@@ -299,36 +381,38 @@ def test_the_fingerprint_subcommand_matches_the_stamp_and_runs_no_benchmark(
     assert "cargo bench" not in harness.log.read_text() if harness.log.exists() else True
     run = harness.run()
     assert run.returncode == 0
-    assert harness.stamp.read_text().strip() == printed.stdout.strip()
+    assert harness.fingerprint == printed.stdout.strip()
 
 
 def test_an_incompatible_baseline_is_discarded_not_compared(harness: Harness) -> None:
     assert harness.run().returncode == 0
-    old = harness.stamp.read_text().strip()
+    old = harness.fingerprint
     # Something the fingerprint covers changes: the compiler.
     harness.rustc("rustc 1.96.0 (def 2026-02-01)\nhost: x86_64-unknown-linux-gnu\n")
     proc = harness.run()
     assert proc.returncode == 0, proc.stderr
     assert "status=BASELINE_CREATED" in proc.stdout
-    assert f"cached baseline fingerprint {old} does not match" in proc.stderr
-    assert harness.stamp.read_text().strip() != old
+    assert "cached baseline is incomplete, corrupt, or incompatible" in proc.stderr
+    assert harness.fingerprint != old
 
 
-def test_a_failed_benchmark_leaves_no_stamp_behind(harness: Harness) -> None:
+def test_a_failed_benchmark_leaves_no_manifest_behind(harness: Harness) -> None:
     harness.bench_succeeds(False)
     proc = harness.run()
     assert proc.returncode == 1
     assert "benchmark iai_governance failed" in proc.stderr
-    assert "no baseline stamp was written" in proc.stderr
-    assert not harness.stamp.exists(), "a failed first run must not look like a baseline"
+    assert "no evidence manifest was accepted" in proc.stderr
+    assert not harness.baseline_manifest.exists(), (
+        "a failed first run must not look like a baseline"
+    )
 
     # And a failed run against an existing baseline keeps that baseline intact.
     harness.bench_succeeds(True)
     assert harness.run().returncode == 0
-    stamp = harness.stamp.read_text()
+    manifest = harness.baseline_manifest.read_text()
     harness.bench_succeeds(False)
     assert harness.run().returncode == 1
-    assert harness.stamp.read_text() == stamp
+    assert harness.baseline_manifest.read_text() == manifest
 
 
 def test_an_environment_threshold_is_overridden_by_the_config_with_a_warning(
@@ -347,14 +431,14 @@ def test_a_valgrind_that_prints_nothing_on_stdout_fails_closed(harness: Harness)
     proc = harness.run()
     assert proc.returncode == 1
     assert "valgrind --version printed nothing on stdout" in proc.stderr
-    assert not harness.stamp.exists()
+    assert not harness.baseline_manifest.exists()
 
 
 def test_stray_arguments_are_refused_instead_of_filtering_the_benchmark(harness: Harness) -> None:
     proc = harness.run("no_such_bench_filter")
     assert proc.returncode == 1
     assert "unexpected argument(s): 'no_such_bench_filter'" in proc.stderr
-    assert not harness.stamp.exists(), "a run that measured nothing must not stamp a baseline"
+    assert not harness.baseline_manifest.exists(), "a filtered run must not create a baseline"
     proc = harness.run("fingerprint", "extra")
     assert proc.returncode == 1
     assert "unexpected argument(s)" in proc.stderr

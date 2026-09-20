@@ -109,29 +109,41 @@ fi
 export IAI_CALLGRIND_REGRESSION="${REGRESSION}"
 
 baseline_dir="target/iai"
-stamp="${baseline_dir}/taskmesh-fingerprint"
 status="BASELINE_CREATED"
-if [[ -f "${stamp}" ]]; then
-  if [[ "$(cat "${stamp}")" == "${fingerprint}" ]]; then
-    status="QUALIFIED"
+expected_comparison="no"
+if [[ -d "${baseline_dir}" ]]; then
+  if python3 "${HELPER}" validate-baseline --root "${baseline_dir}" \
+    --fingerprint "${fingerprint}" --runner "${RUNNER_VERSION}" \
+    --valgrind "${valgrind_version}" --rustc-file "${rustc_probe}"; then
+    expected_comparison="yes"
   else
-    echo "bench-iai: cached baseline fingerprint $(cat "${stamp}") does not match ${fingerprint}; discarding it (not comparable)" >&2
+    echo "bench-iai: cached baseline is incomplete, corrupt, or incompatible; discarding it" >&2
     rm -rf "${baseline_dir}"
   fi
 fi
 mkdir -p "${baseline_dir}"
 
-# The stamp is written only after the benchmark succeeds. A stamp written first
-# would turn a failed first run (compile error, killed job) into a "matching"
-# baseline with no data behind it, and the next run would report QUALIFIED
-# against nothing.
-if ! cargo bench -p taskmesh-bench --features iai --bench "${BENCH}"; then
-  if [[ "${status}" == "BASELINE_CREATED" ]]; then
-    rm -rf "${baseline_dir}"
-  fi
-  fail "benchmark ${BENCH} failed (status would have been ${status}); no baseline stamp was written"
+# Summary files are run outputs, not baseline inputs. Removing them after the
+# baseline was verified prevents a stale summary from claiming this run made a
+# comparison. Raw *.out/*.log baseline data remains in place for the runner.
+find "${baseline_dir}" -type f -name summary.json -delete
+rm -f "${baseline_dir}/comparison-manifest.json" "${baseline_dir}/benchmark-output.log"
+export IAI_CALLGRIND_SAVE_SUMMARY=yes
+export IAI_CALLGRIND_COLOR=never
+
+# Raw output is kept even when cargo fails. It has no baseline authority
+# without a verified baseline manifest, but remains available for diagnosis.
+if ! cargo bench -p taskmesh-bench --features iai --bench "${BENCH}" 2>&1 \
+  | tee "${baseline_dir}/benchmark-output.log"; then
+  fail "benchmark ${BENCH} failed; no evidence manifest was accepted"
 fi
-printf '%s\n' "${fingerprint}" >"${stamp}"
+
+if ! status="$(python3 "${HELPER}" finalize --root "${baseline_dir}" \
+  --fingerprint "${fingerprint}" --runner "${RUNNER_VERSION}" \
+  --valgrind "${valgrind_version}" --rustc-file "${rustc_probe}" \
+  --expected-comparison "${expected_comparison}")"; then
+  fail "runner exit 0 did not produce complete raw/summary comparison evidence"
+fi
 
 echo "taskmesh-iai-gate status=${status} fingerprint=${fingerprint} regression=${REGRESSION} schema=${SCHEMA}"
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then

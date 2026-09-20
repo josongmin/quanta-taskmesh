@@ -162,6 +162,49 @@ def test_workflow_invocations_are_read_from_every_run_shape(tmp_path: Path) -> N
     assert found["secret-gate"] == {"w.yml"}
 
 
+def test_workflow_trust_requires_full_action_pins_and_read_default(tmp_path: Path) -> None:
+    document = {
+        "permissions": {"contents": "write"},
+        "jobs": {"gate": {"steps": [{"uses": "actions/checkout@v4"}]}},
+    }
+    problems = vi.workflow_trust_problems(tmp_path / "ci.yml", document)
+    assert any("top-level permissions" in problem for problem in problems)
+    assert any("mutable action ref" in problem for problem in problems)
+
+
+def test_workflow_trust_rejects_pr_reachable_write_or_token(tmp_path: Path) -> None:
+    document = {
+        "permissions": {"contents": "read"},
+        "jobs": {
+            "trend": {
+                "permissions": {"contents": "write"},
+                "steps": [
+                    {"uses": "example/action@" + "1" * 40, "with": {"github-token": "secret"}}
+                ],
+            }
+        },
+    }
+    problems = vi.workflow_trust_problems(tmp_path / "bench.yml", document)
+    assert any("write permissions" in problem for problem in problems)
+    assert any("PR-reachable action receives github-token" in problem for problem in problems)
+
+
+def test_workflow_trust_allows_trusted_main_write_job(tmp_path: Path) -> None:
+    document = {
+        "permissions": {"contents": "read"},
+        "jobs": {
+            "publish": {
+                "if": "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+                "permissions": {"contents": "write"},
+                "steps": [
+                    {"uses": "example/action@" + "1" * 40, "with": {"github-token": "secret"}}
+                ],
+            }
+        },
+    }
+    assert vi.workflow_trust_problems(tmp_path / "bench.yml", document) == []
+
+
 def test_a_gate_step_that_cannot_fail_the_job_is_reported(tmp_path: Path) -> None:
     """Presence of `just <gate>` is not enforcement. Every way a step can run a
     gate and stay green regardless is a parity hole."""

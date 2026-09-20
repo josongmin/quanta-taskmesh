@@ -11,6 +11,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 defaults:
   run:
     shell: bash
@@ -25,13 +28,13 @@ jobs:
     outputs:
       status: ${{ steps.iai.outputs.status }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The status step diffs the fingerprint inputs against the PR base.
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
 
       - name: Install valgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind
@@ -64,7 +67,7 @@ jobs:
           echo "value=${value}" >> "$GITHUB_OUTPUT"
 
       - name: Cache iai baseline
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: target/iai
           key: iai-v3-${{ runner.os }}-${{ steps.fingerprint.outputs.value }}
@@ -119,15 +122,24 @@ jobs:
               ;;
           esac
 
-  trend:
-    name: wall-clock trend dashboard + flamegraph-on-regress (ADR 9000 / P8)
+      - name: Upload raw IAI and manifest evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: iai-evidence
+          path: target/iai
+          if-no-files-found: warn
+
+  trend-pr-compare:
+    name: read-only PR wall-clock trend compare (ADR 9000 / P8)
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
-      contents: write # auto-push the timeseries to gh-pages (main only)
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
 
       # Fresh repos/forks may not have the benchmark history branch yet. Only
       # "the ref does not exist" (ls-remote exit 2) is a reason to skip. Any other
@@ -154,41 +166,24 @@ jobs:
           python3 tools/bench/validate_bencher_output.py bench-output.txt \
             --expect admit_release --expect governance_tax
 
-      # Timeseries dashboard (gh-pages) + regression alert. On main it pushes the
-      # data point; on PRs it only compares and comments. fail-on-alert trips the
-      # flamegraph step below.
-      - name: Store + alert on regression
+      # The PR action gets no token and cannot comment or push. It can only
+      # compare the checked-out output with public gh-pages history.
+      - name: Compare against history (read-only)
         if: steps.gh_pages.outputs.exists == 'true'
-        uses: benchmark-action/github-action-benchmark@v1
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           name: taskmesh wall-clock
           tool: cargo
           output-file-path: bench-output.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench
-          auto-push: ${{ github.ref == 'refs/heads/main' }}
+          auto-push: false
           alert-threshold: '150%'
-          comment-on-alert: true
+          comment-on-alert: false
           fail-on-alert: true
 
-      # Bootstrap: on main with no history branch, publish the first data point
-      # so the trend has an origin instead of skipping forever.
-      - name: Bootstrap benchmark history (main only, first run)
-        if: steps.gh_pages.outputs.exists != 'true' && github.ref == 'refs/heads/main'
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          name: taskmesh wall-clock
-          tool: cargo
-          output-file-path: bench-output.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          gh-pages-branch: gh-pages
-          benchmark-data-dir-path: dev/bench
-          auto-push: true
-          fail-on-alert: false
-
-      - name: Skip trend compare (no history yet, not on main)
-        if: steps.gh_pages.outputs.exists != 'true' && github.ref != 'refs/heads/main'
+      - name: Skip trend compare (no history yet)
+        if: steps.gh_pages.outputs.exists != 'true'
         run: |
           echo "::notice::origin/gh-pages does not exist yet; the trend compare is skipped on this PR. The first push to main bootstraps it."
 
@@ -209,10 +204,44 @@ jobs:
           done
       - name: Upload regression profile
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: regression-profile
           path: |
             flamegraph-*.svg
             perf-stat-*.txt
           if-no-files-found: ignore
+
+  trend-main-publish:
+    name: trusted-main wall-clock trend publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: benchmark-publish
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - name: Run validated criterion hot-path benches
+        run: |
+          set -o pipefail
+          cargo bench -p taskmesh-bench --bench admit_release -- --output-format bencher \
+            | tee bench-output.txt
+          cargo bench -p taskmesh-bench --bench governance_tax -- --output-format bencher \
+            | tee -a bench-output.txt
+          python3 tools/bench/validate_bencher_output.py bench-output.txt \
+            --expect admit_release --expect governance_tax
+      - name: Publish trusted-main data point
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
+        with:
+          name: taskmesh wall-clock
+          tool: cargo
+          output-file-path: bench-output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench
+          auto-push: true
+          alert-threshold: '150%'
+          comment-on-alert: false
+          fail-on-alert: true

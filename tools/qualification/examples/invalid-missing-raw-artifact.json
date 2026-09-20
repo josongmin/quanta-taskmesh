@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "kind": "taskmesh-evidence-envelope",
+  "producer": {"id": "invalid-producer", "version": "1"},
+  "source": {"head": "1111111111111111111111111111111111111111", "tree_digest": "2222222222222222222222222222222222222222222222222222222222222222", "dirty": false},
+  "command": {"argv": ["false"], "cwd": ".", "environment": {}, "sha256": "e6fdf88ea8c2df77e79b779e1df03db4d8838ddfeafac4e987ec0e0ba89935ed"},
+  "tools": [{"name": "runner", "version": "1.0.0", "identity_sha256": "203817adcf0d6cad4f74f1a1b24b719f4bcf75822fcb00d2bd1718bcd1ece83d"}],
+  "configs": [{"path": "gate.json", "sha256": "3333333333333333333333333333333333333333333333333333333333333333"}],
+  "action": {"workflow": "workflow.yml", "workflow_sha256": "4444444444444444444444444444444444444444444444444444444444444444", "job": "local", "event": "local", "actions": []},
+  "artifacts": [{"path": "summary.json", "sha256": "5555555555555555555555555555555555555555555555555555555555555555", "size": 10, "role": "summary"}],
+  "result": {"status": "PASS", "exit_code": 0, "started_at": "2026-09-21T00:00:00Z", "finished_at": "2026-09-21T00:01:00Z", "selected_count": 1, "executed_count": 1}
+}

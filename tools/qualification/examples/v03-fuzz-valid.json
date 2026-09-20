@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "kind": "taskmesh-evidence-envelope",
+  "producer": {"id": "fuzz-campaign", "version": "1"},
+  "source": {"head": "1111111111111111111111111111111111111111", "tree_digest": "2222222222222222222222222222222222222222222222222222222222222222", "dirty": false},
+  "command": {
+    "argv": ["bash", "tools/fuzz/run.sh"],
+    "cwd": ".",
+    "environment": {"CARGO_TARGET_DIR": "target/proof"},
+    "sha256": "d16d4f045f9e4e44678ac4a514db7ddd52ccff9bcd2e1c0de9fec43a04ab42d7"
+  },
+  "tools": [{"name": "cargo-fuzz", "version": "cargo-fuzz 0.13.1", "identity_sha256": "f5f2806a64439ae56b0abf415fea4f5862cdadb5f5e43bf4a8f79e4eed5854ec"}, {"name": "rustc", "version": "rustc 1.95.0-nightly (exact-build)", "identity_sha256": "d9ffdf5341b91b661e1f0b451ee69da288c4f5bf555f3dd880736a0d6cefec78"}],
+  "configs": [{"path": "tools/fuzz/fuzz-gate.json", "sha256": "3333333333333333333333333333333333333333333333333333333333333333"}],
+  "action": {
+    "workflow": ".github/workflows/ci.yml",
+    "workflow_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "job": "fuzz",
+    "event": "pull_request",
+    "actions": ["actions/checkout@1111111111111111111111111111111111111111"]
+  },
+  "artifacts": [
+    {"path": "raw/fuzz.log", "sha256": "5555555555555555555555555555555555555555555555555555555555555555", "size": 128, "role": "raw"},
+    {"path": "fuzz-receipt.json", "sha256": "6666666666666666666666666666666666666666666666666666666666666666", "size": 64, "role": "summary"}
+  ],
+  "result": {"status": "PASS", "exit_code": 0, "started_at": "2026-09-21T00:00:00Z", "finished_at": "2026-09-21T00:01:00Z", "selected_count": 6, "executed_count": 6}
+}

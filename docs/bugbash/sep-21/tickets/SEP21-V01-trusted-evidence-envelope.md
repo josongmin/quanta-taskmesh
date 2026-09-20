@@ -1,6 +1,7 @@
 # SEP21-V01 — Trusted execution and evidence envelope
 
-- 상태: PLANNED
+- 상태: IN_PROGRESS
+- 현재 단계: phase A schema ready; phase B producer registration 대기
 - 우선순위: P1 release blocker
 - 포함 finding: TM21-011, TM21-014, TM21-022
 - 선행: 없음
@@ -104,3 +105,21 @@ uv run pytest -q tools/qualification/tests tools/gates/tests tools/bench/tests/t
 uv run python tools/gates/validate_inventory.py
 just bench-iai
 ```
+
+## Phase A evidence (2026-09-21)
+
+- schema: `tools/qualification/evidence-envelope-v1.schema.json` v1
+  (`sha256:52149f75ae4b954a7844582cd5bb53a20eb464253666681e0f1876a73ea806bb`).
+- validator: `tools/qualification/evidence.py`; canonical JSON/digest, source/command/tool/config/
+  workflow/action/artifact/result identity, selected/executed parity, UTC ordered interval을 검증한다.
+- producer fixtures:
+  `tools/qualification/examples/v02-mutation-valid.json`,
+  `tools/qualification/examples/v03-fuzz-valid.json`,
+  `tools/qualification/examples/invalid-missing-raw-artifact.json`.
+- IAI: `baseline-manifest.json`의 raw `.out` size/digest와 exact tool/config identity가 먼저
+  검증되고, 현재 run의 `summary.json`마다 old/new `Both` metric이 있을 때만 `QUALIFIED`다.
+  baseline 생성은 `BASELINE_CREATED`, stamp-only/missing/corrupt/incomplete evidence는 non-pass다.
+- workflow trust: 모든 action full-SHA pin, top-level `contents: read`, PR trend compare token 제거,
+  write/publish는 trusted-main + `benchmark-publish` environment로 분리했다.
+- phase B 보류: V02/V03 producer manifest를 shared receipt/inventory/Justfile/CI에 아직 등록하지
+  않았다. `V02_PRODUCER_READY`와 `V03_PRODUCER_READY` 둘 다 수신한 뒤 V01 owner가 통합한다.

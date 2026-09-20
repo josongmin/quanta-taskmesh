@@ -1,6 +1,8 @@
 # SEP21-V02 — Transactional mutation campaign authority
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED_UNQUALIFIED
+- producer state: runner와 integrated focused campaign 검증 완료; full current-source generated
+  sweep는 `NOT_RUN`, bounded `taskmesh-rayon` generated subset은 `FAIL`
 - 우선순위: P1 release blocker
 - 포함 finding: TM21-012, TM21-017
 - 선행: V01
@@ -93,6 +95,71 @@ curated mutation과 generated cargo-mutants campaign을 isolated exact-source tr
 - output substring만으로 exit truth 대체.
 - unrelated failures allow-all.
 - generated survivor를 수기 표 한 줄로만 waive.
+
+## Producer evidence (2026-09-21)
+
+- integrated base: `main@ba643a130dfdaf091099bb11099962198d0e5981` + producer-owned V02
+  changes. Ticket 상태는 full generated sweep가 없고 실제 subset에 survivor/unviable가 있으므로
+  `IMPLEMENTED_UNQUALIFIED`를 유지한다.
+- producer manifest: `tools/verification/mutation-gate.json` v1,
+  `sha256:c861ef1a959715f1de71f5442204b4b45aae49bd40ddb532b21f0164cec2b8bd`.
+- curated inventory: 105 entries, exact failure-set policy
+  `primary_plus_declared_cofailures_exact`; H02 authority 이동으로 실제 drift한 6개만 refresh했고
+  current integrated source에서 anchor 105/105가 정확히 한 번 일치한다. Inventory digest는
+  `00255106d5a238459d283558b420b2933822d68a8d4c7917c08c11c57371a52d`.
+- runner tests: `uv run pytest -q tools/verification/tests` — 55 passed.
+- lint/format: `uv run ruff check tools/verification` 및
+  `uv run ruff format --check tools/verification` — passed.
+- isolation negatives: exact git-visible path만 snapshot하고 ignored/unbound file은 복사하지 않음,
+  symlink 자체 보존, copy 중 path-set race fail-closed, concurrent campaign root/target 분리, normal
+  target sentinel 보존, isolated child `SIGKILL` 뒤 original digest 보존이 모두 passed.
+- manifest safety negatives: absolute/`..`/비정규 file path, parent symlink escape, manifest의
+  `CARGO_TARGET_DIR`/runner isolation env override를 모두 거부한다.
+- classifier negatives: exit 0 + failure text, nonzero control, signal, timeout, zero tests, partial
+  completion, expected + unrelated failure, red baseline이 모두 green으로 승격되지 않는다.
+- generated parser는 cargo-mutants 27.0의 real-shape fixture와 실제 local v27 artifact에서
+  `mutants.json` planned names, category txt names, `outcomes.json` executed names/summary를 모두
+  exact-set 비교한다. Equal-count identity mismatch, duplicate identity, category-summary mismatch,
+  red baseline, zero denominator, partial outcome, all-caught/nonzero-process가 모두 fail-closed다.
+  Equivalent는 mutant ID, reachability evidence, reviewer가 있어도 자동 PASS가 아니다.
+- prescribed integrated focused campaign (6 selected): baseline 4/4 `PASS`, mutation 6/6 `KILLED`,
+  source before/snapshot/after
+  `6192de0fdd022f0a295f142f15b5204dbf9b17da23f46e79bbd9a0322cb48a2b`, envelope problems 0.
+  Full curated inventory는 `NOT_RUN`이다. 이 focused result를 full curated score로 확대하지 않는다.
+- refreshed H02-authority severe campaign (6 selected): baseline 4/4 `PASS`, mutation 6/6
+  `KILLED`, 같은 source identity, envelope problems 0. 중앙 authority mutation이 여러 oracle을
+  깨뜨리는 경우 exact `expect_cofailures`만 선언했다.
+- 첫 integrated focused 시도는 mutation 6/6이 `KILLED`였지만 V03 동시 edit로 source digest가
+  변해 receipt 전체가 `FAIL`했다. 이 artifact는 non-final이며 mixed-source 증거로 재사용하지
+  않았다.
+- real generated subset (`taskmesh-rayon`, cargo-mutants 27.0.0, jobs=1): planned/executed/
+  categorized 10/10/10, `caught=4`, `missed=1`, `unviable=5`, `timeout=0`, `equivalent=0`, process
+  exit 2, signal null, timeout false, parse error null, source before/snapshot/after
+  `d163fc0538a20064f541eeed2dd209f35b1de7037143ff6bccc35f654dac3328`, envelope problems 0.
+  Receipt digest는 `700eba79928dc2fe66322226368280778e58fd83f1b38d710daa8fcf325837a6`이며
+  semantic status는 `FAIL`이다.
+- full workspace generated cargo-mutants sweep: `NOT_RUN`. Package subset/runner 검증과 full
+  generated denominator를 분리하며 R01 전 실제 full sweep와 survivor/unviable 처리가 필요하다.
+
+### V01 shared registration request
+
+- producer id/version: `mutation-campaign` / `1`.
+- envelope schema: `tools/qualification/evidence-envelope-v1.schema.json`.
+- config: `tools/verification/mutation-gate.json`과 그 digest.
+- curated command: `uv run python tools/verification/run_mutations.py`; required summary
+  `receipt.mutations.json`, baseline manifest `mutation-baseline-manifest.json`, raw stdout/stderr logs.
+- generated command: `uv run python tools/verification/run_generated_mutants.py --jobs 1`; required summary
+  `receipt.generated-mutations.json`, raw `mutants.out/**`, runner stdout/stderr.
+- source fields: HEAD, dirty flag, current-source tree digest, snapshot digest, original after digest,
+  isolation root, dedicated target directory.
+- command fields: argv, recorded environment, profile, command digest; tool fields: exact Python/Cargo/
+  rustc and cargo-mutants identity as applicable.
+- result rule: curated PASS requires every selected entry `KILLED` or `CONTROL_GREEN`, every command
+  baseline PASS, selected/executed equality, and unchanged original source. Generated PASS requires a
+  successful raw baseline, complete planned/categorized/outcome denominator, and zero missed,
+  unviable, timeout, and equivalent outcomes.
+- shared files requested from V01 owner only: Justfile recipe, gate inventory record, receipt linkage,
+  workflow execution/upload. V02 does not modify those files.
 
 ## 검증 명령 후보
 

@@ -1,303 +1,407 @@
-"""The mutation runner's own classification logic, driven without cargo.
-
-Everything the runner decides — killed, survived, wrong test, wrong reason,
-invalid (compile error, no tests, timeout), control green/broken — is a pure
-function of the test process's output, so it is tested here on captured
-output shapes. The one side effect that matters (restoring the mutated file
-whatever happens, including on a timeout) is tested against a real temporary
-file with the test command monkeypatched.
-"""
+"""Strict process, classification, and isolation tests for curated mutations."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import signal
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[3]
-RUNNER = REPO / "tools" / "verification" / "run_mutations.py"
+RUNNER = REPO / "tools/verification/run_mutations.py"
 _spec = importlib.util.spec_from_file_location("run_mutations", RUNNER)
 assert _spec and _spec.loader
 rm = importlib.util.module_from_spec(_spec)
-# Dataclasses resolve string annotations through `sys.modules`; register the
-# module before executing it or `@dataclass` cannot find its own namespace.
 sys.modules["run_mutations"] = rm
 _spec.loader.exec_module(rm)
-
-
-def proc(stdout: str = "", stderr: str = "", code: int = 0) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=["x"], returncode=code, stdout=stdout, stderr=stderr)
-
-
-def cargo_run(*failed: str, total: int = 3, message: str = "", messages: dict | None = None) -> str:
-    """libtest-shaped output: FAILED lines, then a `---- name stdout ----` block
-    per failure (message from `messages[name]`, else `message`)."""
-    lines = [f"running {total} tests"]
-    for name in failed:
-        lines.append(f"test {name} ... FAILED")
-    if failed:
-        lines.append("\nfailures:\n")
-        for name in failed:
-            text = (messages or {}).get(name, message)
-            lines.append(f"---- {name} stdout ----\nthread 'x' panicked at src/x.rs:1:1:\n{text}\n")
-        lines.append("\nfailures:")
-        lines.extend(f"    {name}" for name in failed)
-    lines.append(f"\ntest result: {'FAILED' if failed else 'ok'}. …")
-    return "\n".join(lines) + "\n"
+campaign_module = sys.modules["campaign"]
 
 
 MUT = {
     "id": "m",
     "finding": "F",
-    "file": "x.rs",
+    "file": "src.rs",
     "find": "a",
     "replace": "b",
     "package": "p",
     "test_target": "t",
     "expect_failing_test": "the_test",
     "expect_message": "the property",
+    "expect_cofailures": [],
 }
 
 
-def test_killed_requires_the_named_test_and_the_named_reason() -> None:
-    assert rm.evaluate(MUT, proc(cargo_run("the_test", message="the property")))[0] == "KILLED"
-    assert rm.evaluate(MUT, proc(cargo_run()))[0] == "SURVIVED"
-    wrong_test = proc(cargo_run("other_test", message="the property"))
-    assert rm.evaluate(MUT, wrong_test)[0] == "WRONG_TEST"
-    assert (
-        rm.evaluate(MUT, proc(cargo_run("the_test", message="something else")))[0] == "WRONG_REASON"
+def cargo_run(*failed: str, total: int = 3, messages: dict[str, str] | None = None) -> str:
+    lines = [f"running {total} tests"]
+    for name in failed:
+        lines.append(f"test {name} ... FAILED")
+    if failed:
+        lines.append("\nfailures:\n")
+        for name in failed:
+            message = (messages or {}).get(name, "the property")
+            lines.append(f"---- {name} stdout ----\n{message}\n")
+        lines.append("failures:")
+    lines.append(f"test result: {'FAILED' if failed else 'ok'}. 0 passed")
+    return "\n".join(lines) + "\n"
+
+
+def process(
+    stdout: str,
+    *,
+    exit_code: int | None = 0,
+    process_signal: int | None = None,
+    timed_out: bool = False,
+) -> rm.ProcessResult:
+    return rm.ProcessResult(
+        argv=["cargo", "test"],
+        returncode=-process_signal if process_signal is not None else exit_code,
+        exit_code=exit_code,
+        signal=process_signal,
+        timed_out=timed_out,
+        stdout=stdout,
+        stderr="",
+        started_at="2026-09-21T00:00:00Z",
+        finished_at="2026-09-21T00:00:01Z",
+        duration_s=1.0,
     )
 
 
-def test_the_reason_must_come_from_the_named_test_not_a_neighbour() -> None:
-    """Several `expect_message`s are shared helper strings; a different failing
-    test emitting the message must not credit the named one."""
-    out = cargo_run(
-        "other",
-        "the_test",
-        messages={"other": "the property", "the_test": "something else"},
+def init_repo(path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=path, check=True)
+    (path / "src.rs").write_text("a\n", encoding="utf-8")
+    (path / "target").mkdir()
+    (path / "target/sentinel").write_text("normal-target", encoding="utf-8")
+    subprocess.run(["git", "add", "src.rs"], cwd=path, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=path, check=True)
+
+
+def test_kill_requires_nonzero_exit_exact_failure_set_and_named_reason() -> None:
+    killed = process(cargo_run("the_test"), exit_code=101)
+    assert rm.evaluate(MUT, killed)[0] == "KILLED"
+    assert rm.evaluate(MUT, process(cargo_run("the_test"), exit_code=0))[0] == (
+        "INVALID_EXIT_SUCCESS"
     )
-    assert rm.evaluate(MUT, proc(out))[0] == "WRONG_REASON"
-    out = cargo_run(
-        "other",
-        "the_test",
-        messages={"other": "something else", "the_test": "the property"},
+    unrelated = process(cargo_run("the_test", "other"), exit_code=101)
+    assert rm.evaluate(MUT, unrelated)[0] == "UNRELATED_FAILURE_SET"
+    wrong_reason = process(
+        cargo_run("the_test", messages={"the_test": "unrelated reason"}), exit_code=101
     )
-    assert rm.evaluate(MUT, proc(out))[0] == "KILLED"
+    assert rm.evaluate(MUT, wrong_reason)[0] == "WRONG_REASON"
 
 
-def test_pytest_reason_is_scoped_to_the_named_test_too() -> None:
-    py = {**MUT, "runner": "pytest", "test_target": "tools/x/tests/test_x.py::the_test"}
-    out = (
-        "FF\n"
-        "=================================== FAILURES ===================================\n"
-        "_________________________________ other _________________________________\n"
-        "    assert False, 'the property'\n"
-        "E   AssertionError: the property\n"
-        "________________________________ the_test _______________________________\n"
-        "E   AssertionError: something else\n"
-        "=========================== short test summary info ============================\n"
-        "FAILED tools/x/tests/test_x.py::other - AssertionError: the property\n"
-        "FAILED tools/x/tests/test_x.py::the_test - AssertionError: something else\n"
-        "2 failed in 0.10s\n"
-    )
-    assert rm.evaluate(py, proc(out, code=1))[0] == "WRONG_REASON"
-    assert (
-        rm.evaluate(py, proc(out.replace("something else", "the property"), code=1))[0] == "KILLED"
-    )
-
-
-def test_a_long_pytest_failure_header_keeps_its_assertion_reason() -> None:
-    name = "test_coverage_status_line_discloses_uncollected_and_instantiation_metrics"
-    out = (
-        f"__ {name} ___\n\n"
-        "E       AssertionError: instantiation coverage was omitted\n"
-        "=========================== short test summary info ============================\n"
-        f"FAILED tools/gates/tests/test_inventory.py::{name}\n"
-    )
-    failure = rm.failure_output(out, name, "pytest")
-    assert "instantiation coverage was omitted" in failure, (
-        "a long pytest header lost its assertion reason"
-    )
-
-
-def test_pytest_long_runs_and_fixture_errors_are_classified() -> None:
-    py = {**MUT, "runner": "pytest", "test_target": "tools/x/tests/test_x.py::the_test"}
-    # Past a minute pytest appends a wall-clock suffix; the count must still parse.
-    long_run = (
-        "FAILED tools/x/tests/test_x.py::the_test - AssertionError: the property\n"
-        "1 failed, 194 passed in 80.09s (0:01:20)\n"
-    )
-    assert rm.collected_tests(long_run, "pytest") == 195
-    assert rm.evaluate(py, proc(long_run, code=1))[0] == "KILLED"
-    # A fixture ERROR on the named test is a failure to run it, not a survivor.
-    errored = (
-        "ERROR tools/x/tests/test_x.py::the_test - RuntimeError: the property\n1 error in 0.10s\n"
-    )
-    assert rm.failing_tests(errored, "pytest") == ["the_test"]
-    assert rm.evaluate(py, proc(errored, code=1))[0] == "KILLED"
-
-
-def test_a_mutant_that_did_not_run_is_invalid_not_killed() -> None:
-    status, _, _ = rm.evaluate(
-        MUT, proc(stderr="error[E0308]: mismatched types\ncould not compile")
-    )
-    assert status == "INVALID_COMPILE_ERROR"
-    assert rm.evaluate(MUT, proc("running 0 tests\n"))[0] == "INVALID_NO_TESTS"
-
-
-def test_a_control_must_stay_green() -> None:
-    control = {**MUT, "finding": "control", "expect_no_failure": True}
-    assert rm.evaluate(control, proc(cargo_run()))[0] == "CONTROL_GREEN"
-    assert rm.evaluate(control, proc(cargo_run("the_test")))[0] == "CONTROL_BROKEN"
-
-
-def test_pytest_output_is_classified_the_same_way() -> None:
-    py = {**MUT, "runner": "pytest", "test_target": "tools/x/tests/test_x.py::the_test"}
-    killed = (
-        "F..\n"
-        "FAILED tools/x/tests/test_x.py::the_test - AssertionError: the property\n"
-        "1 failed, 2 passed in 0.10s\n"
-    )
-    assert rm.evaluate(py, proc(killed, code=1))[0] == "KILLED"
-    assert rm.evaluate(py, proc("...\n3 passed in 0.10s\n"))[0] == "SURVIVED"
-    wrong = "FAILED tools/x/tests/test_x.py::other - x\n1 failed, 2 passed in 0.1s\n"
-    assert rm.evaluate(py, proc(wrong, code=1))[0] == "WRONG_TEST"
-    assert rm.evaluate(py, proc(stderr="  File x.py\nSyntaxError: invalid syntax"))[0] == (
-        "INVALID_COMPILE_ERROR"
-    )
-    assert rm.evaluate(py, proc("no tests ran in 0.01s\n"))[0] == "INVALID_NO_TESTS"
-
-
-def test_the_test_command_reflects_runner_and_profile() -> None:
-    assert rm.test_command(MUT)[:5] == ["cargo", "test", "-p", "p", "--test"]
-    assert "--release" not in rm.test_command(MUT)
-    assert "--release" in rm.test_command({**MUT, "profile": "release"})
-    assert rm.test_command({**MUT, "test_target": "lib"})[4] == "--lib"
-    py = rm.test_command({**MUT, "runner": "pytest", "test_target": "a.py::t"})
-    assert py[1:3] == ["-m", "pytest"] and py[-1] == "a.py::t"
-    assert "-rfE" in py, "errors must be listed in the summary, not only failures"
-    # A model-check target needs its feature and its cfg together.
-    shuttle = rm.test_command(
-        {**MUT, "cargo_args": ["--features", "shuttle"], "env": {"RUSTFLAGS": "--cfg shuttle"}}
-    )
-    assert shuttle[shuttle.index("--features") + 1] == "shuttle"
-    assert shuttle.index("--features") < shuttle.index("--test"), "cargo args precede the selector"
+def test_declared_cofailure_is_exact_not_allow_all() -> None:
+    mutation = {**MUT, "expect_cofailures": ["known_peer"]}
+    exact = process(cargo_run("the_test", "known_peer"), exit_code=101)
+    assert rm.evaluate(mutation, exact)[0] == "KILLED"
+    missing = process(cargo_run("the_test"), exit_code=101)
+    assert rm.evaluate(mutation, missing)[0] == "UNRELATED_FAILURE_SET"
+    extra = process(cargo_run("the_test", "known_peer", "stranger"), exit_code=101)
+    assert rm.evaluate(mutation, extra)[0] == "UNRELATED_FAILURE_SET"
 
 
 @pytest.mark.parametrize(
-    "broken,reason",
+    ("result", "status"),
     [
-        ({**MUT, "expect_message": ""}, "missing expect_message"),
-        ({**MUT, "replace": "a"}, "identical"),
-        ({**MUT, "runner": "make"}, "unknown runner"),
-        ({**MUT, "profile": "fast"}, "unknown profile"),
-        ({**MUT, "expect_no_failure": True}, "labelled finding=control"),
-        ({**MUT, "finding": "control"}, "without expect_no_failure"),
-        ({k: v for k, v in MUT.items() if k != "expect_failing_test"}, "expect_failing_test"),
-        ({**MUT, "env": {"RUSTFLAGS": 1}}, "env must be"),
-        ({**MUT, "cargo_args": "--features shuttle"}, "cargo_args must be"),
-        ({**MUT, "runner": "pytest", "env": {"X": "1"}}, "cargo runner only"),
+        (process(cargo_run(), exit_code=0), "SURVIVED"),
+        (process(cargo_run(), exit_code=101), "INVALID_NO_FAILURE_DETAIL"),
+        (process("running 0 tests\ntest result: ok. 0 passed\n", exit_code=0), "INVALID_NO_TESTS"),
+        (process("running 3 tests\n", exit_code=101), "INVALID_PARTIAL"),
+        (process(cargo_run("the_test"), exit_code=None, process_signal=9), "INVALID_SIGNAL"),
+        (process(cargo_run("the_test"), exit_code=None, timed_out=True), "INVALID_TIMEOUT"),
     ],
 )
-def test_an_entry_that_cannot_prove_its_claim_is_refused(broken: dict, reason: str) -> None:
-    with pytest.raises(SystemExit) as raised:
-        rm.validate_entry(broken)
-    assert reason in str(raised.value)
+def test_abnormal_process_truth_is_never_killed(result: rm.ProcessResult, status: str) -> None:
+    assert rm.evaluate(MUT, result)[0] == status
 
 
-def test_an_inventory_without_a_control_is_refused(tmp_path: Path) -> None:
-    path = tmp_path / "m.json"
-    path.write_text(json.dumps({"mutations": [MUT]}))
-    with pytest.raises(SystemExit, match="no control entry"):
-        rm.load_inventory(path)
+def test_control_and_baseline_require_clean_completion() -> None:
+    control = {**MUT, "finding": "control", "expect_no_failure": True}
+    assert rm.evaluate(control, process(cargo_run(), exit_code=0))[0] == "CONTROL_GREEN"
+    assert rm.evaluate(control, process(cargo_run(), exit_code=101))[0] == "CONTROL_BAD_EXIT"
+    assert rm.baseline_evaluate(MUT, process(cargo_run(), exit_code=0))[0] == "PASS"
+    assert rm.baseline_evaluate(MUT, process(cargo_run("other"), exit_code=101))[0] == "FAIL"
 
 
-def test_the_committed_inventory_validates() -> None:
-    mutations = rm.load_inventory(rm.INVENTORY)
-    assert len(mutations) >= 30
-    controls = [m for m in mutations if m.get("expect_no_failure")]
-    assert len(controls) == 1 and controls[0]["finding"] == "control"
+def test_pytest_failure_reason_is_scoped_to_the_expected_test() -> None:
+    mutation = {**MUT, "runner": "pytest", "test_target": "x.py::the_test"}
+    output = (
+        "__ the_test __\nE AssertionError: wrong\n"
+        "=========================== short test summary info ============================\n"
+        "FAILED x.py::the_test - AssertionError: wrong\n1 failed in 0.1s\n"
+    )
+    assert rm.evaluate(mutation, process(output, exit_code=1))[0] == "WRONG_REASON"
+    assert (
+        rm.evaluate(mutation, process(output.replace("wrong", "the property"), exit_code=1))[0]
+        == "KILLED"
+    )
+    fixture_error = "ERROR x.py::the_test - RuntimeError: the property\n1 error in 0.1s\n"
+    assert rm.evaluate(mutation, process(fixture_error, exit_code=1))[0] == (
+        "INVALID_HARNESS_ERROR"
+    )
 
 
-def test_receipt_names_its_curated_scope_and_separates_the_control() -> None:
-    mutations = rm.load_inventory(rm.INVENTORY)
-    outcomes = [
-        rm.Outcome(
-            mutation_id=mutation["id"],
-            finding=mutation["finding"],
-            status="CONTROL_GREEN" if mutation.get("expect_no_failure") else "KILLED",
-            detail="proof",
-            duration_s=0.1,
-        )
-        for mutation in mutations
-    ]
-    receipt = rm.build_receipt(mutations, outcomes, [])
-    assert receipt["schema_version"] == 2
-    assert receipt["kind"] == "curated-single-edit-inventory"
-    assert receipt["inventory_total"] == 105
-    assert receipt["selection"] == "full"
-    assert len(receipt["inventory_digest"]) == 64
-    assert receipt["status_counts"] == {"CONTROL_GREEN": 1, "KILLED": 104}
-    assert receipt["scope"] == {
-        "runner_counts": {"cargo": 90, "pytest": 15},
-        "source_counts": {
-            "tooling_faults": 15,
-            "rust_crate_src": 89,
-            "rust_crate_tests": 1,
-        },
-        "control_entries": 1,
+def test_cargo_failure_reason_supports_module_qualified_test_names() -> None:
+    mutation = {
+        **MUT,
+        "expect_failing_test": "runtime::tests::the_test",
+        "expect_message": "the property",
     }
+    output = cargo_run("runtime::tests::the_test")
+    assert rm.evaluate(mutation, process(output, exit_code=101))[0] == "KILLED"
 
 
-def test_every_committed_anchor_matches_its_source_exactly_once() -> None:
-    """Caught by the fast gate, not by minute 28 of the mutation run: `cargo fmt`
-    or `ruff format` rewrapping a line moves an anchor, and a mutation whose
-    anchor no longer matches proves nothing."""
+def test_inventory_contract_and_command_identity_are_deterministic(tmp_path: Path) -> None:
+    inventory = tmp_path / "inventory.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "mutations": [
+                    MUT,
+                    {**MUT, "id": "control", "finding": "control", "expect_no_failure": True},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = rm.load_inventory(inventory)
+    assert len(loaded) == 2
+    assert rm.command_identity(MUT) == rm.command_identity(dict(reversed(list(MUT.items()))))
+    assert rm.test_command(MUT)[:5] == ["cargo", "test", "-p", "p", "--test"]
+
+
+@pytest.mark.parametrize(
+    ("broken", "reason"),
+    [
+        ({**MUT, "expect_message": ""}, "expect_message"),
+        ({**MUT, "replace": "a"}, "identical"),
+        ({**MUT, "runner": "unknown"}, "unknown runner"),
+        ({**MUT, "expect_cofailures": "peer"}, "expect_cofailures"),
+        ({**MUT, "env": {"X": 1}}, "env must be"),
+    ],
+)
+def test_invalid_inventory_entries_fail_closed(broken: dict, reason: str) -> None:
+    with pytest.raises(SystemExit, match=reason):
+        rm.validate_entry(broken)
+
+
+@pytest.mark.parametrize("path", ["/tmp/src.rs", "../src.rs", "dir/../src.rs", "./src.rs", "a//b"])
+def test_manifest_file_must_be_normalized_repo_relative(path: str) -> None:
+    with pytest.raises(SystemExit, match="normalized repository-relative"):
+        rm.validate_entry({**MUT, "file": path})
+
+
+@pytest.mark.parametrize("key", sorted(rm.RUNNER_OWNED_ENV))
+def test_manifest_env_cannot_override_runner_isolation_authority(key: str) -> None:
+    with pytest.raises(SystemExit, match="runner-owned isolation"):
+        rm.validate_entry({**MUT, "env": {key: "attacker-value"}})
+
+
+def test_runner_owned_environment_wins_defensively() -> None:
+    campaign = SimpleNamespace(target=Path("/isolated/target"))
+    mutation = {**MUT, "env": {"RUST_BACKTRACE": "1", "CARGO_TARGET_DIR": "/escape"}}
+    _actual, recorded = rm.command_environment(mutation, campaign)
+    assert recorded["CARGO_TARGET_DIR"] == "/isolated/target"
+    assert recorded["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert recorded["RUST_BACKTRACE"] == "1"
+
+
+def test_parent_symlink_escape_is_rejected(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    outside = tmp_path / "outside"
+    source.mkdir()
+    outside.mkdir()
+    (outside / "src.rs").write_text("a\n", encoding="utf-8")
+    (source / "escape").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(RuntimeError, match="escapes the isolated source"):
+        rm.apply_mutation(source, {**MUT, "file": "escape/src.rs"})
+
+
+def test_two_campaigns_have_disjoint_source_and_target_and_preserve_original(
+    tmp_path: Path,
+) -> None:
+    init_repo(tmp_path)
+    before = (tmp_path / "src.rs").read_bytes()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        campaigns = list(pool.map(lambda _index: rm.create_isolated_campaign(tmp_path), range(2)))
+    try:
+        assert campaigns[0].source != campaigns[1].source
+        assert campaigns[0].target != campaigns[1].target
+        for campaign in campaigns:
+            rm.apply_mutation(campaign.source, MUT)
+            assert (campaign.source / "src.rs").read_text(encoding="utf-8") == "b\n"
+        assert (tmp_path / "src.rs").read_bytes() == before
+        assert (tmp_path / "target/sentinel").read_text(encoding="utf-8") == "normal-target"
+    finally:
+        for campaign in campaigns:
+            campaign.cleanup()
+
+
+def test_snapshot_copies_only_git_visible_paths_and_preserves_symlink(tmp_path: Path) -> None:
+    init_repo(tmp_path)
+    (tmp_path / ".gitignore").write_text("ignored.txt\nignored-dir/\n", encoding="utf-8")
+    (tmp_path / "link.rs").symlink_to("src.rs")
+    subprocess.run(["git", "add", ".gitignore", "link.rs"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "bind ignore and symlink"], cwd=tmp_path, check=True)
+    (tmp_path / "ignored.txt").write_text("not-bound", encoding="utf-8")
+    (tmp_path / "ignored-dir").mkdir()
+    (tmp_path / "ignored-dir/secret").write_text("not-bound", encoding="utf-8")
+
+    campaign = rm.create_isolated_campaign(tmp_path)
+    try:
+        assert not (campaign.source / "ignored.txt").exists()
+        assert not (campaign.source / "ignored-dir").exists()
+        assert (campaign.source / "link.rs").is_symlink()
+        assert os.readlink(campaign.source / "link.rs") == "src.rs"
+        assert sorted(campaign.source_paths) == campaign_module.git_source_paths(tmp_path)
+    finally:
+        campaign.cleanup()
+
+
+def test_snapshot_rejects_path_set_race(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    init_repo(tmp_path)
+    original_copy = campaign_module.shutil.copy2
+    raced = False
+
+    def copy_and_race(*args: object, **kwargs: object) -> object:
+        nonlocal raced
+        copied = original_copy(*args, **kwargs)
+        if not raced:
+            raced = True
+            (tmp_path / "late.rs").write_text("new git-visible source", encoding="utf-8")
+        return copied
+
+    monkeypatch.setattr(campaign_module.shutil, "copy2", copy_and_race)
+    with pytest.raises(RuntimeError, match="source changed"):
+        rm.create_isolated_campaign(tmp_path)
+
+
+def test_abrupt_child_exit_can_only_dirty_the_isolated_copy(tmp_path: Path) -> None:
+    init_repo(tmp_path)
+    campaign = rm.create_isolated_campaign(tmp_path)
+    before = (tmp_path / "src.rs").read_bytes()
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; Path('src.rs').write_text('mutant\\n'); "
+            "import time; time.sleep(60)",
+        ],
+        cwd=campaign.source,
+        start_new_session=True,
+    )
+    try:
+        time.sleep(0.1)
+        os.killpg(child.pid, signal.SIGKILL)
+        child.wait(timeout=5)
+        assert (campaign.source / "src.rs").read_text(encoding="utf-8") == "mutant\n"
+        assert (tmp_path / "src.rs").read_bytes() == before
+        assert campaign.original_is_unchanged(tmp_path)
+    finally:
+        campaign.cleanup()
+
+
+def test_original_path_set_change_is_detected(tmp_path: Path) -> None:
+    init_repo(tmp_path)
+    campaign = rm.create_isolated_campaign(tmp_path)
+    try:
+        (tmp_path / "new.txt").write_text("new", encoding="utf-8")
+        assert not campaign.original_is_unchanged(tmp_path)
+        assert campaign.source_after(tmp_path).startswith("PATH_SET_CHANGED:")
+    finally:
+        campaign.cleanup()
+
+
+def test_output_cleanup_is_confined_to_the_v02_artifact_root(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must be below"):
+        rm.prepare_output_dir(tmp_path, tmp_path / "unrelated")
+    with pytest.raises(ValueError, match="must name a campaign"):
+        rm.prepare_output_dir(tmp_path, tmp_path / "target/sep21/v02")
+    output = tmp_path / "target/sep21/v02/safe-run"
+    output.mkdir(parents=True)
+    (output / "old").write_text("stale", encoding="utf-8")
+    assert rm.prepare_output_dir(tmp_path, output) == output
+    assert not (output / "old").exists()
+
+
+def test_baseline_identity_and_manifest_bind_all_evidence_dimensions(tmp_path: Path) -> None:
+    record: dict[str, object] = {
+        "definition_sha256": "definition",
+        "source_head": "head",
+        "source_snapshot_sha256": "source",
+        "tools_sha256": "tools",
+        "status": "PASS",
+        "detail": "green",
+        "command": ["cargo", "test"],
+        "command_sha256": "command",
+        "environment": {"CARGO_TARGET_DIR": "/isolated"},
+        "profile": "debug",
+        "exit_code": 0,
+        "signal": None,
+        "timed_out": False,
+        "completed": True,
+        "test_count": 3,
+        "observed_failures": [],
+        "started_at": "start",
+        "finished_at": "finish",
+        "duration_s": 1.0,
+        "stdout_artifact": "raw/baseline.stdout.log",
+        "stderr_artifact": "raw/baseline.stderr.log",
+        "stdout_sha256": "stdout",
+        "stderr_sha256": "stderr",
+    }
+    original = rm.baseline_identity(record)
+    for key, replacement in (
+        ("source_snapshot_sha256", "different-source"),
+        ("tools_sha256", "different-tools"),
+        ("command_sha256", "different-command"),
+        ("exit_code", 1),
+        ("stdout_sha256", "different-stdout"),
+    ):
+        changed = deepcopy(record)
+        changed[key] = replacement
+        assert rm.baseline_identity(changed) != original
+
+    init_repo(tmp_path)
+    campaign = rm.create_isolated_campaign(tmp_path)
+    try:
+        baseline = rm.Baseline(identity_sha256=original, **record)
+        baseline_payload = vars(baseline).copy()
+        assert baseline_payload.pop("identity_sha256") == original
+        assert rm.baseline_identity(baseline_payload) == original
+        tools = [{"name": "cargo", "version": "cargo 1", "identity_sha256": "tool-id"}]
+        manifest = rm.build_baseline_manifest(campaign, tools, [baseline])
+        payload = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+        assert manifest["manifest_sha256"] == rm.canonical_digest(payload)
+        assert manifest["source"]["snapshot_sha256"] == campaign.snapshot_digest
+        assert manifest["tools_sha256"] == rm.canonical_digest(tools)
+        assert manifest["baselines"][0]["identity_sha256"] == original
+    finally:
+        campaign.cleanup()
+
+
+def test_current_inventory_has_one_control_and_explicit_exact_policy() -> None:
+    inventory = json.loads(rm.INVENTORY.read_text(encoding="utf-8"))
+    mutations = rm.load_inventory(rm.INVENTORY)
+    assert inventory["failure_set_policy"] == "primary_plus_declared_cofailures_exact"
+    assert len(mutations) == 105
+    assert sum(bool(mutation.get("expect_no_failure")) for mutation in mutations) == 1
+
+
+def test_every_current_inventory_anchor_matches_exactly_once() -> None:
     drifted = []
-    for m in rm.load_inventory(rm.INVENTORY):
-        text = (REPO / m["file"]).read_text(encoding="utf-8")
-        count = text.count(m["find"])
+    for mutation in rm.load_inventory(rm.INVENTORY):
+        count = (REPO / mutation["file"]).read_text(encoding="utf-8").count(mutation["find"])
         if count != 1:
-            drifted.append((m["id"], count))
-    assert not drifted, f"anchors that do not match exactly once: {drifted}"
-
-
-def test_a_timeout_is_invalid_and_the_file_is_still_restored(tmp_path: Path, monkeypatch) -> None:
-    """The docstring promised a hang fixture; this is it. A mutant whose tests
-    never finish is INVALID_TIMEOUT (never KILLED), and the mutated source is
-    restored even though the run never returned normally."""
-    target = tmp_path / "src.rs"
-    target.write_text("fn f() { a }\n")
-    monkeypatch.setattr(rm, "REPO", tmp_path)
-
-    def hang(_mutation: dict) -> subprocess.CompletedProcess[str]:
-        assert target.read_text() == "fn f() { b }\n", "the mutant is applied while tests run"
-        raise subprocess.TimeoutExpired(cmd="cargo test", timeout=rm.TEST_TIMEOUT_SECONDS)
-
-    monkeypatch.setattr(rm, "run_tests", hang)
-    outcome = rm.run_one({**MUT, "file": "src.rs"}, verbose=False)
-    assert outcome.status == "INVALID_TIMEOUT"
-    assert target.read_text() == "fn f() { a }\n", "restored after the timeout"
-
-
-def test_an_anchor_that_does_not_match_exactly_once_is_refused(tmp_path: Path, monkeypatch) -> None:
-    target = tmp_path / "src.rs"
-    target.write_text("a a\n")
-    monkeypatch.setattr(rm, "REPO", tmp_path)
-    with pytest.raises(SystemExit, match="matched 2 times"):
-        rm.apply_mutation({**MUT, "file": "src.rs"})
-    assert target.read_text() == "a a\n"
-
-
-def test_require_clean_refuses_a_dirty_tree(tmp_path: Path, monkeypatch) -> None:
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    (tmp_path / "f.txt").write_text("x")
-    monkeypatch.setattr(rm, "REPO", tmp_path)
-    assert rm.verify_tree(require_clean=False) == ["f.txt"], "dirtiness is reported, not hidden"
-    with pytest.raises(SystemExit, match="dirty tree"):
-        rm.verify_tree(require_clean=True)
+            drifted.append((mutation["id"], count))
+    assert not drifted, f"current-source mutation anchors drifted: {drifted}"

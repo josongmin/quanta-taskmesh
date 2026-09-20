@@ -1,0 +1,40 @@
+[
+  {
+    "name": "src/lib.rs:2:5: replace positive -> bool with true",
+    "package": "v27-fixture",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "positive",
+      "return_type": "-> bool",
+      "span": {
+        "start": {"line": 1, "column": 1},
+        "end": {"line": 3, "column": 2}
+      }
+    },
+    "span": {
+      "start": {"line": 2, "column": 5},
+      "end": {"line": 2, "column": 14}
+    },
+    "replacement": "true",
+    "genre": "FnValue"
+  },
+  {
+    "name": "src/lib.rs:2:5: replace positive -> bool with false",
+    "package": "v27-fixture",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "positive",
+      "return_type": "-> bool",
+      "span": {
+        "start": {"line": 1, "column": 1},
+        "end": {"line": 3, "column": 2}
+      }
+    },
+    "span": {
+      "start": {"line": 2, "column": 5},
+      "end": {"line": 2, "column": 14}
+    },
+    "replacement": "false",
+    "genre": "FnValue"
+  }
+]

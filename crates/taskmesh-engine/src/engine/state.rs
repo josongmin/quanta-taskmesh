@@ -419,12 +419,53 @@ pub struct GrantRequest<'a> {
     pub claim_waker: Option<Arc<dyn PermitWaker>>,
 }
 
+/// A live operation identity has at most one permit. Admission rejects a second
+/// `(root, operation)` before grant, so a set of permit IDs would only allocate
+/// an extra tree node for every grant. The root operation is stored inline;
+/// descendants need a keyed lookup for exact immediate-parent resolution.
+#[derive(Default)]
+struct RootOperationPermits {
+    root: Option<PermitId>,
+    descendants: BTreeMap<String, PermitId>,
+}
+
+impl RootOperationPermits {
+    fn get(&self, root_operation_id: &str, operation: &str) -> Option<PermitId> {
+        if operation == root_operation_id {
+            self.root
+        } else {
+            self.descendants.get(operation).copied()
+        }
+    }
+
+    fn insert(&mut self, root_operation_id: &str, operation: &str, permit_id: PermitId) {
+        let previous = if operation == root_operation_id {
+            self.root.replace(permit_id)
+        } else {
+            self.descendants.insert(operation.to_owned(), permit_id)
+        };
+        debug_assert!(previous.is_none(), "duplicate live operation identity");
+    }
+
+    fn remove(&mut self, root_operation_id: &str, operation: &str) -> Option<PermitId> {
+        if operation == root_operation_id {
+            self.root.take()
+        } else {
+            self.descendants.remove(operation)
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.root.is_none() && self.descendants.is_empty()
+    }
+}
+
 /// The full governed state. One instance lives behind the governor's mutex.
 #[derive(Default)]
 pub struct GovernedState {
     pub classes: BTreeMap<TaskClass, ClassState>,
     pub permits: BTreeMap<PermitId, PermitRecord>,
-    pub operation_permits: BTreeMap<String, BTreeMap<String, BTreeSet<PermitId>>>,
+    operation_permits: BTreeMap<String, RootOperationPermits>,
     pub roots: BTreeMap<String, RootExecutionState>,
     /// The `(root, stage)` pairs a child currently occupies — queued or granted.
     /// Keyed by root so the admit-path lookup borrows the spec's strings instead
@@ -503,15 +544,15 @@ impl GovernedState {
         &self,
         root_operation_id: &str,
         operation: &str,
-    ) -> Option<&BTreeSet<PermitId>> {
+    ) -> Option<PermitId> {
         self.operation_permits
             .get(root_operation_id)?
-            .get(operation)
+            .get(root_operation_id, operation)
     }
 
     pub fn has_operation_identity(&self, root_operation_id: &str, operation: &str) -> bool {
         self.permits_for_operation(root_operation_id, operation)
-            .is_some_and(|permits| !permits.is_empty())
+            .is_some()
             || self.classes.values().any(|class| {
                 class.queue.iter().any(|request| {
                     request.root_operation_id == root_operation_id && request.operation == operation
@@ -552,18 +593,23 @@ impl GovernedState {
             let slot = self.capability_in_use.entry(id.clone()).or_insert(0);
             *slot = slot.saturating_add(1);
         }
-        self.operation_permits
-            .entry(root_operation_id.to_owned())
-            .or_default()
-            .entry(operation.to_owned())
-            .or_default()
-            .insert(permit_id);
+        if let Some(operations) = self.operation_permits.get_mut(root_operation_id) {
+            operations.insert(root_operation_id, operation, permit_id);
+        } else {
+            let mut operations = RootOperationPermits::default();
+            operations.insert(root_operation_id, operation, permit_id);
+            self.operation_permits
+                .insert(root_operation_id.to_owned(), operations);
+        }
 
         // Recursion guard and root attribution are CHILD-only. A root must never
         // occupy `(root, stage)` itself, else its own first child — which targets
         // the parent stage — would be (wrongly) rejected as recursive.
         if matches!(scope, TaskScope::Child { .. }) {
-            let root = self.roots.entry(root_operation_id.to_owned()).or_default();
+            let root = match self.roots.get_mut(root_operation_id) {
+                Some(root) => root,
+                None => self.roots.entry(root_operation_id.to_owned()).or_default(),
+            };
             root.child_inflight += 1;
             root.cpu_units += u128::from(cost.cpu_units);
             root.memory_units += u128::from(cost.memory_units);
@@ -769,12 +815,12 @@ impl GovernedState {
             }
         }
         if let Some(operations) = self.operation_permits.get_mut(&record.root_operation_id) {
-            if let Some(ids) = operations.get_mut(&record.operation) {
-                ids.remove(&permit_id);
-                if ids.is_empty() {
-                    operations.remove(&record.operation);
-                }
-            }
+            let removed = operations.remove(&record.root_operation_id, &record.operation);
+            debug_assert_eq!(
+                removed,
+                Some(permit_id),
+                "permit missing from exact operation identity index"
+            );
             if operations.is_empty() {
                 self.operation_permits.remove(&record.root_operation_id);
             }

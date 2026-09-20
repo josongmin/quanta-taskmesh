@@ -25,6 +25,7 @@ from tools.qualification.evidence import (  # noqa: E402
     command_digest,
     envelope_problems,
     file_identity,
+    runtime_action,
     tool_identity_digest,
 )
 from tools.qualification.receipt import source_identity  # noqa: E402
@@ -413,7 +414,6 @@ def run_all(output_dir: Path) -> int:
         "environment": {"RUSTFLAGS": "checker-specific; see receipt"},
     }
     command["sha256"] = command_digest(command)
-    workflow = REPO / ".github/workflows/ci.yml"
     artifacts = [
         *(
             {**file_identity(raw_dir / f"{name}.log", relative_to=REPO), "role": "raw"}
@@ -450,13 +450,12 @@ def run_all(output_dir: Path) -> int:
                 "sha256": sha256(REPO / "crates/taskmesh-engine/tests/model_replay_fixture.rs"),
             },
         ],
-        "action": {
-            "workflow": workflow.relative_to(REPO).as_posix(),
-            "workflow_sha256": sha256(workflow),
-            "job": "loom+shuttle",
-            "event": os.environ.get("GITHUB_EVENT_NAME", "local"),
-            "actions": [],
-        },
+        "action": runtime_action(
+            root=REPO,
+            source_head=source_before["head"],
+            local_workflow="tools/modelcheck/producer-manifest.json",
+            local_job="local-modelcheck",
+        ),
         "artifacts": artifacts,
         "result": {
             "status": status,

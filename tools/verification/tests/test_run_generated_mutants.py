@@ -237,6 +237,17 @@ def test_raw_manifest_binds_every_file(tmp_path: Path) -> None:
     assert all(entry["size"] == 3 and len(entry["sha256"]) == 64 for entry in manifest)
 
 
+def test_planned_mutants_and_successful_baseline_have_explicit_identity(tmp_path: Path) -> None:
+    raw = tmp_path / "mutants.out"
+    write_outcomes(raw, {"caught": ["m2", "m1"]})
+    assert gm.parse_outcomes(raw)["caught"] == ["m2", "m1"]
+    planned, baseline_sha256 = gm.planned_baseline_identity(raw)
+    assert planned == ["m1", "m2"]
+    assert baseline_sha256 == gm.canonical_digest(
+        {"scenario": "Baseline", "summary": "Success"}
+    )
+
+
 def test_parallel_generated_jobs_are_rejected_before_campaign_creation() -> None:
     with pytest.raises(SystemExit, match="2"):
         gm.main(["--jobs", "2"])

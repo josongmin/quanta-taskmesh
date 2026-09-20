@@ -37,16 +37,22 @@ fn check_seeded_model<F>(model_id: &'static str, seed: u64, schedules: usize, mo
 where
     F: Fn() + Sync + Send + 'static,
 {
-    assert!(schedules > 0, "shuttle model {model_id} requested zero schedules");
+    assert!(
+        schedules > 0,
+        "shuttle model {model_id} requested zero schedules"
+    );
     let mut config = ShuttleConfig::new();
     config.max_steps = MaxSteps::FailAfter(SHUTTLE_MAX_STEPS);
-    config.failure_persistence = std::env::var_os("TASKMESH_MODEL_FAILURE_DIR").map_or(
-        FailurePersistence::Print,
-        |directory| FailurePersistence::File(Some(directory.into())),
-    );
+    config.failure_persistence = std::env::var_os("TASKMESH_MODEL_FAILURE_DIR")
+        .map_or(FailurePersistence::Print, |directory| {
+            FailurePersistence::File(Some(directory.into()))
+        });
     let scheduler = shuttle::scheduler::RandomScheduler::new_from_seed(seed, schedules);
     let completed = Runner::new(scheduler, config).run(model);
-    assert_eq!(completed, schedules, "shuttle model {model_id} stopped early");
+    assert_eq!(
+        completed, schedules,
+        "shuttle model {model_id} stopped early"
+    );
     println!(
         "taskmesh-model-witness checker=shuttle model_id={model_id} \
          scheduler=random seed={seed} requested={schedules} completed={completed} \
@@ -302,55 +308,50 @@ fn randomized_waiters_are_never_parked_past_their_promotion() {
 /// exactly one wins, both are told, the books close.
 #[test]
 fn randomized_claim_versus_reap_fails_closed_both_ways() {
-    check_seeded_model(
-        "shuttle.claim_reap.v1",
-        0x5a17_0004,
-        SCHEDULES,
-        || {
-            let clock = Arc::new(ManualClock::new(1_000));
-            let g = governor(1, 4, clock.clone());
-            let holder = admit(&g, "holder");
-            let (ticket, _waker) = queue_with_waker(&g, "queued");
-            assert_eq!(g.release(holder), ReleaseOutcome::Released);
-            clock.set(1_002);
+    check_seeded_model("shuttle.claim_reap.v1", 0x5a17_0004, SCHEDULES, || {
+        let clock = Arc::new(ManualClock::new(1_000));
+        let g = governor(1, 4, clock.clone());
+        let holder = admit(&g, "holder");
+        let (ticket, _waker) = queue_with_waker(&g, "queued");
+        assert_eq!(g.release(holder), ReleaseOutcome::Released);
+        clock.set(1_002);
 
-            let claimer = {
-                let g = Arc::clone(&g);
-                thread::spawn(move || match g.claim(ticket) {
-                    ClaimOutcome::Ready(permit) => {
-                        let taskmesh_engine::AdvanceOutcome::Leased(lease) =
-                            g.advance_phase(permit, ExecutionPhase::Accepted)
-                        else {
-                            panic!("a claimed lease is live and leases on its first advance");
-                        };
-                        assert_eq!(
-                            g.release(permit),
-                            ReleaseOutcome::HeldByLease {
-                                phase: ExecutionPhase::Accepted
-                            },
-                            "a dispatched permit is not releasable by id"
-                        );
-                        assert_eq!(g.release_leased(lease), ReleaseOutcome::Released);
-                        true
-                    }
-                    ClaimOutcome::Terminal(TerminalReason::Reclaimed) => false,
-                    other => panic!("unexpected {other:?}"),
-                })
-            };
-            let reaper = {
-                let g = Arc::clone(&g);
-                thread::spawn(move || g.reap_leaks_with(1).reclaimed_permits)
-            };
-            let claimed = claimer.join().unwrap();
-            let reclaimed = reaper.join().unwrap();
-            assert_eq!(
-                (claimed, reclaimed),
-                (claimed, u32::from(!claimed)),
-                "exactly one side owns the permit"
-            );
-            assert_quiescent(&g);
-        },
-    );
+        let claimer = {
+            let g = Arc::clone(&g);
+            thread::spawn(move || match g.claim(ticket) {
+                ClaimOutcome::Ready(permit) => {
+                    let taskmesh_engine::AdvanceOutcome::Leased(lease) =
+                        g.advance_phase(permit, ExecutionPhase::Accepted)
+                    else {
+                        panic!("a claimed lease is live and leases on its first advance");
+                    };
+                    assert_eq!(
+                        g.release(permit),
+                        ReleaseOutcome::HeldByLease {
+                            phase: ExecutionPhase::Accepted
+                        },
+                        "a dispatched permit is not releasable by id"
+                    );
+                    assert_eq!(g.release_leased(lease), ReleaseOutcome::Released);
+                    true
+                }
+                ClaimOutcome::Terminal(TerminalReason::Reclaimed) => false,
+                other => panic!("unexpected {other:?}"),
+            })
+        };
+        let reaper = {
+            let g = Arc::clone(&g);
+            thread::spawn(move || g.reap_leaks_with(1).reclaimed_permits)
+        };
+        let claimed = claimer.join().unwrap();
+        let reclaimed = reaper.join().unwrap();
+        assert_eq!(
+            (claimed, reclaimed),
+            (claimed, u32::from(!claimed)),
+            "exactly one side owns the permit"
+        );
+        assert_quiescent(&g);
+    });
 }
 
 // ---- D17: closing admission is decided under the admission lock --------------

@@ -272,6 +272,76 @@ fn duplicate_active_operation_identity_within_one_root_fails_closed() {
     assert_eq!(g.release(reused), ReleaseOutcome::Released);
 }
 
+#[test]
+fn root_operation_slot_can_be_reused_while_descendant_identity_remains_live() {
+    let g = governor([("c", queueing(8, 1, 1))], 100, 100, 0, 0);
+    let root_spec = TaskSpec::io(class("c")).operation("root");
+    let first_root = admitted(&g, &root_spec);
+    let descendant = TaskSpec::io(class("c"))
+        .child_of("root", "root", TaskStage::new("descendant-stage"))
+        .operation("descendant");
+    let child = admitted(&g, &descendant);
+
+    assert_eq!(g.release(first_root), ReleaseOutcome::Released);
+    let second_root = admitted(&g, &root_spec);
+    assert_eq!(
+        g.admit(&descendant),
+        AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission),
+        "reusing the root slot must not erase a live descendant identity"
+    );
+    assert_eq!(g.release(second_root), ReleaseOutcome::Released);
+    assert_eq!(g.release(child), ReleaseOutcome::Released);
+    let reused_child = admitted(&g, &descendant);
+    assert_eq!(g.release(reused_child), ReleaseOutcome::Released);
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
+#[test]
+fn parent_lookup_survives_root_release_and_is_exact_across_other_roots() {
+    let g = governor(
+        [("parent", queueing(8, 1, 1)), ("child", queueing(8, 1, 1))],
+        100,
+        100,
+        1,
+        0,
+    );
+    let root = admitted(&g, &TaskSpec::io(class("parent")).operation("root-a"));
+    let parent = admitted(
+        &g,
+        &rename_primary(
+            TaskSpec::blocking(class("parent"))
+                .child_of("root-a", "root-a", TaskStage::new("root-stage"))
+                .operation("shared-parent"),
+            "parent-stage",
+        ),
+    );
+    let other_root_same_operation = admitted(
+        &g,
+        &TaskSpec::io(class("parent"))
+            .child_of("root-b", "root-b", TaskStage::new("other-stage"))
+            .operation("shared-parent"),
+    );
+
+    assert_eq!(g.release(root), ReleaseOutcome::Released);
+    let awaited = TaskSpec::blocking(class("child"))
+        .awaited_child_of("root-a", "shared-parent", TaskStage::new("parent-stage"))
+        .operation("awaited");
+    assert_cycle(
+        g.admit(&awaited),
+        HeldCapacity::CapabilityPool {
+            pool: "blocking".to_owned(),
+        },
+    );
+    assert_eq!(g.release(parent), ReleaseOutcome::Released);
+    assert_eq!(
+        g.release(other_root_same_operation),
+        ReleaseOutcome::Released
+    );
+    let child = admitted(&g, &awaited);
+    assert_eq!(g.release(child), ReleaseOutcome::Released);
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
 struct CountWake(Arc<AtomicUsize>);
 
 impl PermitWaker for CountWake {

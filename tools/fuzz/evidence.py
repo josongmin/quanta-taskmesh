@@ -23,6 +23,7 @@ from tools.qualification.evidence import (  # noqa: E402
     command_digest,
     envelope_problems,
     file_identity,
+    runtime_action,
     tool_identity_digest,
 )
 from tools.qualification.receipt import source_identity  # noqa: E402
@@ -285,7 +286,6 @@ def emit_evidence(
         if path.is_file() and path.stat().st_size > 0:
             artifacts.append({**file_identity(path, relative_to=REPO), "role": "raw"})
     artifacts.append({**file_identity(receipt_path, relative_to=REPO), "role": "summary"})
-    workflow = REPO / ".github/workflows/ci.yml"
     envelope = {
         "schema_version": 1,
         "kind": "taskmesh-evidence-envelope",
@@ -304,15 +304,12 @@ def emit_evidence(
             {"path": producer_path.relative_to(REPO).as_posix(), "sha256": sha256(producer_path)},
             {"path": corpus_path.relative_to(REPO).as_posix(), "sha256": sha256(corpus_path)},
         ],
-        "action": {
-            "workflow": workflow.relative_to(REPO).as_posix(),
-            "workflow_sha256": sha256(workflow),
-            "job": "fuzz",
-            "event": "local"
-            if not __import__("os").environ.get("GITHUB_EVENT_NAME")
-            else __import__("os").environ["GITHUB_EVENT_NAME"],
-            "actions": [],
-        },
+        "action": runtime_action(
+            root=REPO,
+            source_head=source_before["head"],
+            local_workflow="tools/fuzz/producer-manifest.json",
+            local_job="local-fuzz",
+        ),
         "artifacts": artifacts,
         "result": {
             "status": status,

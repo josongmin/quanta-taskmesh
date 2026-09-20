@@ -164,10 +164,16 @@ The gate set is `tools/gates/inventory.json`; the required subset is
   claim (ADR 9000 / T09).
 - Same-key admission dedupe is out of scope for the startup set; the recursion
   guard is keyed on `(root_operation_id, stage)` and assumes unique root ids.
-- `admit` success path allocates (root-id `to_string`, permit record): 3
-  allocations per admit→release at the current baseline (`just bench-gate`).
-  Capability names are interned so the unified authority added none. 0-alloc
-  would require a storage redesign (root-id interning) — a separate ADR.
+- `admit` success path: the SEP-21 integrated governor measures 8 allocations
+  per admit→release (`just bench-gate`, 200,000 completed operations with the
+  counter self-check; three current-source probes were 8.000/8.000/8.000).
+  The previous committed threshold was 3, so this explicitly accepts a +5
+  allocation regression for the added governance state, not a performance
+  improvement. Borrowed validation and the exact-operation permit index reduced
+  an intermediate 16 to 8 without changing the measurement definition. The
+  no-regression gate now uses exactly 8 with no cushion; Linux IAI comparison
+  remains separate release evidence. A 0-allocation path needs a storage-model
+  redesign (root-id interning), not a threshold adjustment.
 - `run_blocking` + `RunFor` bounds the caller's wait only; a started blocking
   job is not aborted (documented, tested).
 - Declared nested wait cycles (parent awaiting a child on capacity held only by

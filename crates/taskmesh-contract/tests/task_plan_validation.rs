@@ -7,17 +7,18 @@ fn root() -> TaskSpec {
 }
 
 fn assert_invalid(raw: TaskSpec, expected: TaskPlanError) {
+    assert_eq!(raw.validate_borrowed(), Err(expected.clone()));
     assert_eq!(raw.validate(), Err(expected.clone()));
     assert_eq!(ValidatedTaskPlan::try_from(raw), Err(expected));
 }
 
 #[test]
 fn valid_child_preserves_immediate_parent_identity() {
-    let plan = TaskSpec::cpu(TaskClass::new("worker"))
+    let raw = TaskSpec::cpu(TaskClass::new("worker"))
         .awaited_child_of("root-1", "parent-2", TaskStage::new("fanout"))
-        .operation("child-3")
-        .validate()
-        .expect("complete lineage is admissible");
+        .operation("child-3");
+    assert_eq!(raw.validate_borrowed(), Ok(()));
+    let plan = raw.validate().expect("complete lineage is admissible");
     assert_eq!(
         plan.as_spec().scope,
         TaskScope::Child {

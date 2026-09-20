@@ -115,6 +115,71 @@ def test_source_and_action_identity_mismatch_are_rejected() -> None:
     assert any("not pinned to a full commit SHA" in problem for problem in problems)
 
 
+def test_hosted_action_ref_and_source_sha_are_bound() -> None:
+    envelope = load("v02-mutation-valid.json")
+    envelope["action"]["workflow_ref"] = (
+        "taskmesh/taskmesh/.github/workflows/other.yml@refs/heads/main"
+    )
+    envelope["action"]["source_sha"] = "9" * 40
+    problems = evidence.envelope_problems(envelope)
+    assert "hosted action.workflow_ref does not match action.workflow" in problems
+    assert "action.source_sha does not match source.head" in problems
+
+
+def test_runtime_action_reads_the_hosted_environment(tmp_path: Path, monkeypatch) -> None:
+    workflow = tmp_path / ".github" / "workflows" / "ci.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: ci\n", encoding="utf-8")
+    head = "1" * 40
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv(
+        "GITHUB_WORKFLOW_REF", "taskmesh/taskmesh/.github/workflows/ci.yml@refs/heads/main"
+    )
+    monkeypatch.setenv("GITHUB_JOB", "qualification")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_SHA", head)
+    action = evidence.runtime_action(
+        root=tmp_path,
+        source_head=head,
+        local_workflow="ignored.json",
+        local_job="ignored",
+    )
+    assert action["context"] == "github-actions"
+    assert action["workflow"] == ".github/workflows/ci.yml"
+    assert action["job"] == "qualification"
+    assert action["source_sha"] == head
+
+
+def test_runtime_action_rejects_missing_or_wrong_hosted_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workflow = tmp_path / ".github" / "workflows" / "ci.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: ci\n", encoding="utf-8")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv(
+        "GITHUB_WORKFLOW_REF", "taskmesh/taskmesh/.github/workflows/ci.yml@refs/heads/main"
+    )
+    monkeypatch.setenv("GITHUB_JOB", "qualification")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+    with pytest.raises(RuntimeError, match="missing"):
+        evidence.runtime_action(
+            root=tmp_path,
+            source_head="1" * 40,
+            local_workflow="ignored.json",
+            local_job="ignored",
+        )
+    monkeypatch.setenv("GITHUB_SHA", "2" * 40)
+    with pytest.raises(RuntimeError, match="does not match"):
+        evidence.runtime_action(
+            root=tmp_path,
+            source_head="1" * 40,
+            local_workflow="ignored.json",
+            local_job="ignored",
+        )
+
+
 @pytest.mark.parametrize(
     ("started", "finished", "reason"),
     [
@@ -182,6 +247,9 @@ def test_schema_file_has_a_stable_canonical_digest() -> None:
     schema = json.loads(evidence.SCHEMA.read_text(encoding="utf-8"))
     assert schema["title"] == "EvidenceEnvelopeV1"
     assert "identity_sha256" in schema["properties"]["tools"]["items"]["required"]
+    assert {"context", "workflow_ref", "source_sha"} <= set(
+        schema["properties"]["action"]["required"]
+    )
     assert schema["properties"]["configs"]["items"]["properties"]["path"]["$ref"].endswith(
         "safe_path"
     )

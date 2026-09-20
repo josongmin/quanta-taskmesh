@@ -50,7 +50,10 @@ where
         completed_in_model.fetch_add(1, Ordering::SeqCst);
     });
     let completed = completed.load(Ordering::SeqCst);
-    assert!(completed > 0, "loom model {model_id} explored no permutations");
+    assert!(
+        completed > 0,
+        "loom model {model_id} explored no permutations"
+    );
     println!(
         "taskmesh-model-witness checker=loom model_id={model_id} \
          max_threads={LOOM_MAX_THREADS} max_branches={LOOM_MAX_BRANCHES} \

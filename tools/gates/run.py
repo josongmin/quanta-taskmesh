@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
+import signal
 import subprocess
 import sys
 import time
@@ -49,6 +51,47 @@ def applicable(gate: dict, here: str) -> bool:
 # hung, and a hung gate must become a recorded FAIL, not a runner that never
 # returns (which no receipt would ever describe).
 GATE_TIMEOUT_SECONDS = 3600
+MAX_GATE_TIMEOUT_SECONDS = 21600
+TERMINATION_GRACE_SECONDS = 5
+
+
+def execute_gate_process(
+    argv: list[str], timeout_seconds: int
+) -> tuple[subprocess.CompletedProcess, bool]:
+    process = subprocess.Popen(
+        argv,
+        cwd=REPO,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    timed_out = False
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = process.communicate(timeout=TERMINATION_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = process.communicate()
+    return (
+        subprocess.CompletedProcess(
+            args=argv,
+            returncode=process.returncode,
+            stdout=stdout or "",
+            stderr=stderr or "",
+        ),
+        timed_out,
+    )
 
 
 def status_line_qualifies(gate: dict, stdout: str) -> bool:
@@ -74,27 +117,38 @@ def final_status_line(marker: str, stdout: str) -> str | None:
 def run_gate(gate: dict) -> dict:
     started = time.monotonic()
     started_at = datetime.now(timezone.utc).isoformat()
+    timeout_seconds = gate.get("timeout_seconds", GATE_TIMEOUT_SECONDS)
     try:
-        proc = subprocess.run(
-            ["just", gate["recipe"]],
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=GATE_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired as expired:
-        duration = time.monotonic() - started
-        partial = expired.stdout or b""
-        tail = partial.decode("utf-8", "replace") if isinstance(partial, bytes) else str(partial)
+        proc, timed_out = execute_gate_process(["just", gate["recipe"]], timeout_seconds)
+    except OSError as exc:
         return {
             "id": gate["id"],
             "recipe": gate["recipe"],
             "status": "FAIL",
             "exit_code": None,
+            "signal": None,
+            "timed_out": False,
+            "timeout_seconds": timeout_seconds,
+            "started_at": started_at,
+            "duration_s": round(time.monotonic() - started, 3),
+            "output_tail": f"gate command could not start: {exc}",
+        }
+    if timed_out:
+        duration = time.monotonic() - started
+        return {
+            "id": gate["id"],
+            "recipe": gate["recipe"],
+            "status": "FAIL",
+            "exit_code": proc.returncode,
+            "signal": -proc.returncode
+            if proc.returncode is not None and proc.returncode < 0
+            else None,
+            "timed_out": True,
+            "timeout_seconds": timeout_seconds,
             "started_at": started_at,
             "duration_s": round(duration, 3),
-            "output_tail": f"TIMEOUT after {GATE_TIMEOUT_SECONDS}s\n" + tail[-1500:],
+            "output_tail": f"TIMEOUT after {timeout_seconds}s\n"
+            + (proc.stdout + proc.stderr)[-1500:],
         }
     duration = time.monotonic() - started
     if proc.returncode == 0 and not status_line_qualifies(gate, proc.stdout):
@@ -118,6 +172,9 @@ def run_gate(gate: dict) -> dict:
         "recipe": gate["recipe"],
         "status": status,
         "exit_code": proc.returncode,
+        "signal": -proc.returncode if proc.returncode < 0 else None,
+        "timed_out": False,
+        "timeout_seconds": timeout_seconds,
         "started_at": started_at,
         "duration_s": round(duration, 3),
         "output_tail": tail,
@@ -142,7 +199,14 @@ def main(argv: list[str] | None = None) -> int:
         "separately; a skipped required gate still makes this receipt NOT qualified)",
     )
     parser.add_argument("--receipt", type=Path)
+    parser.add_argument(
+        "--deadline-seconds",
+        type=int,
+        help="bound the complete sequential run; the active process is terminated at the deadline",
+    )
     args = parser.parse_args(argv)
+    if args.deadline_seconds is not None and args.deadline_seconds <= 0:
+        raise SystemExit("--deadline-seconds must be positive")
 
     inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
     required = set(json.loads(REQUIRED.read_text(encoding="utf-8"))["required"])
@@ -171,6 +235,9 @@ def main(argv: list[str] | None = None) -> int:
 
     here = host_platform()
     results = []
+    deadline = (
+        time.monotonic() + args.deadline_seconds if args.deadline_seconds is not None else None
+    )
     for gate in selected:
         if not applicable(gate, here):
             results.append(
@@ -184,8 +251,32 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(f"{gate['id']:<20} SKIPPED_PLATFORM ({here} not in {gate.get('platforms')})")
             continue
+        effective_gate = gate
+        if deadline is not None:
+            remaining = int(deadline - time.monotonic())
+            if remaining <= 0:
+                results.append(
+                    {
+                        "id": gate["id"],
+                        "recipe": gate["recipe"],
+                        "status": "FAIL",
+                        "exit_code": None,
+                        "signal": None,
+                        "timed_out": True,
+                        "timeout_seconds": 0,
+                        "output_tail": "QUALIFICATION DEADLINE EXHAUSTED before gate start",
+                    }
+                )
+                print(f"{gate['id']:<20} FAIL (qualification deadline exhausted)")
+                continue
+            effective_gate = {
+                **gate,
+                "timeout_seconds": min(
+                    gate.get("timeout_seconds", GATE_TIMEOUT_SECONDS), remaining
+                ),
+            }
         print(f"{gate['id']:<20} running …", flush=True)
-        result = run_gate(gate)
+        result = run_gate(effective_gate)
         results.append(result)
         print(f"{gate['id']:<20} {result['status']} ({result['duration_s']}s)")
 

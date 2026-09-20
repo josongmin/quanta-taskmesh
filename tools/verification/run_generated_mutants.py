@@ -123,6 +123,17 @@ def parse_outcomes(mutants_out: Path) -> dict[str, list[str]]:
     return outcomes
 
 
+def planned_baseline_identity(mutants_out: Path) -> tuple[list[str], str]:
+    """Record the validated plan and successful baseline from structured raw files."""
+    planned_rows = json.loads((mutants_out / "mutants.json").read_text(encoding="utf-8"))
+    planned = sorted(mutant_name(item, context="planned") for item in planned_rows)
+    outcome_document = json.loads((mutants_out / "outcomes.json").read_text(encoding="utf-8"))
+    baseline = next(
+        row for row in outcome_document["outcomes"] if row.get("scenario") == "Baseline"
+    )
+    return planned, canonical_digest(baseline)
+
+
 def load_equivalents(path: Path | None, missed: list[str]) -> list[dict[str, str]]:
     if path is None:
         return []
@@ -275,6 +286,8 @@ def main(argv: list[str] | None = None) -> int:
 
         parse_error = None
         outcomes: dict[str, list[str]] = {category: [] for category in CATEGORIES}
+        planned_mutants: list[str] = []
+        baseline_sha256: str | None = None
         equivalents: list[dict[str, str]] = []
         counts = {**{category: 0 for category in CATEGORIES}, "equivalent": 0}
         semantic_status = "FAIL"
@@ -285,6 +298,7 @@ def main(argv: list[str] | None = None) -> int:
             if result.signal is not None:
                 raise ValueError(f"cargo-mutants terminated by signal {result.signal}")
             outcomes = parse_outcomes(raw_destination)
+            planned_mutants, baseline_sha256 = planned_baseline_identity(raw_destination)
             equivalents = load_equivalents(args.equivalents, outcomes["missed"])
             counts, semantic_status, problems = classify_generated(outcomes, equivalents)
             semantic_status, problems = apply_process_truth(semantic_status, problems, result)
@@ -325,6 +339,8 @@ def main(argv: list[str] | None = None) -> int:
             "denominator": sum(counts.values()),
             "problems": sorted(set(problems)),
             "outcomes": outcomes,
+            "planned_mutants": planned_mutants,
+            "baseline_sha256": baseline_sha256,
             "equivalents": equivalents,
             "raw_artifacts": raw_files,
         }

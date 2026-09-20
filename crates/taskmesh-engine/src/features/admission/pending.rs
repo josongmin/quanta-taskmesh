@@ -217,19 +217,13 @@ fn cycle_witness(
     else {
         return None;
     };
-    let parent_ids = state.permits_for_operation(root_operation_id, parent_operation_id)?;
-    if parent_ids.is_empty() {
-        return None;
-    }
+    let parent_id = state.permits_for_operation(root_operation_id, parent_operation_id)?;
 
     let mut parent_in_class = 0u32;
     let mut parent_cpu = 0u128;
     let mut parent_memory = 0u128;
     let mut parent_capabilities = std::collections::BTreeMap::<&CapabilityId, u32>::new();
-    for permit_id in parent_ids {
-        let Some(record) = state.permits.get(permit_id) else {
-            continue;
-        };
+    if let Some(record) = state.permits.get(&parent_id) {
         if record.class == *class {
             parent_in_class += 1;
         }

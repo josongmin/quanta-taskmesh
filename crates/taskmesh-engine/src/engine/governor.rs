@@ -157,10 +157,11 @@ impl Governor {
     /// queue). The admission key is derived authoritatively from
     /// `spec.root_operation_id`; there is no caller-supplied key.
     pub fn admit(&self, spec: &TaskSpec) -> AdmissionDecision {
-        let Ok(plan) = spec.validate() else {
+        if spec.validate_borrowed().is_err() {
             return AdmissionDecision::Rejected(taskmesh_contract::AdmissionVerdict::MalformedTask);
-        };
-        self.admit_validated(&plan)
+        }
+        let requirements = self.declared_requirements(spec);
+        self.admit_inner(spec, requirements, None)
     }
 
     pub fn admit_validated(&self, plan: &ValidatedTaskPlan) -> AdmissionDecision {
@@ -175,12 +176,12 @@ impl Governor {
         spec: &TaskSpec,
         waker: Arc<dyn PermitWaker>,
     ) -> AdmissionDecision {
-        let Ok(plan) = spec.validate() else {
+        if spec.validate_borrowed().is_err() {
             drop(waker);
             return AdmissionDecision::Rejected(taskmesh_contract::AdmissionVerdict::MalformedTask);
-        };
-        let requirements = self.declared_requirements(plan.as_spec());
-        self.admit_inner(plan.as_spec(), requirements, Some(waker))
+        }
+        let requirements = self.declared_requirements(spec);
+        self.admit_inner(spec, requirements, Some(waker))
     }
 
     /// Admit a request against an explicitly resolved capability pool.
@@ -199,14 +200,14 @@ impl Governor {
             drop(waker);
             return Err(error);
         }
-        let Ok(plan) = spec.validate() else {
+        if spec.validate_borrowed().is_err() {
             drop(waker);
             return Ok(AdmissionDecision::Rejected(
                 taskmesh_contract::AdmissionVerdict::MalformedTask,
             ));
-        };
+        }
         let requirements = CapabilityRequirementSet::from_resolved([capability])?;
-        Ok(self.admit_inner(plan.as_spec(), requirements, waker))
+        Ok(self.admit_inner(spec, requirements, waker))
     }
 
     pub fn admit_validated_requirements(

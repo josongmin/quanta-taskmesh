@@ -66,6 +66,12 @@ gates-inventory:
 mutants-critical *ARGS:
     uv run python tools/verification/run_mutations.py {{ARGS}}
 
+# Generated cargo-mutants campaign. This denominator is intentionally separate
+# from the curated single-edit inventory above; a subset or survivor is FAIL,
+# never evidence for the curated gate.
+mutants-generated *ARGS:
+    uv run python tools/verification/run_generated_mutants.py --jobs 1 {{ARGS}}
+
 lint-rust: fmt-check clippy
 
 lint-arch: test-architecture
@@ -123,10 +129,11 @@ loom:
 # semgrep, architecture, python, and the deterministic allocation gate. This is
 # the *fast* proof surface — it intentionally does NOT run the feature matrix
 # (`just matrix`) or the heavier rails CI enforces (bench-iai instruction-count,
-# loom + shuttle model-checks, mutation gate, consumer MSRV). Run `just proof`
+# loom + shuttle/model replay checks, both mutation campaigns, consumer MSRV).
+# Run `just proof`
 # to exercise those locally before relying on a green `gate`.
 gate: fmt-check clippy test deny semgrep test-architecture py-lint py-test pm-lint bench-gate gates-inventory fuzz-check
-    @echo "gate: fast local checks passed (CI additionally runs: matrix [test-rayon doctest rustdoc bench-smoke consumer-msrv], mutants-critical, loom, shuttle, tsan, fuzz, bench-iai — see 'just proof')"
+    @echo "gate: fast local checks passed (CI additionally runs: matrix [test-rayon doctest rustdoc bench-smoke consumer-msrv], mutants-critical, mutants-generated, loom, shuttle, modelcheck, tsan, fuzz, bench-iai — see 'just proof')"
 
 # The libFuzzer targets (fuzz/) type-check and lint on stable, so they cannot
 # rot between nightly fuzzing campaigns (`just fuzz`).
@@ -156,6 +163,11 @@ tsan:
 fuzz:
     bash tools/fuzz/run.sh
 
+# V03 owns the bounded Loom + Shuttle + clean-process replay producer. The
+# receipt consumes its EvidenceEnvelopeV1; it does not parse the raw logs.
+modelcheck:
+    python3 tools/modelcheck/run.py all
+
 # Coverage REPORT (cargo-llvm-cov). Numbers for the receipt; never a threshold —
 # this repository makes no coverage-gate promise. NOT_RUN/exit 2 without the tool.
 coverage-report:
@@ -166,5 +178,5 @@ coverage-report:
 # same set of checks CI requires. tools/gates/validate_inventory.py verifies
 # that this chain expands to exactly the required set; a gate added to CI
 # without being added here fails `gates-inventory`.
-proof: gate matrix mutants-critical loom shuttle tsan fuzz coverage-report bench-iai
+proof: gate matrix mutants-critical mutants-generated loom shuttle modelcheck tsan fuzz coverage-report bench-iai
     @echo "proof: full proof surface passed (matches CI required rails)"

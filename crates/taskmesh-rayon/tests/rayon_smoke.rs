@@ -77,10 +77,16 @@ fn the_adapter_declares_what_it_can_honestly_promise() {
 
 #[test]
 fn impossible_construction_is_typed_and_never_clamped() {
-    assert!(matches!(
-        RayonCpuExecutor::try_new(0),
-        Err(RayonBuildError::ZeroWorkers)
-    ));
+    let zero_workers = match RayonCpuExecutor::try_new(0) {
+        Err(error) => error,
+        Ok(_) => panic!("zero workers must be rejected"),
+    };
+    assert!(matches!(zero_workers, RayonBuildError::ZeroWorkers));
+    assert_eq!(
+        zero_workers.to_string(),
+        "rayon worker count must be nonzero",
+        "the public typed error must retain an actionable diagnostic"
+    );
     assert!(matches!(
         RayonCpuExecutor::try_from_topology(&TopologyConfig::new().cpu_fixed(0)),
         Err(RayonBuildError::InvalidTopology(

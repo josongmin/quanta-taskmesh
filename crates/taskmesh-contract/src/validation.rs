@@ -211,7 +211,7 @@ fn is_identifier_character(character: char) -> bool {
     character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':' | '/')
 }
 
-fn validate_task_spec(spec: &TaskSpec) -> Result<(), TaskPlanError> {
+pub(crate) fn validate_task_spec(spec: &TaskSpec) -> Result<(), TaskPlanError> {
     validate_identifier(TaskIdentifierField::Class, spec.class.as_str())?;
     validate_identifier(TaskIdentifierField::Operation, &spec.operation)?;
     validate_identifier(

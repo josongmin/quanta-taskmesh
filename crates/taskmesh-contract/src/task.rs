@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::policy::DeterministicReducePolicy;
 use crate::topology::SubstrateHint;
 use crate::validation::{
-    validate_identifier, TaskIdentifierField, TaskPlanError, ValidatedTaskPlan,
+    validate_identifier, validate_task_spec, TaskIdentifierField, TaskPlanError, ValidatedTaskPlan,
 };
 
 /// Stable semantic class of a unit of work. String-like identifier: ordered and
@@ -369,5 +369,12 @@ impl TaskSpec {
     /// Validates this raw wire/builder value and returns an admission-ready plan.
     pub fn validate(&self) -> Result<ValidatedTaskPlan, TaskPlanError> {
         ValidatedTaskPlan::try_from(self.clone())
+    }
+
+    /// Validate a borrowed plan without copying its owned fields. This is the
+    /// same contract check used by [`Self::validate`], for admission paths that
+    /// consume the plan only for the duration of one transition.
+    pub fn validate_borrowed(&self) -> Result<(), TaskPlanError> {
+        validate_task_spec(self)
     }
 }

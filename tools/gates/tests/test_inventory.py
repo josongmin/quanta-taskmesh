@@ -247,6 +247,148 @@ def test_required_and_inventory_are_different_files() -> None:
     assert vi.INVENTORY.is_file() and vi.REQUIRED.is_file()
 
 
+def test_v02_v03_producers_are_registered_once_with_complete_identity() -> None:
+    inventory, required, *_ = real_inputs()
+    producers = [
+        (gate["id"], gate["producer"]) for gate in inventory["gates"] if "producer" in gate
+    ]
+    assert {producer["registration"] for _, producer in producers} == {
+        "mutation-campaign-curated-v1",
+        "mutation-campaign-generated-v1",
+        "taskmesh-fuzz-v03",
+        "taskmesh-modelcheck-v03",
+    }
+    assert len(producers) == 4
+    assert all(set(producer) == vi.PRODUCER_FIELDS for _, producer in producers)
+    assert required["required_producers"] == {
+        producer["registration"]: gate_id for gate_id, producer in producers
+    }
+
+
+def test_missing_or_duplicate_producer_registration_is_reported() -> None:
+    inventory, *_ = real_inputs()
+    inventory = copy.deepcopy(inventory)
+    producers = [gate for gate in inventory["gates"] if "producer" in gate]
+    del producers[0]["producer"]["manifest"]
+    producers[1]["producer"]["registration"] = producers[0]["producer"]["registration"]
+    problems = problems_with(inventory=inventory)
+    assert any("misses fields ['manifest']" in problem for problem in problems)
+    assert any("duplicate producer registration" in problem for problem in problems)
+
+
+def test_producer_artifacts_upload_even_when_the_gate_fails() -> None:
+    workflow = vi.yaml.safe_load((vi.WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))
+    expected = {
+        "mutation-gate": ("target/sep21/v02/curated",),
+        "mutation-generated": ("target/sep21/v02/generated",),
+        "fuzz": ("target/sep21/v03/fuzz/local",),
+        "modelcheck": ("target/modelcheck",),
+        "qualification": ("receipt.producers.json",),
+    }
+    for job_name, required_paths in expected.items():
+        uploads = [
+            step
+            for step in workflow["jobs"][job_name]["steps"]
+            if isinstance(step, dict)
+            and str(step.get("uses", "")).startswith("actions/upload-artifact@")
+        ]
+        assert uploads, job_name
+        assert any(step.get("if") == "always()" for step in uploads), job_name
+        paths = "\n".join(str(step.get("with", {}).get("path", "")) for step in uploads)
+        assert all(path in paths for path in required_paths), (job_name, paths)
+
+
+def test_qualification_consumes_authorized_producer_jobs_with_bounded_critical_path(
+    tmp_path: Path,
+) -> None:
+    inventory, *_ = real_inputs()
+    workflow = vi.WORKFLOWS / "ci.yml"
+    assert vi.producer_handoff_problems(inventory, workflow) == []
+    assert inventory["qualification_budget_seconds"] == 18000
+
+    over_budget = copy.deepcopy(inventory)
+    over_budget["qualification_budget_seconds"] = 21600
+    assert any(
+        "critical-path deadline" in problem
+        for problem in vi.producer_handoff_problems(over_budget, workflow)
+    )
+
+    broken = tmp_path / "ci.yml"
+    broken.write_text(
+        workflow.read_text(encoding="utf-8")
+        .replace(
+            "needs: [mutation-gate, mutation-generated, fuzz, modelcheck]",
+            "needs: [mutation-gate]",
+        )
+        .replace("--consume-producers", "--rerun-producers"),
+        encoding="utf-8",
+    )
+    problems = vi.producer_handoff_problems(inventory, broken)
+    assert any("needs misses producer jobs" in problem for problem in problems)
+    assert any("must consume prerequisite producer artifacts" in problem for problem in problems)
+
+    failure_path = tmp_path / "failure-path.yml"
+    failure_path.write_text(
+        workflow.read_text(encoding="utf-8")
+        .replace(
+            "needs: [mutation-gate, mutation-generated, fuzz, modelcheck]\n    if: always()",
+            "needs: [mutation-gate, mutation-generated, fuzz, modelcheck]",
+        )
+        .replace("continue-on-error: true", "continue-on-error: false")
+        .replace(
+            "name: modelcheck-evidence\n          path: target/modelcheck",
+            "name: modelcheck-evidence\n          path: .",
+        ),
+        encoding="utf-8",
+    )
+    problems = vi.producer_handoff_problems(inventory, failure_path)
+    assert any("must run under if: always()" in problem for problem in problems)
+    assert any("would skip receipt" in problem for problem in problems)
+    assert any("does not reconstruct" in problem for problem in problems)
+
+    serialized = copy.deepcopy(inventory)
+    generated = next(gate for gate in serialized["gates"] if gate["id"] == "mutants-generated")
+    generated["producer"]["hosted_job"] = "mutation-gate"
+    assert any(
+        "serial producer gate timeouts exceed" in problem
+        for problem in vi.producer_handoff_problems(serialized, workflow)
+    )
+
+    collector_drift = tmp_path / "collector-drift.yml"
+    collector_drift.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            "name: Collect the receipt\n        if: always()", "name: Collect the receipt"
+        ),
+        encoding="utf-8",
+    )
+    collector_problems = vi.producer_handoff_problems(inventory, collector_drift)
+    assert any("collector step must run under if: always()" in p for p in collector_problems)
+
+    needs_drift = tmp_path / "needs-drift.yml"
+    needs_drift.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            "TASKMESH_PRODUCER_NEEDS_JSON: ${{ toJSON(needs) }}",
+            "TASKMESH_PRODUCER_NEEDS_JSON: '{}'",
+        ),
+        encoding="utf-8",
+    )
+    collector_problems = vi.producer_handoff_problems(inventory, needs_drift)
+    assert any("bind actual prerequisite job results" in p for p in collector_problems)
+
+    malformed_env = tmp_path / "malformed-env.yml"
+    malformed_env.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            "env:\n          TASKMESH_PRODUCER_NEEDS_JSON: ${{ toJSON(needs) }}",
+            "env: []",
+        ),
+        encoding="utf-8",
+    )
+    assert any(
+        "bind actual prerequisite job results" in p
+        for p in vi.producer_handoff_problems(inventory, malformed_env)
+    )
+
+
 def test_the_real_cli_passes() -> None:
     proc = subprocess.run(
         [sys.executable, str(VALIDATOR)], capture_output=True, text=True, check=False, cwd=REPO
@@ -431,11 +573,14 @@ def test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps(monkeypa
 
     def fake_run(stdout: str, returncode: int = 0):
         def _run(*_args, **_kwargs):
-            return subprocess.CompletedProcess(
-                args=["just", "consumer-msrv"],
-                returncode=returncode,
-                stdout=stdout,
-                stderr="x" * 4000,  # enough stderr to push stdout out of the tail
+            return (
+                subprocess.CompletedProcess(
+                    args=["just", "consumer-msrv"],
+                    returncode=returncode,
+                    stdout=stdout,
+                    stderr="x" * 4000,  # enough stderr to push stdout out of the tail
+                ),
+                False,
             )
 
         return _run
@@ -444,7 +589,7 @@ def test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps(monkeypa
         "taskmesh-consumer-msrv surface=default toolchain=1.81 status=PASS\n"
         "taskmesh-consumer-msrv status=NOT_RUN msrv=1.81 reason=toolchain-missing\n"
     )
-    monkeypatch.setattr(module.subprocess, "run", fake_run(misleading))
+    monkeypatch.setattr(module, "execute_gate_process", fake_run(misleading))
     result = module.run_gate(gate)
     assert result["status"] == "NOT_RUN", (
         f"the recipe's final status line is the verdict, not an earlier one: {result}"
@@ -456,13 +601,74 @@ def test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps(monkeypa
         "taskmesh-consumer-msrv surface=rayon toolchain=1.81 status=PASS\n"
         "taskmesh-consumer-msrv status=PASS msrv=1.81 toolchain=1.81\n"
     )
-    monkeypatch.setattr(module.subprocess, "run", fake_run(passing))
+    monkeypatch.setattr(module, "execute_gate_process", fake_run(passing))
     result = module.run_gate(gate)
     assert result["status"] == "PASS"
     assert result["status_line"] == "taskmesh-consumer-msrv status=PASS msrv=1.81 toolchain=1.81"
     assert "status=PASS msrv=1.81" not in result["output_tail"], (
         "the tail is not where the verdict survives; the status_line field is"
     )
+
+
+def test_generated_mutation_timeout_is_bounded_and_inventory_owned() -> None:
+    inventory, *_ = real_inputs()
+    generated = next(gate for gate in inventory["gates"] if gate["id"] == "mutants-generated")
+    assert generated["timeout_seconds"] == 21000
+    assert problems_with(inventory=inventory) == []
+
+    invalid = copy.deepcopy(inventory)
+    next(gate for gate in invalid["gates"] if gate["id"] == "mutants-generated")[
+        "timeout_seconds"
+    ] = 21601
+    assert any("timeout_seconds" in problem for problem in problems_with(inventory=invalid))
+
+
+def test_missing_gate_executable_is_fail_not_missing_receipt(monkeypatch) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+
+    def missing(*_args, **_kwargs):
+        raise FileNotFoundError("just is not installed")
+
+    monkeypatch.setattr(module, "execute_gate_process", missing)
+    result = module.run_gate({"id": "fmt-check", "recipe": "fmt-check"})
+    assert result["status"] == "FAIL"
+    assert result["exit_code"] is None
+    assert "could not start" in result["output_tail"]
+
+
+def test_timed_out_gate_terminates_then_kills_the_process_group(monkeypatch) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+
+    class Process:
+        pid = 123
+        returncode = -9
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls < 3:
+                raise subprocess.TimeoutExpired(["just", "mutants-generated"], timeout)
+            return "partial stdout", "partial stderr"
+
+    process = Process()
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    signals = []
+    monkeypatch.setattr(module.os, "killpg", lambda pid, sig: signals.append((pid, sig)))
+    result = module.run_gate(
+        {"id": "mutants-generated", "recipe": "mutants-generated", "timeout_seconds": 7}
+    )
+    assert result["status"] == "FAIL"
+    assert result["timed_out"] is True and result["timeout_seconds"] == 7
+    assert result["exit_code"] == -9 and result["signal"] == 9
+    assert signals == [(123, module.signal.SIGTERM), (123, module.signal.SIGKILL)]
 
 
 def test_a_recipe_script_git_does_not_track_is_reported(tmp_path: Path) -> None:

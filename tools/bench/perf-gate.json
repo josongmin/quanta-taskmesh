@@ -3,7 +3,7 @@
   "description": "Single source of truth for performance-gate thresholds and baseline compatibility. Local recipes and CI read this file; neither carries its own copy.",
   "allocation_gate": {
     "producer_schema": 2,
-    "max_allocs_per_op": "3",
+    "max_allocs_per_op": "8",
     "producer_marker": "taskmesh-alloc-probe",
     "required_fields": [
       "schema",
@@ -13,7 +13,7 @@
       "final_inflight",
       "counter_check"
     ],
-    "threshold_note": "3.000 is the measured value on this tree (see docs/release-checklist.md, Invariant proofs). The gate is 'no regression', so the threshold IS the baseline; raising it is a decision to accept a regression and must be made in this file, in review."
+    "threshold_note": "SEP-21 integration rebases the measured admit/release cycle from the prior 3.000 to 8.000 allocations/op (three current-source 200000-op probes, all 8.000; see docs/release-checklist.md). This explicitly accepts a +5 allocation regression for the added governance state; it is not an improvement claim. The gate remains no-regression against the exact new baseline, without a cushion."
   },
   "instruction_count_gate": {
     "bench": "iai_governance",

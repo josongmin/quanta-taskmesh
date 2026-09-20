@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "description": "Every verification gate this repository runs, keyed by a stable id. The Justfile is the single definition of each command; this file records where each gate runs and what it needs. Required-ness lives in required.json, on purpose a separate file.",
+  "qualification_budget_seconds": 18000,
   "gates": [
     {
       "id": "fmt-check",
@@ -272,10 +273,62 @@
         "uv (pytest for runner: pytest entries)",
         "just",
         "cargo",
-        "clean git tree in CI (--require-clean); locally the runner restores every mutated file and records dirtiness"
+        "clean CI source; runner uses an isolated source snapshot and dedicated target directory"
       ],
       "workflow": "ci.yml",
-      "note": "Curated single-edit fault inventory, not an exhaustive cargo-mutants score. The receipt separates KILLED from CONTROL_GREEN and records cargo/pytest plus source-scope counts."
+      "note": "Curated single-edit fault inventory, not an exhaustive cargo-mutants score. The receipt separates KILLED from CONTROL_GREEN and records cargo/pytest plus source-scope counts.",
+      "producer": {
+        "registration": "mutation-campaign-curated-v1",
+        "manifest": "tools/verification/mutation-gate.json",
+        "producer_id": "mutation-campaign",
+        "version": "1",
+        "surface": "curated",
+        "hosted_job": "mutation-gate",
+        "artifact_name": "mutation-curated-evidence",
+        "artifact_download_path": "target/sep21/v02/curated",
+        "required_configs": [
+          "tools/verification/mutation-gate.json",
+          "tools/verification/mutations.json"
+        ],
+        "summary": "target/sep21/v02/curated/receipt.mutations.json",
+        "envelope": "target/sep21/v02/curated/evidence-envelope.json"
+      }
+    },
+    {
+      "id": "mutants-generated",
+      "recipe": "mutants-generated",
+      "tier": "proof",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "cargo-mutants",
+        "cargo",
+        "one isolated target directory per campaign"
+      ],
+      "workflow": "ci.yml",
+      "conditional": "The full generated denominator is required. Missing tooling is NOT_RUN; any missed, unviable, timeout, equivalent, subset, or incomplete identity set is FAIL.",
+      "timeout_seconds": 21000,
+      "note": "Generated cargo-mutants evidence is a distinct denominator and must never be merged with mutants-critical.",
+      "producer": {
+        "registration": "mutation-campaign-generated-v1",
+        "manifest": "tools/verification/mutation-gate.json",
+        "producer_id": "mutation-campaign",
+        "version": "1",
+        "surface": "generated",
+        "hosted_job": "mutation-generated",
+        "artifact_name": "mutation-generated-evidence",
+        "artifact_download_path": "target/sep21/v02/generated",
+        "required_configs": [
+          "tools/verification/mutation-gate.json"
+        ],
+        "summary": "target/sep21/v02/generated/receipt.generated-mutations.json",
+        "envelope": "target/sep21/v02/generated/evidence-envelope.json"
+      }
     },
     {
       "id": "loom",
@@ -304,6 +357,46 @@
       ],
       "prerequisites": [],
       "workflow": "ci.yml"
+    },
+    {
+      "id": "modelcheck",
+      "recipe": "modelcheck",
+      "tier": "proof",
+      "runs_in": [
+        "local",
+        "ci"
+      ],
+      "platforms": [
+        "any"
+      ],
+      "prerequisites": [
+        "cargo"
+      ],
+      "workflow": "ci.yml",
+      "conditional": "Only the complete bounded Loom/Shuttle model set plus a separately generated and clean-process replayed failure is PASS.",
+      "status_line": {
+        "marker": "taskmesh-modelcheck",
+        "require": "status=PASS"
+      },
+      "producer": {
+        "registration": "taskmesh-modelcheck-v03",
+        "manifest": "tools/modelcheck/producer-manifest.json",
+        "producer_id": "taskmesh-modelcheck-v03",
+        "version": "1",
+        "surface": "modelcheck",
+        "hosted_job": "modelcheck",
+        "artifact_name": "modelcheck-evidence",
+        "artifact_download_path": "target/modelcheck",
+        "required_configs": [
+          "tools/modelcheck/producer-manifest.json",
+          "Cargo.lock",
+          "crates/taskmesh-engine/tests/loom_governance.rs",
+          "crates/taskmesh-engine/tests/shuttle_governance.rs",
+          "crates/taskmesh-engine/tests/model_replay_fixture.rs"
+        ],
+        "summary": "target/modelcheck/model-receipt.json",
+        "envelope": "target/modelcheck/evidence-envelope.json"
+      }
     },
     {
       "id": "consumer-msrv",
@@ -387,11 +480,27 @@
         "cargo-fuzz"
       ],
       "workflow": "ci.yml",
-      "conditional": "reports NOT_RUN (exit 2) when nightly or cargo-fuzz is missing; CI installs them. Only `taskmesh-fuzz status=CLEAN` is PASS; the line (targets, seconds per target, total runs) is kept in the receipt",
+      "conditional": "reports NOT_RUN (exit 2) when nightly or cargo-fuzz is missing; CI installs them. Only `taskmesh-fuzz status=PASS` with all semantic witnesses is PASS",
       "note": "libFuzzer over the production Governor (every public transition, invariants after each step, quiescence at the end), the policy/topology/builder front doors, and the JSON wire formats. Complements the proptest differential model: coverage-guided rather than blind. FUZZ_SECONDS (default 30) bounds each target.",
       "status_line": {
         "marker": "taskmesh-fuzz",
-        "require": "status=CLEAN"
+        "require": "status=PASS"
+      },
+      "producer": {
+        "registration": "taskmesh-fuzz-v03",
+        "manifest": "tools/fuzz/producer-manifest.json",
+        "producer_id": "taskmesh-fuzz-v03",
+        "version": "1",
+        "surface": "fuzz",
+        "hosted_job": "fuzz",
+        "artifact_name": "fuzz-artifacts",
+        "artifact_download_path": ".",
+        "required_configs": [
+          "tools/fuzz/producer-manifest.json",
+          "fuzz/corpus-manifest.json"
+        ],
+        "summary": "target/sep21/v03/fuzz/local/fuzz-receipt.json",
+        "envelope": "target/sep21/v03/fuzz/local/evidence-envelope.json"
       }
     },
     {

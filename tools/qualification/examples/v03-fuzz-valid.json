@@ -12,8 +12,11 @@
   "tools": [{"name": "cargo-fuzz", "version": "cargo-fuzz 0.13.1", "identity_sha256": "f5f2806a64439ae56b0abf415fea4f5862cdadb5f5e43bf4a8f79e4eed5854ec"}, {"name": "rustc", "version": "rustc 1.95.0-nightly (exact-build)", "identity_sha256": "d9ffdf5341b91b661e1f0b451ee69da288c4f5bf555f3dd880736a0d6cefec78"}],
   "configs": [{"path": "tools/fuzz/fuzz-gate.json", "sha256": "3333333333333333333333333333333333333333333333333333333333333333"}],
   "action": {
+    "context": "github-actions",
     "workflow": ".github/workflows/ci.yml",
+    "workflow_ref": "taskmesh/taskmesh/.github/workflows/ci.yml@refs/heads/main",
     "workflow_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "source_sha": "1111111111111111111111111111111111111111",
     "job": "fuzz",
     "event": "pull_request",
     "actions": ["actions/checkout@1111111111111111111111111111111111111111"]

@@ -6,6 +6,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(not(feature = "rayon"))]
 use std::sync::{Arc, Condvar, Mutex};
+#[cfg(not(feature = "rayon"))]
+use std::{future::Future, task::Poll};
 
 use taskmesh::*;
 
@@ -28,6 +30,18 @@ impl Gate {
     fn release(&self) {
         *self.released.lock().expect("gate lock") = true;
         self.cv.notify_all();
+    }
+}
+
+// An assertion failure must still unblock the worker closures before Tokio
+// tears down its blocking pool. Otherwise a useful failure becomes a hang.
+#[cfg(not(feature = "rayon"))]
+struct ReleaseOnDrop(Arc<Gate>);
+
+#[cfg(not(feature = "rayon"))]
+impl Drop for ReleaseOnDrop {
+    fn drop(&mut self) {
+        self.0.release();
     }
 }
 
@@ -89,6 +103,7 @@ async fn blocking_maintenance_and_cpu_fallback_share_one_finite_domain() {
     );
 
     let gate = Arc::new(Gate::default());
+    let release_on_drop = ReleaseOnDrop(Arc::clone(&gate));
     let active = Arc::new(AtomicUsize::new(0));
     let peak = Arc::new(AtomicUsize::new(0));
     let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -126,31 +141,35 @@ async fn blocking_maintenance_and_cpu_fallback_share_one_finite_domain() {
             .await
         })
     };
-    let cpu = {
-        let rt = rt.clone();
-        let run = job(
+    started_rx.recv().await.expect("first worker starts");
+    started_rx.recv().await.expect("second worker starts");
+    // Poll the third submission ourselves after both physical slots are known
+    // to be occupied. A spawned future alone gives no ordering guarantee that
+    // admission has happened by the time the snapshot is read.
+    let mut cpu = Box::pin(rt.run_cpu(
+        TaskSpec::cpu(TaskClass::new("c")).operation("cpu"),
+        job(
             started_tx,
             Arc::clone(&gate),
             Arc::clone(&active),
             Arc::clone(&peak),
-        );
-        tokio::spawn(async move {
-            rt.run_cpu(TaskSpec::cpu(TaskClass::new("c")).operation("cpu"), run)
-                .await
-        })
-    };
-
-    started_rx.recv().await.expect("first worker starts");
-    started_rx.recv().await.expect("second worker starts");
+        ),
+    ));
+    std::future::poll_fn(|cx| {
+        assert!(cpu.as_mut().poll(cx).is_pending(), "third job must queue");
+        Poll::Ready(())
+    })
+    .await;
     let saturated = rt.snapshot();
     assert_eq!(saturated.capabilities[PHYSICAL_SHARED_BLOCKING].in_use, 2);
     assert_eq!(saturated.classes[&class].queued, 1);
     assert_eq!(peak.load(Ordering::SeqCst), 2);
 
-    gate.release();
-    for handle in [blocking, maintenance, cpu] {
+    release_on_drop.0.release();
+    for handle in [blocking, maintenance] {
         handle.await.expect("join").expect("job succeeds");
     }
+    cpu.await.expect("cpu job succeeds");
     assert_eq!(peak.load(Ordering::SeqCst), 2, "aggregate bound held");
     let drained = rt.snapshot();
     assert_eq!(drained.capabilities[PHYSICAL_SHARED_BLOCKING].in_use, 0);

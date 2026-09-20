@@ -5,10 +5,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
-import time
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
@@ -295,19 +295,29 @@ def test_abrupt_child_exit_can_only_dirty_the_isolated_copy(tmp_path: Path) -> N
             sys.executable,
             "-c",
             "from pathlib import Path; Path('src.rs').write_text('mutant\\n'); "
-            "import time; time.sleep(60)",
+            "print('mutated', flush=True); import signal; signal.pause()",
         ],
         cwd=campaign.source,
         start_new_session=True,
+        stdout=subprocess.PIPE,
+        text=True,
     )
     try:
-        time.sleep(0.1)
+        assert child.stdout is not None
+        ready, _, _ = select.select([child.stdout], [], [], 5)
+        assert ready, "mutant child did not report its completed write"
+        assert child.stdout.readline().strip() == "mutated"
         os.killpg(child.pid, signal.SIGKILL)
         child.wait(timeout=5)
         assert (campaign.source / "src.rs").read_text(encoding="utf-8") == "mutant\n"
         assert (tmp_path / "src.rs").read_bytes() == before
         assert campaign.original_is_unchanged(tmp_path)
     finally:
+        if child.poll() is None:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait(timeout=5)
+        if child.stdout is not None:
+            child.stdout.close()
         campaign.cleanup()
 
 

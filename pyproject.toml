@@ -16,4 +16,5 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tools"]
+addopts = "--import-mode=importlib"
 markers = ["slow: runs a real cargo producer (seconds, not milliseconds)"]

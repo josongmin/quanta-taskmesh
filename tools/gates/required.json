@@ -19,19 +19,28 @@
     "rustdoc",
     "bench-smoke",
     "mutants-critical",
+    "mutants-generated",
     "loom",
     "shuttle",
+    "modelcheck",
     "consumer-msrv",
     "bench-iai",
     "tsan",
     "fuzz",
     "coverage-report"
   ],
+  "required_producers": {
+    "mutation-campaign-curated-v1": "mutants-critical",
+    "mutation-campaign-generated-v1": "mutants-generated",
+    "taskmesh-fuzz-v03": "fuzz",
+    "taskmesh-modelcheck-v03": "modelcheck"
+  },
   "platform_conditional": {
     "bench-iai": "linux",
     "consumer-msrv": "declared-toolchain-installed",
     "tsan": "nightly-toolchain-with-rust-src",
     "coverage-report": "cargo-llvm-cov-installed",
-    "fuzz": "nightly-toolchain-with-cargo-fuzz"
+    "fuzz": "nightly-toolchain-with-cargo-fuzz",
+    "mutants-generated": "cargo-mutants-installed"
   }
 }

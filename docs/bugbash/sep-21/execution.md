@@ -26,9 +26,9 @@ The commit is a source checkpoint, not implementation or qualification proof.
 | contract | C01 | `sep21_contract` | LOCALLY_VERIFIED | `C01_CONTRACT_READY` accepted |
 | engine-core | E01,E02,E03,E04 | `sep21_engine` | LOCALLY_VERIFIED | `E04_RESOLVER_READY` accepted at `0fb1874` |
 | proof-envelope | V01 | `sep21_v01` | IN_PROGRESS | phase A ready; phase B waits for V02/V03 |
-| host | H01,H03,H02 | `sep21_host` | LOCALLY_VERIFIED | `HOST_PACKET_READY` accepted; checkpoint pending |
-| mutation | V02 | `sep21_v02` | IN_PROGRESS | V01 schema consumed |
-| concurrency | V03 | `sep21_v03` | IN_PROGRESS | V01 schema consumed |
+| host | H01,H03,H02 | `sep21_host` | LOCALLY_VERIFIED | `HOST_PACKET_READY` accepted at `ba643a1` |
+| mutation | V02 | `sep21_v02` | IMPLEMENTED_UNQUALIFIED | producer checkpoint `df08a59`; full generated sweep remains NOT_RUN |
+| concurrency | V03 | `sep21_v03` | LOCALLY_VERIFIED | producer checkpoint `3969063`; hosted exact-source replay remains NOT_RUN |
 | release | R01 | unassigned | PLANNED | waits for all closures |
 
 ## Checkpoints
@@ -39,7 +39,9 @@ The commit is a source checkpoint, not implementation or qualification proof.
 | CP1 C01 contract | `eab2ceb` | contract tests 56/56, adversarial 11/11, clippy `-D warnings`, structure validator and diff check PASS | pushed to `origin/main` |
 | CP2 V01 phase A | `32189ab` | full V01 suite 130 PASS; independent targeted 86 PASS; ruff, 24/24 inventory parity, structure and diff check PASS; real Linux IAI NOT_RUN | pushed to `origin/main`; phase B open |
 | CP3 E01-E04 engine core | `0fb1874` | engine default 224/224, Loom 5/5, Shuttle 7/7 at 10,000 schedules/model, clippy `-D warnings`, structure validator and diff check PASS; capacity conservation zero residuals | pushed to `origin/main` |
-| CP4 H01-H03-H02 host | pending | contract 57/57, taskmesh default 160/160, rayon 160/160, adapter 4/4, consumer MSRV default/rayon on Rust 1.81, four clippy `-D warnings` configurations PASS; coordinator focused rerun 44/44 plus rayon clippy PASS | checkpoint commit/push pending |
+| CP4 H01-H03-H02 host | `ba643a1` | contract 57/57, taskmesh default 160/160, rayon 160/160, adapter 4/4, consumer MSRV default/rayon on Rust 1.81, four clippy `-D warnings` configurations PASS; coordinator focused rerun 44/44 plus rayon clippy PASS | pushed to `origin/main` |
+| CP5 V02 mutation producer | `df08a59` | producer tests 55/55 PASS, final focused curated 6/6 KILLED; generated `taskmesh-rayon` subset 4 caught, 1 missed, 5 unviable; full curated and full workspace generated NOT_RUN | pushed to `origin/main`; V02 remains IMPLEMENTED_UNQUALIFIED |
+| CP6 V03 fuzz/model producer | `3969063` | producer tests 18/18 PASS; short local fuzz admission 6,371, policy 6, wire 23,245 runs with semantic checkpoints; model evidence 12/12, Loom 1,611 permutations, Shuttle 60,000 schedules and separate replay generation/verification PASS | pushed to `origin/main`; hosted exact-source run NOT_RUN |
 
 The earlier H01-only detached checkpoint (focused 21/21, default/rayon 154/154) is superseded by
 the integrated CP4 host transaction. H01, H03 and H02 are not treated as independently mergeable
@@ -52,3 +54,26 @@ succeeded. `origin/hardening/sep-16` remains a separate stale remote ref and is 
 
 Future entries must include exact commit/tree, changed paths, owner-local commands/counts, negative fixtures,
 unexecuted items and dependency signals. A commit or push alone is not closure.
+
+## Open integration boundaries (not release evidence)
+
+- V01 phase B is under adversarial review. A producer envelope that parses as JSON but has malformed
+  nested fields must yield a durable `NOT_QUALIFIED` receipt, not abort collection. Hosted imported
+  rows must bind the registered artifact and successful prerequisite job result. No hosted final
+  receipt exists yet.
+- The committed pre-SEP-21 allocation baseline was 3 allocations/admit→release. The integrated
+  source initially measured 16; borrowed validation plus an exact-operation permit index reduced
+  it to 8. Three current-source 200,000-op probe runs each measured 8.000 with self-check 1000/1000
+  and zero residual inflight. `tools/bench/perf-gate.json` now explicitly accepts the +5 regression
+  with no cushion; parser negatives were 33 PASS (2 slow tests deselected). The real `just bench-gate`
+  and Linux IAI comparison remain separate proof. This is not a performance improvement claim.
+- The only identified `0.2.0` release commit is `39bee682d7daa1efaf1c10993ba6221fd0a90871`;
+  there is no release tag. R01 must freeze an immutable baseline SHA and a final candidate SHA.
+  Ordinary hosted qualification of a PR merge SHA is evidence only for that SHA, not a release
+  verdict for a different final source.
+- `docs/release-checklist.md` still describes the generated mutation surface as `NOT_RUN` and
+  excluded, while V01's candidate ordinary required set requires a full generated result. V02's
+  candidate PASS rule additionally rejects missed, unviable, timeout and equivalent outcomes;
+  the observed `taskmesh-rayon` subset had one missed and five unviable. The full workspace sweep
+  is `NOT_RUN`. R01 must reconcile policy and documentation without promoting `REPORTED` to
+  mutation-quality PASS or silently waiving a non-caught outcome.

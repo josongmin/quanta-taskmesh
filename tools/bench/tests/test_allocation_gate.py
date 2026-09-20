@@ -192,9 +192,9 @@ def test_a_counter_that_cannot_see_known_allocations_is_not_a_measurement(tmp_pa
 
 
 def test_the_threshold_is_the_measured_baseline_not_a_cushion() -> None:
-    # The gate is "no regression": +1 alloc/op is a 33% regression on this
-    # engine and must fail. A threshold above the recorded value would let it in.
-    baseline = 3.0
+    # The SEP-21 +5 alloc/op rebaseline is explicit. The gate still admits no
+    # additional allocation beyond the measured value.
+    baseline = 8.0
     assert float(CONFIG["max_allocs_per_op"]) == baseline
     assert "regression" in CONFIG["threshold_note"]
 

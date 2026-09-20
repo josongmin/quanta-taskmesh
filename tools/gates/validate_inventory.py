@@ -43,6 +43,7 @@ It does not run anything; `tools/gates/run.py` does.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -111,6 +112,164 @@ SCRIPT_PATH = re.compile(r"\btools/[\w./-]+\.(?:sh|py)\b")
 # thing about a run that must survive verbatim.
 STATUS_MARKER = re.compile(r"(taskmesh-[a-z0-9-]+) status=")
 FULL_ACTION_REF = re.compile(r"^[^\s@]+@[0-9a-f]{40}$")
+PRODUCER_FIELDS = {
+    "registration",
+    "manifest",
+    "producer_id",
+    "version",
+    "surface",
+    "hosted_job",
+    "artifact_name",
+    "artifact_download_path",
+    "required_configs",
+    "summary",
+    "envelope",
+}
+
+QUALIFICATION_MARGIN_SECONDS = 3600
+PRODUCER_JOB_MARGIN_SECONDS = 600
+
+
+def producer_handoff_problems(inventory: dict, workflow_path: Path) -> list[str]:
+    """Validate producer job authority, artifact handoff, and hosted time budgets."""
+    document = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    jobs = document.get("jobs", {}) if isinstance(document, dict) else {}
+    if not isinstance(jobs, dict):
+        return ["ci.yml jobs are missing or malformed"]
+    qualification = jobs.get("qualification")
+    if not isinstance(qualification, dict):
+        return ["ci.yml qualification job is missing"]
+    problems: list[str] = []
+    needs = qualification.get("needs", [])
+    if isinstance(needs, str):
+        needs = [needs]
+    if not isinstance(needs, list):
+        needs = []
+    q_steps = qualification.get("steps", [])
+    if not isinstance(q_steps, list):
+        q_steps = []
+    q_runs = "\n".join(str(step.get("run", "")) for step in q_steps if isinstance(step, dict))
+    if "--consume-producers" not in q_runs:
+        problems.append("qualification must consume prerequisite producer artifacts")
+    collectors = [
+        step
+        for step in q_steps
+        if isinstance(step, dict) and step.get("name") == "Collect the receipt"
+    ]
+    if len(collectors) != 1 or collectors[0].get("if") != "always()":
+        problems.append("qualification receipt collector step must run under if: always()")
+    else:
+        collector = collectors[0]
+        collector_env = collector.get("env")
+        if (
+            not isinstance(collector_env, dict)
+            or collector_env.get("TASKMESH_PRODUCER_NEEDS_JSON") != "${{ toJSON(needs) }}"
+        ):
+            problems.append("qualification receipt must bind actual prerequisite job results")
+        if (
+            not str(collector.get("run", ""))
+            .lstrip()
+            .startswith("python3 tools/qualification/receipt.py collect")
+        ):
+            problems.append("qualification receipt collector requires baseline Python startup")
+    downloaded = {
+        step.get("with", {}).get("name"): step
+        for step in q_steps
+        if isinstance(step, dict)
+        and str(step.get("uses", "")).startswith("actions/download-artifact@")
+        and isinstance(step.get("with"), dict)
+    }
+    producers = [
+        (gate, gate["producer"])
+        for gate in inventory.get("gates", [])
+        if isinstance(gate, dict) and isinstance(gate.get("producer"), dict)
+    ]
+    producer_jobs = {producer.get("hosted_job") for _, producer in producers}
+    missing_needs = sorted(
+        job for job in producer_jobs if isinstance(job, str) and job not in needs
+    )
+    if missing_needs:
+        problems.append(f"qualification needs misses producer jobs {missing_needs}")
+    if qualification.get("if") != "always()":
+        problems.append("qualification with producer needs must run under if: always()")
+    job_gate_seconds: dict[str, int] = {}
+    for gate, producer in producers:
+        job_name = producer.get("hosted_job")
+        artifact_name = producer.get("artifact_name")
+        download_path = producer.get("artifact_download_path")
+        job = jobs.get(job_name)
+        if not isinstance(job, dict):
+            problems.append(f"{gate.get('id')}: hosted producer job {job_name!r} is missing")
+            continue
+        steps = job.get("steps", [])
+        if not isinstance(steps, list):
+            steps = []
+        runs = "\n".join(str(step.get("run", "")) for step in steps if isinstance(step, dict))
+        if not re.search(rf"\bjust\s+{re.escape(str(gate.get('recipe')))}\b", runs):
+            problems.append(
+                f"{gate.get('id')}: hosted producer job {job_name!r} does not run its recipe"
+            )
+        uploaded = {
+            step.get("with", {}).get("name"): step
+            for step in steps
+            if isinstance(step, dict)
+            and str(step.get("uses", "")).startswith("actions/upload-artifact@")
+            and step.get("if") == "always()"
+            and isinstance(step.get("with"), dict)
+        }
+        if artifact_name not in uploaded:
+            problems.append(
+                f"{gate.get('id')}: job {job_name!r} does not always upload {artifact_name!r}"
+            )
+        if artifact_name not in downloaded:
+            problems.append(f"{gate.get('id')}: qualification does not download {artifact_name!r}")
+        else:
+            download = downloaded[artifact_name]
+            actual_download_path = download.get("with", {}).get("path")
+            if actual_download_path != download_path:
+                problems.append(
+                    f"{gate.get('id')}: artifact {artifact_name!r} download path differs from "
+                    "the registered extraction root"
+                )
+            if download.get("continue-on-error") is not True:
+                problems.append(
+                    f"{gate.get('id')}: missing artifact {artifact_name!r} would skip receipt"
+                )
+        upload = uploaded.get(artifact_name)
+        if isinstance(upload, dict):
+            raw_paths = upload.get("with", {}).get("path", "")
+            paths = [line.strip() for line in str(raw_paths).splitlines() if line.strip()]
+            common = (
+                os.path.commonpath(paths) if len(paths) > 1 else (paths[0] if paths else "")
+            ) or "."
+            if common != download_path:
+                problems.append(
+                    f"{gate.get('id')}: artifact {artifact_name!r} does not reconstruct "
+                    "its registered repository path"
+                )
+        gate_seconds = gate.get("timeout_seconds", 3600)
+        if isinstance(job_name, str) and type(gate_seconds) is int:
+            job_gate_seconds[job_name] = job_gate_seconds.get(job_name, 0) + gate_seconds
+    for job_name, gate_seconds in job_gate_seconds.items():
+        job = jobs.get(job_name, {})
+        job_minutes = job.get("timeout-minutes", 360) if isinstance(job, dict) else None
+        if type(job_minutes) is not int or (
+            gate_seconds > job_minutes * 60 - PRODUCER_JOB_MARGIN_SECONDS
+        ):
+            problems.append(
+                f"{job_name}: serial producer gate timeouts exceed the job budget or margin"
+            )
+    budget = inventory.get("qualification_budget_seconds")
+    qualification_minutes = qualification.get("timeout-minutes")
+    if type(budget) is not int or budget <= 0:
+        problems.append("qualification_budget_seconds must be a positive integer")
+    elif type(qualification_minutes) is not int or (
+        budget > qualification_minutes * 60 - QUALIFICATION_MARGIN_SECONDS
+    ):
+        problems.append(
+            "qualification critical-path deadline exceeds its job budget or required margin"
+        )
+    return problems
 
 
 def recipe_scripts(recipe: str, text: str | None = None) -> list[str]:
@@ -320,6 +479,7 @@ def validate(
         seen.add(gate_id)
 
     by_id = {gate["id"]: gate for gate in gates if gate.get("id")}
+    producer_registrations: set[str] = set()
 
     for gate in gates:
         gate_id = gate.get("id", "<missing>")
@@ -332,6 +492,9 @@ def validate(
         if recipe not in recipes:
             problems.append(f"{gate_id}: recipe {recipe!r} is not a Justfile recipe")
         runs_in = set(gate.get("runs_in", []))
+        timeout_seconds = gate.get("timeout_seconds", 3600)
+        if type(timeout_seconds) is not int or timeout_seconds <= 0 or timeout_seconds > 21600:
+            problems.append(f"{gate_id}: timeout_seconds must be an integer in 1..21600")
         if "ci" in runs_in and recipe not in invocations:
             problems.append(
                 f"{gate_id}: declared to run in CI but no workflow invokes `just {recipe}`"
@@ -345,6 +508,62 @@ def validate(
                 f"{gate_id}: declared in workflow {gate['workflow']} "
                 f"but that file does not invoke `just {recipe}`"
             )
+        producer = gate.get("producer")
+        if producer is not None:
+            if not isinstance(producer, dict):
+                problems.append(f"{gate_id}: producer registration is not an object")
+            else:
+                missing_fields = sorted(PRODUCER_FIELDS - set(producer))
+                if missing_fields:
+                    problems.append(
+                        f"{gate_id}: producer registration misses fields {missing_fields}"
+                    )
+                registration = producer.get("registration")
+                if not isinstance(registration, str) or not registration:
+                    problems.append(f"{gate_id}: producer registration id is empty")
+                elif registration in producer_registrations:
+                    problems.append(f"duplicate producer registration: {registration}")
+                else:
+                    producer_registrations.add(registration)
+                for field in PRODUCER_FIELDS - {"registration", "required_configs"}:
+                    value = producer.get(field)
+                    if not isinstance(value, str) or not value:
+                        problems.append(f"{gate_id}: producer {field} is empty")
+                required_configs = producer.get("required_configs")
+                if (
+                    not isinstance(required_configs, list)
+                    or not required_configs
+                    or not all(isinstance(path, str) and path for path in required_configs)
+                ):
+                    problems.append(f"{gate_id}: producer required_configs is empty or malformed")
+                else:
+                    if len(required_configs) != len(set(required_configs)):
+                        problems.append(f"{gate_id}: producer required_configs contains duplicates")
+                    tracked = tracked_files()
+                    for path in required_configs:
+                        if Path(path).is_absolute() or ".." in Path(path).parts:
+                            problems.append(
+                                f"{gate_id}: producer required config {path!r} is not repo-relative"
+                            )
+                        elif path not in tracked:
+                            problems.append(
+                                f"{gate_id}: producer required config {path!r} is not tracked"
+                            )
+                for field in ("manifest", "summary", "envelope"):
+                    value = producer.get(field)
+                    if isinstance(value, str) and (
+                        Path(value).is_absolute() or ".." in Path(value).parts
+                    ):
+                        problems.append(f"{gate_id}: producer {field} is not repo-relative")
+                    if field in {"summary", "envelope"} and isinstance(value, str):
+                        parts = Path(value).parts
+                        if len(parts) < 2 or parts[0] != "target":
+                            problems.append(
+                                f"{gate_id}: producer {field} must be below repository target/"
+                            )
+                manifest = producer.get("manifest")
+                if isinstance(manifest, str) and manifest not in tracked_files():
+                    problems.append(f"{gate_id}: producer manifest {manifest!r} is not tracked")
         if untracked_scripts is not None:
             for script in untracked_scripts.get(recipe, []):
                 problems.append(
@@ -392,6 +611,21 @@ def validate(
     for gate_id in required.get("platform_conditional", {}):
         if gate_id not in required_ids:
             problems.append(f"platform_conditional names {gate_id!r}, which is not required")
+    required_producers = required.get("required_producers")
+    if not isinstance(required_producers, dict):
+        problems.append("required.json lacks required_producers")
+    else:
+        registered = {
+            gate.get("producer", {}).get("registration"): gate.get("id")
+            for gate in gates
+            if isinstance(gate.get("producer"), dict)
+            and isinstance(gate["producer"].get("registration"), str)
+        }
+        if registered != required_producers:
+            problems.append(
+                f"producer registrations {registered!r} do not match required_producers "
+                f"{required_producers!r}"
+            )
 
     fast_ids = [gate["id"] for gate in gates if gate.get("tier") == "fast" and gate.get("id")]
     if sorted(fast_ids) != sorted(gate_deps):
@@ -435,6 +669,7 @@ def main() -> int:
         enforcement = [
             *workflow_enforcement_problems(WORKFLOWS, inventory_recipes),
             *all_workflow_trust_problems(WORKFLOWS),
+            *producer_handoff_problems(inventory, WORKFLOWS / "ci.yml"),
         ]
         self_reports = {
             recipe: self_report_markers(recipe) for recipe in inventory_recipes if recipe in recipes

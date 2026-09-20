@@ -73,8 +73,9 @@ jobs:
       - run: just bench-smoke
 
   mutation-gate:
-    name: mutation gate (just mutants-critical)
+    name: curated mutation campaign
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
@@ -82,8 +83,34 @@ jobs:
       - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       # Reintroduce each fixed defect and require its named regression to fail.
-      # A dirty checkout would make the score meaningless; CI refuses one.
-      - run: just mutants-critical --require-clean
+      # The producer snapshots the current clean CI source into an isolated campaign.
+      - run: just mutants-critical
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: mutation-curated-evidence
+          path: target/sep21/v02/curated
+
+  mutation-generated:
+    name: generated workspace mutation campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+      - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
+        with:
+          tool: cargo-mutants
+      # A distinct full-workspace denominator; curated outcomes cannot satisfy it.
+      - run: just mutants-generated
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: mutation-generated-evidence
+          path: target/sep21/v02/generated
 
   tsan:
     name: ThreadSanitizer (just tsan)
@@ -126,10 +153,12 @@ jobs:
       # on every push. A crash uploads its reproducer.
       - run: FUZZ_SECONDS=60 just fuzz
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: failure()
+        if: always()
         with:
           name: fuzz-artifacts
-          path: fuzz/artifacts
+          path: |
+            target/sep21/v03/fuzz/local
+            fuzz/artifacts
 
   coverage:
     name: coverage report (just coverage-report)
@@ -152,18 +181,39 @@ jobs:
             target/coverage/summary.json
             target/coverage/lcov.info
 
-  # The receipt of record (H16-022). Everything above also runs here, once
-  # more, through tools/qualification/receipt.py on a clean checkout — that is
-  # the only place a QUALIFIED verdict is issued (the collector verifies the
-  # Actions workspace and GITHUB_SHA, and the validator re-derives
-  # source identity; the gate results are this job's attestation). Uploaded as
-  # an artifact; the job fails unless the verdict is QUALIFIED, so a required
-  # gate that could not run here (a missing tool) is red, not silently NOT_RUN.
+  # The receipt of record (H16-022). Producer-heavy gates run in prerequisite
+  # jobs and their exact-SHA envelopes are imported here; the remaining gates
+  # run under one bounded collector deadline. This job always runs so a failed
+  # or missing producer becomes a durable NOT_QUALIFIED receipt, not a skipped
+  # check with no evidence.
   qualification:
     name: qualification receipt (isolated hosted checkout)
+    needs: [mutation-gate, mutation-generated, fuzz, modelcheck]
+    if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          name: mutation-curated-evidence
+          path: target/sep21/v02/curated
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          name: mutation-generated-evidence
+          path: target/sep21/v02/generated
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          name: fuzz-artifacts
+          path: .
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          name: modelcheck-evidence
+          path: target/modelcheck
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
         with:
           components: rustfmt, clippy, llvm-tools-preview
@@ -179,7 +229,7 @@ jobs:
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
         with:
-          tool: cargo-deny,cargo-llvm-cov,cargo-fuzz
+          tool: cargo-deny,cargo-llvm-cov,cargo-fuzz,cargo-mutants
       - name: Install semgrep
         run: uv tool install semgrep
       - name: Install valgrind
@@ -199,8 +249,16 @@ jobs:
         with:
           path: target/iai
           key: iai-v3-${{ runner.os }}-${{ steps.fingerprint.outputs.value }}
+      # Baseline python3 keeps a failed optional tool install from suppressing
+      # the NOT_QUALIFIED receipt. Checkout/runner failure is irreducible here:
+      # without receipt.py on disk no in-repository collector can execute.
       - name: Collect the receipt
-        run: uv run python tools/qualification/receipt.py collect --hosted-ci --out receipt.json
+        if: always()
+        env:
+          TASKMESH_PRODUCER_NEEDS_JSON: ${{ toJSON(needs) }}
+        run: >-
+          python3 tools/qualification/receipt.py collect --hosted-ci
+          --consume-producers --out receipt.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -209,6 +267,12 @@ jobs:
             receipt.json
             receipt.gates.json
             receipt.mutations.json
+            receipt.generated-mutations.json
+            receipt.producers.json
+            target/sep21/v02/curated
+            target/sep21/v02/generated
+            target/sep21/v03/fuzz/local
+            target/modelcheck
             target/iai/baseline-manifest.json
             target/iai/comparison-manifest.json
             target/iai/benchmark-output.log
@@ -232,6 +296,21 @@ jobs:
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
       - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
       - run: just shuttle
+
+  modelcheck:
+    name: bounded model evidence (Loom + Shuttle + replay)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
+      - run: just modelcheck
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: modelcheck-evidence
+          path: target/modelcheck
 
   consumer-msrv:
     name: consumer MSRV (declared rust-version, outside the workspace)

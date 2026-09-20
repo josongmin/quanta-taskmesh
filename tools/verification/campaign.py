@@ -8,15 +8,24 @@ import json
 import os
 import shutil
 import signal
-import stat
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from tools.qualification.evidence import (  # noqa: E402
+    git_source_paths,
+    runtime_action,
+    source_tree_digest,
+)
 
 
 def utc_now() -> str:
@@ -37,37 +46,7 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def git_source_paths(repo: Path) -> list[str]:
-    """Return tracked and non-ignored untracked source paths in stable order."""
-    proc = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-        cwd=repo,
-        capture_output=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"git ls-files failed: {proc.stderr.decode(errors='replace').strip()}")
-    return sorted(path.decode("utf-8") for path in proc.stdout.split(b"\0") if path)
-
-
-def tree_digest(root: Path, paths: Iterable[str]) -> str:
-    """Digest path, file kind, executable bit, and bytes for an explicit source set."""
-    digest = hashlib.sha256()
-    for relative in sorted(paths):
-        path = root / relative
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
-        if path.is_symlink():
-            digest.update(b"symlink\0")
-            digest.update(os.readlink(path).encode("utf-8"))
-        elif path.is_file():
-            digest.update(b"file\0")
-            executable = path.stat().st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-            digest.update(b"x" if executable else b"-")
-            digest.update(path.read_bytes())
-        else:
-            digest.update(b"missing\0")
-    return digest.hexdigest()
+tree_digest = source_tree_digest
 
 
 def git_head(repo: Path) -> str:
@@ -301,7 +280,6 @@ def evidence_envelope(
         except ValueError as error:
             raise ValueError(f"evidence path must be inside the repository: {path}") from error
 
-    workflow = repo / "tools/verification/mutation-gate.json"
     command_record = {
         "argv": command,
         "cwd": str(campaign.source),
@@ -330,13 +308,12 @@ def evidence_envelope(
         "command": command_record,
         "tools": tools,
         "configs": [{"path": relative(path), "sha256": sha256_file(path)} for path in config_paths],
-        "action": {
-            "workflow": relative(workflow),
-            "workflow_sha256": sha256_file(workflow),
-            "job": job,
-            "event": "local",
-            "actions": [],
-        },
+        "action": runtime_action(
+            root=repo,
+            source_head=campaign.source_head,
+            local_workflow="tools/verification/mutation-gate.json",
+            local_job=job,
+        ),
         "artifacts": artifacts,
         "result": {
             "status": status,

@@ -84,7 +84,10 @@ uv run python tools/pm/pm.py lint
 }
 ```
 
-최종 receipt schema/validator는 H16-022에서 구현한다. secret env 값은 저장하지 않는다. before/after digest가 같아도 중간 edit-and-restore가 없었다는 증거는 아니다. final qualification에는 immutable checkout과 artifact custody가 필요하다. HEAD만 같은 dirty overlay는 동일 source가 아니다.
+최종 receipt schema/validator는 H16-022에서 구현한다. secret env 값은 저장하지 않는다. before/after
+digest가 같아도 중간 edit-and-restore가 없었다는 증거는 아니다. hosted qualification에는 isolated
+GitHub Actions checkout, exact `GITHUB_SHA`/workspace 검증과 artifact custody가 필요하다. local collection은
+exact-source evidence일 뿐 `QUALIFIED`를 낼 수 없다. HEAD만 같은 dirty overlay는 동일 source가 아니다.
 
 ## 이번 계획 검증 재현
 

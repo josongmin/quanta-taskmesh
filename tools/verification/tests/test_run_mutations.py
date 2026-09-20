@@ -111,6 +111,20 @@ def test_pytest_reason_is_scoped_to_the_named_test_too() -> None:
     )
 
 
+def test_a_long_pytest_failure_header_keeps_its_assertion_reason() -> None:
+    name = "test_coverage_status_line_discloses_uncollected_and_instantiation_metrics"
+    out = (
+        f"__ {name} ___\n\n"
+        "E       AssertionError: instantiation coverage was omitted\n"
+        "=========================== short test summary info ============================\n"
+        f"FAILED tools/gates/tests/test_inventory.py::{name}\n"
+    )
+    failure = rm.failure_output(out, name, "pytest")
+    assert "instantiation coverage was omitted" in failure, (
+        "a long pytest header lost its assertion reason"
+    )
+
+
 def test_pytest_long_runs_and_fixture_errors_are_classified() -> None:
     py = {**MUT, "runner": "pytest", "test_target": "tools/x/tests/test_x.py::the_test"}
     # Past a minute pytest appends a wall-clock suffix; the count must still parse.
@@ -208,6 +222,36 @@ def test_the_committed_inventory_validates() -> None:
     assert len(mutations) >= 30
     controls = [m for m in mutations if m.get("expect_no_failure")]
     assert len(controls) == 1 and controls[0]["finding"] == "control"
+
+
+def test_receipt_names_its_curated_scope_and_separates_the_control() -> None:
+    mutations = rm.load_inventory(rm.INVENTORY)
+    outcomes = [
+        rm.Outcome(
+            mutation_id=mutation["id"],
+            finding=mutation["finding"],
+            status="CONTROL_GREEN" if mutation.get("expect_no_failure") else "KILLED",
+            detail="proof",
+            duration_s=0.1,
+        )
+        for mutation in mutations
+    ]
+    receipt = rm.build_receipt(mutations, outcomes, [])
+    assert receipt["schema_version"] == 2
+    assert receipt["kind"] == "curated-single-edit-inventory"
+    assert receipt["inventory_total"] == 105
+    assert receipt["selection"] == "full"
+    assert len(receipt["inventory_digest"]) == 64
+    assert receipt["status_counts"] == {"CONTROL_GREEN": 1, "KILLED": 104}
+    assert receipt["scope"] == {
+        "runner_counts": {"cargo": 90, "pytest": 15},
+        "source_counts": {
+            "tooling_faults": 15,
+            "rust_crate_src": 89,
+            "rust_crate_tests": 1,
+        },
+        "control_entries": 1,
+    }
 
 
 def test_every_committed_anchor_matches_its_source_exactly_once() -> None:

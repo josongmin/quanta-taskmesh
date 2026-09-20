@@ -445,7 +445,8 @@ spec 문자열을 빌려 allocation 없이 한다.
 - CI `qualification` job이 clean checkout에서 `receipt.py collect`를 돌려 receipt of record를
   artifact로 남긴다; verdict가 QUALIFIED가 아니면 job이 red다. local receipt는 증거지 자격이
   아니다.
-- mutation inventory(100개)의 모든 non-control entry는 `expect_message`를 가져야 하며
+- curated single-edit mutation inventory(105개; cargo-mutants score가 아님)의 모든 non-control
+  entry는 `expect_message`를 가져야 하며
   runner가 이를 거부한다. 그 message는 named test *자신의* 출력 블록(libtest의
   `---- name stdout ----`, pytest의 `___ name ___`/`FAILED …::name`)에서만 찾는다 — 다른
   실패 test가 공유 helper 문자열로 이유를 대신 채울 수 없다. control은 `finding=control`로만 표기한다. `runner: pytest`
@@ -550,11 +551,12 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
   `crates/taskmesh/tests/hardening_*.rs`,
   `crates/taskmesh/src/runtime/claim_acquisition_tests.rs`,
   `crates/taskmesh-contract/tests/topology_validation.rs`.
-- `just mutants-critical`: 100 entries — 99 KILLED + 1 CONTROL_GREEN
-  (`tools/verification/mutations.json`; 각 entry는 named test와 named assertion
+- `just mutants-critical`: curated 105 entries — 104 defect probes + 1 CONTROL_GREEN
+  (`tools/verification/mutations.json`; cargo runner 90, pytest runner 15; 각 entry는 named test와 named assertion
   message로 kill된다). `just loom` 5/5, `just shuttle` 7/7 — production `Governor`.
 - `just tsan` CLEAN (engine 3 + host 12 test binaries — drain·nested wait 포함 — + the rayon adapter, macOS aarch64), `just coverage-report`
-  REPORTED (수치는 receipt). `tests/differential_model.rs`: admission/promotion 상태기계를 ~150줄
+  REPORTED (lines/regions/functions/instantiations를 receipt에 기록하고 branch·MCDC 미수집은
+  `NOT_COLLECTED`로 표시). `tests/differential_model.rs`: admission/promotion 상태기계를 ~150줄
   실행 가능한 명세와 무작위 op 시퀀스(proptest, 매 op 뒤 verdict·gauge·ticket·ledger 동치)로 대조 —
   engine mutation(release가 promote하지 않음, queued abandon이 promote하지 않음 — 이건 이 test만 잡는다 —,
   LIFO promotion, inflight 경계 off-by-one, claim이 ticket을 남김, terminal record 유실, 잘못된 QueueFull

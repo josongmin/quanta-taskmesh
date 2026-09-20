@@ -9,16 +9,17 @@ The gate set is `tools/gates/inventory.json`; the required subset is
       (real integration tests enrolled), architecture checker, py-lint, py-test,
       pm-lint, allocation gate, gates-inventory parity
 - [ ] `just test-rayon` / `just doctest` / `just rustdoc` / `just bench-smoke`
-- [ ] `just mutants-critical` — every mutation in
-      `tools/verification/mutations.json` KILLED (and the control CONTROL_GREEN)
+- [ ] `just mutants-critical` — curated single-edit inventory의 non-control 104개가
+      KILLED이고 control 1개가 CONTROL_GREEN인지 확인한다. 이것은 cargo-mutants
+      전체 생성 sweep의 score가 아니다.
 - [ ] `just loom` / `just shuttle`
 - [ ] `just tsan` — `status=CLEAN` (ThreadSanitizer over the production engine and
       host concurrency tests; needs nightly + rust-src, otherwise NOT_RUN which is
       not a pass)
-- [ ] `just coverage-report` — `status=REPORTED`; read the uncovered production
-      lines in `target/coverage/lcov.info` and account for each (unreachable by
-      design, or a gap). The percentage is information for this review, never a
-      threshold.
+- [ ] `just coverage-report` — `status=REPORTED`; lines/regions/functions/
+      instantiations를 확인하고 branch·MCDC가 `NOT_COLLECTED`면 미수집 proof gap으로
+      명시한다. `target/coverage/lcov.info`의 uncovered production line도 분류한다.
+      어떤 percentage도 threshold가 아니다.
 - [ ] `just consumer-msrv` — PASS on the declared `rust-version` (NOT_RUN is
       not a pass)
 - [ ] `just bench-iai` on Linux — `status=QUALIFIED`. The first run for a given
@@ -27,13 +28,18 @@ The gate set is `tools/gates/inventory.json`; the required subset is
       fingerprint qualifies. CI keys its baseline cache on
       `tools/bench-iai.sh fingerprint`, so a PR that does not change those inputs
       is compared against main's baseline.
-- [ ] `uv run python tools/qualification/receipt.py collect --out <receipt>` on
-      an **immutable checkout** (under `uv run`, so the pytest-runner mutations
-      have their environment), and `validate` reports `QUALIFIED`. `validate`
+- [ ] `uv run python tools/qualification/receipt.py collect --hosted-ci --out <receipt>`
+      in the isolated GitHub Actions qualification job (under `uv run`, so the
+      pytest-runner mutations have their environment), and `validate` reports
+      `QUALIFIED`. Local collection is exact-source evidence but cannot emit a
+      hosted qualification. `validate`
       re-derives the source identity (digest, HEAD, dirtiness) and the receipt's
       internal consistency; it does not re-run gates. The receipt of record is
       the one `collect` produced on that checkout — never a file handed over
-      for `validate` alone.
+      for `validate` alone. The machine-readable `generated_mutation_sweep` must
+      say `NOT_RUN` and `included_in_qualification: false`; a curated mutation
+      PASS never implies a generated cargo-mutants score. The generated sweep
+      remains a separate campaign.
 - [ ] hell-gate e2e: `crates/taskmesh/tests/e2e_proof.rs`, `e2e_scenarios.rs`
 
 ## Invariant proofs
@@ -59,12 +65,12 @@ The gate set is `tools/gates/inventory.json`; the required subset is
   front doors; the JSON wire formats. `just fuzz-check` keeps the targets
   compiling on stable. NOT_RUN without nightly + cargo-fuzz; only
   `taskmesh-fuzz status=CLEAN` is PASS.
-- Mutation gate: 100 entries — 99 single-edit reintroductions of fixed defects
-  (89 cargo incl. 3 shuttle-model targets and 1 differential-model target, 10 pytest
+- Mutation gate: 105 curated entries — 104 single-edit fault probes
+  (90 cargo incl. 3 shuttle-model targets and 1 differential-model target, 15 pytest
   against the Python tooling and the bench workflow scripts), each killed by its named regression for its named
   reason found in that test's own output, plus one behaviour-preserving control
-  that must stay green
-  (`receipts/local-2026-09-19.mutations.json`).
+  that must stay green. The historical schema-v1 receipt contains the first 100;
+  five receipt/coverage/runner integrity probes were added with schema v2.
 
 ## Required proof scenarios
 
@@ -164,11 +170,13 @@ The gate set is `tools/gates/inventory.json`; the required subset is
   would require a storage redesign (root-id interning) — a separate ADR.
 - `run_blocking` + `RunFor` bounds the caller's wait only; a started blocking
   job is not aborted (documented, tested).
-- Declared nested wait cycles (parent awaiting a child on the capability it
-  holds) are unsupported and not detected (ADR 0003, D12).
-- No coverage gate exists. `just mutants-critical` covers the enrolled
-  regressions only; property tests outside `tools/verification/mutations.json`
-  are not mutation-checked.
+- Declared nested wait cycles (parent awaiting a child on capacity held only by
+  that root) are rejected before queueing. Undeclared and cross-root cycles are
+  still outside the detection contract (ADR 0003, D12).
+- No coverage threshold gate exists. `just mutants-critical` covers the curated
+  enrolled faults only; property tests outside `tools/verification/mutations.json`
+  are not mutation-checked, and generated cargo-mutants breadth is a separate
+  campaign.
 
 ## Rollout / rollback (H16-022 A06–A07)
 

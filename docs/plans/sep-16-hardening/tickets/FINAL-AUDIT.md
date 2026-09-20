@@ -24,7 +24,7 @@
 | baseline | fetch 실패를 '없음'으로 처리; schema 바뀐 수치 비교 | typed fetch status, compatible fingerprint, NOT_QUALIFIED bootstrap — H16-017 |
 | MSRV/advisory | dev graph와 consumer graph 혼동; advisory 범위 과장 | workspace 밖 consumer fixture, 실제 toolchain, revision/time receipt — H16-019 |
 | PM | duplicate YAML key·basename collapse·lint가 다른 파일 검증 | strict loader, exact render plan, nonmutating lint — H16-020 |
-| proof custody | dirty source 이동/편집복구를 head만으로 감춤 | content/mode/symlink/untracked digest + final immutable checkout — H16-022 |
+| proof custody | dirty source 이동/편집복구를 head만으로 감춤 | content/mode/symlink/untracked digest + isolated hosted checkout의 Actions/workspace/GITHUB_SHA 검증 — H16-022 |
 
 이 표는 독립적으로 재현된 신규 결함 15개라는 뜻이 아니다. 기존 finding의 구조적 해결을 망가뜨릴 수 있는 설계 위험을 acceptance로 전환한 것이다. 특히 arbitrary nested wait cycle은 이번에 새 runtime bug로 확정하지 않았다.
 
@@ -39,4 +39,3 @@
 ## 최종 판단
 
 우선순위는 admission·lease lifecycle·capacity accounting·cleanup correctness이며, benchmark/gate 신뢰성은 독립 병렬 rail로 복구해야 한다. 코드 수정 전에 결정해야 할 계약은 12개다. 구현과 검증 모두 완료되지 않았으므로 전체 repo가 안전하다거나 SOTA 성능이라는 결론은 내리지 않는다.
-

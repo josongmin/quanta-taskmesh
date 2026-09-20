@@ -478,3 +478,39 @@ def test_the_committed_inventorys_scripts_are_all_tracked() -> None:
     }
     missing = {gate: scripts for gate, scripts in missing.items() if scripts}
     assert missing == {}, f"gate scripts git does not track: {missing}"
+
+
+def test_coverage_status_line_discloses_uncollected_and_instantiation_metrics(
+    tmp_path: Path,
+) -> None:
+    summary = tmp_path / "summary.json"
+    summary.write_text(
+        json.dumps(
+            {
+                "data": [
+                    {
+                        "totals": {
+                            "lines": {"count": 10, "percent": 90.0},
+                            "regions": {"count": 20, "percent": 80.0},
+                            "functions": {"count": 5, "percent": 70.0},
+                            "instantiations": {"count": 30, "percent": 56.63},
+                            "branches": {"count": 0, "percent": 0.0},
+                            "mcdc": {"count": 0, "percent": 0.0},
+                        }
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        ["bash", "tools/coverage/report.sh", "--summarize", str(summary)],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "instantiations=56.63" in proc.stdout, "instantiation coverage was omitted"
+    assert "branches=NOT_COLLECTED branch_count=0" in proc.stdout
+    assert "mcdc=NOT_COLLECTED mcdc_count=0" in proc.stdout

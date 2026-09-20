@@ -42,13 +42,16 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -297,7 +300,7 @@ def failure_output(combined: str, test_name: str, runner: str) -> str:
         short = test_name.rsplit("::", 1)[-1]
         pieces: list[str] = []
         section = re.search(
-            rf"^_{{3,}} .*\b{re.escape(short)}\b.* _{{3,}}$\n(.*?)(?=^_{{3,}} |^={{3,}} |\Z)",
+            rf"^_{{2,}} .*\b{re.escape(short)}\b.* _{{2,}}$\n(.*?)(?=^_{{2,}} |^={{3,}} |\Z)",
             combined,
             re.MULTILINE | re.DOTALL,
         )
@@ -402,6 +405,69 @@ def verify_tree(require_clean: bool) -> list[str]:
 GOOD_STATUSES = {"KILLED", "CONTROL_GREEN"}
 
 
+def receipt_scope(mutations: list[dict]) -> dict:
+    runners = Counter(mutation.get("runner", "cargo") for mutation in mutations)
+    sources: Counter[str] = Counter()
+    for mutation in mutations:
+        path = mutation["file"]
+        runner = mutation.get("runner", "cargo")
+        if runner == "pytest":
+            sources["tooling_faults"] += 1
+        elif re.match(r"^crates/[^/]+/src/", path):
+            sources["rust_crate_src"] += 1
+        elif re.match(r"^crates/[^/]+/tests/", path):
+            sources["rust_crate_tests"] += 1
+        else:
+            sources["other"] += 1
+    return {
+        "runner_counts": dict(sorted(runners.items())),
+        "source_counts": dict(sorted(sources.items())),
+        "control_entries": sum(1 for mutation in mutations if mutation.get("expect_no_failure")),
+    }
+
+
+def build_receipt(
+    mutations: list[dict],
+    outcomes: list[Outcome],
+    dirty: list[str],
+    *,
+    selection: str = "full",
+) -> dict:
+    bad = [outcome for outcome in outcomes if outcome.status not in GOOD_STATUSES]
+    status_counts = Counter(outcome.status for outcome in outcomes)
+    definitions = {mutation["id"]: mutation for mutation in mutations}
+    return {
+        "schema_version": 2,
+        "kind": "curated-single-edit-inventory",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "inventory": str(INVENTORY.relative_to(REPO)),
+        "inventory_digest": hashlib.sha256(INVENTORY.read_bytes()).hexdigest(),
+        "inventory_total": len(load_inventory(INVENTORY)),
+        "selection": selection,
+        "scope": receipt_scope(mutations),
+        "dirty_tree": bool(dirty),
+        "dirty_paths": dirty,
+        "total": len(outcomes),
+        "problems": len(bad),
+        "status_counts": dict(sorted(status_counts.items())),
+        "results": [
+            {
+                "id": outcome.mutation_id,
+                "finding": outcome.finding,
+                "runner": definitions[outcome.mutation_id].get("runner", "cargo"),
+                "file": definitions[outcome.mutation_id]["file"],
+                "control": bool(definitions[outcome.mutation_id].get("expect_no_failure")),
+                "status": outcome.status,
+                "detail": outcome.detail,
+                "expected_test": outcome.expected_test,
+                "observed_failures": outcome.observed_failures,
+                "duration_s": round(outcome.duration_s, 3),
+            }
+            for outcome in outcomes
+        ],
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--id", action="append", help="run only these mutation ids")
@@ -422,7 +488,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{mutation['id']:<48} {kind:<12} {mutation['file']}")
         return 0
 
+    selection = "full"
     if args.id:
+        selection = "subset"
         wanted = set(args.id)
         unknown = wanted - {m["id"] for m in mutations}
         if unknown:
@@ -466,36 +534,15 @@ def main(argv: list[str] | None = None) -> int:
 
     bad = [o for o in outcomes if o.status not in GOOD_STATUSES]
     print()
+    counts = Counter(outcome.status for outcome in outcomes)
     print(
-        f"mutations: {len(outcomes)}  killed/controlled: {len(outcomes) - len(bad)}  "
-        f"problems: {len(bad)}"
+        f"curated mutations: {len(outcomes)}  killed: {counts['KILLED']}  "
+        f"controls green: {counts['CONTROL_GREEN']}  problems: {len(bad)}"
     )
 
     if args.receipt:
         args.receipt.write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "inventory": str(INVENTORY.relative_to(REPO)),
-                    "dirty_tree": bool(dirty),
-                    "dirty_paths": dirty,
-                    "total": len(outcomes),
-                    "problems": len(bad),
-                    "results": [
-                        {
-                            "id": o.mutation_id,
-                            "finding": o.finding,
-                            "status": o.status,
-                            "detail": o.detail,
-                            "expected_test": o.expected_test,
-                            "observed_failures": o.observed_failures,
-                            "duration_s": round(o.duration_s, 3),
-                        }
-                        for o in outcomes
-                    ],
-                },
-                indent=2,
-            )
+            json.dumps(build_receipt(mutations, outcomes, dirty, selection=selection), indent=2)
             + "\n",
             encoding="utf-8",
         )

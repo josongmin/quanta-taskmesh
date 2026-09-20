@@ -274,7 +274,8 @@
         "cargo",
         "clean git tree in CI (--require-clean); locally the runner restores every mutated file and records dirtiness"
       ],
-      "workflow": "ci.yml"
+      "workflow": "ci.yml",
+      "note": "Curated single-edit fault inventory, not an exhaustive cargo-mutants score. The receipt separates KILLED from CONTROL_GREEN and records cargo/pytest plus source-scope counts."
     },
     {
       "id": "loom",
@@ -408,8 +409,8 @@
         "cargo-llvm-cov"
       ],
       "workflow": "ci.yml",
-      "conditional": "reports NOT_RUN (exit 2) when cargo-llvm-cov is missing; CI installs it. Only `taskmesh-coverage status=REPORTED …` is PASS; that line carries the percentages the receipt records",
-      "note": "A report, not a threshold: the repository makes no coverage-gate promise. PASS means the report was produced; the percentages are recorded for review.",
+      "conditional": "reports NOT_RUN (exit 2) when cargo-llvm-cov is missing; CI installs it. Only `taskmesh-coverage status=REPORTED …` is PASS; that line carries every available summary metric and explicitly marks uncollected branch/MCDC data",
+      "note": "A report, not a threshold: the repository makes no coverage-gate promise. PASS means the report was produced. Lines, regions, functions and instantiations are recorded; zero-count branch/MCDC data is reported as NOT_COLLECTED, never as 0% coverage.",
       "status_line": {
         "marker": "taskmesh-coverage",
         "require": "status=REPORTED"

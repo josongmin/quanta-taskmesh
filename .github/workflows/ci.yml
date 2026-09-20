@@ -151,12 +151,13 @@ jobs:
 
   # The receipt of record (H16-022). Everything above also runs here, once
   # more, through tools/qualification/receipt.py on a clean checkout — that is
-  # the only place a QUALIFIED verdict is meaningful (the validator re-derives
+  # the only place a QUALIFIED verdict is issued (the collector verifies the
+  # Actions workspace and GITHUB_SHA, and the validator re-derives
   # source identity; the gate results are this job's attestation). Uploaded as
   # an artifact; the job fails unless the verdict is QUALIFIED, so a required
   # gate that could not run here (a missing tool) is red, not silently NOT_RUN.
   qualification:
-    name: qualification receipt (immutable checkout)
+    name: qualification receipt (isolated hosted checkout)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -196,7 +197,7 @@ jobs:
           path: target/iai
           key: iai-v3-${{ runner.os }}-${{ steps.fingerprint.outputs.value }}
       - name: Collect the receipt
-        run: uv run python tools/qualification/receipt.py collect --out receipt.json
+        run: uv run python tools/qualification/receipt.py collect --hosted-ci --out receipt.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

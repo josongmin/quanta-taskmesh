@@ -84,7 +84,7 @@
 | Q29 | Loom/Shuttle model realism | [H16-014](H16-014-production-regression-proof.md) | **FIX_PROOF** (계획: FIX_PROOF) | 감사(A2-P0-1)에서 toy replica로 판정 → engine `src/sync.rs` seam으로 production `Governor`를 checker 위에서 실행: loom 5 (전수) / shuttle 6 (10k schedules ×4 + D08 gap 모델 5k ×2). ADR 0003 D13 |
 | Q30 | unknown serde fields | [H16-001](H16-001-contracts-and-compatibility.md), [H16-021](H16-021-quality-and-doc-migration.md) | **RETAINED** (계획: RETAIN_OR_DECIDE) | `deny_unknown_fields` 미도입 — 호환성 계약 없이 강제하지 않음 |
 | Q31 | LocalSet affinity/non-Send | [H16-014](H16-014-production-regression-proof.md), [H16-021](H16-021-quality-and-doc-migration.md) | **RETAIN_TEST** (계획: RETAIN_TEST) | `run_local` non-Send future는 caller task 유지 — `hardening_dispatch_resolution.rs`, `runtime_local.rs` |
-| Q32 | measurement qualification gaps | [H16-017](H16-017-performance-gates.md), [H16-022](H16-022-qualification-and-rollout.md) | **QUALIFY** (계획: QUALIFY) | Linux IAI baseline은 macOS에서 미실행 → receipt에 `SKIPPED_PLATFORM`/NOT_QUALIFIED로 기록; fault injection은 mutation gate 45건(44 defects + control) |
+| Q32 | measurement qualification gaps | [H16-017](H16-017-performance-gates.md), [H16-022](H16-022-qualification-and-rollout.md) | **QUALIFY** (계획: QUALIFY) | Linux IAI baseline은 macOS에서 미실행 → receipt에 `SKIPPED_PLATFORM`/NOT_QUALIFIED로 기록; fault injection은 curated inventory 105건(104 defects + control), cargo-mutants generated sweep와 별도 |
 | Q33 | external activation evidence | [H16-022](H16-022-qualification-and-rollout.md) | **EXTERNAL** (계획: EXTERNAL) | 외부 consumer/activation 미확인 → UNVERIFIED |
 
 ## 누락 방지
@@ -93,4 +93,3 @@
 - primary owner 변경 시 plan.json 및 표·각 티켓 source links를 함께 갱신한다.
 - 새 설계 위험은 acceptance/decision으로 먼저 관리한다. reachable source defect가 입증될 때만 별도 bug ticket으로 승격한다.
 - H16-022는 dependency closure로 나머지 21개를 포함한다. validator가 cycle·미매핑·중복 primary·누락된 파일/acceptance를 검사한다.
-

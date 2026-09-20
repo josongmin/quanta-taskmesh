@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "source": {
+    "branch": "hardening/sep-16",
+    "head": "1f04ccb245fc631507df780b97768f8d2f0e5e1a",
+    "tree": "65152e1f97e5b691df7ffe946c43a25bc7c61ee5",
+    "tracked_dirty_count": 19,
+    "tracked_diff_sha256": "bc3c9862cec60ba697fd55365734ee41e981eac3d919c2ef8ce40fe1a629fc9d",
+    "untracked_source_files": ["docs/taskmesh-sota-audit-checklist.md"],
+    "audit_output_prefixes": ["docs/bugbash/sep-21/"],
+    "checklist": "docs/taskmesh-sota-audit-checklist.md",
+    "checklist_sha256": "80cc61adaef3b059825fe2965e55e915ff0ae942ff60b72e52a6326d448e570a",
+    "findings": "docs/bugbash/sep-21/findings.md",
+    "findings_sha256": "ae273aa0c58686c97d224d03f458dc550f44dabcd0d9b600b90e7b56ffc2c87b"
+  },
+  "tickets": [
+    {
+      "id": "SEP21-C01",
+      "file": "SEP21-C01-task-plan-contract.md",
+      "lane": "contract-task",
+      "findings": ["TM21-010"],
+      "depends_on": []
+    },
+    {
+      "id": "SEP21-E01",
+      "file": "SEP21-E01-capability-authority.md",
+      "lane": "engine-core",
+      "findings": ["TM21-008"],
+      "depends_on": []
+    },
+    {
+      "id": "SEP21-E02",
+      "file": "SEP21-E02-effect-custody.md",
+      "lane": "engine-core",
+      "findings": ["TM21-004"],
+      "depends_on": []
+    },
+    {
+      "id": "SEP21-E03",
+      "file": "SEP21-E03-memory-epoch.md",
+      "lane": "engine-core",
+      "findings": ["TM21-016"],
+      "depends_on": []
+    },
+    {
+      "id": "SEP21-E04",
+      "file": "SEP21-E04-pending-resolver.md",
+      "lane": "engine-core",
+      "findings": ["TM21-001", "TM21-002", "TM21-009", "TM21-023"],
+      "depends_on": ["SEP21-C01", "SEP21-E01", "SEP21-E02"]
+    },
+    {
+      "id": "SEP21-H01",
+      "file": "SEP21-H01-validated-dispatch-plan.md",
+      "lane": "host",
+      "findings": ["TM21-007"],
+      "depends_on": ["SEP21-C01"]
+    },
+    {
+      "id": "SEP21-H02",
+      "file": "SEP21-H02-acquisition-arbiter.md",
+      "lane": "host",
+      "findings": ["TM21-005", "TM21-006", "TM21-019"],
+      "depends_on": ["SEP21-H03"]
+    },
+    {
+      "id": "SEP21-H03",
+      "file": "SEP21-H03-executor-domain.md",
+      "lane": "host",
+      "findings": ["TM21-003", "TM21-015", "TM21-020"],
+      "depends_on": ["SEP21-E01", "SEP21-E04", "SEP21-H01"]
+    },
+    {
+      "id": "SEP21-V01",
+      "file": "SEP21-V01-trusted-evidence-envelope.md",
+      "lane": "proof-envelope",
+      "findings": ["TM21-011", "TM21-014", "TM21-022"],
+      "depends_on": []
+    },
+    {
+      "id": "SEP21-V02",
+      "file": "SEP21-V02-mutation-evidence.md",
+      "lane": "mutation-proof",
+      "findings": ["TM21-012", "TM21-017"],
+      "depends_on": ["SEP21-V01"]
+    },
+    {
+      "id": "SEP21-V03",
+      "file": "SEP21-V03-fuzz-model-evidence.md",
+      "lane": "concurrency-proof",
+      "findings": ["TM21-018", "TM21-021"],
+      "depends_on": ["SEP21-V01"]
+    },
+    {
+      "id": "SEP21-R01",
+      "file": "SEP21-R01-release-qualification.md",
+      "lane": "release",
+      "findings": ["TM21-013"],
+      "depends_on": ["SEP21-C01", "SEP21-E01", "SEP21-E02", "SEP21-E03", "SEP21-E04", "SEP21-H01", "SEP21-H02", "SEP21-H03", "SEP21-V01", "SEP21-V02", "SEP21-V03"]
+    }
+  ],
+  "lane_serialization": {
+    "engine-core": ["SEP21-E01", "SEP21-E02", "SEP21-E03", "SEP21-E04"],
+    "host": ["SEP21-H01", "SEP21-H03", "SEP21-H02"]
+  },
+  "orchestrator_prompt": "../prompts/00-orchestrator.md",
+  "execution_packets": [
+    {
+      "id": "contract",
+      "file": "../prompts/10-contract-c01.md",
+      "tickets": ["SEP21-C01"]
+    },
+    {
+      "id": "engine-core",
+      "file": "../prompts/20-engine-core.md",
+      "tickets": ["SEP21-E01", "SEP21-E02", "SEP21-E03", "SEP21-E04"]
+    },
+    {
+      "id": "proof-envelope",
+      "file": "../prompts/30-proof-envelope-v01.md",
+      "tickets": ["SEP21-V01"]
+    },
+    {
+      "id": "host",
+      "file": "../prompts/40-host-runtime.md",
+      "tickets": ["SEP21-H01", "SEP21-H03", "SEP21-H02"]
+    },
+    {
+      "id": "mutation",
+      "file": "../prompts/50-mutation-v02.md",
+      "tickets": ["SEP21-V02"]
+    },
+    {
+      "id": "concurrency",
+      "file": "../prompts/60-concurrency-v03.md",
+      "tickets": ["SEP21-V03"]
+    },
+    {
+      "id": "release",
+      "file": "../prompts/70-release-r01.md",
+      "tickets": ["SEP21-R01"]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "description": "Single-edit mutations of production source, each paired with the test that must detect it and the message that test emits when it does. A mutation that no test rejects is a gap in the proof, not a passing build. `runner: pytest` entries mutate the Python tooling and are proved by its own tests; `profile: release` entries need the engine's debug invariants out of the way so the named test is what observes the defect.",
+  "description": "Curated single-edit fault inventory, not a cargo-mutants score. Each entry is paired with the test that must detect it and the message that test emits when it does. A mutation that no test rejects is a gap in the proof, not a passing build. `runner: pytest` entries mutate the Python tooling and are proved by its own tests; `profile: release` entries need the engine's debug invariants out of the way so the named test is what observes the defect.",
   "mutations": [
     {
       "id": "waker-retired-under-lock",
@@ -417,6 +417,66 @@
       "test_target": "tools/qualification/tests/test_receipt.py::test_a_receipt_claiming_a_clean_tree_over_a_dirty_one_is_caught",
       "expect_failing_test": "test_a_receipt_claiming_a_clean_tree_over_a_dirty_one_is_caught",
       "expect_message": "claims a clean tree"
+    },
+    {
+      "id": "receipt-validator-trusts-a-stale-gate-summary",
+      "finding": "R5-receipt-integrity",
+      "runner": "pytest",
+      "rationale": "The collector once appended the derived mutation PASS without recomputing required_not_run or qualified. A validator that trusts or ignores that stale summary accepts a self-contradictory receipt.",
+      "file": "tools/qualification/receipt.py",
+      "find": "        if gates.get(key) != expected:",
+      "replace": "        if False:",
+      "test_target": "tools/qualification/tests/test_receipt.py::test_stale_gate_summary_is_rejected_even_when_results_are_complete",
+      "expect_failing_test": "test_stale_gate_summary_is_rejected_even_when_results_are_complete",
+      "expect_message": "a stale gate summary must fail closed"
+    },
+    {
+      "id": "receipt-validator-trusts-a-detached-mutation-digest",
+      "finding": "R5-receipt-integrity",
+      "runner": "pytest",
+      "rationale": "A derived PASS must be cryptographically bound to the embedded detailed mutation receipt; otherwise the detail can be replaced after collection while the gate result remains green.",
+      "file": "tools/qualification/receipt.py",
+      "find": "        if isinstance(mutations, dict) and mutation_gate.get(\"evidence_digest\") != canonical_digest(\n            mutations\n        ):",
+      "replace": "        if False:",
+      "test_target": "tools/qualification/tests/test_receipt.py::test_derived_mutation_digest_must_match_the_embedded_evidence",
+      "expect_failing_test": "test_derived_mutation_digest_must_match_the_embedded_evidence",
+      "expect_message": "mutated evidence digest was trusted"
+    },
+    {
+      "id": "coverage-status-hides-instantiation-coverage",
+      "finding": "R5-coverage-disclosure",
+      "runner": "pytest",
+      "rationale": "The raw llvm-cov summary reported 56.63% instantiation coverage while the receipt status line retained only the three stronger metrics. The machine-readable line must disclose every available summary dimension.",
+      "file": "tools/coverage/report.sh",
+      "find": "    f\"instantiations={pct('instantiations')} branches={branches} \"",
+      "replace": "    f\"instantiations=OMITTED branches={branches} \"",
+      "test_target": "tools/gates/tests/test_inventory.py::test_coverage_status_line_discloses_uncollected_and_instantiation_metrics",
+      "expect_failing_test": "test_coverage_status_line_discloses_uncollected_and_instantiation_metrics",
+      "expect_message": "instantiation coverage was omitted"
+    },
+    {
+      "id": "long-pytest-header-loses-its-failure-reason",
+      "finding": "R5-mutation-runner",
+      "runner": "pytest",
+      "rationale": "Pytest shortens the leading underscore run to two when a test name is long. Requiring at least three loses that test's assertion block and misclassifies a real kill as WRONG_REASON.",
+      "file": "tools/verification/run_mutations.py",
+      "find": "            rf\"^_{{2,}} .*\\b{re.escape(short)}\\b.* _{{2,}}$\\n(.*?)(?=^_{{2,}} |^={{3,}} |\\Z)\",",
+      "replace": "            rf\"^_{{3,}} .*\\b{re.escape(short)}\\b.* _{{3,}}$\\n(.*?)(?=^_{{3,}} |^={{3,}} |\\Z)\",",
+      "test_target": "tools/verification/tests/test_run_mutations.py::test_a_long_pytest_failure_header_keeps_its_assertion_reason",
+      "expect_failing_test": "test_a_long_pytest_failure_header_keeps_its_assertion_reason",
+      "expect_message": "a long pytest header lost its assertion reason"
+    },
+    {
+      "id": "receipt-claims-generated-mutation-pass-without-evidence",
+      "finding": "R5-receipt-integrity",
+      "runner": "pytest",
+      "rationale": "The qualification gate runs a curated fault inventory, not cargo-mutants. If the validator stops enforcing the generated-sweep disclosure, a receipt can market the curated count as a generated PASS without any outcomes or denominator.",
+      "file": "tools/qualification/receipt.py",
+      "find": "    reasons.extend(generated_mutation_disclosure_problems(receipt.get(\"generated_mutation_sweep\")))",
+      "replace": "    reasons.extend([])",
+      "test_target": "tools/qualification/tests/test_receipt.py::test_generated_mutation_sweep_cannot_claim_a_pass",
+      "expect_failing_test": "test_generated_mutation_sweep_cannot_claim_a_pass",
+      "expect_message": "generated sweep PASS was trusted without evidence"
     },
     {
       "id": "proof-parity-not-checked",

@@ -178,7 +178,10 @@ async fn requested_stack_async_runtime_honors_cooperative_deadline_v1() {
 async fn absolute_deadline_is_one_budget_across_queue_and_execution_v1() {
     let rt = single_slot_deadline_rt();
     let spec = TaskSpec::io(TaskClass::new("c")).operation("absolute-deadline");
-    let occupied = match rt.governor().admit(&spec) {
+    let occupied = match rt
+        .governor()
+        .admit(&TaskSpec::io(TaskClass::new("c")).operation("absolute-holder"))
+    {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("expected occupied permit, got {other:?}"),
     };
@@ -225,7 +228,10 @@ async fn an_absolute_deadline_that_expires_while_queued_is_deadline_exceeded_v1(
     // that can end the wait.
     let rt = single_slot_deadline_rt();
     let spec = TaskSpec::io(TaskClass::new("c")).operation("expires-while-queued");
-    let occupied = match rt.governor().admit(&spec) {
+    let occupied = match rt
+        .governor()
+        .admit(&TaskSpec::io(TaskClass::new("c")).operation("expiry-holder"))
+    {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("expected occupied permit, got {other:?}"),
     };
@@ -262,7 +268,10 @@ async fn an_acquire_timeout_under_a_far_absolute_deadline_stays_an_acquisition_t
     // budget that never expired. The occupied permit is never released.
     let rt = single_slot_deadline_rt();
     let spec = TaskSpec::io(TaskClass::new("c")).operation("acquire-times-out");
-    let occupied = match rt.governor().admit(&spec) {
+    let occupied = match rt
+        .governor()
+        .admit(&TaskSpec::io(TaskClass::new("c")).operation("timeout-holder"))
+    {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("expected occupied permit, got {other:?}"),
     };
@@ -592,6 +601,13 @@ impl CpuExecutor for StallExecutor {
     fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
         self.held.lock().unwrap().push(work);
     }
+
+    fn capabilities(&self) -> ExecutorCapabilities {
+        ExecutorCapabilities::legacy()
+            .nonblocking_submit(true)
+            .declared_workers(1)
+            .physical_domain(PHYSICAL_CPU)
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -600,6 +616,7 @@ async fn run_cpu_escapes_stalled_executor_via_cancel() {
         held: Mutex::new(Vec::new()),
     });
     let rt = Builder::new()
+        .topology(TopologyConfig::new().cpu_fixed(1))
         .resources(ResourceBudget::new().cpu_units(64).memory_units(64))
         .class_policy(
             TaskClass::new("c"),

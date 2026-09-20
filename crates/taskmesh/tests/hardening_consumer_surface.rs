@@ -98,14 +98,15 @@ fn a_pending_request_key_is_readable_through_the_facade() {
     let AdmissionDecision::Admitted { permit_id } = g.admit(&spec) else {
         panic!("first admission");
     };
-    let AdmissionDecision::Queued { ticket } = g.admit(&spec) else {
+    let queued = TaskSpec::io(TaskClass::new("c")).operation("queued");
+    let AdmissionDecision::Queued { ticket } = g.admit(&queued) else {
         panic!("second queues");
     };
     let view = g.pending_view(ticket).expect("queued");
     let key: &RequestKey = &view.request_key;
-    assert_eq!(key.as_str(), spec.root_operation_id);
-    assert_eq!(key.to_string(), spec.root_operation_id);
-    assert_eq!(key, &RequestKey::from_root(&spec.root_operation_id));
+    assert_eq!(key.as_str(), queued.root_operation_id);
+    assert_eq!(key.to_string(), queued.root_operation_id);
+    assert_eq!(key, &RequestKey::from_root(&queued.root_operation_id));
     g.abandon(ticket);
     assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
 }
@@ -123,9 +124,10 @@ fn the_runtime_and_builder_are_debug_and_the_deadline_is_comparable() {
         .unwrap_err();
     assert_eq!(
         error,
-        GovernorError::InvalidTopology(TopologyError::ExecutorDeclaresFewerWorkers {
+        GovernorError::InvalidTopology(TopologyError::ExecutorWorkerCountMismatch {
             declared: 1,
             resolved: 4,
+            domain: PHYSICAL_CPU,
         })
     );
     let rt = runtime();
@@ -167,6 +169,9 @@ impl CpuExecutor for NarrowExecutor {
     }
 
     fn capabilities(&self) -> ExecutorCapabilities {
-        ExecutorCapabilities::legacy().declared_workers(1)
+        ExecutorCapabilities::legacy()
+            .nonblocking_submit(true)
+            .declared_workers(1)
+            .physical_domain(PHYSICAL_CPU)
     }
 }

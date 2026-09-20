@@ -65,7 +65,8 @@ async fn a_parent_that_awaits_a_declared_child_on_its_own_slot_is_told_so_at_onc
             let child = inner
                 .run_io(
                     TaskSpec::io(TaskClass::new("c"))
-                        .awaited_child_of("parent", TaskStage::new("child")),
+                        .awaited_child_of("parent", "parent", TaskStage::new("child"))
+                        .operation("declared-child"),
                     async { Ok::<u32, ()>(1) },
                 )
                 .await;
@@ -104,7 +105,12 @@ async fn an_undeclared_child_is_not_inferred_and_the_parents_acquire_timeout_end
         async move {
             let child = inner
                 .run_io_with(
-                    TaskSpec::io(TaskClass::new("c")).child_of("parent", TaskStage::new("child")),
+                    TaskSpec::io(TaskClass::new("c")).child_of(
+                        "parent",
+                        "parent",
+                        TaskStage::new("child"),
+                    )
+                    .operation("undeclared-child"),
                     SubmitOptions::unbounded().with_acquire_timeout(Duration::from_millis(100)),
                     async { Ok::<u32, ()>(1) },
                 )

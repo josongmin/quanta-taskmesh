@@ -84,10 +84,10 @@ pub trait CpuExecutor: Send + Sync {
 
     /// What this adapter guarantees about submission and pool ownership.
     ///
-    /// The default is [`ExecutorCapabilities::legacy`] — the conservative
-    /// profile for an adapter written before this method existed. The host does
-    /// not infer stronger guarantees than an adapter declares; in particular it
-    /// does not claim to bound work an adapter shares with ambient users.
+    /// The default is [`ExecutorCapabilities::legacy`] so old adapters remain
+    /// source-compatible. The host rejects that profile at installation: an
+    /// executor must explicitly declare nonblocking submission, its finite
+    /// worker count, and its registered physical domain.
     fn capabilities(&self) -> ExecutorCapabilities {
         ExecutorCapabilities::legacy()
     }
@@ -95,18 +95,18 @@ pub trait CpuExecutor: Send + Sync {
 
 /// The declared guarantees of a [`CpuExecutor`] adapter.
 ///
-/// These are *declarations*, not measurements. The host uses them to decide what
-/// it may honestly promise (see `docs/adr/0003-sep-16-hardening-contracts.md`, D05): an
-/// adapter that cannot say its submission is non-blocking does not get a
-/// "deadline starts at submission" guarantee, and an adapter that shares its
-/// pool with ambient work does not get "this runtime bounds that pool".
+/// These are *declarations*, not measurements. The host validates them at build
+/// time and rejects incomplete or inconsistent adapters. `exclusive_pool=false`
+/// remains observable: taskmesh bounds its own atomic submissions to the shared
+/// physical domain but does not claim authority over ambient users.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ExecutorCapabilities {
     /// `spawn` returns without running the work to completion on the caller
     /// thread. When `false`, the host must assume `spawn` may execute the job
     /// inline and therefore judges run deadlines by the worker's own start and
-    /// completion timestamps rather than by when `spawn` returned.
+    /// completion timestamps rather than by when `spawn` returned. The host
+    /// rejects `false` at installation.
     pub nonblocking_submit: bool,
     /// Worker threads the adapter owns, when it knows. `None` means unknown, and
     /// unknown is never upgraded to a capacity guarantee.
@@ -114,6 +114,9 @@ pub struct ExecutorCapabilities {
     /// The adapter's pool runs taskmesh work only. When `false`, ambient users
     /// share it and taskmesh governs only its own submissions.
     pub exclusive_pool: bool,
+    /// Registered physical-domain capability this executor occupies. The host
+    /// resolves this once at build/preflight time; promotion never reparses it.
+    pub physical_domain: Option<&'static str>,
 }
 
 impl ExecutorCapabilities {
@@ -124,6 +127,7 @@ impl ExecutorCapabilities {
             nonblocking_submit: false,
             declared_workers: None,
             exclusive_pool: false,
+            physical_domain: None,
         }
     }
 
@@ -139,6 +143,11 @@ impl ExecutorCapabilities {
 
     pub const fn exclusive_pool(mut self, value: bool) -> Self {
         self.exclusive_pool = value;
+        self
+    }
+
+    pub const fn physical_domain(mut self, value: &'static str) -> Self {
+        self.physical_domain = Some(value);
         self
     }
 }

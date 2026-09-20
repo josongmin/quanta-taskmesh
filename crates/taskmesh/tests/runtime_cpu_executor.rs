@@ -21,6 +21,13 @@ impl CpuExecutor for PanicOnceCpuExecutor {
         );
         work();
     }
+
+    fn capabilities(&self) -> taskmesh::ext::ExecutorCapabilities {
+        taskmesh::ext::ExecutorCapabilities::legacy()
+            .nonblocking_submit(true)
+            .declared_workers(1)
+            .physical_domain(PHYSICAL_CPU)
+    }
 }
 
 struct AsyncFutureDropSignalV1(Option<tokio::sync::oneshot::Sender<()>>);
@@ -35,7 +42,7 @@ impl Drop for AsyncFutureDropSignalV1 {
 
 fn runtime_with_rayon(workers: usize) -> (TokioRuntime, usize) {
     let topology = TopologyConfig::new().cpu_fixed(workers);
-    let rayon = RayonCpuExecutor::from_topology(&topology);
+    let rayon = RayonCpuExecutor::try_from_topology(&topology).expect("rayon builds");
     let count = rayon.worker_count();
     let rt = Builder::new()
         .topology(topology)
@@ -81,16 +88,19 @@ fn the_cpu_gate_and_the_rayon_pool_are_sized_from_one_answer() {
             TaskClass::new("c"),
             ClassPolicy::new().max_inflight(8).cpu_units(1),
         )
-        .cpu_executor(Arc::new(RayonCpuExecutor::new(2)))
+        .cpu_executor(Arc::new(
+            RayonCpuExecutor::try_new(2).expect("rayon builds"),
+        ))
         .build();
     let Err(error) = error else {
         panic!("a narrower pool is refused");
     };
     assert_eq!(
         error,
-        GovernorError::InvalidTopology(TopologyError::ExecutorDeclaresFewerWorkers {
+        GovernorError::InvalidTopology(TopologyError::ExecutorWorkerCountMismatch {
             declared: 2,
             resolved: 4,
+            domain: PHYSICAL_CPU,
         })
     );
 }
@@ -532,6 +542,7 @@ async fn requested_stack_blocking_caller_abort_retains_permit_until_worker_termi
 async fn default_runtime_works_without_rayon() {
     // Without an injected executor, run_cpu still works (blocking-pool default).
     let rt = Builder::new()
+        .topology(TopologyConfig::new().cpu_fixed(1))
         .resources(ResourceBudget::new().cpu_units(10))
         .class_policy(
             TaskClass::new("c"),
@@ -547,6 +558,7 @@ async fn default_runtime_works_without_rayon() {
 #[tokio::test]
 async fn cpu_executor_spawn_panic_is_typed_and_releases_lease_v1() {
     let rt = Builder::new()
+        .topology(TopologyConfig::new().cpu_fixed(1))
         .resources(ResourceBudget::new().cpu_units(64).memory_units(64))
         .class_policy(
             TaskClass::new("c"),

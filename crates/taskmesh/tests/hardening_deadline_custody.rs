@@ -179,8 +179,9 @@ async fn a_blocking_job_inside_its_budget_still_succeeds() {
 // ---- TM16-022: the budget is anchored to the worker, not to `spawn` ---------
 
 /// A `CpuExecutor` that runs work inline: `spawn` returns only after the job is
-/// finished. Legal — the port does not promise otherwise — and it is exactly the
-/// shape that made "start the timer after spawn" meaningless.
+/// finished. H03 makes this an install-time protocol violation: allowing it
+/// would create a competing synchronous execution path outside the bounded
+/// physical-domain transition.
 struct InlineCpuExecutor;
 
 impl CpuExecutor for InlineCpuExecutor {
@@ -193,9 +194,9 @@ impl CpuExecutor for InlineCpuExecutor {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_inline_executor_cannot_report_a_late_result_as_success() {
-    let rt = Builder::new()
+#[test]
+fn an_inline_executor_is_rejected_before_any_submission() {
+    let error = Builder::new()
         .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
         .class_policy(
             TaskClass::new("c"),
@@ -205,53 +206,16 @@ async fn an_inline_executor_cannot_report_a_late_result_as_success() {
                 .cancellation_policy(CancellationPolicy::CooperativeWithDeadline),
         )
         .cpu_executor(Arc::new(InlineCpuExecutor))
-        .build()
-        .expect("runtime builds");
-
-    let error = rt
-        .run_cpu_with(
-            TaskSpec::cpu(TaskClass::new("c")).operation("overrun"),
-            SubmitOptions::unbounded().with_deadline(Duration::from_millis(5)),
-            || {
-                // nosemgrep: taskmesh-test-thread-sleep -- reason: the job must overrun its RunFor budget by wall-clock time on an inline executor; that overrun is the property under test.
-                std::thread::sleep(Duration::from_millis(60));
-                Ok::<i32, ()>(7)
-            },
-        )
-        .await
-        .expect_err("a job that took 60ms under a 5ms budget did not meet it");
+        .build();
     assert!(
-        matches!(error, RunError::Governor(GovernorError::DeadlineExceeded)),
-        "got {error:?}"
+        matches!(
+            error,
+            Err(GovernorError::InvalidTopology(
+                TopologyError::ExecutorSubmissionMayBlock
+            ))
+        ),
+        "inline executor must fail build: {error:?}"
     );
-    assert_drains(&rt, "inline executor overrun").await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_inline_executor_inside_its_budget_succeeds() {
-    let rt = Builder::new()
-        .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
-        .class_policy(
-            TaskClass::new("c"),
-            ClassPolicy::new()
-                .max_inflight(8)
-                .cpu_units(1)
-                .cancellation_policy(CancellationPolicy::CooperativeWithDeadline),
-        )
-        .cpu_executor(Arc::new(InlineCpuExecutor))
-        .build()
-        .expect("runtime builds");
-
-    let out: i32 = rt
-        .run_cpu_with(
-            TaskSpec::cpu(TaskClass::new("c")).operation("quick"),
-            SubmitOptions::unbounded().with_deadline(Duration::from_secs(30)),
-            || Ok::<_, ()>(3),
-        )
-        .await
-        .expect("inside budget");
-    assert_eq!(out, 3);
-    assert_drains(&rt, "inline executor control").await;
 }
 
 // ---- TM16-032: an expired acquisition budget starts nothing ----------------

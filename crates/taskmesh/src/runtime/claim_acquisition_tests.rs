@@ -2,13 +2,14 @@
 
 use super::*;
 use std::future::poll_fn;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::Poll;
 use std::time::Duration;
 use taskmesh_contract::{
-    ClassPolicy, ManualClock, MemoryReleasePolicy, OverflowPolicy, ResourceBudget, TaskClass,
+    AdmissionVerdict, ClassPolicy, ManualClock, MemoryReleasePolicy, OverflowPolicy,
+    ResourceBudget, TaskClass,
 };
-use taskmesh_engine::{AdvanceOutcome, PolicySet, ReleaseOutcome};
+use taskmesh_engine::{AdvanceOutcome, ReleaseOutcome};
 
 fn runtime() -> (TokioRuntime, Arc<ManualClock>, TaskSpec) {
     let mut runtime = crate::Builder::new()
@@ -27,10 +28,7 @@ fn runtime() -> (TokioRuntime, Arc<ManualClock>, TaskSpec) {
         .expect("validated host configuration");
     // Replace only the clock port; retain the builder's actual policy/inventory.
     let clock = Arc::new(ManualClock::new(1_000));
-    let policy = PolicySet::new(
-        runtime.config.resources.clone(),
-        runtime.config.classes.clone(),
-    );
+    let policy = runtime.governor.policy().clone();
     runtime.governor = Arc::new(
         Governor::new(policy, clock.clone()).expect("same validated policy with controlled clock"),
     );
@@ -38,11 +36,37 @@ fn runtime() -> (TokioRuntime, Arc<ManualClock>, TaskSpec) {
     (runtime, clock, spec)
 }
 
+static NEXT_OPERATION: AtomicUsize = AtomicUsize::new(1);
+
+fn unique_spec(spec: &TaskSpec, prefix: &str) -> TaskSpec {
+    let id = NEXT_OPERATION.fetch_add(1, Ordering::SeqCst);
+    spec.clone().operation(format!("{prefix}-{id}"))
+}
+
 fn occupy(runtime: &TokioRuntime, spec: &TaskSpec) -> PermitId {
-    match runtime.governor.admit(spec) {
+    match runtime.governor.admit(&unique_spec(spec, "holder")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("expected the first permit, got {other:?}"),
     }
+}
+
+fn validated_plan(
+    runtime: &TokioRuntime,
+    spec: &TaskSpec,
+    opts: &SubmitOptions,
+) -> ValidatedDispatchPlan {
+    runtime
+        .plan(
+            unique_spec(spec, "waiter"),
+            opts,
+            &[SubstrateHint::AsyncIo],
+            DispatchKind::CallerFuture,
+        )
+        .expect("test task is a valid IO dispatch")
+}
+
+fn arbiter(opts: &SubmitOptions) -> AcquisitionArbiter {
+    AcquisitionArbiter::new(opts, None).expect("test acquisition budget is representable")
 }
 
 async fn park<F: Future>(mut future: Pin<&mut F>) {
@@ -75,11 +99,15 @@ fn assert_accounting(runtime: &TokioRuntime, inflight: u32, queued: u32) {
 async fn ready_and_pending_promotion_transfer_ownership_once_v1() {
     let (runtime, _, spec) = runtime();
     let opts = SubmitOptions::unbounded();
+    let first_plan = validated_plan(&runtime, &spec, &opts);
+    let first_arbiter = arbiter(&opts);
     let first = runtime
-        .acquire(&spec, None, &opts, None)
+        .acquire(&first_plan, &first_arbiter)
         .await
         .expect("ready");
-    let mut waiter = Box::pin(runtime.acquire(&spec, None, &opts, None));
+    let second_plan = validated_plan(&runtime, &spec, &opts);
+    let second_arbiter = arbiter(&opts);
+    let mut waiter = Box::pin(runtime.acquire(&second_plan, &second_arbiter));
     park(waiter.as_mut()).await;
     assert_accounting(&runtime, 1, 1);
     assert_eq!(runtime.governor.release(first), ReleaseOutcome::Released);
@@ -125,10 +153,11 @@ async fn reclaimed_promotion_returns_public_typed_error_and_releases_guard_v1() 
 async fn invalid_ticket_without_deadline_returns_instead_of_parking_v1() {
     let (runtime, _, _) = runtime();
     let waker = TokioPermitWaker::new();
-    let error =
-        finish(runtime.await_promotion(u64::MAX, &waker, &SubmitOptions::unbounded(), None))
-            .await
-            .expect_err("never-issued ticket");
+    let opts = SubmitOptions::unbounded();
+    let arbiter = arbiter(&opts);
+    let error = finish(runtime.await_promotion(u64::MAX, &waker, &arbiter))
+        .await
+        .expect_err("never-issued ticket");
     assert_eq!(
         error,
         GovernorError::InvalidTicketClaim { ticket: u64::MAX }
@@ -140,13 +169,10 @@ async fn invalid_ticket_without_deadline_returns_instead_of_parking_v1() {
 async fn pending_timeout_removes_queued_ticket_without_releasing_holder_v1() {
     let (runtime, _, spec) = runtime();
     let first = occupy(&runtime, &spec);
-    let opts = SubmitOptions::unbounded();
-    let mut waiter = Box::pin(runtime.acquire(
-        &spec,
-        None,
-        &opts,
-        Some(Instant::now() + Duration::from_millis(10)),
-    ));
+    let opts = SubmitOptions::unbounded().with_acquire_timeout(Duration::from_millis(10));
+    let plan = validated_plan(&runtime, &spec, &opts);
+    let arbiter = arbiter(&opts);
+    let mut waiter = Box::pin(runtime.acquire(&plan, &arbiter));
     park(waiter.as_mut()).await;
     let error = finish(waiter).await.expect_err("queue deadline");
     assert_eq!(
@@ -166,7 +192,9 @@ async fn cancel_beats_claim_of_promoted_permit_and_guard_releases_it_v1() {
     let first = occupy(&runtime, &spec);
     let token = CancellationToken::new();
     let opts = SubmitOptions::unbounded().with_cancel(token.clone());
-    let mut waiter = Box::pin(runtime.acquire(&spec, None, &opts, None));
+    let plan = validated_plan(&runtime, &spec, &opts);
+    let arbiter = arbiter(&opts);
+    let mut waiter = Box::pin(runtime.acquire(&plan, &arbiter));
     park(waiter.as_mut()).await;
     assert_eq!(runtime.governor.release(first), ReleaseOutcome::Released);
     token.cancel();
@@ -178,13 +206,39 @@ async fn cancel_beats_claim_of_promoted_permit_and_guard_releases_it_v1() {
     assert_accounting(&runtime, 0, 0);
 }
 
+#[test]
+fn cancel_between_immediate_admit_and_handoff_returns_unstarted_once_v1() {
+    let (runtime, _, spec) = runtime();
+    let permit = occupy(&runtime, &spec);
+    let token = CancellationToken::new();
+    let opts = SubmitOptions::unbounded().with_cancel(token.clone());
+    let arbiter = arbiter(&opts);
+    token.cancel();
+
+    let error = runtime
+        .finalize_acquired(permit, &arbiter, false, None)
+        .expect_err("cancel at the handoff boundary wins");
+    assert_eq!(
+        error,
+        GovernorError::Rejected(AdmissionVerdict::CancelledBeforeSubmit)
+    );
+    assert_accounting(&runtime, 0, 0);
+    assert_eq!(
+        runtime.governor.release(permit),
+        ReleaseOutcome::UnknownPermit,
+        "the unstarted permit was returned exactly once"
+    );
+}
+
 #[tokio::test]
 async fn dropped_acquisition_abandons_queued_and_promoted_tickets_v1() {
     for promote in [false, true] {
         let (runtime, _, spec) = runtime();
         let first = occupy(&runtime, &spec);
         let opts = SubmitOptions::unbounded();
-        let mut waiter = Box::pin(runtime.acquire(&spec, None, &opts, None));
+        let plan = validated_plan(&runtime, &spec, &opts);
+        let arbiter = arbiter(&opts);
+        let mut waiter = Box::pin(runtime.acquire(&plan, &arbiter));
         park(waiter.as_mut()).await;
         if promote {
             assert_eq!(runtime.governor.release(first), ReleaseOutcome::Released);
@@ -199,7 +253,7 @@ async fn dropped_acquisition_abandons_queued_and_promoted_tickets_v1() {
 }
 
 fn queue_without_notification(runtime: &TokioRuntime, spec: &TaskSpec) -> u64 {
-    match runtime.governor.admit(spec) {
+    match runtime.governor.admit(&unique_spec(spec, "queued")) {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected a queue ticket, got {other:?}"),
     }
@@ -222,9 +276,9 @@ async fn a_promotion_found_on_wake_after_the_budget_is_spent_is_unwound_v1() {
         ClaimOutcome::Ready(_)
     ));
     let waker = TokioPermitWaker::new();
-    let opts = SubmitOptions::unbounded();
-    let spent = Instant::now() - Duration::from_millis(1);
-    let error = finish(runtime.await_promotion(ticket, &waker, &opts, Some(spent)))
+    let opts = SubmitOptions::unbounded().with_acquire_timeout(Duration::ZERO);
+    let arbiter = arbiter(&opts);
+    let error = finish(runtime.await_promotion(ticket, &waker, &arbiter))
         .await
         .expect_err("a promotion found after the budget is spent must not start");
     assert_eq!(
@@ -251,13 +305,9 @@ async fn timeout_after_racing_promotion_unwinds_instead_of_starting_v1() {
     let first = occupy(&runtime, &spec);
     let ticket = queue_without_notification(&runtime, &spec);
     let waker = TokioPermitWaker::new();
-    let opts = SubmitOptions::unbounded();
-    let mut waiter = Box::pin(runtime.await_promotion(
-        ticket,
-        &waker,
-        &opts,
-        Some(Instant::now() + Duration::from_millis(10)),
-    ));
+    let opts = SubmitOptions::unbounded().with_acquire_timeout(Duration::from_millis(10));
+    let arbiter = arbiter(&opts);
+    let mut waiter = Box::pin(runtime.await_promotion(ticket, &waker, &arbiter));
     // No governor waker is registered for this ticket: only the deadline resumes
     // this suspended select, so what it does with the racing promotion is the
     // timeout branch's own decision, not the loop's.
@@ -295,13 +345,9 @@ async fn timeout_last_chance_claim_preserves_reclaimed_terminal_reason_v1() {
     let first = occupy(&runtime, &spec);
     let ticket = queue_without_notification(&runtime, &spec);
     let waker = TokioPermitWaker::new();
-    let opts = SubmitOptions::unbounded();
-    let mut waiter = Box::pin(runtime.await_promotion(
-        ticket,
-        &waker,
-        &opts,
-        Some(Instant::now() + Duration::from_millis(10)),
-    ));
+    let opts = SubmitOptions::unbounded().with_acquire_timeout(Duration::from_millis(10));
+    let arbiter = arbiter(&opts);
+    let mut waiter = Box::pin(runtime.await_promotion(ticket, &waker, &arbiter));
     park(waiter.as_mut()).await;
     assert_eq!(runtime.governor.release(first), ReleaseOutcome::Released);
     clock.advance(11);
@@ -324,13 +370,9 @@ async fn timeout_last_chance_claim_reports_invalid_instead_of_generic_timeout_v1
     let first = occupy(&runtime, &spec);
     let ticket = queue_without_notification(&runtime, &spec);
     let waker = TokioPermitWaker::new();
-    let opts = SubmitOptions::unbounded();
-    let mut waiter = Box::pin(runtime.await_promotion(
-        ticket,
-        &waker,
-        &opts,
-        Some(Instant::now() + Duration::from_millis(10)),
-    ));
+    let opts = SubmitOptions::unbounded().with_acquire_timeout(Duration::from_millis(10));
+    let arbiter = arbiter(&opts);
+    let mut waiter = Box::pin(runtime.await_promotion(ticket, &waker, &arbiter));
     park(waiter.as_mut()).await;
     runtime.governor.abandon(ticket);
     let error = finish(waiter).await.expect_err("invalid beats timeout");

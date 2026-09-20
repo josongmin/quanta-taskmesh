@@ -186,7 +186,9 @@ fn governance_invariants_via_governor() {
         .build()
         .unwrap();
     let g = rt.governor();
-    let child = TaskSpec::blocking(TaskClass::new("worker")).child_of("root", TaskStage::new("p"));
+    let child = TaskSpec::blocking(TaskClass::new("worker"))
+        .child_of("root", "root", TaskStage::new("p"))
+        .operation("child");
     assert!(matches!(
         g.admit(&child),
         AdmissionDecision::Admitted { .. }

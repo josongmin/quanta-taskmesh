@@ -2,12 +2,12 @@
 
 use std::sync::mpsc;
 
-use taskmesh_contract::{CpuExecutor, TopologyConfig};
-use taskmesh_rayon::RayonCpuExecutor;
+use taskmesh_contract::{CpuExecutor, TopologyConfig, TopologyError, PHYSICAL_CPU};
+use taskmesh_rayon::{RayonBuildError, RayonCpuExecutor};
 
 #[test]
 fn executor_runs_cpu_work() {
-    let executor = RayonCpuExecutor::new(2);
+    let executor = RayonCpuExecutor::try_new(2).expect("pool builds");
     assert_eq!(executor.worker_count(), 2);
 
     let (tx, rx) = mpsc::channel();
@@ -22,20 +22,23 @@ fn executor_runs_cpu_work() {
 #[test]
 fn worker_count_respects_topology_clamp() {
     // Fixed mode is taken verbatim (clamped to >= 1).
-    let fixed = RayonCpuExecutor::from_topology(&TopologyConfig::new().cpu_fixed(4));
+    let fixed = RayonCpuExecutor::try_from_topology(&TopologyConfig::new().cpu_fixed(4)).unwrap();
     assert_eq!(fixed.worker_count(), 4);
 
     // max_workers clamps auto sizing down.
-    let clamped = RayonCpuExecutor::from_topology(&TopologyConfig::new().cpu_auto().max_workers(1));
+    let clamped =
+        RayonCpuExecutor::try_from_topology(&TopologyConfig::new().cpu_auto().max_workers(1))
+            .unwrap();
     assert_eq!(clamped.worker_count(), 1);
 
     // min_workers raises a tiny auto budget.
-    let raised = RayonCpuExecutor::from_topology(
+    let raised = RayonCpuExecutor::try_from_topology(
         &TopologyConfig::new()
             .cpu_auto()
             .reserve_cores(1024)
             .min_workers(2),
-    );
+    )
+    .unwrap();
     assert_eq!(raised.worker_count(), 2);
 }
 
@@ -43,7 +46,7 @@ fn worker_count_respects_topology_clamp() {
 fn the_adapter_declares_what_it_can_honestly_promise() {
     // D05: a pool this adapter built is exclusive and its declared worker
     // count is the pool's real thread count.
-    let owned = RayonCpuExecutor::new(3);
+    let owned = RayonCpuExecutor::try_new(3).unwrap();
     let declared = owned.capabilities();
     assert_eq!(declared.declared_workers, Some(3));
     assert!(
@@ -69,4 +72,19 @@ fn the_adapter_declares_what_it_can_honestly_promise() {
     assert_eq!(declared.declared_workers, Some(2));
     assert!(!declared.exclusive_pool);
     assert!(declared.nonblocking_submit);
+    assert_eq!(declared.physical_domain, Some(PHYSICAL_CPU));
+}
+
+#[test]
+fn impossible_construction_is_typed_and_never_clamped() {
+    assert!(matches!(
+        RayonCpuExecutor::try_new(0),
+        Err(RayonBuildError::ZeroWorkers)
+    ));
+    assert!(matches!(
+        RayonCpuExecutor::try_from_topology(&TopologyConfig::new().cpu_fixed(0)),
+        Err(RayonBuildError::InvalidTopology(
+            TopologyError::ZeroFixedCpuWorkers
+        ))
+    ));
 }

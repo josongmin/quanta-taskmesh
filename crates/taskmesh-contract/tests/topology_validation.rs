@@ -5,7 +5,10 @@
 //! `clamp` panics when `min > max`, and both the default executor and the Rayon
 //! adapter called it. A fallible `Builder::build` that panics is not fallible.
 
-use taskmesh_contract::{CpuMode, TopologyConfig, TopologyError, MAX_CAPABILITY_SLOTS};
+use taskmesh_contract::{
+    CpuMode, PhysicalDomainMode, TopologyConfig, TopologyError, MAX_CAPABILITY_SLOTS, PHYSICAL_CPU,
+    PHYSICAL_DEDICATED, PHYSICAL_SHARED_BLOCKING,
+};
 
 #[test]
 fn inverted_worker_bounds_are_reported_not_panicked() {
@@ -132,5 +135,38 @@ fn cpu_mode_setters_touch_only_the_cpu_mode() {
     assert_eq!(
         TopologyConfig::new().cpu_auto().cpu_fixed(3).cpu.mode,
         CpuMode::Fixed(3)
+    );
+}
+
+#[test]
+fn physical_domains_are_finite_and_cpu_reuses_the_cpu_resolver() {
+    let topology = TopologyConfig::new()
+        .cpu_auto()
+        .reserve_cores(2)
+        .min_workers(3)
+        .max_workers(5)
+        .shared_blocking_domain(PhysicalDomainMode::Fixed(7))
+        .dedicated_domain(PhysicalDomainMode::Auto);
+    assert_eq!(
+        topology.try_resolved_physical_domain(PHYSICAL_CPU, 8),
+        Ok(5),
+        "CPU physical authority uses reserve and clamp policy"
+    );
+    assert_eq!(
+        topology.try_resolved_physical_domain(PHYSICAL_SHARED_BLOCKING, 8),
+        Ok(7)
+    );
+    assert_eq!(
+        topology.try_resolved_physical_domain(PHYSICAL_DEDICATED, 0),
+        Ok(1),
+        "Auto domains remain nonzero"
+    );
+    assert_eq!(
+        TopologyConfig::new()
+            .dedicated_domain(PhysicalDomainMode::Fixed(0))
+            .validate(),
+        Err(TopologyError::ZeroFixedPhysicalDomain {
+            domain: PHYSICAL_DEDICATED,
+        })
     );
 }

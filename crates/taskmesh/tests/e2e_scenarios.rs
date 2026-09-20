@@ -450,7 +450,8 @@ fn composite_pipeline_attribution_recursion_and_reduce() {
         (SubstrateHint::SharedCpuExecutor, "cpu"),
     ] {
         let child = TaskSpec::base(cls("worker"), hint)
-            .child_of("root-1", TaskStage::new(label.to_string()));
+            .child_of("root-1", "root-1", TaskStage::new(label.to_string()))
+            .operation(format!("child-{label}"));
         match g.admit(&child) {
             AdmissionDecision::Admitted { permit_id } => permits.push(permit_id),
             other => panic!("child must admit: {other:?}"),
@@ -462,7 +463,9 @@ fn composite_pipeline_attribution_recursion_and_reduce() {
     assert_eq!(root.active_stages, 3);
 
     // A fourth child re-entering an already-active stage ("io") is a recursive loop.
-    let dup = TaskSpec::io(cls("worker")).child_of("root-1", TaskStage::new("io"));
+    let dup = TaskSpec::io(cls("worker"))
+        .child_of("root-1", "root-1", TaskStage::new("io"))
+        .operation("duplicate-io-child");
     assert!(matches!(
         g.admit(&dup),
         AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission)
@@ -520,10 +523,10 @@ fn memory_reconcile_lifecycle_is_consistent() {
     };
     assert_eq!(mem(&rt), 5, "initial estimate reserved");
 
-    assert!(g.reconcile_memory(p, 80)); // 80/10 = 8 -> max(5,8)=8
+    assert!(g.reconcile_memory(p, 80).is_applied()); // 80/10 = 8 -> max(5,8)=8
     assert_eq!(mem(&rt), 8);
 
-    assert!(g.reconcile_memory(p, 20)); // 20/10 = 2 -> max(5,2)=5
+    assert!(g.reconcile_memory(p, 20).is_applied()); // 20/10 = 2 -> max(5,2)=5
     assert_eq!(mem(&rt), 5, "hybrid never drops below estimate");
 
     let freed = g.release_stage_memory(p, 2);
@@ -546,7 +549,9 @@ fn memory_reconcile_lifecycle_is_consistent() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rayon_cpu_soak_results_correct_and_drains() {
     let topology = TopologyConfig::new().cpu_fixed(4);
-    let rayon = Arc::new(taskmesh_rayon::RayonCpuExecutor::from_topology(&topology));
+    let rayon = Arc::new(
+        taskmesh_rayon::RayonCpuExecutor::try_from_topology(&topology).expect("rayon builds"),
+    );
     let rt = Builder::new()
         .topology(topology)
         .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))

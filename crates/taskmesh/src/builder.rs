@@ -20,8 +20,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use taskmesh_contract::{
-    ClassPolicy, CpuExecutor, GovernorError, ResourceBudget, RuntimeConfig, SubstrateRecord,
-    TaskClass, TopologyConfig,
+    ClassPolicy, CpuExecutor, GovernorError, ResourceBudget, RuntimeConfig, SubstrateKind,
+    SubstrateRecord, TaskClass, TopologyConfig, TopologyError, PHYSICAL_CPU, PHYSICAL_DEDICATED,
+    PHYSICAL_SHARED_BLOCKING,
 };
 use taskmesh_engine::{Governor, PolicySet, SystemClock};
 
@@ -37,6 +38,7 @@ pub struct Builder {
     resources: ResourceBudget,
     classes: BTreeMap<TaskClass, ClassPolicy>,
     substrates: Vec<SubstrateRecord>,
+    capability_limits: BTreeMap<String, u32>,
     cpu_executor: Option<Arc<dyn CpuExecutor>>,
 }
 
@@ -62,6 +64,7 @@ impl Default for Builder {
             resources: ResourceBudget::new(),
             classes: BTreeMap::new(),
             substrates: Vec::new(),
+            capability_limits: BTreeMap::new(),
             cpu_executor: None,
         }
     }
@@ -103,6 +106,13 @@ impl Builder {
         self
     }
 
+    /// Declare capacity authority for an additional substrate pool. `0` is an
+    /// explicit unbounded declaration; omission is rejected by the engine.
+    pub fn capability_limit(mut self, pool: impl Into<String>, slots: u32) -> Self {
+        self.capability_limits.insert(pool.into(), slots);
+        self
+    }
+
     /// Override the CPU executor (e.g. `taskmesh_rayon::RayonCpuExecutor`).
     /// Defaults to the Tokio blocking pool.
     pub fn cpu_executor(mut self, executor: Arc<dyn CpuExecutor>) -> Self {
@@ -118,13 +128,84 @@ impl Builder {
         self.topology.validate()?;
         let available = detected_parallelism();
         let cpu_workers = self.topology.try_resolved_cpu_workers(available)?;
+        if cpu_workers > taskmesh_contract::MAX_CAPABILITY_SLOTS {
+            return Err(GovernorError::InvalidTopology(
+                TopologyError::SlotCountTooLarge {
+                    pool: "cpu",
+                    slots: cpu_workers,
+                    max: taskmesh_contract::MAX_CAPABILITY_SLOTS,
+                },
+            ));
+        }
+        let shared_blocking_workers = self
+            .topology
+            .try_resolved_physical_domain(PHYSICAL_SHARED_BLOCKING, available)?;
+        let dedicated_workers = self
+            .topology
+            .try_resolved_physical_domain(PHYSICAL_DEDICATED, available)?;
+
+        // Construct and validate the installed executor before creating any
+        // governed state. Installed executors are submission protocols, not
+        // advisory metadata: inline/legacy submission is rejected.
+        let cpu: Arc<dyn CpuExecutor> = match self.cpu_executor {
+            Some(cpu) => cpu,
+            None => default_cpu_executor(cpu_workers, shared_blocking_workers)?,
+        };
+        let descriptor = cpu.capabilities();
+        if !descriptor.nonblocking_submit {
+            return Err(GovernorError::InvalidTopology(
+                TopologyError::ExecutorSubmissionMayBlock,
+            ));
+        }
+        let domain = descriptor
+            .physical_domain
+            .ok_or(GovernorError::InvalidTopology(
+                TopologyError::ExecutorPhysicalDomainUnknown,
+            ))?;
+        let expected_workers = match domain {
+            PHYSICAL_SHARED_BLOCKING => shared_blocking_workers,
+            PHYSICAL_CPU => cpu_workers,
+            _ => {
+                return Err(GovernorError::InvalidTopology(
+                    TopologyError::UnknownExecutorPhysicalDomain { domain },
+                ));
+            }
+        };
+        let declared_workers =
+            descriptor
+                .declared_workers
+                .ok_or(GovernorError::InvalidTopology(
+                    TopologyError::ExecutorWorkerCountUnknown,
+                ))?;
+        if u64::from(declared_workers) != u64::try_from(expected_workers).unwrap_or(u64::MAX) {
+            return Err(GovernorError::InvalidTopology(
+                TopologyError::ExecutorWorkerCountMismatch {
+                    declared: declared_workers,
+                    resolved: expected_workers,
+                    domain,
+                },
+            ));
+        }
+
+        let mut substrates = self.substrates;
+        substrates.extend([
+            physical_domain_record(PHYSICAL_SHARED_BLOCKING),
+            physical_domain_record(PHYSICAL_CPU),
+            physical_domain_record(PHYSICAL_DEDICATED),
+        ]);
 
         // `PolicySet::new` already seeds the canonical built-in inventory; here we
         // only layer caller additions on top. The registry rejects duplicates
         // (including any attempt to shadow a built-in) and invalid records.
         let policy = PolicySet::new(self.resources.clone(), self.classes.clone())
-            .with_substrates(self.substrates)?
-            .with_capability_limits(capability_limits(&self.topology, cpu_workers)?)?;
+            .with_substrates(substrates)?
+            .with_capability_limits(capability_limits(
+                &self.topology,
+                cpu_workers,
+                shared_blocking_workers,
+                dedicated_workers,
+                self.capability_limits,
+            )?)?;
 
         // The config captures the *resolved* substrate inventory, so `config()`
         // is a faithful, serializable description of the built runtime.
@@ -139,29 +220,6 @@ impl Builder {
         // mixed-tier fairness, invalid memory scaling, misused degrade/queue,
         // and the completeness of the substrate registry itself).
         let governor = Arc::new(Governor::new(policy, Arc::new(SystemClock))?);
-        let cpu: Arc<dyn CpuExecutor> = match self.cpu_executor {
-            Some(cpu) => cpu,
-            None => default_cpu_executor(cpu_workers)?,
-        };
-        // D05: the adapter's declaration is checked against the gate built from
-        // topology. A `cpu` gate wider than the workers the adapter says it has
-        // would admit work the pool cannot run concurrently — the exact
-        // disagreement this builder exists to prevent — so it is rejected here,
-        // typed, rather than discovered as unexplained queueing under load.
-        let declared = cpu.capabilities();
-        if let Some(declared_workers) = declared.declared_workers {
-            // Compared in `u64` so neither side is truncated: a declaration that
-            // does not fit `usize` is *more* workers, not fewer.
-            let resolved = u64::try_from(cpu_workers).unwrap_or(u64::MAX);
-            if u64::from(declared_workers) < resolved {
-                return Err(GovernorError::InvalidTopology(
-                    taskmesh_contract::TopologyError::ExecutorDeclaresFewerWorkers {
-                        declared: declared_workers,
-                        resolved: cpu_workers,
-                    },
-                ));
-            }
-        }
 
         Ok(TokioRuntime::new(config, governor, cpu))
     }
@@ -180,8 +238,10 @@ fn detected_parallelism() -> usize {
 fn capability_limits(
     topology: &TopologyConfig,
     cpu_workers: usize,
+    shared_blocking_workers: usize,
+    dedicated_workers: usize,
+    mut limits: BTreeMap<String, u32>,
 ) -> Result<BTreeMap<String, u32>, GovernorError> {
-    let mut limits = BTreeMap::new();
     let mut insert = |pool: &str, slots: usize| -> Result<(), GovernorError> {
         if slots == 0 {
             return Ok(());
@@ -194,14 +254,29 @@ fn capability_limits(
                 max: taskmesh_contract::MAX_CAPABILITY_SLOTS,
             })
         })?;
-        limits.insert(pool.to_owned(), slots);
+        if limits.insert(pool.to_owned(), slots).is_some() {
+            return Err(GovernorError::PolicyViolation(
+                format!("capability limit for built-in pool {pool} cannot be overridden").into(),
+            ));
+        }
         Ok(())
     };
     insert("cpu", cpu_workers.max(1))?;
+    insert(PHYSICAL_CPU, cpu_workers.max(1))?;
+    insert(PHYSICAL_SHARED_BLOCKING, shared_blocking_workers)?;
+    insert(PHYSICAL_DEDICATED, dedicated_workers)?;
     for (pool, slots) in topology.declared_slots() {
         insert(pool, slots)?;
     }
     Ok(limits)
+}
+
+fn physical_domain_record(domain: &'static str) -> SubstrateRecord {
+    SubstrateRecord::new(
+        format!("host-domain:{domain}"),
+        SubstrateKind::CompetingExecution,
+        Some(domain),
+    )
 }
 
 /// Map a pool name back to its `'static` built-in spelling for error reporting.
@@ -222,7 +297,10 @@ fn builtin_pool_name(pool: &str) -> &'static str {
 /// `run_cpu` rides the `CpuExecutor` port — never a hardcoded `spawn_blocking`.
 /// Fallible so a pool build failure surfaces as a `build()` error, never a panic.
 #[cfg(feature = "rayon")]
-fn default_cpu_executor(cpu_workers: usize) -> Result<Arc<dyn CpuExecutor>, GovernorError> {
+fn default_cpu_executor(
+    cpu_workers: usize,
+    _shared_blocking_workers: usize,
+) -> Result<Arc<dyn CpuExecutor>, GovernorError> {
     let pool = taskmesh_rayon::RayonCpuExecutor::try_new(cpu_workers).map_err(|e| {
         GovernorError::PolicyViolation(format!("failed to build shared CPU pool: {e}").into())
     })?;
@@ -230,10 +308,18 @@ fn default_cpu_executor(cpu_workers: usize) -> Result<Arc<dyn CpuExecutor>, Gove
 }
 
 #[cfg(not(feature = "rayon"))]
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "signature mirrors the fallible rayon variant so build() is uniform"
-)]
-fn default_cpu_executor(_cpu_workers: usize) -> Result<Arc<dyn CpuExecutor>, GovernorError> {
-    Ok(Arc::new(BlockingPoolCpuExecutor))
+fn default_cpu_executor(
+    _cpu_workers: usize,
+    shared_blocking_workers: usize,
+) -> Result<Arc<dyn CpuExecutor>, GovernorError> {
+    let workers = u32::try_from(shared_blocking_workers).map_err(|_| {
+        GovernorError::InvalidTopology(TopologyError::SlotCountTooLarge {
+            pool: PHYSICAL_SHARED_BLOCKING,
+            slots: shared_blocking_workers,
+            max: taskmesh_contract::MAX_CAPABILITY_SLOTS,
+        })
+    })?;
+    let workers = std::num::NonZeroU32::new(workers)
+        .expect("validated physical domain is finite and nonzero");
+    Ok(Arc::new(BlockingPoolCpuExecutor::new(workers)))
 }

@@ -44,6 +44,24 @@ pub enum TopologyError {
     /// resolved CPU topology, so the `cpu` gate would admit more concurrent
     /// work than the executor can run. The two must be sized from one answer.
     ExecutorDeclaresFewerWorkers { declared: u32, resolved: usize },
+    /// An installable executor may execute `spawn` inline and therefore create
+    /// an unbounded competing path on the runtime worker that submitted it.
+    ExecutorSubmissionMayBlock,
+    /// The executor did not declare the finite physical domain it occupies.
+    ExecutorPhysicalDomainUnknown,
+    /// The executor did not declare the finite worker count of its domain.
+    ExecutorWorkerCountUnknown,
+    /// The executor named a domain the host does not own.
+    UnknownExecutorPhysicalDomain { domain: &'static str },
+    /// A fixed physical worker domain cannot contain zero workers.
+    ZeroFixedPhysicalDomain { domain: &'static str },
+    /// The executor's declared workers and its configured physical domain must
+    /// be the same number; wider and narrower declarations are both dishonest.
+    ExecutorWorkerCountMismatch {
+        declared: u32,
+        resolved: usize,
+        domain: &'static str,
+    },
 }
 
 impl fmt::Display for TopologyError {
@@ -67,6 +85,29 @@ impl fmt::Display for TopologyError {
             Self::ZeroFixedCpuWorkers => {
                 f.write_str("topology cpu.mode = Fixed(0) cannot execute any work")
             }
+            Self::ExecutorSubmissionMayBlock => {
+                f.write_str("cpu executor submission must be nonblocking")
+            }
+            Self::ExecutorPhysicalDomainUnknown => {
+                f.write_str("cpu executor must declare its physical domain")
+            }
+            Self::ExecutorWorkerCountUnknown => {
+                f.write_str("cpu executor must declare its physical worker count")
+            }
+            Self::UnknownExecutorPhysicalDomain { domain } => {
+                write!(f, "cpu executor declares unknown physical domain {domain}")
+            }
+            Self::ZeroFixedPhysicalDomain { domain } => {
+                write!(f, "physical domain {domain} cannot resolve to zero workers")
+            }
+            Self::ExecutorWorkerCountMismatch {
+                declared,
+                resolved,
+                domain,
+            } => write!(
+                f,
+                "cpu executor declares {declared} worker(s) for physical domain {domain}, but the domain resolved {resolved}"
+            ),
         }
     }
 }
@@ -154,6 +195,39 @@ pub enum CpuMode {
     Fixed(usize),
 }
 
+/// Capacity source for a host-owned physical worker domain.
+///
+/// This is versioned separately from the legacy role-slot fields below. Their
+/// published `0 = explicitly unbounded` meaning remains unchanged; physical
+/// worker domains are always finite and nonzero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PhysicalDomainMode {
+    Auto,
+    Fixed(usize),
+}
+
+/// Stable, product-neutral identifiers for the worker domains the Tokio host
+/// can dispatch into. They are capability-pool names as well: one engine
+/// transition atomically charges a physical domain and any semantic role pool.
+pub const PHYSICAL_SHARED_BLOCKING: &str = "physical.shared_blocking";
+pub const PHYSICAL_CPU: &str = "physical.cpu";
+pub const PHYSICAL_DEDICATED: &str = "physical.dedicated";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhysicalDomainTopology {
+    pub shared_blocking: PhysicalDomainMode,
+    pub dedicated: PhysicalDomainMode,
+}
+
+impl Default for PhysicalDomainTopology {
+    fn default() -> Self {
+        Self {
+            shared_blocking: PhysicalDomainMode::Auto,
+            dedicated: PhysicalDomainMode::Auto,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CpuPoolConfig {
     pub mode: CpuMode,
@@ -181,6 +255,10 @@ pub struct TopologyConfig {
     pub large_stack_slots: usize,
     pub maintenance_workers: usize,
     pub local_runtime_slots: usize,
+    /// Finite physical worker ownership. Defaults are machine-derived once by
+    /// the host builder; they are never represented by the legacy zero sentinel.
+    #[serde(default)]
+    pub physical_domains: PhysicalDomainTopology,
 }
 
 impl TopologyConfig {
@@ -233,6 +311,16 @@ impl TopologyConfig {
         self
     }
 
+    pub fn shared_blocking_domain(mut self, mode: PhysicalDomainMode) -> Self {
+        self.physical_domains.shared_blocking = mode;
+        self
+    }
+
+    pub fn dedicated_domain(mut self, mode: PhysicalDomainMode) -> Self {
+        self.physical_domains.dedicated = mode;
+        self
+    }
+
     /// Fail-closed structural validation. Every constructor that turns a topology
     /// into real worker capacity calls this **before** resolving anything, so an
     /// impossible topology is a typed `Err`, never a panic in a clamp.
@@ -248,6 +336,17 @@ impl TopologyConfig {
         if self.cpu.mode == CpuMode::Fixed(0) {
             return Err(TopologyError::ZeroFixedCpuWorkers);
         }
+        for (domain, mode) in [
+            (
+                PHYSICAL_SHARED_BLOCKING,
+                self.physical_domains.shared_blocking,
+            ),
+            (PHYSICAL_DEDICATED, self.physical_domains.dedicated),
+        ] {
+            if mode == PhysicalDomainMode::Fixed(0) {
+                return Err(TopologyError::ZeroFixedPhysicalDomain { domain });
+            }
+        }
         for (pool, slots) in self.declared_slots() {
             if slots > MAX_CAPABILITY_SLOTS {
                 return Err(TopologyError::SlotCountTooLarge {
@@ -258,6 +357,28 @@ impl TopologyConfig {
             }
         }
         Ok(())
+    }
+
+    /// Resolve one physical domain from the same machine answer used for every
+    /// other Auto capacity. Validation makes the result finite and nonzero.
+    pub fn try_resolved_physical_domain(
+        &self,
+        domain: &'static str,
+        available: usize,
+    ) -> Result<usize, TopologyError> {
+        self.validate()?;
+        if domain == PHYSICAL_CPU {
+            return self.try_resolved_cpu_workers(available);
+        }
+        let mode = match domain {
+            PHYSICAL_SHARED_BLOCKING => self.physical_domains.shared_blocking,
+            PHYSICAL_DEDICATED => self.physical_domains.dedicated,
+            _ => return Err(TopologyError::UnknownExecutorPhysicalDomain { domain }),
+        };
+        Ok(match mode {
+            PhysicalDomainMode::Auto => available.max(1),
+            PhysicalDomainMode::Fixed(workers) => workers,
+        })
     }
 
     /// The explicitly-declared slot counts, by capability-pool name. The `cpu`

@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use taskmesh_contract::{AdmissionVerdict, GovernorError};
 use tokio_util::sync::CancellationToken;
 
 /// Mutually exclusive deadline authority for one submission.
@@ -72,10 +73,189 @@ impl SubmitOptions {
         self.deadline = Some(SubmissionDeadline::CompleteBy(deadline));
         self
     }
+}
 
-    pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancel
+/// Relative acquisition authority without collapsing it into an absolute task
+/// completion deadline. `TryOnce` is intentionally distinct from `At(now)`: an
+/// uncontended immediate admit succeeds, while the first queued observation
+/// expires without parking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RelativeAcquisitionBudget {
+    Unbounded,
+    TryOnce,
+    At(std::time::Instant),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AcquisitionRejection {
+    Cancelled,
+    AbsoluteDeadline,
+    RelativeTimeout,
+}
+
+/// Single owner for pre-dispatch cancel/deadline/budget precedence.
+///
+/// The three inputs remain independent until the final lease handoff. Their
+/// fixed precedence is cancel, absolute completion deadline, then relative
+/// acquisition timeout; equality is expired for both clocks.
+#[derive(Debug, Clone)]
+pub(crate) struct AcquisitionArbiter {
+    cancel: Option<CancellationToken>,
+    absolute_deadline: Option<std::time::Instant>,
+    relative: RelativeAcquisitionBudget,
+}
+
+impl AcquisitionArbiter {
+    pub(crate) fn new(
+        opts: &SubmitOptions,
+        absolute_deadline: Option<std::time::Instant>,
+    ) -> Result<Self, GovernorError> {
+        let now = std::time::Instant::now();
+        let relative = match opts.acquire_timeout {
+            None => RelativeAcquisitionBudget::Unbounded,
+            Some(Duration::ZERO) => RelativeAcquisitionBudget::TryOnce,
+            Some(timeout) => {
+                RelativeAcquisitionBudget::At(now.checked_add(timeout).ok_or_else(|| {
+                    GovernorError::PolicyViolation("acquire timeout exceeds Instant range".into())
+                })?)
+            }
+        };
+        Ok(Self {
+            cancel: opts.cancel.clone(),
+            absolute_deadline,
+            relative,
+        })
+    }
+
+    pub(crate) fn cancel_token(&self) -> Option<&CancellationToken> {
+        self.cancel.as_ref()
+    }
+
+    /// Earliest instant that can wake a queued acquisition. The verdict is not
+    /// chosen from this merged wait key; [`Self::rejection`] re-evaluates the
+    /// original authorities in precedence order after every wake.
+    pub(crate) fn wake_deadline(&self) -> Option<std::time::Instant> {
+        let relative = match self.relative {
+            RelativeAcquisitionBudget::At(deadline) => Some(deadline),
+            RelativeAcquisitionBudget::TryOnce | RelativeAcquisitionBudget::Unbounded => None,
+        };
+        match (self.absolute_deadline, relative) {
+            (Some(absolute), Some(relative)) => Some(absolute.min(relative)),
+            (Some(deadline), None) | (None, Some(deadline)) => Some(deadline),
+            (None, None) => None,
+        }
+    }
+
+    pub(crate) fn rejection(
+        &self,
+        now: std::time::Instant,
+        queued: bool,
+    ) -> Option<AcquisitionRejection> {
+        if self
+            .cancel
             .as_ref()
             .is_some_and(CancellationToken::is_cancelled)
+        {
+            return Some(AcquisitionRejection::Cancelled);
+        }
+        if self
+            .absolute_deadline
+            .is_some_and(|deadline| now >= deadline)
+        {
+            return Some(AcquisitionRejection::AbsoluteDeadline);
+        }
+        match self.relative {
+            RelativeAcquisitionBudget::Unbounded => None,
+            RelativeAcquisitionBudget::TryOnce if queued => {
+                Some(AcquisitionRejection::RelativeTimeout)
+            }
+            RelativeAcquisitionBudget::TryOnce => None,
+            RelativeAcquisitionBudget::At(deadline) if now >= deadline => {
+                Some(AcquisitionRejection::RelativeTimeout)
+            }
+            RelativeAcquisitionBudget::At(_) => None,
+        }
+    }
+
+    pub(crate) fn to_governor_error(
+        rejection: AcquisitionRejection,
+        capability_blocked: bool,
+    ) -> GovernorError {
+        match rejection {
+            AcquisitionRejection::Cancelled => {
+                GovernorError::Rejected(AdmissionVerdict::CancelledBeforeSubmit)
+            }
+            AcquisitionRejection::AbsoluteDeadline => GovernorError::DeadlineExceeded,
+            AcquisitionRejection::RelativeTimeout if capability_blocked => {
+                GovernorError::Rejected(AdmissionVerdict::SubstratePoolTimedOut {
+                    retry_after_ms: None,
+                })
+            }
+            AcquisitionRejection::RelativeTimeout => {
+                GovernorError::Rejected(AdmissionVerdict::PermitAcquireTimedOut {
+                    retry_after_ms: None,
+                })
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancel_wins_three_way_tie() {
+        let token = CancellationToken::new();
+        token.cancel();
+        let now = std::time::Instant::now();
+        let arbiter = AcquisitionArbiter {
+            cancel: Some(token),
+            absolute_deadline: Some(now),
+            relative: RelativeAcquisitionBudget::At(now),
+        };
+        assert_eq!(
+            arbiter.rejection(now, true),
+            Some(AcquisitionRejection::Cancelled)
+        );
+    }
+
+    #[test]
+    fn absolute_deadline_wins_relative_timeout_tie_at_equality() {
+        let now = std::time::Instant::now();
+        let arbiter = AcquisitionArbiter {
+            cancel: None,
+            absolute_deadline: Some(now),
+            relative: RelativeAcquisitionBudget::At(now),
+        };
+        assert_eq!(
+            arbiter.rejection(now, true),
+            Some(AcquisitionRejection::AbsoluteDeadline)
+        );
+    }
+
+    #[test]
+    fn zero_budget_is_try_once_without_suppressing_absolute_deadline() {
+        let now = std::time::Instant::now();
+        let live = AcquisitionArbiter {
+            cancel: None,
+            absolute_deadline: None,
+            relative: RelativeAcquisitionBudget::TryOnce,
+        };
+        assert_eq!(live.rejection(now, false), None);
+        assert_eq!(
+            live.rejection(now, true),
+            Some(AcquisitionRejection::RelativeTimeout)
+        );
+
+        let expired = AcquisitionArbiter {
+            cancel: None,
+            absolute_deadline: Some(now),
+            relative: RelativeAcquisitionBudget::TryOnce,
+        };
+        assert_eq!(
+            expired.rejection(now, false),
+            Some(AcquisitionRejection::AbsoluteDeadline)
+        );
     }
 }

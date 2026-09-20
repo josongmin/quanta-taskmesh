@@ -152,7 +152,7 @@ impl fmt::Display for AdmissionVerdict {
 /// A waiter must be able to tell these apart from "not promoted yet". Collapsing
 /// them into one absent value is what turns a reclaimed reservation into a
 /// waiter parked forever on a promotion that already happened and was undone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TerminalReason {
     /// The leak sweep reclaimed the promoted-but-unclaimed permit.
@@ -161,6 +161,11 @@ pub enum TerminalReason {
     Released,
     /// The waiter itself abandoned the ticket.
     Abandoned,
+    /// Host notifier retirement panicked; the engine compensated the permit
+    /// before publishing the terminal result.
+    ClaimDeliveryFailed,
+    /// The resolver proved this wait can never become runnable.
+    IrreversibleWaitCycle { held_by_parent: HeldCapacity },
 }
 
 impl fmt::Display for TerminalReason {
@@ -169,6 +174,8 @@ impl fmt::Display for TerminalReason {
             Self::Reclaimed => "reclaimed by the leak sweep",
             Self::Released => "released before the claim",
             Self::Abandoned => "abandoned by the waiter",
+            Self::ClaimDeliveryFailed => "claim delivery failed after compensation",
+            Self::IrreversibleWaitCycle { .. } => "irreversible wait cycle",
         })
     }
 }

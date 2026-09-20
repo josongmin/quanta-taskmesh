@@ -18,10 +18,74 @@
 //! a memory fallback re-accounted the work under is readable from the engine's
 //! permit ledger. Keeping a third copy here would be one more thing to drift.
 
-use taskmesh_contract::{CancellationPolicy, ClassPolicy, GovernorError, SubstrateHint, TaskSpec};
+use taskmesh_contract::{
+    AdmissionVerdict, CancellationPolicy, ClassPolicy, GovernorError, SubstrateHint, TaskSpec,
+    ValidatedTaskPlan,
+};
+use taskmesh_engine::{CapabilityRequirementSet, PolicySet, ResolvedCapability};
 use tokio_util::sync::CancellationToken;
 
 use crate::executor::{SubmissionDeadline, SubmitOptions};
+use taskmesh_contract::{PHYSICAL_DEDICATED, PHYSICAL_SHARED_BLOCKING};
+
+/// The protocol upper bound for an explicitly requested worker stack: 16 GiB.
+///
+/// This bound is checked before the platform-width conversion. On a target
+/// whose `usize` cannot represent 16 GiB, the conversion is a distinct typed
+/// preflight failure rather than an OS-thread construction attempt.
+pub const MAX_REQUESTED_STACK_BYTES: u64 = 1 << 34;
+
+/// A nonzero, bounded stack size that fits the current target's `usize`.
+///
+/// Only dispatch preflight constructs this value. Worker code consumes it and
+/// never re-reads or re-validates `TaskSpec::stack_size_bytes`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ValidatedStackSize(usize);
+
+impl ValidatedStackSize {
+    pub fn get(self) -> usize {
+        self.0
+    }
+
+    fn validate(requested: u64) -> Result<Self, GovernorError> {
+        validate_stack_size_for_usize(requested, usize_max_as_u64())
+    }
+}
+
+fn usize_max_as_u64() -> u64 {
+    u64::try_from(usize::MAX).unwrap_or(u64::MAX)
+}
+
+/// Injectable target-width seam used by the 32-bit conversion oracle.
+fn validate_stack_size_for_usize(
+    requested: u64,
+    usize_max: u64,
+) -> Result<ValidatedStackSize, GovernorError> {
+    if requested == 0 {
+        return Err(GovernorError::PolicyViolation(
+            "requested stack size must be nonzero".into(),
+        ));
+    }
+    if requested > MAX_REQUESTED_STACK_BYTES {
+        return Err(GovernorError::PolicyViolation(
+            format!(
+                "requested stack size {requested} bytes exceeds the supported maximum \
+                 {MAX_REQUESTED_STACK_BYTES}"
+            )
+            .into(),
+        ));
+    }
+    if requested > usize_max {
+        return Err(GovernorError::PolicyViolation(
+            "requested stack size does not fit usize".into(),
+        ));
+    }
+    usize::try_from(requested)
+        .map(ValidatedStackSize)
+        .map_err(|_too_large| {
+            GovernorError::PolicyViolation("requested stack size does not fit usize".into())
+        })
+}
 
 /// How the host will physically run this work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,32 +107,45 @@ pub enum DispatchKind {
     DedicatedStackRuntime,
 }
 
-/// The frozen answer for one submission.
-pub struct ResolvedExecutionPlan {
-    /// The capability pool the work will occupy while it runs. `None` for an
-    /// ungated substrate. A `&'static str` from the built-in hint table: the
-    /// engine interns it, so resolving a plan allocates nothing.
-    pub capability: Option<&'static str>,
-    pub dispatch: DispatchKind,
+/// The admission-ready, host-validated answer for one submission.
+///
+/// Construction consumes C01's [`ValidatedTaskPlan`] boundary first, then
+/// validates host dispatch semantics. Admission and every worker path receive
+/// this value; no later path interprets raw stack bytes.
+pub struct ValidatedDispatchPlan {
+    task: ValidatedTaskPlan,
+    /// Canonical authority-backed role + physical-domain capabilities charged
+    /// atomically by admission. Raw names do not survive preflight.
+    pub(crate) requirements: CapabilityRequirementSet,
+    pub(crate) dispatch: DispatchKind,
+    stack_size: Option<ValidatedStackSize>,
     /// Mid-run cancel token, if the declared class's policy supports it.
-    pub cancel: Option<CancellationToken>,
+    pub(crate) cancel: Option<CancellationToken>,
     /// Run deadline, if the declared class's policy supports one.
-    pub deadline: Option<SubmissionDeadline>,
+    pub(crate) deadline: Option<SubmissionDeadline>,
 }
 
-impl ResolvedExecutionPlan {
+impl ValidatedDispatchPlan {
     /// Resolve `spec` + `opts` against the class policy for one run path.
     ///
     /// `allowed` is the set of substrate hints this run path accepts;
     /// `dispatch` is what the path will do once admitted. Both are properties of
     /// the entry point, not of the spec, so they are supplied by the caller.
-    pub fn resolve(
-        spec: &TaskSpec,
+    pub(crate) fn preflight(
+        spec: TaskSpec,
         opts: &SubmitOptions,
         policy: Option<&ClassPolicy>,
         allowed: &[SubstrateHint],
         dispatch: DispatchKind,
+        authority: &PolicySet,
+        cpu_physical_domain: &'static str,
     ) -> Result<Self, GovernorError> {
+        // Contract shape is authoritative and has precedence over every
+        // host-specific dispatch check. A malformed task never reaches the
+        // governor, so it allocates no ticket or permit.
+        let task = ValidatedTaskPlan::try_from(spec)
+            .map_err(|_error| GovernorError::Rejected(AdmissionVerdict::MalformedTask))?;
+        let spec = task.as_spec();
         let hint = spec.primary_substrate_hint();
         if !allowed.contains(&hint) {
             return Err(GovernorError::Rejected(
@@ -76,7 +153,8 @@ impl ResolvedExecutionPlan {
             ));
         }
 
-        let wants_dedicated_thread = spec.requested_stack_size_bytes().is_some()
+        let requested_stack = spec.requested_stack_size_bytes();
+        let wants_dedicated_thread = requested_stack.is_some()
             && matches!(
                 hint,
                 SubstrateHint::BlockingPool
@@ -91,6 +169,27 @@ impl ResolvedExecutionPlan {
             DispatchKind::DedicatedStackThread
         } else {
             dispatch
+        };
+
+        let stack_size = match (dispatch, requested_stack) {
+            (
+                DispatchKind::DedicatedStackThread | DispatchKind::DedicatedStackRuntime,
+                Some(requested),
+            ) => Some(ValidatedStackSize::validate(requested)?),
+            (DispatchKind::DedicatedStackRuntime, None) => {
+                return Err(GovernorError::PolicyViolation(
+                    "requested stack size missing on async large-stack path".into(),
+                ));
+            }
+            (DispatchKind::CallerFuture | DispatchKind::CpuExecutor, Some(_requested)) => {
+                return Err(GovernorError::PolicyViolation(
+                    "requested stack size is not supported by this dispatch path".into(),
+                ));
+            }
+            (DispatchKind::BlockingPool, Some(_)) => {
+                unreachable!("a blocking-family stack request resolves to a dedicated thread")
+            }
+            (_, None) => None,
         };
 
         // D04: a stack request consumes the large-stack capability whichever
@@ -135,12 +234,50 @@ impl ResolvedExecutionPlan {
             });
         }
 
+        let physical_domain = match dispatch {
+            DispatchKind::BlockingPool => Some(PHYSICAL_SHARED_BLOCKING),
+            DispatchKind::CpuExecutor => Some(cpu_physical_domain),
+            DispatchKind::DedicatedStackThread | DispatchKind::DedicatedStackRuntime => {
+                Some(PHYSICAL_DEDICATED)
+            }
+            DispatchKind::CallerFuture => None,
+        };
+        let resolved = [capability, physical_domain]
+            .into_iter()
+            .flatten()
+            .map(|name| authority.resolve_capability(name))
+            .collect::<Result<Vec<ResolvedCapability>, _>>()
+            .map_err(|error| {
+                GovernorError::PolicyViolation(
+                    format!("dispatch capability resolution failed: {error}").into(),
+                )
+            })?;
+        let requirements = CapabilityRequirementSet::from_resolved(resolved).map_err(|error| {
+            GovernorError::PolicyViolation(
+                format!("dispatch capability requirement failed: {error}").into(),
+            )
+        })?;
+
         Ok(Self {
-            capability,
+            task,
+            requirements,
             dispatch,
+            stack_size,
             cancel: mid_run.then(|| opts.cancel.clone()).flatten(),
             deadline: with_deadline.then_some(opts.deadline).flatten(),
         })
+    }
+
+    pub fn task(&self) -> &ValidatedTaskPlan {
+        &self.task
+    }
+
+    pub fn spec(&self) -> &TaskSpec {
+        self.task.as_spec()
+    }
+
+    pub fn stack_size(&self) -> Option<ValidatedStackSize> {
+        self.stack_size
     }
 
     /// The absolute completion instant this plan must respect, if any. `RunFor`
@@ -162,5 +299,27 @@ impl ResolvedExecutionPlan {
             Some(SubmissionDeadline::RunFor(budget)) => Some(budget),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stack_validator_has_an_injectable_32_bit_conversion_boundary() {
+        let maximum_32_bit = u64::from(u32::MAX);
+        assert_eq!(
+            validate_stack_size_for_usize(maximum_32_bit, maximum_32_bit)
+                .expect("32-bit maximum is representable")
+                .get() as u64,
+            maximum_32_bit
+        );
+        assert_eq!(
+            validate_stack_size_for_usize(maximum_32_bit + 1, maximum_32_bit),
+            Err(GovernorError::PolicyViolation(
+                "requested stack size does not fit usize".into()
+            ))
+        );
     }
 }

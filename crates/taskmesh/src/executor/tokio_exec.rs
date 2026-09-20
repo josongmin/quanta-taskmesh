@@ -3,11 +3,21 @@
 //! hardcoded into `run_cpu` (T09). Swapping in `taskmesh-rayon` replaces only
 //! this object.
 
-use taskmesh_contract::{CpuExecutor, ExecutorCapabilities};
+use taskmesh_contract::{CpuExecutor, ExecutorCapabilities, PHYSICAL_SHARED_BLOCKING};
 
 /// Runs CPU work on Tokio's blocking pool. Always available without extra crates.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct BlockingPoolCpuExecutor;
+#[derive(Debug, Clone, Copy)]
+pub struct BlockingPoolCpuExecutor {
+    physical_workers: u32,
+}
+
+impl BlockingPoolCpuExecutor {
+    pub fn new(physical_workers: std::num::NonZeroU32) -> Self {
+        Self {
+            physical_workers: physical_workers.get(),
+        }
+    }
+}
 
 impl CpuExecutor for BlockingPoolCpuExecutor {
     fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
@@ -23,6 +33,8 @@ impl CpuExecutor for BlockingPoolCpuExecutor {
     fn capabilities(&self) -> ExecutorCapabilities {
         ExecutorCapabilities::legacy()
             .nonblocking_submit(true)
+            .declared_workers(self.physical_workers)
             .exclusive_pool(false)
+            .physical_domain(PHYSICAL_SHARED_BLOCKING)
     }
 }

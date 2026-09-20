@@ -37,17 +37,19 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use taskmesh_contract::{
-    AdmissionVerdict, CpuExecutor, ExecutionPhase, GovernorError, RunError, Runtime, Snapshot,
-    SubstrateHint, TaskSpec,
+    CpuExecutor, ExecutionPhase, GovernorError, RunError, Runtime, Snapshot, SubstrateHint,
+    TaskSpec,
 };
 use taskmesh_engine::{
     AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId, ReleaseOutcome,
+    TerminalReason as EngineTerminalReason,
 };
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 use crate::adapters::TokioPermitWaker;
-use crate::execution_plan::{DispatchKind, ResolvedExecutionPlan};
+use crate::execution_plan::{DispatchKind, ValidatedDispatchPlan};
+use crate::executor::cancel::AcquisitionArbiter;
 use crate::executor::{SubmissionDeadline, SubmitOptions};
 use crate::RuntimeConfig;
 
@@ -138,15 +140,11 @@ impl TokioRuntime {
     /// on a [`TokioPermitWaker`] and are woken on promotion — no polling.
     async fn acquire(
         &self,
-        spec: &TaskSpec,
-        capability: Option<&str>,
-        opts: &SubmitOptions,
-        acquire_deadline: Option<Instant>,
+        plan: &ValidatedDispatchPlan,
+        arbiter: &AcquisitionArbiter,
     ) -> Result<PermitId, GovernorError> {
-        if opts.is_cancelled() {
-            return Err(GovernorError::Rejected(
-                AdmissionVerdict::CancelledBeforeSubmit,
-            ));
+        if let Some(rejection) = arbiter.rejection(std::time::Instant::now(), false) {
+            return Err(AcquisitionArbiter::to_governor_error(rejection, false));
         }
 
         let waker = TokioPermitWaker::new();
@@ -157,28 +155,16 @@ impl TokioRuntime {
             reason = "Arc::clone cannot unsize concrete Arc<T> to Arc<dyn _>"
         )]
         let waker_port: Arc<dyn taskmesh_contract::PermitWaker> = waker.clone();
-        match self
-            .governor
-            .admit_resolved(spec, capability, Some(waker_port))
-        {
-            AdmissionDecision::Admitted { permit_id } => {
-                // The acquisition budget covers *every* wait on the way in,
-                // including the time this thread spent blocked on the admission
-                // mutex. An immediate `Admitted` that arrives after the budget
-                // expired is still a budget overrun, and starting the caller's
-                // work anyway is a side effect they asked not to have.
-                if acquisition_budget_expired(opts, acquire_deadline) {
-                    self.return_unstarted(permit_id);
-                    return Err(GovernorError::Rejected(
-                        AdmissionVerdict::PermitAcquireTimedOut {
-                            retry_after_ms: None,
-                        },
-                    ));
-                }
-                Ok(permit_id)
+        match self.governor.admit_validated_requirements(
+            plan.task(),
+            plan.requirements.clone(),
+            Some(waker_port),
+        ) {
+            Ok(AdmissionDecision::Admitted { permit_id }) => {
+                self.finalize_acquired(permit_id, arbiter, false, None)
             }
-            AdmissionDecision::Rejected(verdict) => Err(GovernorError::Rejected(verdict)),
-            AdmissionDecision::Queued { ticket } => {
+            Ok(AdmissionDecision::Rejected(verdict)) => Err(GovernorError::Rejected(verdict)),
+            Ok(AdmissionDecision::Queued { ticket }) => {
                 // While parked on the queue this future owns the ticket. If it is
                 // dropped (external cancellation) or times out, the guard abandons
                 // the ticket — removing it from the engine queue, or releasing it
@@ -189,14 +175,20 @@ impl TokioRuntime {
                     drain: Arc::clone(&self.drain),
                     ticket: Some(ticket),
                 };
-                let result = self
-                    .await_promotion(ticket, &waker, opts, acquire_deadline)
-                    .await;
-                if result.is_ok() {
+                let result = self.await_promotion(ticket, &waker, arbiter).await;
+                if result.is_ok()
+                    || matches!(
+                        self.governor.ticket_status(ticket),
+                        ClaimOutcome::Terminal(_) | ClaimOutcome::Invalid
+                    )
+                {
                     guard.disarm();
                 }
                 result
             }
+            Err(error) => Err(GovernorError::PolicyViolation(
+                format!("validated dispatch requirements rejected: {error}").into(),
+            )),
         }
     }
 
@@ -213,65 +205,68 @@ impl TokioRuntime {
         &self,
         ticket: u64,
         waker: &TokioPermitWaker,
-        opts: &SubmitOptions,
-        acquire_deadline: Option<Instant>,
+        arbiter: &AcquisitionArbiter,
     ) -> Result<PermitId, GovernorError> {
-        let cancel = opts.cancel.as_ref();
         loop {
-            if cancel.is_some_and(CancellationToken::is_cancelled) {
-                return Err(GovernorError::Rejected(
-                    AdmissionVerdict::CancelledBeforeSubmit,
-                ));
+            // The diagnostic is sampled immediately before the ownership
+            // decision. Intake-time causes are never retained or projected.
+            let current_blocker = self.governor.pending_block_reason(ticket);
+            if let Some(rejection) = arbiter.rejection(std::time::Instant::now(), true) {
+                return match self.governor.claim(ticket) {
+                    ClaimOutcome::Ready(permit_id) => {
+                        self.finalize_acquired(permit_id, arbiter, true, current_blocker)
+                    }
+                    ClaimOutcome::Pending => Err(AcquisitionArbiter::to_governor_error(
+                        rejection,
+                        matches!(current_blocker, Some(CapacityBlock::Capability)),
+                    )),
+                    ClaimOutcome::Terminal(reason) => Err(GovernorError::TicketClaimTerminated {
+                        ticket,
+                        reason: terminal_reason(reason),
+                    }),
+                    ClaimOutcome::Invalid => Err(GovernorError::InvalidTicketClaim { ticket }),
+                };
             }
-            // Read *before* claiming: a timeout must be able to say what the
-            // request was waiting on, and once it is dequeued that is gone.
-            let blocked_on = self.governor.pending_block_reason(ticket);
             match self.governor.claim(ticket) {
                 ClaimOutcome::Ready(permit_id) => {
-                    if acquisition_budget_expired(opts, acquire_deadline) {
-                        self.return_unstarted(permit_id);
-                        return Err(GovernorError::Rejected(acquire_timeout_verdict(blocked_on)));
-                    }
-                    return Ok(permit_id);
+                    return self.finalize_acquired(permit_id, arbiter, true, current_blocker);
                 }
                 ClaimOutcome::Pending => {}
                 ClaimOutcome::Terminal(reason) => {
-                    return Err(GovernorError::TicketClaimTerminated { ticket, reason });
+                    return Err(GovernorError::TicketClaimTerminated {
+                        ticket,
+                        reason: terminal_reason(reason),
+                    });
                 }
                 ClaimOutcome::Invalid => return Err(GovernorError::InvalidTicketClaim { ticket }),
             }
             tokio::select! {
                 biased;
-                () = cancellation_requested_v1(cancel), if cancel.is_some() => {
-                    return Err(GovernorError::Rejected(
-                        AdmissionVerdict::CancelledBeforeSubmit,
-                    ));
-                }
+                () = cancellation_requested_v1(arbiter.cancel_token()), if arbiter.cancel_token().is_some() => {}
                 () = waker.notified() => {}
-                () = acquisition_deadline_reached_v1(acquire_deadline), if acquire_deadline.is_some() => {
-                    if cancel.is_some_and(CancellationToken::is_cancelled) {
-                        return Err(GovernorError::Rejected(
-                            AdmissionVerdict::CancelledBeforeSubmit,
-                        ));
-                    }
-                    // The budget is spent. A promotion that raced the timer is
-                    // returned unstarted (D09); a ticket the engine already
-                    // ended reports the engine's reason instead of a generic
-                    // timeout, because that reason is the more useful truth.
-                    match self.governor.claim(ticket) {
-                        ClaimOutcome::Ready(permit_id) => self.return_unstarted(permit_id),
-                        ClaimOutcome::Pending => {}
-                        ClaimOutcome::Terminal(reason) => {
-                            return Err(GovernorError::TicketClaimTerminated { ticket, reason });
-                        }
-                        ClaimOutcome::Invalid => {
-                            return Err(GovernorError::InvalidTicketClaim { ticket });
-                        }
-                    }
-                    return Err(GovernorError::Rejected(acquire_timeout_verdict(blocked_on)));
-                }
+                () = acquisition_deadline_reached_v1(arbiter.wake_deadline().map(Instant::from_std)), if arbiter.wake_deadline().is_some() => {}
             }
         }
+    }
+
+    /// The one permit-to-execution linearization point shared by immediate and
+    /// promoted admission. A rejected handoff returns the unstarted permit
+    /// exactly once and cannot create a worker, thread, or user closure effect.
+    fn finalize_acquired(
+        &self,
+        permit_id: PermitId,
+        arbiter: &AcquisitionArbiter,
+        queued: bool,
+        current_blocker: Option<CapacityBlock>,
+    ) -> Result<PermitId, GovernorError> {
+        if let Some(rejection) = arbiter.rejection(std::time::Instant::now(), queued) {
+            self.return_unstarted(permit_id);
+            return Err(AcquisitionArbiter::to_governor_error(
+                rejection,
+                matches!(current_blocker, Some(CapacityBlock::Capability)),
+            ));
+        }
+        Ok(permit_id)
     }
 
     /// Return a permit whose work will not start (budget expired after grant).
@@ -290,43 +285,21 @@ impl TokioRuntime {
     /// Acquire the execution lease for a resolved plan.
     async fn acquire_execution_lease<E>(
         &self,
-        spec: &TaskSpec,
         opts: &SubmitOptions,
-        plan: &ResolvedExecutionPlan,
+        plan: &ValidatedDispatchPlan,
     ) -> Result<ExecutionLease, RunError<E>> {
-        if opts.is_cancelled() {
-            return Err(RunError::Governor(GovernorError::Rejected(
-                AdmissionVerdict::CancelledBeforeSubmit,
-            )));
-        }
         let absolute_deadline = plan.absolute_deadline();
         if absolute_deadline.is_some() && !plan_supports_absolute_deadline(plan) {
             return Err(RunError::Governor(GovernorError::PolicyViolation(
                 "absolute completion deadline requires cooperative async work".into(),
             )));
         }
-        if absolute_deadline.is_some_and(|deadline| deadline <= std::time::Instant::now()) {
-            return Err(RunError::Governor(GovernorError::DeadlineExceeded));
-        }
-        let relative_acquire_deadline = match opts.acquire_timeout {
-            Some(timeout) => Some(Instant::now().checked_add(timeout).ok_or_else(|| {
-                RunError::Governor(GovernorError::PolicyViolation(
-                    "acquire timeout exceeds Instant range".into(),
-                ))
-            })?),
-            None => None,
-        };
-        let absolute_acquire_deadline = absolute_deadline.map(Instant::from_std);
-        let acquire_deadline = match (relative_acquire_deadline, absolute_acquire_deadline) {
-            (Some(relative), Some(absolute)) => Some(relative.min(absolute)),
-            (Some(relative), None) => Some(relative),
-            (None, Some(absolute)) => Some(absolute),
-            (None, None) => None,
-        };
+        let arbiter =
+            AcquisitionArbiter::new(opts, absolute_deadline).map_err(RunError::Governor)?;
         let permit = self
-            .acquire(spec, plan.capability, opts, acquire_deadline)
+            .acquire(plan, &arbiter)
             .await
-            .map_err(|error| absolute_acquire_error_v1(absolute_deadline, error))?;
+            .map_err(RunError::Governor)?;
         Ok(ExecutionLease::reserved(
             Arc::clone(&self.governor),
             Arc::clone(&self.drain),
@@ -337,17 +310,25 @@ impl TokioRuntime {
     /// Resolve the plan for one submission against its class policy.
     fn plan(
         &self,
-        spec: &TaskSpec,
+        spec: TaskSpec,
         opts: &SubmitOptions,
         allowed: &[SubstrateHint],
         dispatch: DispatchKind,
-    ) -> Result<ResolvedExecutionPlan, GovernorError> {
-        ResolvedExecutionPlan::resolve(
+    ) -> Result<ValidatedDispatchPlan, GovernorError> {
+        let policy = self.config.classes.get(&spec.class);
+        let cpu_physical_domain = self
+            .cpu
+            .capabilities()
+            .physical_domain
+            .expect("builder validates executor physical domain");
+        ValidatedDispatchPlan::preflight(
             spec,
             opts,
-            self.config.classes.get(&spec.class),
+            policy,
             allowed,
             dispatch,
+            self.governor.policy(),
+            cpu_physical_domain,
         )
     }
 
@@ -363,7 +344,7 @@ impl TokioRuntime {
         Fut: Future<Output = Result<T, E>> + Send,
     {
         let plan = match self.plan(
-            &spec,
+            spec,
             &opts,
             &[SubstrateHint::AsyncIo],
             DispatchKind::CallerFuture,
@@ -371,7 +352,7 @@ impl TokioRuntime {
             Ok(plan) => plan,
             Err(error) => return Err(RunError::Governor(error)),
         };
-        let mut lease = self.acquire_execution_lease(&spec, &opts, &plan).await?;
+        let mut lease = self.acquire_execution_lease(&opts, &plan).await?;
         lease.advance(ExecutionPhase::Running)?;
         run_cancellable(plan.cancel.clone(), plan.deadline, async {
             fut.await.map_err(RunError::Task)
@@ -391,7 +372,7 @@ impl TokioRuntime {
         T: Send + 'static,
     {
         let plan = match self.plan(
-            &spec,
+            spec,
             &opts,
             &[
                 SubstrateHint::BlockingPool,
@@ -405,10 +386,10 @@ impl TokioRuntime {
         };
         let boxed_job: BlockingJobV1<T, E> = Box::new(job);
         Box::pin(async move {
-            let lease = self.acquire_execution_lease(&spec, &opts, &plan).await?;
+            let lease = self.acquire_execution_lease(&opts, &plan).await?;
             match plan.dispatch {
                 DispatchKind::DedicatedStackThread => {
-                    self.run_blocking_on_dedicated_thread(&spec, boxed_job, lease, &plan)
+                    self.run_blocking_on_dedicated_thread(boxed_job, lease, &plan)
                         .await
                 }
                 _ => self.run_blocking_on_pool(boxed_job, lease, &plan).await,
@@ -427,7 +408,7 @@ impl TokioRuntime {
         &self,
         job: BlockingJobV1<T, E>,
         lease: ExecutionLease,
-        plan: &ResolvedExecutionPlan,
+        plan: &ValidatedDispatchPlan,
     ) -> Result<T, RunError<E>>
     where
         E: Send + 'static,
@@ -453,17 +434,19 @@ impl TokioRuntime {
     /// Blocking work on a dedicated OS thread sized by the spec's stack request.
     async fn run_blocking_on_dedicated_thread<T, E>(
         &self,
-        spec: &TaskSpec,
         job: BlockingJobV1<T, E>,
         lease: ExecutionLease,
-        plan: &ResolvedExecutionPlan,
+        plan: &ValidatedDispatchPlan,
     ) -> Result<T, RunError<E>>
     where
         E: Send + 'static,
         T: Send + 'static,
     {
-        let stack_size_bytes = requested_stack_size_bytes_v1(spec)?;
-        let thread_name = requested_stack_thread_name_v1(spec);
+        let stack_size_bytes = plan
+            .stack_size()
+            .expect("dedicated stack dispatch is preflight-validated")
+            .get();
+        let thread_name = requested_stack_thread_name_v1(plan.spec());
         let tokio_handle = tokio::runtime::Handle::try_current().ok();
         let (started_tx, started_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
@@ -526,29 +509,23 @@ impl TokioRuntime {
     {
         let plan = self
             .plan(
-                &spec,
+                spec,
                 &opts,
                 &[SubstrateHint::LargeStackCapability],
                 DispatchKind::DedicatedStackRuntime,
             )
             .map_err(RunError::Governor)?;
-        if spec.requested_stack_size_bytes().is_none() {
-            return Err(RunError::Governor(GovernorError::PolicyViolation(
-                "requested stack size missing on async large-stack path".into(),
-            )));
-        }
         let make_future: RequestedStackAsyncFutureFactoryV1<T, E> =
             Box::new(move || Box::pin(make_future()));
-        let lease = self.acquire_execution_lease(&spec, &opts, &plan).await?;
-        self.run_async_with_requested_stack_v1(&spec, make_future, &plan, lease)
+        let lease = self.acquire_execution_lease(&opts, &plan).await?;
+        self.run_async_with_requested_stack_v1(make_future, &plan, lease)
             .await
     }
 
     async fn run_async_with_requested_stack_v1<T, E>(
         &self,
-        spec: &TaskSpec,
         make_future: RequestedStackAsyncFutureFactoryV1<T, E>,
-        plan: &ResolvedExecutionPlan,
+        plan: &ValidatedDispatchPlan,
         lease: ExecutionLease,
     ) -> Result<T, RunError<E>>
     where
@@ -572,8 +549,11 @@ impl TokioRuntime {
             Terminated(RunError<E>),
         }
 
-        let stack_size_bytes = requested_stack_size_bytes_v1(spec)?;
-        let thread_name = requested_stack_thread_name_v1(spec);
+        let stack_size_bytes = plan
+            .stack_size()
+            .expect("dedicated stack dispatch is preflight-validated")
+            .get();
+        let thread_name = requested_stack_thread_name_v1(plan.spec());
         let cancel = plan.cancel.clone();
         let deadline = plan.deadline;
         let (tx, rx) = oneshot::channel::<AsyncThreadOutcome<T, E>>();
@@ -728,7 +708,7 @@ impl TokioRuntime {
         T: Send + 'static,
     {
         let plan = match self.plan(
-            &spec,
+            spec,
             &opts,
             &[SubstrateHint::SharedCpuExecutor],
             DispatchKind::CpuExecutor,
@@ -737,7 +717,7 @@ impl TokioRuntime {
             Err(error) => return Err(RunError::Governor(error)),
         };
         let cpu = Arc::clone(&self.cpu);
-        let lease = self.acquire_execution_lease(&spec, &opts, &plan).await?;
+        let lease = self.acquire_execution_lease(&opts, &plan).await?;
         let (started_tx, started_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         let boxed_job: BlockingJobV1<T, E> = Box::new(job);
@@ -778,7 +758,7 @@ impl TokioRuntime {
     {
         // `run_local` is the local-runtime exception, not a general async path.
         let plan = match self.plan(
-            &spec,
+            spec,
             &opts,
             &[SubstrateHint::LocalRuntime],
             DispatchKind::CallerFuture,
@@ -788,7 +768,7 @@ impl TokioRuntime {
         };
         // The non-`Send` future never leaves this task: only the permit metadata
         // is governed centrally, so a local payload keeps its caller affinity.
-        let mut lease = self.acquire_execution_lease(&spec, &opts, &plan).await?;
+        let mut lease = self.acquire_execution_lease(&opts, &plan).await?;
         lease.advance(ExecutionPhase::Running)?;
         let work = async move {
             tokio::task::LocalSet::new()
@@ -804,7 +784,7 @@ impl TokioRuntime {
 ///
 /// Only cooperatively-polled async work can be stopped mid-run. Accepting a
 /// `CompleteBy` on a synchronous path would promise an abort that cannot happen.
-fn plan_supports_absolute_deadline(plan: &ResolvedExecutionPlan) -> bool {
+fn plan_supports_absolute_deadline(plan: &ValidatedDispatchPlan) -> bool {
     match plan.dispatch {
         // The requested-stack *async* path runs a cooperative future on its own
         // runtime, so it can be stopped mid-run exactly like a caller future.
@@ -818,28 +798,17 @@ fn plan_supports_absolute_deadline(plan: &ResolvedExecutionPlan) -> bool {
     }
 }
 
-/// Whether the acquisition budget is already spent.
-///
-/// `Some(Duration::ZERO)` keeps its published meaning — *try, do not wait* — so
-/// an uncontended immediate acquisition still succeeds. Any positive budget is
-/// enforced against the clock, which is what makes it cover a blocking wait on
-/// the admission mutex rather than only the asynchronous queue wait.
-fn acquisition_budget_expired(opts: &SubmitOptions, acquire_deadline: Option<Instant>) -> bool {
-    if opts.acquire_timeout == Some(Duration::ZERO) {
-        return false;
-    }
-    acquire_deadline.is_some_and(|deadline| Instant::now() >= deadline)
-}
-
-/// The timeout verdict matching what the request was actually waiting on.
-fn acquire_timeout_verdict(blocked_on: Option<CapacityBlock>) -> AdmissionVerdict {
-    match blocked_on {
-        Some(CapacityBlock::Capability) => AdmissionVerdict::SubstratePoolTimedOut {
-            retry_after_ms: None,
-        },
-        _ => AdmissionVerdict::PermitAcquireTimedOut {
-            retry_after_ms: None,
-        },
+fn terminal_reason(reason: EngineTerminalReason) -> taskmesh_contract::TerminalReason {
+    match reason {
+        EngineTerminalReason::Reclaimed => taskmesh_contract::TerminalReason::Reclaimed,
+        EngineTerminalReason::Released => taskmesh_contract::TerminalReason::Released,
+        EngineTerminalReason::Abandoned => taskmesh_contract::TerminalReason::Abandoned,
+        EngineTerminalReason::ClaimDeliveryFailed => {
+            taskmesh_contract::TerminalReason::ClaimDeliveryFailed
+        }
+        EngineTerminalReason::IrreversibleWaitCycle { held_by_parent } => {
+            taskmesh_contract::TerminalReason::IrreversibleWaitCycle { held_by_parent }
+        }
     }
 }
 
@@ -981,59 +950,6 @@ async fn closed<T>(tx: Option<&mut oneshot::Sender<T>>) {
         Some(tx) => tx.closed().await,
         None => std::future::pending::<()>().await,
     }
-}
-
-fn absolute_acquire_error_v1<E>(
-    absolute_deadline: Option<std::time::Instant>,
-    error: GovernorError,
-) -> RunError<E> {
-    let acquisition_timed_out = matches!(
-        &error,
-        GovernorError::Rejected(
-            AdmissionVerdict::PermitAcquireTimedOut { .. }
-                | AdmissionVerdict::SubstratePoolTimedOut { .. }
-        )
-    );
-    if acquisition_timed_out
-        && absolute_deadline.is_some_and(|deadline| deadline <= std::time::Instant::now())
-    {
-        RunError::Governor(GovernorError::DeadlineExceeded)
-    } else {
-        RunError::Governor(error)
-    }
-}
-
-/// The largest stack a submission may request: 16 GiB.
-///
-/// `std::thread::Builder::stack_size` is handed to the OS after `std` rounds it
-/// up to a page boundary; near `usize::MAX` that arithmetic overflows, and what
-/// happens next depends on how `std` was built (a release `std` wraps and the
-/// OS refuses the mangled size; a debug `std`, as under `-Zbuild-std` with a
-/// sanitizer, panics inside the spawn). A request that large is a caller error
-/// in every case, so the host refuses it here, deterministically, before `std`
-/// is involved. Real OS refusals of *sane* sizes remain `WorkerUnavailable`.
-pub const MAX_REQUESTED_STACK_BYTES: u64 = 1 << 34;
-
-fn requested_stack_size_bytes_v1<E>(spec: &TaskSpec) -> Result<usize, RunError<E>> {
-    let requested = spec.requested_stack_size_bytes().ok_or_else(|| {
-        RunError::Governor(GovernorError::PolicyViolation(
-            "requested stack size missing on large-stack path".into(),
-        ))
-    })?;
-    if requested > MAX_REQUESTED_STACK_BYTES {
-        return Err(RunError::Governor(GovernorError::PolicyViolation(
-            format!(
-                "requested stack size {requested} bytes exceeds the supported maximum \
-                 {MAX_REQUESTED_STACK_BYTES}"
-            )
-            .into(),
-        )));
-    }
-    usize::try_from(requested).map_err(|_too_large| {
-        RunError::Governor(GovernorError::PolicyViolation(
-            "requested stack size does not fit usize".into(),
-        ))
-    })
 }
 
 /// Build the OS thread label for a dedicated worker.

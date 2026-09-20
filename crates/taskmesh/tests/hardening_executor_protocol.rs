@@ -1,10 +1,9 @@
 //! Executor-boundary regressions (H16-011).
 //!
 //! * **TM16-031** — the OS thread label was built by interpolating the task
-//!   class straight into `thread::Builder::name`. A class containing a NUL is
-//!   accepted by `TaskClass` and rejected by `std`, and the resulting panic
-//!   happened during *host setup* — outside the worker's own unwind boundary —
-//!   so it surfaced as a panicked caller task rather than a typed error.
+//!   class straight into `thread::Builder::name`. C01 now rejects non-canonical
+//!   identifiers, while canonical punctuation and maximum-length identifiers
+//!   still pass through the same bounded label derivation.
 //!
 //! The rest of this file pins the ownership protocol around that boundary: a job
 //! runs at most once, each failure mode is reported as itself, and a caller who
@@ -53,16 +52,11 @@ async fn assert_drains(rt: &TokioRuntime, class: &TaskClass, what: &str) {
     }
 }
 
-/// Class identifiers that are valid to taskmesh and hostile to an OS thread name.
+/// Contract-valid class identifiers that still require OS-label normalization.
 fn awkward_classes() -> Vec<(&'static str, TaskClass)> {
     vec![
-        ("interior NUL", TaskClass::new("class\0name")),
-        ("leading NUL", TaskClass::new("\0leading")),
-        ("only NUL", TaskClass::new("\0")),
-        ("unicode", TaskClass::new("클래스-名前-🌍")),
-        ("very long", TaskClass::new("l".repeat(4096))),
-        ("empty", TaskClass::new("")),
-        ("path-like", TaskClass::new("a/b:c d\te")),
+        ("path-like", TaskClass::new("a/b:c")),
+        ("maximum length", TaskClass::new("l".repeat(128))),
     ]
 }
 
@@ -121,7 +115,7 @@ async fn class_identity_is_not_rewritten_to_suit_an_os_label() {
     // The label is derived and lossy; the class itself is untouched. Sanitizing
     // the identity instead would silently merge two distinct classes into one
     // policy bucket.
-    let class = TaskClass::new("a/b\0c");
+    let class = TaskClass::new("a/b:c");
     let rt = runtime_for(class.clone());
     let out: i32 = rt
         .run_blocking(
@@ -139,7 +133,126 @@ async fn class_identity_is_not_rewritten_to_suit_an_os_label() {
         "the class key is preserved verbatim: {:?}",
         snapshot.classes.keys().collect::<Vec<_>>()
     );
-    assert_eq!(class.as_str(), "a/b\0c");
+    assert_eq!(class.as_str(), "a/b:c");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn invalid_stack_preflight_has_zero_governor_and_worker_side_effects() {
+    let class = TaskClass::new("c");
+    let rt = runtime_for(class.clone());
+
+    // Hold a large-stack slot. An invalid waiter must not join the queue:
+    // preflight completes before admission and before the caller's closure can
+    // cross a worker boundary.
+    let rt_holder = rt.clone();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel(0);
+    let holder = tokio::spawn(async move {
+        rt_holder
+            .run_blocking(
+                TaskSpec::blocking(TaskClass::new("c"))
+                    .operation("holder")
+                    .stack_size_bytes(STACK),
+                move || {
+                    let _ = started_tx.send(());
+                    let _ = release_rx.recv();
+                    Ok::<(), ()>(())
+                },
+            )
+            .await
+    });
+    started_rx.await.expect("holder reached its worker");
+
+    let before = rt.snapshot();
+    let ran = Arc::new(AtomicUsize::new(0));
+    for (hint, requested, expected) in [
+        (
+            SubstrateHint::BlockingPool,
+            0,
+            "requested stack size must be nonzero",
+        ),
+        (
+            SubstrateHint::LargeStackCapability,
+            MAX_REQUESTED_STACK_BYTES + 1,
+            "exceeds the supported maximum",
+        ),
+        (
+            SubstrateHint::BackgroundOnly,
+            MAX_REQUESTED_STACK_BYTES + 1,
+            "exceeds the supported maximum",
+        ),
+    ] {
+        let job_ran = Arc::clone(&ran);
+        let error = rt
+            .run_blocking(
+                TaskSpec::base(class.clone(), hint)
+                    .operation(format!("invalid-{hint:?}-{requested}"))
+                    .stack_size_bytes(requested),
+                move || {
+                    job_ran.fetch_add(1, Ordering::SeqCst);
+                    Ok::<(), ()>(())
+                },
+            )
+            .await
+            .expect_err("invalid stack must fail in preflight");
+        assert!(
+            matches!(
+                &error,
+                RunError::Governor(GovernorError::PolicyViolation(message))
+                    if message.contains(expected)
+            ),
+            "{hint:?}/{requested}: {error:?}"
+        );
+        assert_eq!(rt.snapshot(), before, "{hint:?}/{requested}");
+    }
+
+    let async_error = rt
+        .run_async_with_requested_stack(
+            TaskSpec::base(class.clone(), SubstrateHint::LargeStackCapability)
+                .operation("invalid-async")
+                .stack_size_bytes(0),
+            || async { Ok::<(), ()>(()) },
+        )
+        .await
+        .expect_err("async stack uses the same validator");
+    assert_eq!(
+        async_error,
+        RunError::Governor(GovernorError::PolicyViolation(
+            "requested stack size must be nonzero".into()
+        ))
+    );
+    assert_eq!(rt.snapshot(), before, "async invalid request is invisible");
+    assert_eq!(ran.load(Ordering::SeqCst), 0, "no invalid job ran");
+
+    release_tx.send(()).expect("holder still owns its worker");
+    holder
+        .await
+        .expect("holder task joins")
+        .expect("holder runs");
+    assert_drains(&rt, &class, "invalid preflight fixture").await;
+}
+
+#[tokio::test]
+async fn contract_shape_precedes_dispatch_and_stack_validation() {
+    let class = TaskClass::new("c");
+    let rt = runtime_for(class.clone());
+    let before = rt.snapshot();
+    let error = rt
+        .run_io(
+            TaskSpec::blocking(class)
+                // Empty operation/root identity is a C01 shape error. The
+                // wrong run path and absurd stack are deliberately present to
+                // prove the documented precedence.
+                .stack_size_bytes(MAX_REQUESTED_STACK_BYTES + 1),
+            async { Ok::<(), ()>(()) },
+        )
+        .await
+        .expect_err("shape validation is first");
+    assert_eq!(
+        error,
+        RunError::Governor(GovernorError::Rejected(AdmissionVerdict::MalformedTask))
+    );
+    assert_eq!(rt.snapshot(), before);
 }
 
 // ---- ownership protocol ----------------------------------------------------
@@ -158,6 +271,13 @@ impl CpuExecutor for PanicAfterEnqueueExecutor {
         self.enqueued.lock().expect("lock").push(work);
         panic!("executor failed after taking the job");
     }
+
+    fn capabilities(&self) -> ExecutorCapabilities {
+        ExecutorCapabilities::legacy()
+            .nonblocking_submit(true)
+            .declared_workers(1)
+            .physical_domain(PHYSICAL_CPU)
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -166,6 +286,7 @@ async fn an_executor_that_panics_after_accepting_does_not_run_the_job_twice() {
     // execution of the caller's work. The host reports and stops instead.
     let enqueued = Arc::new(std::sync::Mutex::new(Vec::new()));
     let rt = Builder::new()
+        .topology(TopologyConfig::new().cpu_fixed(1))
         .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
         .class_policy(
             TaskClass::new("c"),
@@ -350,6 +471,13 @@ impl CpuExecutor for HoldingExecutor {
     fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
         self.held.lock().expect("lock").push(work);
     }
+
+    fn capabilities(&self) -> ExecutorCapabilities {
+        ExecutorCapabilities::legacy()
+            .nonblocking_submit(true)
+            .declared_workers(1)
+            .physical_domain(PHYSICAL_CPU)
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -361,6 +489,7 @@ async fn a_caller_that_leaves_while_the_job_is_accepted_but_not_started_keeps_it
     let class = TaskClass::new("c");
     let held: HeldJobs = Arc::new(std::sync::Mutex::new(Vec::new()));
     let rt = Builder::new()
+        .topology(TopologyConfig::new().cpu_fixed(1))
         .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
         .class_policy(
             class.clone(),
@@ -448,6 +577,15 @@ impl CpuExecutor for DeclaringExecutor {
             .nonblocking_submit(true)
             .declared_workers(self.workers)
             .exclusive_pool(true)
+            .physical_domain(PHYSICAL_CPU)
+    }
+}
+
+struct LegacyExecutor;
+
+impl CpuExecutor for LegacyExecutor {
+    fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
+        work();
     }
 }
 
@@ -470,9 +608,10 @@ fn a_cpu_gate_wider_than_the_executor_declares_is_refused_at_build() {
     };
     assert_eq!(
         error,
-        GovernorError::InvalidTopology(TopologyError::ExecutorDeclaresFewerWorkers {
+        GovernorError::InvalidTopology(TopologyError::ExecutorWorkerCountMismatch {
             declared: 2,
             resolved: 4,
+            domain: PHYSICAL_CPU,
         })
     );
 
@@ -491,9 +630,10 @@ fn a_cpu_gate_wider_than_the_executor_declares_is_refused_at_build() {
     };
     assert_eq!(
         error,
-        GovernorError::InvalidTopology(TopologyError::ExecutorDeclaresFewerWorkers {
+        GovernorError::InvalidTopology(TopologyError::ExecutorWorkerCountMismatch {
             declared: 3,
             resolved: 4,
+            domain: PHYSICAL_CPU,
         })
     );
     let rt = Builder::new()
@@ -508,8 +648,9 @@ fn a_cpu_gate_wider_than_the_executor_declares_is_refused_at_build() {
         .expect("exactly the gate is enough");
     assert_eq!(rt.executor_capabilities().declared_workers, Some(4));
 
-    // Declaring *more* than the gate is fine: the gate is the stricter bound.
-    let rt = Builder::new()
+    // Declaring more is also a mismatch: inventory must describe the actual
+    // finite physical domain, not merely a lower admission bound.
+    let error = Builder::new()
         .topology(TopologyConfig::new().cpu_fixed(4))
         .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
         .class_policy(
@@ -517,30 +658,37 @@ fn a_cpu_gate_wider_than_the_executor_declares_is_refused_at_build() {
             ClassPolicy::new().max_inflight(8).cpu_units(1),
         )
         .cpu_executor(Arc::new(DeclaringExecutor { workers: 16 }))
-        .build()
-        .expect("a wider executor is fine");
-    assert_eq!(rt.snapshot().capabilities["cpu"].limit, 4);
-    assert_eq!(rt.executor_capabilities().declared_workers, Some(16));
+        .build();
+    assert_eq!(
+        error.expect_err("wider declaration must be rejected"),
+        GovernorError::InvalidTopology(TopologyError::ExecutorWorkerCountMismatch {
+            declared: 16,
+            resolved: 4,
+            domain: PHYSICAL_CPU,
+        })
+    );
 
-    // An adapter that declares nothing is not upgraded to a guarantee — and is
-    // not refused either, because unknown is not "fewer".
-    let rt = Builder::new()
+    // A legacy/undeclared adapter is rejected. Unknown is not a physical
+    // capacity guarantee and inline submission cannot be admitted as a second
+    // unbounded execution path.
+    let error = Builder::new()
         .topology(TopologyConfig::new().cpu_fixed(4))
         .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
         .class_policy(
             TaskClass::new("c"),
             ClassPolicy::new().max_inflight(8).cpu_units(1),
         )
-        .cpu_executor(Arc::new(BlockingPoolCpuExecutor))
-        .build()
-        .expect("an undeclared worker count is allowed");
-    let declared = rt.executor_capabilities();
-    assert_eq!(declared.declared_workers, None);
+        .cpu_executor(Arc::new(LegacyExecutor))
+        .build();
     assert!(
-        !declared.exclusive_pool,
-        "the Tokio blocking pool is shared"
+        matches!(
+            error,
+            Err(GovernorError::InvalidTopology(
+                TopologyError::ExecutorSubmissionMayBlock
+            ))
+        ),
+        "legacy inline executor must be rejected: {error:?}"
     );
-    assert!(declared.nonblocking_submit);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -683,7 +831,10 @@ async fn two_runtimes_sharing_an_executor_each_govern_their_own_submissions() {
         }
         fn capabilities(&self) -> ExecutorCapabilities {
             // Honest profile: shared with another runtime, so not exclusive.
-            ExecutorCapabilities::legacy().nonblocking_submit(true)
+            ExecutorCapabilities::legacy()
+                .nonblocking_submit(true)
+                .declared_workers(1)
+                .physical_domain(PHYSICAL_CPU)
         }
     }
 

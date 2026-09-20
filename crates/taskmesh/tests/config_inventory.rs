@@ -21,6 +21,7 @@ fn config_carries_resolved_substrate_inventory() {
         .resources(ResourceBudget::new().cpu_units(8).memory_units(8))
         .class_policy(TaskClass::new("c"), ClassPolicy::new().cpu_units(1))
         .substrate(extra)
+        .capability_limit("external-gpu", 0)
         .build()
         .unwrap();
 

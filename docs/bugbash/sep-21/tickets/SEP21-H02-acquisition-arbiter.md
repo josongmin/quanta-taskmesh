@@ -1,6 +1,6 @@
 # SEP21-H02 — Acquisition boundary arbiter
 
-- 상태: PLANNED
+- 상태: LOCALLY_VERIFIED
 - 우선순위: P1
 - 포함 finding: TM21-005, TM21-006, TM21-019
 - 선행: H03
@@ -92,3 +92,31 @@ linearization point를 하나의 arbiter로 만든다.
 cargo test --locked -p taskmesh --lib claim_acquisition_tests
 cargo test --locked -p taskmesh --test runtime_cancel_timeout --test hardening_deadline_custody --test cancellation_policy
 ```
+
+## Closure evidence (2026-09-21)
+
+- source: uncommitted `host` lane atop `main@0fb1874`
+- linearization owner: `AcquisitionArbiter` retains the cancel token, absolute CompleteBy, and
+  relative budget as distinct values. `TokioRuntime::finalize_acquired` is the only
+  permit-to-execution handoff for immediate and promoted permits.
+- precedence: cancel -> absolute deadline -> relative timeout; equality is expired. ZERO is a
+  distinct `TryOnce` relative mode and cannot suppress CompleteBy.
+- timeout diagnostics: `Governor::pending_block_reason` is read immediately before the last claim;
+  no intake blocker snapshot is stored or projected.
+
+| Acceptance | Local evidence |
+| --- | --- |
+| SEP21-H02-A01 | `cancel_between_immediate_admit_and_handoff_returns_unstarted_once_v1` and `cancel_beats_claim_of_promoted_permit_and_guard_releases_it_v1` deterministically cover immediate and Ready races without sleeps. |
+| SEP21-H02-A02 | Arbiter unit fixtures pin three-way cancel precedence, absolute-vs-relative equality, and ZERO+expired CompleteBy; deadline/cancel integration tests assert exact public variants. |
+| SEP21-H02-A03 | Both rejected-handoff fixtures prove closure/thread effect 0, inflight==terminated, capability usage 0, and reusable capacity. |
+| SEP21-H02-A04 | Normal immediate/queued transfer and caller-abandon fixtures prove one lease owner and exactly one release; settled terminal/invalid tickets disarm `TicketGuard` instead of duplicate abandon. |
+| SEP21-H02-A05 | Default and Rayon host surfaces call the same runtime arbiter/finalize implementation; both full matrices pass. |
+| SEP21-H02-A06 | `zero_budget_projects_the_current_capability_blocker_without_running_work` proves current capability state maps to `SubstratePoolTimedOut`; class contention maps to `PermitAcquireTimedOut`. E04 transition fixtures prove the pending view itself recomputes blockers. |
+
+Intentional negatives cover token firing after initial check, promoted-permit timeout, reclaimed and
+invalid terminal tickets, acquisition instant overflow, ZERO+absolute deadline, three-way ties,
+capability-only timeout cause, and duplicate guard cleanup.
+
+Validation: taskmesh default 160/160 PASS; taskmesh+rayon 160/160 PASS; focused acquisition lib
+14/14 and runtime cancel/timeout 9/9 PASS; default/rayon clippy `-D warnings` PASS; consumer MSRV
+default+rayon PASS on Rust 1.81. Workspace/release qualification remains R01.

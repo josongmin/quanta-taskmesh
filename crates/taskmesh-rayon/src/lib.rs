@@ -11,7 +11,28 @@ use std::sync::Arc;
 use std::thread::available_parallelism;
 
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use taskmesh_contract::{CpuExecutor, ExecutorCapabilities, TopologyConfig};
+use taskmesh_contract::{
+    CpuExecutor, ExecutorCapabilities, TopologyConfig, TopologyError, PHYSICAL_CPU,
+};
+
+#[derive(Debug)]
+pub enum RayonBuildError {
+    ZeroWorkers,
+    InvalidTopology(TopologyError),
+    Pool(rayon::ThreadPoolBuildError),
+}
+
+impl std::fmt::Display for RayonBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ZeroWorkers => f.write_str("rayon worker count must be nonzero"),
+            Self::InvalidTopology(error) => write!(f, "invalid rayon topology: {error}"),
+            Self::Pool(error) => write!(f, "rayon pool construction failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for RayonBuildError {}
 
 /// A `CpuExecutor` backed by one shared Rayon thread pool.
 #[derive(Clone)]
@@ -24,14 +45,18 @@ pub struct RayonCpuExecutor {
 }
 
 impl RayonCpuExecutor {
-    /// Build a pool with an explicit worker count (clamped to at least 1).
+    /// Build a pool with an explicit nonzero worker count.
     /// Returns an error instead of panicking if the OS cannot create the pool,
     /// so a host `Builder` can stay fail-closed.
-    pub fn try_new(workers: usize) -> Result<Self, rayon::ThreadPoolBuildError> {
+    pub fn try_new(workers: usize) -> Result<Self, RayonBuildError> {
+        if workers == 0 {
+            return Err(RayonBuildError::ZeroWorkers);
+        }
         let pool = ThreadPoolBuilder::new()
-            .num_threads(workers.max(1))
+            .num_threads(workers)
             .thread_name(|i| format!("taskmesh-cpu-{i}"))
-            .build()?;
+            .build()
+            .map_err(RayonBuildError::Pool)?;
         Ok(Self {
             pool: Arc::new(pool),
             exclusive: true,
@@ -40,22 +65,25 @@ impl RayonCpuExecutor {
 
     /// Build a pool with an explicit worker count, panicking on failure. Prefer
     /// [`RayonCpuExecutor::try_new`] on a fail-closed construction path.
+    #[deprecated(since = "0.2.0", note = "use RayonCpuExecutor::try_new")]
     pub fn new(workers: usize) -> Self {
         Self::try_new(workers).expect("rayon pool must build")
     }
 
     /// Fallible topology-derived constructor (see [`RayonCpuExecutor::try_new`]).
-    pub fn try_from_topology(
-        topology: &TopologyConfig,
-    ) -> Result<Self, rayon::ThreadPoolBuildError> {
+    pub fn try_from_topology(topology: &TopologyConfig) -> Result<Self, RayonBuildError> {
         let available = available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-        Self::try_new(topology.resolved_cpu_workers(available))
+        let workers = topology
+            .try_resolved_cpu_workers(available)
+            .map_err(RayonBuildError::InvalidTopology)?;
+        Self::try_new(workers)
     }
 
     /// Build a pool whose worker count is derived from the runtime topology:
     /// `available_parallelism() - reserve_cores`, clamped to
     /// `[min_workers, max_workers]` (T09). Panics on pool-build failure; prefer
     /// [`RayonCpuExecutor::try_from_topology`] on a fail-closed path.
+    #[deprecated(since = "0.2.0", note = "use RayonCpuExecutor::try_from_topology")]
     pub fn from_topology(topology: &TopologyConfig) -> Self {
         Self::try_from_topology(topology).expect("rayon pool must build")
     }
@@ -92,5 +120,6 @@ impl CpuExecutor for RayonCpuExecutor {
             .nonblocking_submit(true)
             .declared_workers(workers)
             .exclusive_pool(self.exclusive)
+            .physical_domain(PHYSICAL_CPU)
     }
 }

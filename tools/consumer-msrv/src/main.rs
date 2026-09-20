@@ -23,7 +23,7 @@ use taskmesh::{
     AdmissionVerdict, Builder, CancellationPolicy, ClassPolicy, ExecutionPhase, GovernorError,
     HeldCapacity, MemoryReleasePolicy, MemoryUnitScale, OverflowPolicy, ResourceBudget, RunError,
     Runtime, SubmitOptions, TaskClass, TaskScope, TaskSpec, TaskStage, TokioRuntime,
-    TopologyConfig, TopologyError,
+    TopologyConfig, TopologyError, PHYSICAL_CPU, PHYSICAL_SHARED_BLOCKING,
 };
 
 /// The wire schema a 0.2.0 consumer must expect. The literal is the consumer's
@@ -116,12 +116,13 @@ impl CpuExecutor for DeclaringExecutor {
             .nonblocking_submit(true)
             .declared_workers(self.workers)
             .exclusive_pool(true)
+            .physical_domain(PHYSICAL_CPU)
     }
 }
 
-/// A 0.1.0-era adapter that never heard of `capabilities()`. It must still
-/// compile (the method has a default) and must still be accepted by `build()`
-/// (an *unknown* worker count is not "fewer").
+/// A 0.1.0-era adapter that never heard of `capabilities()`. It still compiles,
+/// but H03 rejects installation because synchronous/unknown submission cannot
+/// be placed in a finite physical domain.
 struct LegacyExecutor;
 
 impl CpuExecutor for LegacyExecutor {
@@ -137,6 +138,13 @@ struct DroppingExecutor;
 impl CpuExecutor for DroppingExecutor {
     fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
         drop(work);
+    }
+
+    fn capabilities(&self) -> ExecutorCapabilities {
+        ExecutorCapabilities::legacy()
+            .nonblocking_submit(true)
+            .declared_workers(4)
+            .physical_domain(PHYSICAL_CPU)
     }
 }
 
@@ -439,20 +447,20 @@ async fn worker_failures_are_typed() {
     );
 }
 
-/// CHANGELOG: `ExecutorCapabilities` / `ExecutorDeclaresFewerWorkers` — a custom
-/// `CpuExecutor` that declares fewer workers than the topology resolves now
-/// fails `build()`; an undeclared count is accepted; the declaration is readable.
+/// CHANGELOG: installed executors declare nonblocking submission, an exact
+/// finite worker count, and a registered physical domain.
 async fn executor_capabilities_are_load_bearing() {
     let error = cpu_runtime(Arc::new(DeclaringExecutor { workers: 2 }))
         .err()
         .expect("fewer declared workers than the cpu gate is refused");
     check!(
         error
-            == GovernorError::InvalidTopology(TopologyError::ExecutorDeclaresFewerWorkers {
+            == GovernorError::InvalidTopology(TopologyError::ExecutorWorkerCountMismatch {
                 declared: 2,
                 resolved: 4,
+                domain: PHYSICAL_CPU,
             }),
-        "expected ExecutorDeclaresFewerWorkers {{ declared: 2, resolved: 4 }}, got {error:?}"
+        "expected exact worker/domain mismatch, got {error:?}"
     );
     check!(
         classify(&error) == "invalid-topology",
@@ -470,6 +478,10 @@ async fn executor_capabilities_are_load_bearing() {
         "nonblocking_submit {declared:?}"
     );
     check!(declared.exclusive_pool, "exclusive_pool {declared:?}");
+    check!(
+        declared.physical_domain == Some(PHYSICAL_CPU),
+        "physical domain {declared:?}"
+    );
     let cpu = runtime.snapshot().capabilities["cpu"];
     check!(
         cpu.limit == 4,
@@ -485,34 +497,33 @@ async fn executor_capabilities_are_load_bearing() {
         .expect("cpu work runs on the consumer's executor");
     check!(out == 42, "custom executor returned {out}");
 
-    // A 0.1.0-era adapter: compiles unchanged, declares the legacy profile,
-    // and is not refused (unknown is not "fewer").
-    let runtime = cpu_runtime(Arc::new(LegacyExecutor)).expect("an undeclared count is allowed");
-    let declared = runtime.executor_capabilities();
+    // A 0.1.0-era adapter compiles unchanged but is rejected at installation.
+    let error = cpu_runtime(Arc::new(LegacyExecutor))
+        .err()
+        .expect("legacy inline/unknown submission is rejected");
     check!(
-        declared == ExecutorCapabilities::legacy(),
-        "legacy adapter declares the legacy profile: {declared:?}"
-    );
-    check!(
-        declared.declared_workers.is_none(),
-        "legacy declared_workers {declared:?}"
+        error == GovernorError::InvalidTopology(TopologyError::ExecutorSubmissionMayBlock),
+        "legacy adapter rejection: {error:?}"
     );
 
-    // The default executor's declaration depends on the feature set: Rayon
-    // reports its real thread count; the Tokio blocking pool cannot see its cap.
+    // Both defaults declare finite physical ownership. Rayon owns the CPU pool;
+    // the Tokio fallback shares the aggregate blocking domain.
     let default_runtime = build();
     let declared = default_runtime.executor_capabilities();
     #[cfg(feature = "rayon")]
     check!(
-        declared.declared_workers.is_some() && declared.nonblocking_submit,
+        declared.declared_workers.is_some()
+            && declared.nonblocking_submit
+            && declared.physical_domain == Some(PHYSICAL_CPU),
         "rayon default executor declares its pool: {declared:?}"
     );
     #[cfg(not(feature = "rayon"))]
     check!(
-        declared.declared_workers.is_none()
+        declared.declared_workers.is_some()
             && declared.nonblocking_submit
-            && !declared.exclusive_pool,
-        "blocking-pool default executor declares an unknown, shared pool: {declared:?}"
+            && !declared.exclusive_pool
+            && declared.physical_domain == Some(PHYSICAL_SHARED_BLOCKING),
+        "blocking-pool default executor declares its shared finite domain: {declared:?}"
     );
 }
 
@@ -637,7 +648,7 @@ fn governor_outcomes() {
     let describe = |outcome: ClaimOutcome| match outcome {
         ClaimOutcome::Ready(permit) => format!("ready:{permit}"),
         ClaimOutcome::Pending => "pending".to_string(),
-        ClaimOutcome::Terminal(reason) => format!("terminal:{reason}"),
+        ClaimOutcome::Terminal(reason) => format!("terminal:{reason:?}"),
         ClaimOutcome::Invalid => "invalid".to_string(),
     };
     check!(
@@ -826,7 +837,9 @@ fn declared_nested_wait_is_refused() {
             unreachable!()
         }
     };
-    let child = TaskSpec::io(retrieval()).awaited_child_of("parent", TaskStage::new("child"));
+    let child = TaskSpec::io(retrieval())
+        .awaited_child_of("parent", "parent", TaskStage::new("child"))
+        .operation("declared-child");
     check!(
         matches!(
             &child.scope,
@@ -844,7 +857,9 @@ fn declared_nested_wait_is_refused() {
         ),
         other => check!(false, "a declared cycle is refused, got {other:?}"),
     }
-    let lineage_only = TaskSpec::io(retrieval()).child_of("parent", TaskStage::new("child"));
+    let lineage_only = TaskSpec::io(retrieval())
+        .child_of("parent", "parent", TaskStage::new("child"))
+        .operation("lineage-child");
     check!(
         matches!(
             governor.admit(&lineage_only),
@@ -966,7 +981,7 @@ fn memory_outcomes() {
     );
     // The `bool` form is still there for callers that do not order reporters.
     check!(
-        governor.reconcile_memory(staged, 0),
+        governor.reconcile_memory(staged, 0).is_applied(),
         "bool reconcile applies"
     );
 

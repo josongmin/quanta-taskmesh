@@ -1,6 +1,6 @@
 # SEP21-H03 — Installed executor and physical-domain authority
 
-- 상태: PLANNED
+- 상태: LOCALLY_VERIFIED
 - 우선순위: P0
 - 포함 finding: TM21-003, TM21-015, TM21-020
 - 선행: E01, E04, H01
@@ -108,3 +108,32 @@ cargo test --locked -p taskmesh --features rayon
 cargo test --locked -p taskmesh-rayon
 just consumer-msrv
 ```
+
+## Closure evidence (2026-09-21)
+
+- source: uncommitted `host` lane atop `main@0fb1874`
+- declared physical domains: `physical.shared_blocking`, `physical.cpu`, and
+  `physical.dedicated`; Auto/Fixed configuration is separate from legacy semantic role limits.
+- dispatch transaction: `ValidatedDispatchPlan` resolves every raw role/domain name once against
+  the runtime's `PolicySet`, freezes a bounded `CapabilityRequirementSet`, and admission charges
+  the entire set atomically.
+- installed-executor contract: build rejects blocking/legacy submit, missing/unknown domains,
+  unknown worker counts, and either side of a declared/actual count mismatch.
+
+| Acceptance | Local evidence |
+| --- | --- |
+| SEP21-H03-A01 | Builder always installs finite nonzero physical-domain limits. Zero Fixed and capacity-domain overflow reject typed before worker construction. Snapshot capability keys expose declared limits and live occupancy. |
+| SEP21-H03-A02 | `blocking_maintenance_and_cpu_fallback_share_one_finite_domain` starts three mixed roles behind a barrier and proves peak active and snapshot occupancy never exceed the aggregate bound of two. |
+| SEP21-H03-A03 | Executor protocol fixtures reject inline/legacy, missing domain/count, and narrower/wider mismatches. Runtime config inventory and snapshot capability authority agree. |
+| SEP21-H03-A04 | Only descriptors declaring `nonblocking_submit=true` install; accepted Tokio and Rayon adapters submit without executing caller work inline. No host semaphore or trampoline queue was added. |
+| SEP21-H03-A05 | `RayonBuildError` distinguishes zero workers, invalid topology, and pool construction failure. `new/from_topology` are deprecated in favor of `try_*`; adapter tests cover typed zero/topology rejection. |
+| SEP21-H03-A06 | Mixed-domain barrier, protocol panic/abandon, default host, and Rayon suites all drain class/role/domain accounting to zero with conservation intact. |
+
+Intentional negatives cover zero domains, oversized CPU topology before pool construction,
+inline/legacy submission, missing/foreign physical domain, unknown/narrower/wider worker count,
+panic after custody, and accepted-but-not-started caller abandonment.
+
+Validation: taskmesh default 160/160 PASS; taskmesh+rayon 160/160 PASS; taskmesh-contract
+57/57 PASS; taskmesh-rayon 4/4 PASS;
+default/rayon/taskmesh-rayon clippy `-D warnings` PASS; consumer MSRV default+rayon PASS on Rust
+1.81. Documentation/CHANGELOG integration remains R01.

@@ -1,6 +1,6 @@
 # SEP21-H01 — Pre-admission validated dispatch plan
 
-- 상태: PLANNED
+- 상태: LOCALLY_VERIFIED
 - 우선순위: P1
 - 포함 finding: TM21-007
 - 선행: C01
@@ -79,3 +79,24 @@ dispatch에 필요한 consumer input을 governor 호출 전에 typed form으로 
 cargo test --locked -p taskmesh --test hardening_executor_protocol --test hardening_dispatch_resolution
 cargo test --locked -p taskmesh --test substrate_enforcement
 ```
+
+## Closure evidence (2026-09-21)
+
+- source: uncommitted `host` lane atop `main@0fb1874`
+- owner: `ValidatedDispatchPlan::preflight` validates C01 shape, dispatch semantics, requested
+  stack, registered capability requirements, and cancellation/deadline compatibility before
+  `Governor::admit_validated_requirements`.
+- stack authority: only `ValidatedStackSize::validate` applies nonzero, 16 GiB, and target-width
+  conversion. Worker paths consume `ValidatedStackSize::get` and never re-read raw stack bytes.
+
+| Acceptance | Local evidence |
+| --- | --- |
+| SEP21-H01-A01 | `invalid_stack_preflight_has_zero_governor_and_worker_side_effects` holds a contended slot and proves exact snapshot equality plus closure count 0 for zero/over-limit sync and async requests. |
+| SEP21-H01-A02 | Blocking, background, dedicated blocking, and requested-stack async all consume the same `ValidatedDispatchPlan`; the old runtime post-validator was removed. |
+| SEP21-H01-A03 | Preflight policy failures remain `PolicyViolation`; valid preflight followed by OS spawn failure remains `WorkerUnavailable` in executor protocol fixtures. |
+| SEP21-H01-A04 | `stack_validator_has_an_injectable_32_bit_conversion_boundary` proves the exact 32-bit `usize` edge without requiring a 32-bit host. |
+| SEP21-H01-A05 | H02 `AcquisitionArbiter` and H03 capability/domain resolution receive only the frozen plan; neither reads `TaskSpec::stack_size_bytes`. |
+
+Validation: taskmesh default 160/160 PASS; taskmesh+rayon 160/160 PASS; contract 57/57 PASS;
+default/rayon/taskmesh-rayon clippy `-D warnings` PASS; consumer MSRV default+rayon PASS on Rust
+1.81. Workspace/release qualification remains R01.

@@ -57,8 +57,9 @@ pub use task::{
     ClassificationRationale, PlanSource, StageDescriptor, TaskClass, TaskScope, TaskSpec, TaskStage,
 };
 pub use topology::{
-    CpuMode, CpuPoolConfig, SubstrateHint, SubstrateKind, SubstrateRecord, TopologyConfig,
-    TopologyError, MAX_CAPABILITY_SLOTS,
+    CpuMode, CpuPoolConfig, PhysicalDomainMode, PhysicalDomainTopology, SubstrateHint,
+    SubstrateKind, SubstrateRecord, TopologyConfig, TopologyError, MAX_CAPABILITY_SLOTS,
+    PHYSICAL_CPU, PHYSICAL_DEDICATED, PHYSICAL_SHARED_BLOCKING,
 };
 pub use validation::{
     IdentifierViolation, TaskIdentifierField, TaskPlanError, ValidatedTaskPlan,

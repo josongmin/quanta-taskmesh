@@ -43,8 +43,9 @@ mod runtime;
 // types. One crate to depend on; engine internals live under `ext`.
 
 pub use builder::Builder;
+pub use execution_plan::{ValidatedDispatchPlan, ValidatedStackSize, MAX_REQUESTED_STACK_BYTES};
 pub use executor::{SubmissionDeadline, SubmitOptions};
-pub use runtime::{DrainReport, NotDrained, Outstanding, TokioRuntime, MAX_REQUESTED_STACK_BYTES};
+pub use runtime::{DrainReport, NotDrained, Outstanding, TokioRuntime};
 pub use tokio_util::sync::CancellationToken;
 
 pub use taskmesh_contract::{
@@ -75,6 +76,8 @@ pub use taskmesh_contract::{
     OverflowPolicy,
     PartialResultOrdering,
     PermitCost,
+    PhysicalDomainMode,
+    PhysicalDomainTopology,
     PlanSource,
     ResourceBudget,
     ResourceConversionError,
@@ -96,6 +99,9 @@ pub use taskmesh_contract::{
     TopologyConfig,
     TopologyError,
     MAX_CAPABILITY_SLOTS,
+    PHYSICAL_CPU,
+    PHYSICAL_DEDICATED,
+    PHYSICAL_SHARED_BLOCKING,
     SNAPSHOT_SCHEMA_VERSION,
 };
 

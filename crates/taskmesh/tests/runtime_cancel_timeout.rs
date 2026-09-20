@@ -1,6 +1,7 @@
 //! T07: cancellation and bounded acquire are adapter-layer concerns, surfaced as
 //! typed governor-side rejections.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use taskmesh::ext::*;
@@ -22,8 +23,11 @@ fn single_slot_runtime() -> TokioRuntime {
         .unwrap()
 }
 
+static NEXT_OPERATION: AtomicUsize = AtomicUsize::new(1);
+
 fn spec() -> TaskSpec {
-    TaskSpec::blocking(TaskClass::new("c")).operation("op")
+    let id = NEXT_OPERATION.fetch_add(1, Ordering::SeqCst);
+    TaskSpec::blocking(TaskClass::new("c")).operation(format!("op-{id}"))
 }
 
 async fn wait_until_queue_depth(rt: &TokioRuntime, expected: usize) {
@@ -176,7 +180,10 @@ async fn cancel_while_waiting_for_substrate_rejects_without_waiting_for_capacity
 async fn cancel_while_queued_for_governor_abandons_ticket_promptly_v1() {
     let rt = single_slot_runtime();
     let io_spec = TaskSpec::io(TaskClass::new("c")).operation("queued-cancel");
-    let occupied = match rt.governor().admit(&io_spec) {
+    let occupied = match rt
+        .governor()
+        .admit(&TaskSpec::io(TaskClass::new("c")).operation("queued-cancel-holder"))
+    {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("expected direct governor admission, got {other:?}"),
     };
@@ -237,6 +244,66 @@ async fn timed_acquire_yields_typed_governor_error() {
     ));
 
     assert_eq!(rt.governor().release(occupied), ReleaseOutcome::Released);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn zero_budget_projects_the_current_capability_blocker_without_running_work() {
+    let rt = Builder::new()
+        .topology(TopologyConfig::new().blocking_threads(1))
+        .resources(ResourceBudget::new().cpu_units(100).memory_units(100))
+        .class_policy(
+            TaskClass::new("c"),
+            ClassPolicy::new()
+                .max_inflight(2)
+                .max_queue_depth(8)
+                .cpu_units(1)
+                .overflow_policy(OverflowPolicy::QueueWithinDepth),
+        )
+        .build()
+        .expect("capability-only blocker fixture builds");
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel(0);
+    let holder = {
+        let rt = rt.clone();
+        tokio::spawn(async move {
+            rt.run_blocking(spec(), move || {
+                started_tx.send(()).expect("observer alive");
+                release_rx.recv().expect("test releases holder");
+                Ok::<(), ()>(())
+            })
+            .await
+        })
+    };
+    started_rx.await.expect("holder occupies blocking role");
+
+    let invoked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let job_invoked = std::sync::Arc::clone(&invoked);
+    let error = rt
+        .run_blocking_with(
+            spec(),
+            SubmitOptions::unbounded().with_acquire_timeout(Duration::ZERO),
+            move || {
+                job_invoked.store(true, Ordering::SeqCst);
+                Ok::<(), ()>(())
+            },
+        )
+        .await
+        .expect_err("try-once sees the current capability blocker");
+    assert_eq!(
+        error,
+        RunError::Governor(GovernorError::Rejected(
+            AdmissionVerdict::SubstratePoolTimedOut {
+                retry_after_ms: None,
+            }
+        ))
+    );
+    assert!(!invoked.load(Ordering::SeqCst));
+
+    release_tx.send(()).expect("holder alive");
+    holder.await.expect("join").expect("holder succeeds");
+    let snapshot = rt.snapshot();
+    assert_eq!(snapshot.classes[&TaskClass::new("c")].inflight, 0);
+    assert_eq!(snapshot.capabilities["blocking"].in_use, 0);
 }
 
 #[tokio::test]

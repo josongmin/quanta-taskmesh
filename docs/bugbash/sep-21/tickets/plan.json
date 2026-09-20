@@ -2,16 +2,16 @@
   "schema_version": 1,
   "source": {
     "branch": "hardening/sep-16",
-    "head": "1f04ccb245fc631507df780b97768f8d2f0e5e1a",
-    "tree": "65152e1f97e5b691df7ffe946c43a25bc7c61ee5",
-    "tracked_dirty_count": 19,
-    "tracked_diff_sha256": "bc3c9862cec60ba697fd55365734ee41e981eac3d919c2ef8ce40fe1a629fc9d",
-    "untracked_source_files": ["docs/taskmesh-sota-audit-checklist.md"],
+    "head": "48aa2092572b8838561a499a0e8cac72fc5c152e",
+    "tree": "e16e1d776935e6f199ae5fa045c6d59db9c8a948",
+    "tracked_dirty_count": 0,
+    "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "untracked_source_files": [],
     "audit_output_prefixes": ["docs/bugbash/sep-21/"],
     "checklist": "docs/taskmesh-sota-audit-checklist.md",
     "checklist_sha256": "80cc61adaef3b059825fe2965e55e915ff0ae942ff60b72e52a6326d448e570a",
     "findings": "docs/bugbash/sep-21/findings.md",
-    "findings_sha256": "ae273aa0c58686c97d224d03f458dc550f44dabcd0d9b600b90e7b56ffc2c87b"
+    "findings_sha256": "9ad7ddf10d4f5d0470b23fead592e5220971ed302ae9f961d3bfebec11b28351"
   },
   "tickets": [
     {

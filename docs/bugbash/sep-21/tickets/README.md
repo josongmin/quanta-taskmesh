@@ -3,15 +3,16 @@
 ## 기준과 판정
 
 - 기준일: 2026-09-21
-- source: branch `hardening/sep-16`, HEAD
-  `1f04ccb245fc631507df780b97768f8d2f0e5e1a`, tree
-  `65152e1f97e5b691df7ffe946c43a25bc7c61ee5`
+- source: branch `hardening/sep-16`, campaign baseline
+  `48aa2092572b8838561a499a0e8cac72fc5c152e`, tree
+  `e16e1d776935e6f199ae5fa045c6d59db9c8a948`
 - 입력: [`../findings.md`](../findings.md)의 확정 finding 23건
 - 재현성: `plan.json`이 HEAD/tree뿐 아니라 tracked dirty diff, untracked audit 입력,
   체크리스트와 finding SHA-256을 고정한다. `docs/bugbash/sep-21/`만 audit 산출물로 제외한다.
 - 상태: **PLANNED / implementation NOT_STARTED / release NO-GO**
 - 목표: finding별 국소 패치가 아니라 authority와 불변식 단위로 원인을 제거한다.
 - 비목표: 이 문서 작성, focused test 또는 ticket 체크만으로 qualification을 주장하지 않는다.
+- 실행 상태와 checkpoint: [`../execution.md`](../execution.md)
 
 ## 공통 RCA
 

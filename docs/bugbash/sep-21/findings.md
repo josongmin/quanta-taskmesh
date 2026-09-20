@@ -5,13 +5,12 @@
 - 상태: **FINAL AUDIT / OPEN / release NO-GO**
 - 최종 대조일: 2026-09-21
 - 확정 open finding: **23건 — P0 3, P1 16, P2 4**
-- 감사 기준: `hardening/sep-16`의 working tree, HEAD
-  `1f04ccb245fc631507df780b97768f8d2f0e5e1a`, tree
-  `65152e1f97e5b691df7ffe946c43a25bc7c61ee5`
-- source 상태: tracked dirty 19개, audit 입력 untracked 1개(체크리스트), audit 산출물
-  untracked 17개(finding·ticket plan 포함).
-  이 보고서는 기존 변경을 수정하거나
-  clean/exact-SHA qualification으로 승격하지 않는다.
+- 감사 기준: `hardening/sep-16` campaign baseline commit
+  `48aa2092572b8838561a499a0e8cac72fc5c152e`, tree
+  `e16e1d776935e6f199ae5fa045c6d59db9c8a948`
+- source 상태: baseline commit 직후 tracked/untracked clean. 이전 HEAD `1f04ccb` 위의 tracked
+  dirty 19개와 audit 산출물은 baseline commit에 함께 보존됐다. 이 보고서는 clean commit 존재만으로
+  implementation 또는 qualification 완료를 주장하지 않는다.
 - 범위: public contract, engine admission/promotion, Tokio host, capability topology,
   mutation/performance gate, qualification receipt
 - 포함 기준: 현재 소스에서 도달 가능한 실패 경로, repository의 명시적 architecture

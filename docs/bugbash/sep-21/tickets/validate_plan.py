@@ -157,7 +157,14 @@ def main() -> None:
         if source_untracked != source.get("untracked_source_files"):
             fail(f"untracked audit inputs changed: {source_untracked}")
         tracked_dirty_count = len(
-            git_value("status", "--porcelain=v1", "--untracked-files=no").splitlines()
+            git_value(
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=no",
+                "--",
+                ".",
+                ":(exclude)docs/bugbash/sep-21/**",
+            ).splitlines()
         )
         if tracked_dirty_count != source.get("tracked_dirty_count"):
             fail(f"tracked dirty count changed: {tracked_dirty_count}")

@@ -6,7 +6,8 @@
 //!
 //! 1. **Data contract** — product-neutral wire/domain types ([`TaskSpec`],
 //!    [`ClassPolicy`], [`AdmissionVerdict`], [`Snapshot`], …). Pure data, no
-//!    behavior beyond constructors and builders.
+//!    runtime behavior; raw task plans cross one contract-owned validation
+//!    boundary before admission.
 //! 2. **Port surface** — the trait seams adapters implement: the driving port
 //!    [`Runtime`] and the driven ports [`Clock`], [`CpuExecutor`],
 //!    [`PermitWaker`].
@@ -36,6 +37,7 @@ mod runtime;
 mod snapshot;
 mod task;
 mod topology;
+mod validation;
 mod verdict;
 
 pub use config::RuntimeConfig;
@@ -57,5 +59,9 @@ pub use task::{
 pub use topology::{
     CpuMode, CpuPoolConfig, SubstrateHint, SubstrateKind, SubstrateRecord, TopologyConfig,
     TopologyError, MAX_CAPABILITY_SLOTS,
+};
+pub use validation::{
+    IdentifierViolation, TaskIdentifierField, TaskPlanError, ValidatedTaskPlan,
+    MAX_TASK_IDENTIFIER_LEN,
 };
 pub use verdict::{AdmissionVerdict, GovernorError, HeldCapacity, RunError, TerminalReason};

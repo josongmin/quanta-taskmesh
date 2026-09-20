@@ -38,7 +38,7 @@ fn operation_after_child_of_preserves_root_id() {
     // operation must NOT re-root it — root attribution & recursion key depend
     // on the inherited root id.
     let child = TaskSpec::cpu(TaskClass::new("rank"))
-        .child_of("fetch:doc:42", TaskStage::new("fanout"))
+        .child_of("fetch:doc:42", "fetch:doc:42", TaskStage::new("fanout"))
         .operation("rank:shard:3");
     assert_eq!(
         child.root_operation_id, "fetch:doc:42",
@@ -51,7 +51,7 @@ fn operation_after_child_of_preserves_root_id() {
     // explicitly sets the parent root.
     let child2 = TaskSpec::cpu(TaskClass::new("rank"))
         .operation("rank:shard:3")
-        .child_of("fetch:doc:42", TaskStage::new("fanout"));
+        .child_of("fetch:doc:42", "fetch:doc:42", TaskStage::new("fanout"));
     assert_eq!(child2.root_operation_id, "fetch:doc:42");
 
     // A plain root is still keyed by its own operation name.
@@ -61,7 +61,8 @@ fn operation_after_child_of_preserves_root_id() {
 
 #[test]
 fn child_of_inherits_root_id_and_sets_scope() {
-    let child = TaskSpec::cpu(TaskClass::new("c")).child_of("root-7", TaskStage::new("fanout"));
+    let child =
+        TaskSpec::cpu(TaskClass::new("c")).child_of("root-7", "parent-6", TaskStage::new("fanout"));
     assert_eq!(child.root_operation_id, "root-7");
     assert!(matches!(child.scope, TaskScope::Child { .. }));
 }
@@ -70,39 +71,64 @@ fn child_of_inherits_root_id_and_sets_scope() {
 fn only_awaited_child_of_declares_that_the_parent_waits() {
     // D12: lineage (`child_of`) says nothing about who waits for whom; the
     // wait is a separate, explicit declaration. Both re-root the child.
-    let lineage = TaskSpec::cpu(TaskClass::new("c")).child_of("root-7", TaskStage::new("fanout"));
+    let lineage =
+        TaskSpec::cpu(TaskClass::new("c")).child_of("root-7", "parent-6", TaskStage::new("fanout"));
     assert_eq!(
         lineage.scope,
         TaskScope::Child {
+            parent_operation_id: "parent-6".to_string(),
             parent_stage: TaskStage::new("fanout"),
             parent_awaits: false,
         },
         "child_of must not declare a wait the caller did not"
     );
-    let awaited =
-        TaskSpec::cpu(TaskClass::new("c")).awaited_child_of("root-7", TaskStage::new("fanout"));
+    let awaited = TaskSpec::cpu(TaskClass::new("c")).awaited_child_of(
+        "root-7",
+        "parent-6",
+        TaskStage::new("fanout"),
+    );
     assert_eq!(awaited.root_operation_id, "root-7");
     assert_eq!(
         awaited.scope,
         TaskScope::Child {
+            parent_operation_id: "parent-6".to_string(),
             parent_stage: TaskStage::new("fanout"),
             parent_awaits: true,
         }
     );
 
-    // The declaration is on the wire, and a payload written before it existed
-    // still parses — as an undeclared wait, never as a declared one.
+    // The declaration is on the wire. A legacy child payload without an exact
+    // immediate-parent identity is ambiguous and rejected.
     let json = serde_json::to_string(&awaited.scope).expect("serializes");
     assert!(json.contains("\"parent_awaits\":true"), "{json}");
-    let legacy: TaskScope = serde_json::from_str(r#"{"Child":{"parent_stage":"fanout"}}"#)
-        .expect("legacy scope parses");
+    assert!(
+        serde_json::from_str::<TaskScope>(r#"{"Child":{"parent_stage":"fanout"}}"#).is_err(),
+        "legacy child scope without immediate-parent identity is ambiguous and must reject"
+    );
+}
+
+#[test]
+fn product_neutral_plan_source_is_bounded() {
+    let source = PlanSource::new("adapter.v2").expect("valid opaque key");
+    assert_eq!(source.as_str(), "adapter.v2");
+    assert_eq!(serde_json::to_string(&source).unwrap(), r#""adapter.v2""#);
+
     assert_eq!(
-        legacy,
-        TaskScope::Child {
-            parent_stage: TaskStage::new("fanout"),
-            parent_awaits: false,
-        },
-        "a scope without the field is an undeclared wait"
+        PlanSource::new("").unwrap_err(),
+        TaskPlanError::InvalidIdentifier {
+            field: TaskIdentifierField::PlanSource,
+            violation: IdentifierViolation::Empty,
+        }
+    );
+    assert_eq!(
+        PlanSource::new("x".repeat(MAX_TASK_IDENTIFIER_LEN + 1)).unwrap_err(),
+        TaskPlanError::InvalidIdentifier {
+            field: TaskIdentifierField::PlanSource,
+            violation: IdentifierViolation::TooLong {
+                actual: MAX_TASK_IDENTIFIER_LEN + 1,
+                max: MAX_TASK_IDENTIFIER_LEN,
+            },
+        }
     );
 }
 

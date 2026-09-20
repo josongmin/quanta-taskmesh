@@ -3,10 +3,13 @@
 use std::borrow::Cow;
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::policy::DeterministicReducePolicy;
 use crate::topology::SubstrateHint;
+use crate::validation::{
+    validate_identifier, TaskIdentifierField, TaskPlanError, ValidatedTaskPlan,
+};
 
 /// Stable semantic class of a unit of work. String-like identifier: ordered and
 /// hashable so it can key deterministic `BTreeMap` state.
@@ -49,15 +52,83 @@ impl fmt::Display for TaskStage {
     }
 }
 
-/// Origin of an execution plan. Product-neutral provenance for audit/telemetry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PlanSource {
-    PublicSdk,
-    FluentSdk,
-    SearchAdapter,
-    Warmup,
-    Indexing,
-    Internal,
+/// Bounded, product-neutral provenance key for audit and telemetry.
+///
+/// The wire representation remains a JSON string. Product-specific mapping is
+/// owned by adapters; core code treats this value as opaque provenance.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PlanSource(Cow<'static, str>);
+
+impl PlanSource {
+    /// Canonical source for work originated inside taskmesh.
+    pub const INTERNAL: Self = Self(Cow::Borrowed("internal"));
+
+    /// Builds a validated opaque provenance key.
+    pub fn new(value: impl Into<Cow<'static, str>>) -> Result<Self, TaskPlanError> {
+        let value = value.into();
+        validate_identifier(TaskIdentifierField::PlanSource, value.as_ref())?;
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_ref()
+    }
+
+    #[allow(non_upper_case_globals)]
+    #[deprecated(
+        note = "accepted during the 0.2 migration window; use PlanSource::INTERNAL before the next breaking release"
+    )]
+    pub const Internal: Self = Self(Cow::Borrowed("Internal"));
+    #[allow(non_upper_case_globals)]
+    #[deprecated(
+        note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
+    )]
+    pub const PublicSdk: Self = Self(Cow::Borrowed("PublicSdk"));
+    #[allow(non_upper_case_globals)]
+    #[deprecated(
+        note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
+    )]
+    pub const FluentSdk: Self = Self(Cow::Borrowed("FluentSdk"));
+    #[allow(non_upper_case_globals)]
+    #[deprecated(
+        note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
+    )]
+    pub const SearchAdapter: Self = Self(Cow::Borrowed("SearchAdapter"));
+    #[allow(non_upper_case_globals)]
+    #[deprecated(
+        note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
+    )]
+    pub const Warmup: Self = Self(Cow::Borrowed("Warmup"));
+    #[allow(non_upper_case_globals)]
+    #[deprecated(
+        note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
+    )]
+    pub const Indexing: Self = Self(Cow::Borrowed("Indexing"));
+}
+
+impl fmt::Display for PlanSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for PlanSource {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for PlanSource {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
 }
 
 /// Why a task carries the class it does. Keeps classification auditable.
@@ -73,6 +144,8 @@ pub enum ClassificationRationale {
 pub enum TaskScope {
     Root,
     Child {
+        /// Exact operation identity of the immediate parent.
+        parent_operation_id: String,
         parent_stage: TaskStage,
         /// The parent's execution blocks on this child's result (declared with
         /// [`TaskSpec::awaited_child_of`]). While the parent holds its permit
@@ -93,9 +166,9 @@ pub struct StageDescriptor {
     pub stage: TaskStage,
     pub substrate_hint: SubstrateHint,
     /// Whether this stage fans out into parallel work. A fan-out stage is not
-    /// shippable without a `reduce_policy` (enforced by the composite feature).
+    /// valid without a `reduce_policy` (enforced by the contract validator).
     pub fan_out: bool,
-    /// Required for parallel/fan-out stages; validated by the composite feature.
+    /// Required for parallel/fan-out stages; validated by the contract validator.
     pub reduce_policy: Option<DeterministicReducePolicy>,
 }
 
@@ -155,7 +228,7 @@ impl TaskSpec {
             class: class.clone(),
             operation: String::new(),
             root_operation_id: String::new(),
-            source: PlanSource::Internal,
+            source: PlanSource::INTERNAL,
             reason: ClassificationRationale::ExplicitMapping,
             scope: TaskScope::Root,
             stack_size_bytes: None,
@@ -193,10 +266,12 @@ impl TaskSpec {
     pub fn child_of(
         mut self,
         root_operation_id: impl Into<String>,
+        parent_operation_id: impl Into<String>,
         parent_stage: TaskStage,
     ) -> Self {
         self.root_operation_id = root_operation_id.into();
         self.scope = TaskScope::Child {
+            parent_operation_id: parent_operation_id.into(),
             parent_stage,
             parent_awaits: false,
         };
@@ -217,10 +292,12 @@ impl TaskSpec {
     pub fn awaited_child_of(
         mut self,
         root_operation_id: impl Into<String>,
+        parent_operation_id: impl Into<String>,
         parent_stage: TaskStage,
     ) -> Self {
         self.root_operation_id = root_operation_id.into();
         self.scope = TaskScope::Child {
+            parent_operation_id: parent_operation_id.into(),
             parent_stage,
             parent_awaits: true,
         };
@@ -287,5 +364,10 @@ impl TaskSpec {
 
     pub fn requested_stack_size_bytes(&self) -> Option<u64> {
         self.stack_size_bytes
+    }
+
+    /// Validates this raw wire/builder value and returns an admission-ready plan.
+    pub fn validate(&self) -> Result<ValidatedTaskPlan, TaskPlanError> {
+        ValidatedTaskPlan::try_from(self.clone())
     }
 }

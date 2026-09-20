@@ -1,6 +1,6 @@
 # SEP21-C01 — Task plan contract normalization
 
-- 상태: PLANNED
+- 상태: LOCALLY_VERIFIED
 - 우선순위: P1 contract foundation
 - 포함 finding: TM21-010
 - 선행: 없음
@@ -100,3 +100,63 @@ engine/host가 각자 유사 validation을 재구현하지 않게 한다.
 cargo test --locked -p taskmesh-contract
 cargo test --locked -p taskmesh-engine --test reduce_policy_validation --test composite_root_attribution
 ```
+
+## Closure evidence (2026-09-21)
+
+Focused source:
+
+- branch/HEAD: `main@3da26491997c81435c969bd05b8a20438e360f99`
+- HEAD tree: `65a9061dcae7c815ab99477f0d98eabec1fcba8e`
+- C01 source/test dirty digest: `sha256:11553d63d041be8ad6a13167edfc2d5649e035db98bbba37f5c4e12ce2e4dc7b`
+  (binary diff of the four tracked contract source/test paths plus Git blob identities of the two
+  new files; this deliberately excludes this self-referential ticket and other owners' dirty paths)
+- new validation artifact digests:
+  - `validation.rs`: `sha256:6261e153bd94d3c65f3d95d9b7dc2e229a23e410cc5d9978535f47f7908d7b1d`
+  - `task_plan_validation.rs`: `sha256:fe80f9bdfc6b6979205e589bdf3a46cd62763d9ae6a2f7314aa67cf682534c1b`
+
+Changed paths:
+
+- `crates/taskmesh-contract/src/lib.rs`
+- `crates/taskmesh-contract/src/task.rs`
+- `crates/taskmesh-contract/src/validation.rs`
+- `crates/taskmesh-contract/tests/contract_builders.rs`
+- `crates/taskmesh-contract/tests/contract_roundtrip.rs`
+- `crates/taskmesh-contract/tests/task_plan_validation.rs`
+- `docs/bugbash/sep-21/tickets/SEP21-C01-task-plan-contract.md`
+
+This is contract evidence only; engine admission integration, facade/MSRV migration, workspace-wide
+tests, semver proof, hosted CI, and release qualification were not run here and remain assigned to
+E04/H01/H03/R01.
+
+| Acceptance | Evidence |
+| --- | --- |
+| SEP21-C01-A01 | `TaskSpec::validate`, `TryFrom<TaskSpec> for ValidatedTaskPlan`, and validated-plan serde all use the single validator in `validation.rs`; typed negative fixtures cover zero stages, identifiers, class mismatch, reduce shape, and lineage. |
+| SEP21-C01-A02 | `DuplicateStage` rejects an identical repeated descriptor; `ConflictingStage` rejects the same stage identity with a different descriptor. No sorting or dedupe occurs. |
+| SEP21-C01-A03 | `TaskScope::Child` now carries required `parent_operation_id` in addition to root and parent stage. Empty, child-equal-parent, and child-equal-root identities reject. Active-operation uniqueness remains E04 state-owner work. |
+| SEP21-C01-A04 | `PlanSource` is an opaque bounded string newtype. Product names remain only as deprecated 0.2 migration constants; there is no product enum or core branching. |
+| SEP21-C01-A05 | All six legacy provenance JSON strings decode and re-encode byte-for-byte. The former enum's `Copy` and exhaustive-match source compatibility intentionally breaks. |
+| SEP21-C01-A06 | A validated child plan exposes `root_operation_id`, exact `parent_operation_id`, `parent_stage`, and `parent_awaits`, sufficient for E04 to resolve the active immediate-parent permit without raw string scans. |
+| SEP21-C01-A07 | The R01 input manifest below records the Rust and serde breaks and the bounded 0.2 provenance migration window. |
+
+Validation evidence:
+
+```text
+CARGO_TARGET_DIR=target/sep21/contract-c01 cargo test --locked -p taskmesh-contract
+exit 0; 56 passed, 0 failed (11 task-plan adversarial tests)
+
+uv run python docs/bugbash/sep-21/tickets/validate_plan.py --structure-only
+exit 0
+
+git diff --check
+exit 0
+```
+
+### R01 input manifest
+
+| Surface | Before | After / compatibility |
+| --- | --- | --- |
+| Provenance Rust API | `Copy` product enum with exhaustive variants | Opaque non-`Copy` `PlanSource`; `new` validates a maximum 128-byte canonical key. Legacy associated constants are deprecated for the 0.2 migration window and are removed at the next breaking release. |
+| Provenance wire | Enum strings such as `"SearchAdapter"` and `"Internal"` | Every legacy string decodes and re-encodes unchanged. New internal plans emit canonical `"internal"`. Invalid/empty/oversize strings reject during decode. |
+| Child Rust API | `child_of(root, stage)` / `awaited_child_of(root, stage)` | Both builders require `(root, immediate_parent_operation, parent_stage)`. This is an intentional source break. |
+| Child wire | `parent_stage` plus optional `parent_awaits` | `parent_operation_id` is required. Legacy child payloads missing it reject as ambiguous; root payloads are unchanged. |
+| Admission boundary | Public raw `TaskSpec` only | `ValidatedTaskPlan` is sealed and constructible only through validation. Raw `TaskSpec` remains the serde/builder input type. Engine admission wiring is E04-owned. |

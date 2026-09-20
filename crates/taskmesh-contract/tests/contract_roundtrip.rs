@@ -34,6 +34,37 @@ fn task_spec_roundtrips() {
 }
 
 #[test]
+fn validated_task_plan_roundtrips_without_reopening_the_boundary() {
+    let plan = TaskSpec::blocking(TaskClass::new("retrieval"))
+        .operation("search:repo:1")
+        .validate()
+        .expect("valid plan");
+    let json = serde_json::to_string(&plan).unwrap();
+    let back: ValidatedTaskPlan = serde_json::from_str(&json).unwrap();
+    assert_eq!(plan, back);
+}
+
+#[test]
+#[allow(deprecated)]
+fn legacy_plan_source_strings_decode_and_reencode_exactly() {
+    for (wire, constant) in [
+        ("PublicSdk", PlanSource::PublicSdk),
+        ("FluentSdk", PlanSource::FluentSdk),
+        ("SearchAdapter", PlanSource::SearchAdapter),
+        ("Warmup", PlanSource::Warmup),
+        ("Indexing", PlanSource::Indexing),
+        ("Internal", PlanSource::Internal),
+    ] {
+        let decoded: PlanSource = serde_json::from_str(&format!(r#""{wire}""#)).unwrap();
+        assert_eq!(decoded, constant);
+        assert_eq!(
+            serde_json::to_string(&decoded).unwrap(),
+            format!(r#""{wire}""#)
+        );
+    }
+}
+
+#[test]
 fn class_policy_roundtrips() {
     let policy = sample_class_policy();
     let json = serde_json::to_string_pretty(&policy).unwrap();

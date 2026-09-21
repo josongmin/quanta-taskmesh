@@ -201,15 +201,16 @@ def test_inventory_contract_and_command_identity_are_deterministic(tmp_path: Pat
     assert rm.test_command(MUT)[:5] == ["cargo", "test", "-p", "p", "--test"]
 
 
-def test_exact_oracle_filter_is_after_harness_separator_and_single_threaded() -> None:
-    mutation = {**MUT, "test_filter": "the_test"}
-    assert rm.test_command(mutation)[-5:] == [
+def test_each_cargo_mutation_uses_its_primary_oracle_exactly_and_single_threaded() -> None:
+    assert rm.test_command(MUT)[-5:] == [
         "--",
         "the_test",
         "--exact",
         "--test-threads",
         "1",
     ]
+    control = {**MUT, "finding": "control", "expect_no_failure": True}
+    assert rm.test_command(control)[-3:] == ["--", "--test-threads", "4"]
 
 
 @pytest.mark.parametrize(
@@ -220,12 +221,10 @@ def test_exact_oracle_filter_is_after_harness_separator_and_single_threaded() ->
         ({**MUT, "runner": "unknown"}, "unknown runner"),
         ({**MUT, "expect_cofailures": "peer"}, "expect_cofailures"),
         ({**MUT, "env": {"X": 1}}, "env must be"),
-        ({**MUT, "test_filter": ""}, "test_filter"),
-        ({**MUT, "test_filter": "--ignored"}, "exact Rust test name"),
-        ({**MUT, "test_filter": "other"}, "must equal expect_failing_test"),
+        ({**MUT, "expect_failing_test": "--ignored"}, "exact Rust test name"),
         (
-            {**MUT, "test_filter": "the_test", "expect_cofailures": ["peer"]},
-            "cannot declare control/cofailures",
+            {**MUT, "expect_cofailures": ["peer"]},
+            "cannot declare cofailures",
         ),
     ],
 )
@@ -458,7 +457,7 @@ def test_baseline_identity_and_manifest_bind_all_evidence_dimensions(tmp_path: P
 def test_current_inventory_has_one_control_and_explicit_exact_policy() -> None:
     inventory = json.loads(rm.INVENTORY.read_text(encoding="utf-8"))
     mutations = rm.load_inventory(rm.INVENTORY)
-    assert inventory["failure_set_policy"] == "primary_plus_declared_cofailures_exact"
+    assert inventory["failure_set_policy"] == "cargo_primary_exact_pytest_declared_cofailures_exact"
     assert len(mutations) == 105
     assert sum(bool(mutation.get("expect_no_failure")) for mutation in mutations) == 1
 

@@ -13,7 +13,9 @@ input, not a release verdict. Run the registered recipes through `just`:
 - [ ] `just test-rayon` / `just doctest` / `just rustdoc` / `just bench-smoke`
 - [ ] `just mutants-critical` — curated single-edit inventory의 non-control 104개가
       KILLED이고 control 1개가 CONTROL_GREEN인지 확인한다. 이것은 cargo-mutants
-      전체 생성 sweep의 score가 아니다.
+      전체 생성 sweep의 score가 아니다. Non-control cargo mutation은 named primary
+      oracle 하나만 `--exact --test-threads 1`로 실행하며 cargo cofailure 선언은 거부한다;
+      pytest mutation은 file-scope exact failure-set 분류를 유지한다.
 - [ ] `just mutants-generated` — full current-source cargo-mutants workspace sweep.
       planned/executed/categorized IDs가 완전히 일치하고 baseline이 green이어야 한다.
       전체 denominator에는 `unviable` ID도 남긴다. 다만 cargo-mutants가 컴파일하지 못한
@@ -73,9 +75,9 @@ input, not a release verdict. Run the registered recipes through `just`:
   compiling on stable. NOT_RUN without nightly + cargo-fuzz; only
   `taskmesh-fuzz status=PASS` with all target-specific semantic witnesses is PASS.
 - Mutation gate: 105 curated entries — 104 single-edit fault probes
-  (90 cargo incl. 3 shuttle-model targets and 1 differential-model target, 15 pytest
+  (89 non-control cargo incl. 3 shuttle-model targets and 1 differential-model target, 15 pytest
   against the Python tooling and the bench workflow scripts), each killed by its named regression for its named
-  reason found in that test's own output, plus one behaviour-preserving control
+  reason found in that test's own output, plus one cargo behaviour-preserving control
   that must stay green. The historical schema-v1 receipt contains the first 100;
   five receipt/coverage/runner integrity probes were added with schema v2.
 

@@ -110,8 +110,9 @@ curated mutation과 generated cargo-mutants campaign을 isolated exact-source tr
   `IMPLEMENTED_UNQUALIFIED`를 유지한다.
 - producer manifest: `tools/verification/mutation-gate.json` v1,
   `sha256:c861ef1a959715f1de71f5442204b4b45aae49bd40ddb532b21f0164cec2b8bd`.
-- curated inventory: 105 entries, exact failure-set policy
-  `primary_plus_declared_cofailures_exact`; H02 authority 이동으로 실제 drift한 6개만 refresh했고
+- curated inventory: 105 entries. Non-control cargo entries run the named primary Rust oracle only,
+  with `--exact --test-threads 1`; pytest entries use exact file-scope failure-set classification.
+  H02 authority 이동으로 실제 drift한 6개만 refresh했고
   current integrated source에서 anchor 105/105가 정확히 한 번 일치한다. Inventory digest는
   `00255106d5a238459d283558b420b2933822d68a8d4c7917c08c11c57371a52d`.
 - runner tests: `uv run pytest -q tools/verification/tests` — 55 passed.
@@ -199,20 +200,25 @@ just mutants-critical --require-clean
   완전히 일치하고 exit 101, selected/executed 1/1, problems 0으로 KILLED였다. 이는 allow-all이
   아니라 raw hosted failure set에 대한 최소 oracle 보정이었다. 그러나 CP14 hosted rerun은
   primary oracle만 실패하고 racing peer는 통과해 그 cofailure가 scheduler-dependent임을
-  증명했다. 따라서 cofailure를 고정하지 않고 이 entry의 대표 oracle 하나를 `--exact`,
-  `--test-threads 1`로 baseline/mutant 양쪽에서 동일 실행한다. Filter는 primary failure와
-  동일한 Rust test-name만 허용하고 control/cofailure와 병용할 수 없다. Focused 실제 실행은
-  baseline 1/1 PASS, mutant 1/1 exact failure, exit 101, problems 0으로 KILLED였다.
+  증명했다. CP15에서는 다른 drain mutation의 peer cofailure가 재현되지 않아 entry별
+  cofailure binding 자체가 구조적으로 불안정함을 재확인했다. 따라서 모든 non-control cargo
+  entry는 primary oracle 하나를 `--exact --test-threads 1`로 baseline/mutant 양쪽에서 동일
+  실행한다. Primary는 exact Rust test-name grammar를 만족해야 하고 cargo cofailure 선언은
+  거부한다. Control은 behaviour preservation을 위해 전체 target을 실행하고, pytest entry는
+  file-scope exact failure-set 분류를 유지한다. 이 정책의 full local 실행은 105/105,
+  104 KILLED + 1 CONTROL_GREEN, problems 0, source unchanged였고 receipt SHA-256은
+  `c6f9421f05232044f8b1a99ba6bdc204f955e4ccf6629bc3bf03d550e63d3a80`이다. Dirty-overlay
+  producer proof이므로 clean hosted qualification을 대체하지 않는다.
 
 - Hosted `main@1378383b63728eedd2a38d5e7f7d87c828d2f0d0`, run
   `35543694307`의 curated raw artifact는 105개 중 `KILLED=71`,
   `CONTROL_GREEN=1`, `UNRELATED_FAILURE_SET=25`, `BLOCKED_BASELINE=4`,
   `SURVIVED=4`였다. 이것은 full curated `FAIL`이며 과거 focused PASS로 대체할 수 없다.
 - 25개 `UNRELATED_FAILURE_SET`는 모두 unmutated command baseline이 PASS였고,
-  지정된 primary test도 실패했다. Raw per-test panic과 source operator를 대조해
-  같은 변이 때문에 추가로 실패한 41개 test name을 각 inventory entry의
-  `expect_cofailures`에 명시했다. 추가 실패를 무조건 허용하지 않았고
-  `primary_plus_declared_cofailures_exact` 분류는 유지했다. 원인별 검토 범위:
+  지정된 primary test도 실패했다. 당시 raw per-test panic과 source operator를 대조해
+  같은 변이 때문에 추가로 실패한 41개 test name을 inventory에 명시했지만, CP14/CP15가
+  그 failure set의 scheduler dependence를 반증했다. 해당 cargo cofailure 목록은 제거됐고
+  위 exact-primary 실행 계약으로 대체됐다. 당시 검토 범위:
   - Fairness/continuation: `wfq-scale-loses-precision`,
     `drr-walks-the-ring-visit-by-visit`, `drr-cursor-serves-the-wrong-class`,
     `capability-blocked-head-holds-back-every-newcomer`,

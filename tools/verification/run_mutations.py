@@ -160,15 +160,8 @@ def validate_entry(mutation: dict) -> None:
     cargo_args = mutation.get("cargo_args", [])
     if not isinstance(cargo_args, list) or not all(isinstance(value, str) for value in cargo_args):
         raise SystemExit(f"mutation {mutation_id}: cargo_args must be a list of strings")
-    test_filter = mutation.get("test_filter")
-    if test_filter is not None and (not isinstance(test_filter, str) or not test_filter):
-        raise SystemExit(f"mutation {mutation_id}: test_filter must be a non-empty string")
-    if isinstance(test_filter, str) and EXACT_TEST_NAME.fullmatch(test_filter) is None:
-        raise SystemExit(f"mutation {mutation_id}: test_filter must be an exact Rust test name")
-    if runner == "pytest" and (env or cargo_args or test_filter is not None):
-        raise SystemExit(
-            f"mutation {mutation_id}: env/cargo_args/test_filter apply to the cargo runner only"
-        )
+    if runner == "pytest" and (env or cargo_args):
+        raise SystemExit(f"mutation {mutation_id}: env/cargo_args apply to the cargo runner only")
     cofailures = mutation.get("expect_cofailures", [])
     if not isinstance(cofailures, list) or not all(isinstance(value, str) for value in cofailures):
         raise SystemExit(f"mutation {mutation_id}: expect_cofailures must be a list of strings")
@@ -185,13 +178,16 @@ def validate_entry(mutation: dict) -> None:
         raise SystemExit(f"mutation {mutation_id}: missing expect_failing_test")
     if not mutation.get("expect_message"):
         raise SystemExit(f"mutation {mutation_id}: missing expect_message")
-    if test_filter is not None:
-        if control or cofailures:
+    if runner == "cargo":
+        if EXACT_TEST_NAME.fullmatch(mutation["expect_failing_test"]) is None:
             raise SystemExit(
-                f"mutation {mutation_id}: an exact test_filter cannot declare control/cofailures"
+                f"mutation {mutation_id}: expect_failing_test must be an exact Rust test name"
             )
-        if test_filter != mutation["expect_failing_test"]:
-            raise SystemExit(f"mutation {mutation_id}: test_filter must equal expect_failing_test")
+        if cofailures:
+            raise SystemExit(
+                f"mutation {mutation_id}: cargo mutations run one exact primary oracle and "
+                "cannot declare cofailures"
+            )
 
 
 def load_inventory(path: Path) -> list[dict]:
@@ -226,10 +222,9 @@ def test_command(mutation: dict) -> list[str]:
         ["--lib"] if mutation["test_target"] == "lib" else ["--test", mutation["test_target"]]
     )
     profile = ["--release"] if mutation.get("profile") == "release" else []
-    test_filter = mutation.get("test_filter")
     harness_args = (
-        [test_filter, "--exact", "--test-threads", "1"]
-        if test_filter is not None
+        [mutation["expect_failing_test"], "--exact", "--test-threads", "1"]
+        if not mutation.get("expect_no_failure")
         else ["--test-threads", "4"]
     )
     return [

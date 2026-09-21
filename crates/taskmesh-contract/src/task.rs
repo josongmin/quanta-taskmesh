@@ -74,32 +74,50 @@ impl PlanSource {
         self.0.as_ref()
     }
 
-    #[allow(non_upper_case_globals)]
+    #[allow(
+        non_upper_case_globals,
+        reason = "legacy 0.2 migration alias keeps its published spelling"
+    )]
     #[deprecated(
         note = "accepted during the 0.2 migration window; use PlanSource::INTERNAL before the next breaking release"
     )]
     pub const Internal: Self = Self(Cow::Borrowed("Internal"));
-    #[allow(non_upper_case_globals)]
+    #[allow(
+        non_upper_case_globals,
+        reason = "legacy 0.2 migration alias keeps its published spelling"
+    )]
     #[deprecated(
         note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
     )]
     pub const PublicSdk: Self = Self(Cow::Borrowed("PublicSdk"));
-    #[allow(non_upper_case_globals)]
+    #[allow(
+        non_upper_case_globals,
+        reason = "legacy 0.2 migration alias keeps its published spelling"
+    )]
     #[deprecated(
         note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
     )]
     pub const FluentSdk: Self = Self(Cow::Borrowed("FluentSdk"));
-    #[allow(non_upper_case_globals)]
+    #[allow(
+        non_upper_case_globals,
+        reason = "legacy 0.2 migration alias keeps its published spelling"
+    )]
     #[deprecated(
         note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
     )]
     pub const SearchAdapter: Self = Self(Cow::Borrowed("SearchAdapter"));
-    #[allow(non_upper_case_globals)]
+    #[allow(
+        non_upper_case_globals,
+        reason = "legacy 0.2 migration alias keeps its published spelling"
+    )]
     #[deprecated(
         note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
     )]
     pub const Warmup: Self = Self(Cow::Borrowed("Warmup"));
-    #[allow(non_upper_case_globals)]
+    #[allow(
+        non_upper_case_globals,
+        reason = "legacy 0.2 migration alias keeps its published spelling"
+    )]
     #[deprecated(
         note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
     )]

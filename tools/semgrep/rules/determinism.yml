@@ -19,6 +19,9 @@ rules:
         # (`runtime.rs`) and the bounded drain wait (`runtime/drain.rs`, D17).
         - "**/crates/taskmesh/src/runtime.rs"
         - "**/crates/taskmesh/src/runtime/drain.rs"
+        # Host acquisition arbiter owns monotonic pre-dispatch timeouts;
+        # semantic engine time remains injected through contract::Clock.
+        - "**/crates/taskmesh/src/executor/cancel.rs"
         - "**/tests/**"
         # Test-only modules that live in `src/` by necessity (they need
         # crate-private access). Named `*_tests.rs` by convention and gated

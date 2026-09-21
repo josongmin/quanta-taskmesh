@@ -266,9 +266,25 @@ pub fn queued_behind_index(
     queue: &std::collections::VecDeque<PendingRequest>,
     index: usize,
 ) -> bool {
-    let request = &queue[index];
+    let Some(request) = queue.get(index) else {
+        // An unknown position must not bypass an earlier same-domain request.
+        return true;
+    };
     queue
         .iter()
         .take(index)
         .any(|earlier| earlier.capabilities.intersects(&request.capabilities))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::queued_behind_index;
+
+    #[test]
+    fn an_unknown_queue_position_fails_closed_as_queued_behind() {
+        assert!(
+            queued_behind_index(&std::collections::VecDeque::new(), 0),
+            "an index outside the frozen queue must not become runnable"
+        );
+    }
 }

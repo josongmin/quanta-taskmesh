@@ -225,6 +225,9 @@ class Harness:
             "  exit 0\n"
             "fi\n"
             'if [[ "$1" == "bench" ]]; then\n'
+            '  [[ "${IAI_CALLGRIND_SAVE_SUMMARY:-}" == "json" ]] || {\n'
+            '    echo "unsupported summary format" >&2; exit 3;\n'
+            "  }\n"
             f"  if [[ {0 if ok else 1} -ne 0 ]]; then echo 'benchmark failed'; exit 1; fi\n"
             "  mkdir -p target/iai/fake\n"
             "  if [[ -f target/iai/fake/callgrind.fake.out "

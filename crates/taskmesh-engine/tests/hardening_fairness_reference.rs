@@ -619,7 +619,9 @@ fn abandoning_a_queued_head_promotes_its_runnable_follower_before_returning() {
     let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
     let releasing = Arc::clone(&g);
     std::thread::spawn(move || {
-        let _ = done_tx.send(releasing.release(holder));
+        done_tx
+            .send(releasing.release(holder))
+            .expect("release observer remains connected");
     });
     assert_eq!(
         done_rx

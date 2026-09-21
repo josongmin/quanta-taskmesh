@@ -45,7 +45,7 @@ fn estimated_mode_uses_configured_units() {
     let p = admit(&g);
     assert_eq!(held(&g, &c), 3);
     // Reconcile is a no-op for estimated mode.
-    let _ = g.reconcile_memory(p, 9_999);
+    assert!(g.reconcile_memory(p, 9_999).is_applied());
     assert_eq!(held(&g, &c), 3);
 }
 
@@ -66,10 +66,10 @@ fn hybrid_reconcile_keeps_max_of_estimate_and_measured() {
     assert_eq!(held(&g, &c), 5);
 
     // measured 80 bytes -> 8 units; max(5, 8) = 8.
-    let _ = g.reconcile_memory(p, 80);
+    assert!(g.reconcile_memory(p, 80).is_applied());
     assert_eq!(held(&g, &c), 8);
 
     // measured 30 bytes -> 3 units; max(5, 3) = 5 (never drops below estimate).
-    let _ = g.reconcile_memory(p, 30);
+    assert!(g.reconcile_memory(p, 30).is_applied());
     assert_eq!(held(&g, &c), 5);
 }

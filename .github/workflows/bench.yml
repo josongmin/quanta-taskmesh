@@ -159,6 +159,11 @@ jobs:
       - name: Run criterion hot-path benches
         run: |
           set -o pipefail
+          # Rust build caches can contain a partial Criterion baseline. Only
+          # the validated bencher capture is published, so keep raw Criterion
+          # state in a fresh run-local directory.
+          criterion_home="$(mktemp -d)"
+          export CRITERION_HOME="${criterion_home}"
           cargo bench -p taskmesh-bench --bench admit_release -- --output-format bencher \
             | tee bench-output.txt
           cargo bench -p taskmesh-bench --bench governance_tax -- --output-format bencher \
@@ -226,6 +231,8 @@ jobs:
       - name: Run validated criterion hot-path benches
         run: |
           set -o pipefail
+          criterion_home="$(mktemp -d)"
+          export CRITERION_HOME="${criterion_home}"
           cargo bench -p taskmesh-bench --bench admit_release -- --output-format bencher \
             | tee bench-output.txt
           cargo bench -p taskmesh-bench --bench governance_tax -- --output-format bencher \

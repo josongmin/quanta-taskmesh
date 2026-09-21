@@ -128,7 +128,7 @@ mkdir -p "${baseline_dir}"
 # comparison. Raw *.out/*.log baseline data remains in place for the runner.
 find "${baseline_dir}" -type f -name summary.json -delete
 rm -f "${baseline_dir}/comparison-manifest.json" "${baseline_dir}/benchmark-output.log"
-export IAI_CALLGRIND_SAVE_SUMMARY=yes
+export IAI_CALLGRIND_SAVE_SUMMARY=json
 export IAI_CALLGRIND_COLOR=never
 
 # Raw output is kept even when cargo fails. It has no baseline authority

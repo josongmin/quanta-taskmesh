@@ -119,7 +119,10 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
                                 if !held.is_empty() {
                                     let i = (lcg.next() as usize) % held.len();
                                     let bytes = lcg.next() % 256;
-                                    let _ = g.reconcile_memory(held[i].0, bytes);
+                                    assert!(
+                                        g.reconcile_memory(held[i].0, bytes).is_applied(),
+                                        "a held permit must accept its memory reading"
+                                    );
                                 }
                             }
                             // stage-boundary partial memory release on a held permit

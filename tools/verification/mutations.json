@@ -1220,6 +1220,7 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_lease_token",
       "expect_failing_test": "a_token_from_another_governor_is_not_this_permits_lease",
+      "expect_cofailures": ["nonce_accessor_reproduces_distinct_live_lease_proofs"],
       "expect_message": "another governor's lease for the same permit id must not release this permit"
     },
     {

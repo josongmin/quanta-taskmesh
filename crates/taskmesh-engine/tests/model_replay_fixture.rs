@@ -59,6 +59,7 @@ fn failure_schedule_replays_the_same_failure() {
             .expect_err("fixture model must fail");
             assert!(panic_text(first.as_ref()).contains(SENTINEL));
             let schedule = only_schedule(&directory);
+            // nosemgrep: taskmesh-test-eprintln-debug-leftover -- reason: modelcheck consumes this generation witness.
             println!(
                 "taskmesh-replay-generation model_id={FAILURE_MODEL_ID} seed={FAILURE_SEED} \
                  result=failure_persisted artifact={}",
@@ -72,6 +73,7 @@ fn failure_schedule_replays_the_same_failure() {
             }))
             .expect_err("saved schedule must reproduce the failure");
             assert!(panic_text(replay.as_ref()).contains(SENTINEL));
+            // nosemgrep: taskmesh-test-eprintln-debug-leftover -- reason: modelcheck consumes this replay witness.
             println!(
                 "taskmesh-replay-witness model_id={FAILURE_MODEL_ID} seed={FAILURE_SEED} \
                  result=same_failure artifact={}",

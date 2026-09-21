@@ -361,7 +361,7 @@ fn claim_final_drop_panic_compensates_and_promotes_the_next_waiter() {
     assert_eq!(bad_dropped.load(Ordering::SeqCst), 0);
 
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = governor.claim(bad_ticket);
+        drop(governor.claim(bad_ticket));
     }));
     assert!(panic.is_err(), "the first host panic remains observable");
     assert_eq!(bad_dropped.load(Ordering::SeqCst), 1);

@@ -179,8 +179,8 @@ async fn invalid_stack_preflight_has_zero_governor_and_worker_side_effects() {
                     .operation("holder")
                     .stack_size_bytes(STACK),
                 move || {
-                    let _ = started_tx.send(());
-                    let _ = release_rx.recv();
+                    started_tx.send(()).expect("holder start observer is alive");
+                    release_rx.recv().expect("holder receives release signal");
                     Ok::<(), ()>(())
                 },
             )

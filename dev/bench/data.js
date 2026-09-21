@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789945765438,
+  "lastUpdate": 1789953264290,
   "repoUrl": "https://github.com/josongmin/quanta-taskmesh",
   "entries": {
     "taskmesh wall-clock": [
@@ -699,6 +699,78 @@ window.BENCHMARK_DATA = {
             "name": "governance_tax_blocking_noop/governed_substrate_saturated_shed",
             "value": 702,
             "range": "± 2",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "songmin.jo@twelvelabs.io",
+            "name": "Songmin Jo",
+            "username": "songminjo"
+          },
+          "committer": {
+            "email": "songmin.jo@twelvelabs.io",
+            "name": "Songmin Jo",
+            "username": "songminjo"
+          },
+          "distinct": true,
+          "id": "d7c745bae9268552e1b0d314702de9a1a1ffb398",
+          "message": "Repair hosted static and benchmark evidence gates",
+          "timestamp": "2026-09-21T10:12:21+09:00",
+          "tree_id": "a35206a0935588b4db4d536599a8c03f193932eb",
+          "url": "https://github.com/josongmin/quanta-taskmesh/commit/d7c745bae9268552e1b0d314702de9a1a1ffb398"
+        },
+        "date": 1789953263308,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "admit_release_success",
+            "value": 788,
+            "range": "± 27",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "admit_unknown_class_reject",
+            "value": 182,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/governed",
+            "value": 34297,
+            "range": "± 3255",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/raw_spawn_blocking",
+            "value": 29232,
+            "range": "± 2279",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/semaphore_only",
+            "value": 30328,
+            "range": "± 2182",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/tower_concurrency_limit",
+            "value": 27210,
+            "range": "± 2450",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/governed_pre_submit_cancelled",
+            "value": 798,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "governance_tax_blocking_noop/governed_substrate_saturated_shed",
+            "value": 1084,
+            "range": "± 7",
             "unit": "ns/iter"
           }
         ]

@@ -118,6 +118,16 @@ fn a_plain_release_cannot_end_a_dispatched_permit() {
 
 #[test]
 fn a_lease_releases_its_permit_exactly_once() {
+    // The process-wide first nonce is 1. Spend it before checking an accessor
+    // round trip so a constant-1 accessor cannot pass by coincidence.
+    let (warmup, _) = gov();
+    let warmup_permit = admit(&warmup, "warmup");
+    let warmup_lease = lease(&warmup, warmup_permit, ExecutionPhase::Running);
+    assert_eq!(
+        warmup.release_leased(warmup_lease),
+        ReleaseOutcome::Released
+    );
+
     let (g, _) = gov();
     let permit = admit(&g, "owned");
     let token = lease(&g, permit, ExecutionPhase::Running);
@@ -161,13 +171,35 @@ fn a_lease_releases_its_permit_exactly_once() {
 }
 
 #[test]
+fn nonce_accessor_reproduces_distinct_live_lease_proofs() {
+    let (g, _) = gov();
+    let first_permit = admit(&g, "first");
+    let second_permit = admit(&g, "second");
+    let first = lease(&g, first_permit, ExecutionPhase::Running);
+    let second = lease(&g, second_permit, ExecutionPhase::Running);
+
+    assert_ne!(
+        first.nonce(),
+        second.nonce(),
+        "nonce accessor must distinguish two live lease proofs"
+    );
+    assert_eq!(LeaseToken::forge(first.permit_id(), first.nonce()), first);
+    assert_eq!(
+        LeaseToken::forge(second.permit_id(), second.nonce()),
+        second
+    );
+    assert_eq!(g.release_leased(first), ReleaseOutcome::Released);
+    assert_eq!(g.release_leased(second), ReleaseOutcome::Released);
+}
+
+#[test]
 fn a_forged_token_is_refused_and_changes_nothing() {
     let (g, _) = gov();
     let permit = admit(&g, "owned");
     let token = lease(&g, permit, ExecutionPhase::Running);
-    // Same permit id, a different nonce: a token for this permit that is not
-    // this permit's lease.
-    let forged = LeaseToken::forge(permit, token.nonce().wrapping_add(1));
+    // Minted nonces start at 1; zero is never a valid proof. This wrong-token
+    // test must not depend on the accessor that has its own exact oracle.
+    let forged = LeaseToken::forge(permit, 0);
 
     let before = observe(&g);
     assert_eq!(

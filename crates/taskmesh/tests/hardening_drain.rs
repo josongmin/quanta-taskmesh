@@ -623,6 +623,12 @@ async fn abandoning_an_unclaimed_promotion_is_a_custody_return_the_drain_hears()
         c.inflight == 1 && c.queued == 0
     })
     .await;
+    let outstanding = rt
+        .drain(Duration::ZERO)
+        .await
+        .expect_err("an unclaimed promoted permit is still outstanding custody");
+    assert_eq!(outstanding.classes[&class("c")].inflight, 1);
+    assert_eq!(outstanding.classes[&class("c")].queued, 0);
     assert!(
         !drain.is_finished(),
         "an unclaimed promotion is still charged, so the drain must keep waiting"

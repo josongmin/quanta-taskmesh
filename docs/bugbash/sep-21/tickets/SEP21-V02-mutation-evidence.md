@@ -228,3 +228,30 @@ just mutants-critical --require-clean
   `b4fcdc9c830a9ad5fcd83e4ff17d7af73d713ef0abf37bd0e6dd5b75ef048488`이다.
   이는 선택한 5개만 증명한다. 25개 cofailure 정합화 후의 full 105 curated와
   full generated workspace sweep은 아직 `NOT_RUN`이며 release qualification이 아니다.
+
+### CP9 hosted 105/105 denominator (run 35547086905)
+
+- `main@a8c7d3f2282a20f93ea5429d85e42f6a87e7178c`의 hosted curated
+  artifact는 `KILLED=102`, `CONTROL_GREEN=1`, `UNRELATED_FAILURE_SET=1`,
+  `SURVIVED=1`, total 105, `source_unchanged=true`, 전체 `FAIL`이다.
+- `drain-counts-queues-not-custody`는 primary와 2개 cofailure가 실패했지만,
+  `abandoning_an_unclaimed_promotion_is_a_custody_return_the_drain_hears`는
+  같은 실행에서 통과했다. 해당 test는 promoted/unclaimed 상태를 관측한 직후
+  장기 drain task의 완료 여부를 읽어 scheduler timing에 의존했다. 별도의
+  `drain(Duration::ZERO)`로 `inflight=1, queued=0`이 반드시 `NotDrained`인지
+  동기적으로 검사하도록 semantic oracle을 보강했다. Exact cofailure 집합은
+  완화하지 않았다.
+- `lease-token-nonce-accessor-lies`의 constant-1 accessor는 최초 발급 nonce가
+  실제로 1이라 기존 단일-token round trip을 통과했다. 두 개의 동시 lease proof에서
+  accessor nonce가 다르고 각각 exact token을 재구성함을 검증하는 test를 추가하고
+  그 test를 mutant의 named failure로 지정했다.
+- 이 두 보완은 CP9 이후 소스 변경이다. 보완 뒤 focused/full curated와 full
+  generated 결과는 CP9 `FAIL`을 closure로 승격하지 않는다. 보완 뒤 focused
+  receipts `target/sep21/v02/nonce-focused-cp10b/receipt.mutations.json`과
+  `target/sep21/v02/drain-focused-cp10/receipt.mutations.json`은 각각
+  1/1 exact `KILLED`, baseline PASS, `source_unchanged=true`, problems 0이다.
+  최초 nonce focused 실행은 기존 twin test의 실행 순서 의존으로
+  `UNRELATED_FAILURE_SET`였고, 별도 governor에서 nonce 하나를 먼저 소비해
+  원래 twin test가 constant-1 accessor를 항상 거부하도록 했다. Wrong-token
+  test는 accessor에 의존하지 않는 zero proof를 사용한다. 이 두 focused 실행은
+  최종 committed source의 full curated 결과를 대체하지 않는다.

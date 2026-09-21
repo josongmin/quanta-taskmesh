@@ -36,7 +36,7 @@ jobs:
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.19.7
       - name: Install semgrep
         run: uv tool install semgrep
 
@@ -229,7 +229,7 @@ jobs:
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
         with:
-          tool: cargo-deny,cargo-llvm-cov,cargo-fuzz,cargo-mutants
+          tool: cargo-deny@0.19.7,cargo-llvm-cov,cargo-fuzz,cargo-mutants
       - name: Install semgrep
         run: uv tool install semgrep
       - name: Install valgrind

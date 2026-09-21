@@ -1337,14 +1337,15 @@
       "id": "lease-token-nonce-accessor-lies",
       "finding": "A5-lease-token",
       "runner": "cargo",
-      "rationale": "Found by the objective delta sweep: the spent-lease test forges a twin from `nonce()`; if the accessor returned anything but the real proof, that test would be proving a different token is refused, and still pass. The twin must equal the token.",
+      "rationale": "The first minted lease can legitimately have nonce 1, so a lying constant-1 accessor survives a single-token round trip. Two simultaneous lease proofs must expose distinct nonces and each accessor value must forge its exact token.",
       "file": "crates/taskmesh-engine/src/engine/state.rs",
       "find": "    pub fn nonce(&self) -> u64 {\n        self.nonce\n    }",
       "replace": "    pub fn nonce(&self) -> u64 {\n        1\n    }",
       "package": "taskmesh-engine",
       "test_target": "hardening_lease_token",
-      "expect_failing_test": "a_lease_releases_its_permit_exactly_once",
-      "expect_message": "forge(permit_id(), nonce()) must reproduce the token exactly"
+      "expect_failing_test": "nonce_accessor_reproduces_distinct_live_lease_proofs",
+      "expect_cofailures": ["a_lease_releases_its_permit_exactly_once"],
+      "expect_message": "nonce accessor must distinguish two live lease proofs"
     },
     {
       "finding": "B2-nested-wait",

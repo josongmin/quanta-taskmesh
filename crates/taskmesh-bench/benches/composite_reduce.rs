@@ -36,8 +36,10 @@ fn bench(c: &mut Criterion) {
         b.iter(|| {
             n += 1;
             let stage = TaskStage::new(format!("s{}", n % 4096));
-            let child =
-                TaskSpec::blocking(TaskClass::new("worker")).child_of("root", "root", stage);
+            // Child provenance requires an operation distinct from its root.
+            let child = TaskSpec::blocking(TaskClass::new("worker"))
+                .child_of("root", "root", stage)
+                .operation(format!("child-{n}"));
             // The op is admit→release. A queued or rejected child is a different
             // operation and must not be timed as a cheaper cycle.
             match g.admit(&child) {

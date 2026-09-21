@@ -48,6 +48,8 @@ pub struct SubmitOptions {
 
 impl SubmitOptions {
     /// No cancellation, wait indefinitely for promotion.
+    // This named constructor is intentionally identical to `Default`; exclude
+    // only that mechanically equivalent whole-function replacement.
     pub fn unbounded() -> Self {
         Self::default()
     }
@@ -256,6 +258,32 @@ mod tests {
         assert_eq!(
             expired.rejection(now, false),
             Some(AcquisitionRejection::AbsoluteDeadline)
+        );
+    }
+
+    #[test]
+    fn submission_option_builders_preserve_each_authority() {
+        let token = CancellationToken::new();
+        let absolute = std::time::Instant::now() + Duration::from_secs(10);
+        let options = SubmitOptions::unbounded()
+            .with_cancel(token.clone())
+            .with_acquire_timeout(Duration::from_millis(7))
+            .with_deadline(Duration::from_millis(11));
+        token.cancel();
+        assert!(options
+            .cancel
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled));
+        assert_eq!(options.acquire_timeout, Some(Duration::from_millis(7)));
+        assert_eq!(
+            options.deadline,
+            Some(SubmissionDeadline::RunFor(Duration::from_millis(11)))
+        );
+
+        let absolute_options = SubmitOptions::unbounded().with_absolute_deadline(absolute);
+        assert_eq!(
+            absolute_options.deadline,
+            Some(SubmissionDeadline::CompleteBy(absolute))
         );
     }
 }

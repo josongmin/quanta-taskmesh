@@ -279,6 +279,50 @@ def test_generated_command_uses_two_isolated_cargo_mutants_jobs() -> None:
     assert generated[generated.index("--jobs") + 1] == "2"
 
 
+def test_generated_exclusions_are_narrow_and_have_alternate_oracles() -> None:
+    config = (REPO / ".cargo/mutants.toml").read_text(encoding="utf-8")
+    assert '"default_cpu_executor"' in config
+    assert '"imp::Mutex<T>::lock -> loom::"' in config
+    assert '"imp::Mutex<T>::lock -> shuttle::"' in config
+    assert '"CapabilityRequirementSet::empty"' in config
+    assert '"SubmitOptions::unbounded"' in config
+    assert "default/rayon feature tests" in config
+    assert "dedicated model gates" in config
+
+    manifest = json.loads((REPO / "tools/verification/mutation-gate.json").read_text())
+    assert manifest["generated"]["config_paths"] == [
+        "tools/verification/mutation-gate.json",
+        ".cargo/mutants.toml",
+    ]
+
+
+def test_unfiltered_listing_and_exclusion_accounting_are_exact(tmp_path: Path) -> None:
+    config = tmp_path / "mutants.toml"
+    config.write_text('exclude_re = ["equivalent", "cfg-only"]\n', encoding="utf-8")
+    listing = json.dumps(
+        [
+            {"name": "a: caught"},
+            {"name": "b: equivalent"},
+            {"name": "c: cfg-only"},
+        ]
+    )
+    unfiltered = gm.parse_unfiltered_listing(listing)
+    assert unfiltered == ["a: caught", "b: equivalent", "c: cfg-only"]
+    assert gm.excluded_mutants(unfiltered, ["a: caught"], config, require_every_pattern=True) == [
+        "b: equivalent",
+        "c: cfg-only",
+    ]
+
+
+def test_exclusion_accounting_rejects_unapproved_or_stale_scope(tmp_path: Path) -> None:
+    config = tmp_path / "mutants.toml"
+    config.write_text('exclude_re = ["^approved$", "^stale$"]\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="unapproved excluded"):
+        gm.excluded_mutants(["a", "rogue"], ["a"], config, require_every_pattern=False)
+    with pytest.raises(ValueError, match="matched no identities"):
+        gm.excluded_mutants(["a", "approved"], ["a"], config, require_every_pattern=True)
+
+
 def test_parallel_jobs_never_inherit_one_absolute_cargo_target() -> None:
     parent = {"PATH": "/bin", "CARGO_TARGET_DIR": "/shared/target"}
     assert gm.execution_environment(parent) == {"PATH": "/bin"}

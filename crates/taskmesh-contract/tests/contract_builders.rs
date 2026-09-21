@@ -142,6 +142,134 @@ fn builder_defaults_smoke() {
 }
 
 #[test]
+fn class_policy_builder_preserves_every_explicit_field() {
+    let checkpoint = CheckpointPolicy {
+        every_n_work_items: Some(7),
+        before_fan_out: false,
+        before_large_allocation: false,
+        before_stage_boundary: false,
+        before_reduce: false,
+    };
+    let policy = ClassPolicy::new()
+        .max_inflight(11)
+        .max_queue_depth(12)
+        .cpu_units(13)
+        .memory_units(14)
+        .fairness(FairnessPolicy::DeficitRoundRobin { quantum: 15 })
+        .overflow_policy(OverflowPolicy::QueueWithinDepth)
+        .retry_after_policy(RetryAfterPolicy::FixedMs(16))
+        .memory_permit_mode(MemoryPermitMode::Hybrid)
+        .memory_release_policy(MemoryReleasePolicy::OnStageBoundary)
+        .memory_overcommit_policy(MemoryOvercommitPolicy::DegradeToLight {
+            fallback_class: TaskClass::new("fallback"),
+        })
+        .cancellation_policy(CancellationPolicy::CooperativeWithDeadline)
+        .checkpoint_policy(checkpoint)
+        .best_effort(true);
+
+    assert_eq!(policy.max_inflight, 11);
+    assert_eq!(policy.max_queue_depth, 12);
+    assert_eq!(policy.permit_cost.cpu_units, 13);
+    assert_eq!(policy.permit_cost.memory_units, 14);
+    assert_eq!(
+        policy.fairness,
+        FairnessPolicy::DeficitRoundRobin { quantum: 15 }
+    );
+    assert_eq!(policy.overflow_policy, OverflowPolicy::QueueWithinDepth);
+    assert_eq!(policy.retry_after_policy, RetryAfterPolicy::FixedMs(16));
+    assert_eq!(policy.memory_permit_mode, MemoryPermitMode::Hybrid);
+    assert_eq!(
+        policy.memory_release_policy,
+        MemoryReleasePolicy::OnStageBoundary
+    );
+    assert_eq!(
+        policy.memory_overcommit_policy,
+        MemoryOvercommitPolicy::DegradeToLight {
+            fallback_class: TaskClass::new("fallback"),
+        }
+    );
+    assert_eq!(
+        policy.cancellation_policy,
+        CancellationPolicy::CooperativeWithDeadline
+    );
+    assert_eq!(policy.checkpoint_policy, checkpoint);
+    assert!(policy.best_effort);
+}
+
+#[test]
+fn resource_budget_builder_preserves_every_explicit_field() {
+    let budget = ResourceBudget::new()
+        .cpu_units(21)
+        .memory_units(22)
+        .per_request_cpu_units(23)
+        .per_request_memory_units(24)
+        .memory_unit_scale(4096);
+
+    assert_eq!(budget.max_cpu_units, 21);
+    assert_eq!(budget.max_memory_units, 22);
+    assert_eq!(budget.per_request_max_cpu_units, 23);
+    assert_eq!(budget.per_request_max_memory_units, 24);
+    assert_eq!(budget.memory_unit_scale.bytes_per_unit, 4096);
+}
+
+#[test]
+fn queueability_is_exactly_queue_within_depth() {
+    assert!(!OverflowPolicy::Reject.is_queueable());
+    assert!(OverflowPolicy::QueueWithinDepth.is_queueable());
+    assert!(!OverflowPolicy::DropBestEffort.is_queueable());
+}
+
+#[test]
+fn manual_clock_set_advance_and_read_are_observable() {
+    let clock = ManualClock::new(41);
+    assert_eq!(clock.now_ms(), 41);
+    clock.advance(1);
+    assert_eq!(clock.now_ms(), 42);
+    clock.set(99);
+    assert_eq!(clock.now_ms(), 99);
+}
+
+#[test]
+fn execution_phase_rank_and_started_boundary_are_exact() {
+    let cases = [
+        (ExecutionPhase::DispatchReserved, 0, false),
+        (ExecutionPhase::Accepted, 1, false),
+        (ExecutionPhase::Running, 2, true),
+        (ExecutionPhase::CleanupPending, 3, true),
+    ];
+    for (phase, rank, started) in cases {
+        assert_eq!(phase.rank(), rank);
+        assert_eq!(phase.has_started(), started);
+    }
+}
+
+#[test]
+fn plan_source_display_and_stack_request_preserve_values() {
+    let source = PlanSource::new("adapter.v2").expect("valid source");
+    assert_eq!(source.to_string(), "adapter.v2");
+
+    let ordinary = TaskSpec::io(TaskClass::new("c"));
+    assert_eq!(ordinary.requested_stack_size_bytes(), None);
+    let stacked = ordinary.stack_size_bytes(8 * 1024 * 1024);
+    assert_eq!(stacked.requested_stack_size_bytes(), Some(8 * 1024 * 1024));
+}
+
+#[test]
+fn substrate_hint_mapping_is_total_and_exact() {
+    let cases = [
+        (SubstrateHint::AsyncIo, None),
+        (SubstrateHint::BlockingPool, Some("blocking")),
+        (SubstrateHint::SharedCpuExecutor, Some("cpu")),
+        (SubstrateHint::LargeStackCapability, Some("large_stack")),
+        (SubstrateHint::LocalRuntime, Some("local_runtime")),
+        (SubstrateHint::BackgroundOnly, Some("maintenance")),
+    ];
+    for (hint, pool) in cases {
+        assert_eq!(hint.capability_pool(), pool);
+    }
+}
+
+#[test]
 fn identifier_ordering_hash_equality() {
     assert_eq!(TaskClass::new("a"), TaskClass::new("a"));
     assert!(TaskClass::new("a") < TaskClass::new("b"));

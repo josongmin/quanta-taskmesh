@@ -1,0 +1,15 @@
+# Permanent exclusions are deliberately narrow and reviewable. cargo-mutants
+# parses cfg-disabled source, so mutually exclusive execution adapters otherwise
+# appear as false misses in every feature lane. Loom and Shuttle remain covered
+# by their dedicated model gates; both host executor variants remain covered by
+# default/rayon feature tests.
+exclude_re = [
+  "default_cpu_executor",
+  "imp::Mutex<T>::lock -> loom::",
+  "imp::Mutex<T>::lock -> shuttle::",
+
+  # These named constructors are definitionally identical to `Default`; the
+  # only generated replacement is byte-for-byte equivalent Rust semantics.
+  "CapabilityRequirementSet::empty",
+  "SubmitOptions::unbounded",
+]

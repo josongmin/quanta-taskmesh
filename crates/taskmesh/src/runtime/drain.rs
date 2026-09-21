@@ -156,13 +156,6 @@ fn outstanding(snapshot: &Snapshot) -> BTreeMap<TaskClass, Outstanding> {
         .collect()
 }
 
-async fn drain_deadline_reached(deadline: Option<Instant>) {
-    match deadline {
-        Some(deadline) => tokio::time::sleep_until(deadline).await,
-        None => std::future::pending::<()>().await,
-    }
-}
-
 impl TokioRuntime {
     /// Whether [`Self::drain`] has been called on this runtime or any clone of
     /// it — the engine's own flag ([`Governor::admission_closed`]), so `true`
@@ -219,17 +212,32 @@ impl TokioRuntime {
                     classes_drained: snapshot.classes.len(),
                 });
             }
-            let now = Instant::now();
-            if deadline.is_some_and(|deadline| now >= deadline) {
-                return Err(NotDrained {
-                    classes,
-                    elapsed: now.duration_since(started),
-                });
-            }
-            tokio::select! {
-                biased;
-                () = settled => {}
-                () = drain_deadline_reached(deadline) => {}
+            match deadline {
+                None => settled.await,
+                Some(deadline) => {
+                    tokio::select! {
+                        biased;
+                        () = settled => {}
+                        () = tokio::time::sleep_until(deadline) => {
+                            // The timeout and final release can race. Re-read the
+                            // authoritative gauges once at the deadline so an
+                            // already-settled runtime succeeds and outstanding
+                            // custody returns a bounded answer instead of looping.
+                            let snapshot = self.governor.snapshot();
+                            let classes = outstanding(&snapshot);
+                            if classes.is_empty() {
+                                return Ok(DrainReport {
+                                    elapsed: started.elapsed(),
+                                    classes_drained: snapshot.classes.len(),
+                                });
+                            }
+                            return Err(NotDrained {
+                                classes,
+                                elapsed: Instant::now().duration_since(started),
+                            });
+                        }
+                    }
+                }
             }
         }
     }

@@ -148,6 +148,9 @@ pub const MAX_CAPABILITY_REQUIREMENTS: usize = 32;
 pub struct CapabilityRequirementSet(Vec<CapabilityId>);
 
 impl CapabilityRequirementSet {
+    // This named constructor is intentionally identical to `Default`; exclude
+    // only that mechanically equivalent whole-function replacement while still
+    // mutating every non-equivalent operation in this impl.
     pub fn empty() -> Self {
         Self::default()
     }
@@ -579,4 +582,153 @@ pub enum AdmissionDecision {
     Queued { ticket: Ticket },
     /// Rejected with a terminal verdict.
     Rejected(taskmesh_contract::AdmissionVerdict),
+}
+
+#[cfg(test)]
+mod mutation_semantics {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::hash::{Hash, Hasher};
+
+    struct FixedHasher(u64);
+
+    impl Default for FixedHasher {
+        fn default() -> Self {
+            Self(0xcbf2_9ce4_8422_2325)
+        }
+    }
+
+    impl Hasher for FixedHasher {
+        fn finish(&self) -> u64 {
+            self.0
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            for byte in bytes {
+                self.0 ^= u64::from(*byte);
+                self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+    }
+
+    fn policy_with_pools(count: usize) -> PolicySet {
+        let records = (0..count)
+            .map(|index| {
+                let name = format!("executor-{index}");
+                let pool = format!("pool-{index}");
+                SubstrateRecord::new(
+                    name,
+                    taskmesh_contract::SubstrateKind::CompetingExecution,
+                    Some(pool),
+                )
+            })
+            .collect::<Vec<_>>();
+        let limits = (0..count)
+            .map(|index| (format!("pool-{index}"), 1))
+            .collect();
+        PolicySet::new(ResourceBudget::new(), BTreeMap::new())
+            .with_substrates(records)
+            .expect("unique executing substrates")
+            .with_capability_limits(limits)
+            .expect("every capability has an executing substrate")
+    }
+
+    fn hash(value: &CapabilityId) -> u64 {
+        let mut hasher = FixedHasher::default();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn registered(capability: ResolvedCapability) -> Option<CapabilityId> {
+        match capability {
+            ResolvedCapability::Registered(id) => Some(id),
+            ResolvedCapability::Ungated => None,
+        }
+    }
+
+    #[test]
+    fn capability_identity_binds_name_and_issuing_authority() {
+        let first_policy = PolicySet::new(ResourceBudget::new(), BTreeMap::new());
+        let second_policy = PolicySet::new(ResourceBudget::new(), BTreeMap::new());
+        let first = registered(first_policy.resolve_capability("cpu").expect("built-in"))
+            .expect("cpu is registered");
+        let clone = first.clone();
+        let foreign = registered(second_policy.resolve_capability("cpu").expect("built-in"))
+            .expect("cpu is registered");
+
+        assert_eq!(first, clone);
+        assert_eq!(first.partial_cmp(&clone), Some(CmpOrdering::Equal));
+        assert_eq!(hash(&first), hash(&clone));
+        assert_ne!(first, foreign);
+        assert_ne!(hash(&first), hash(&foreign));
+        assert_eq!(first.to_string(), "cpu");
+    }
+
+    #[test]
+    fn requirement_bound_is_inclusive_and_foreign_ids_fail_closed() {
+        let policy = policy_with_pools(MAX_CAPABILITY_REQUIREMENTS + 1);
+        let resolved: Vec<_> = (0..=MAX_CAPABILITY_REQUIREMENTS)
+            .map(|index| {
+                policy
+                    .resolve_capability(&format!("pool-{index}"))
+                    .expect("registered")
+            })
+            .collect();
+        let maximum = CapabilityRequirementSet::from_resolved(
+            resolved
+                .get(..MAX_CAPABILITY_REQUIREMENTS)
+                .expect("fixture contains the documented maximum")
+                .iter()
+                .cloned(),
+        )
+        .expect("the documented maximum is admissible");
+        assert_eq!(maximum.iter().count(), MAX_CAPABILITY_REQUIREMENTS);
+        assert_eq!(policy.validate_requirements(&maximum), Ok(()));
+        assert_eq!(
+            CapabilityRequirementSet::from_resolved(resolved),
+            Err(CapabilityResolutionError::TooManyRequirements {
+                max: MAX_CAPABILITY_REQUIREMENTS,
+            })
+        );
+
+        let foreign_policy = policy_with_pools(1);
+        let foreign = CapabilityRequirementSet::from_resolved([foreign_policy
+            .resolve_capability("pool-0")
+            .expect("registered")])
+        .expect("one requirement");
+        assert_eq!(
+            policy.validate_requirements(&foreign),
+            Err(CapabilityResolutionError::ForeignId)
+        );
+    }
+
+    #[test]
+    fn request_key_accessors_preserve_the_authoritative_root() {
+        let key = RequestKey::from_root("root:42");
+        assert_eq!(key.as_str(), "root:42");
+        assert_eq!(key.to_string(), "root:42");
+    }
+
+    #[test]
+    fn capability_resolution_errors_render_exact_context() {
+        assert_eq!(
+            CapabilityResolutionError::EmptyName.to_string(),
+            "capability name must be non-empty"
+        );
+        assert_eq!(
+            CapabilityResolutionError::UnknownName {
+                name: "gpu".to_owned(),
+            }
+            .to_string(),
+            "unknown capability: gpu"
+        );
+        assert_eq!(
+            CapabilityResolutionError::ForeignId.to_string(),
+            "capability id is not registered by this policy"
+        );
+        assert_eq!(
+            CapabilityResolutionError::TooManyRequirements { max: 32 }.to_string(),
+            "capability requirement count exceeds bounded maximum 32"
+        );
+    }
 }

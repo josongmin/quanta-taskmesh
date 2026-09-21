@@ -33,6 +33,8 @@ compile_error!("`--features loom` requires `RUSTFLAGS=\"--cfg loom\"` (see `just
 compile_error!("`--features shuttle` requires `RUSTFLAGS=\"--cfg shuttle\"` (see `just shuttle`)");
 
 #[cfg(loom)]
+// cargo-mutants scans cfg-disabled model seams as if they were active default
+// code. Loom owns this implementation through the registered model-check gate.
 mod imp {
     pub use loom::sync::atomic::{AtomicU64, Ordering};
 
@@ -54,6 +56,7 @@ mod imp {
 }
 
 #[cfg(shuttle)]
+// Shuttle owns this mutually exclusive implementation through its model gate.
 mod imp {
     pub use shuttle::sync::atomic::{AtomicU64, Ordering};
 

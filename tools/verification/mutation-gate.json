@@ -17,8 +17,13 @@
     "command": ["uv", "run", "python", "tools/verification/run_generated_mutants.py", "--jobs", "2"],
     "summary_artifact": "receipt.generated-mutations.json",
     "raw_artifact_glob": "raw/mutants.out/**",
+    "config_paths": [
+      "tools/verification/mutation-gate.json",
+      ".cargo/mutants.toml"
+    ],
     "required_categories": ["caught", "missed", "unviable", "timeout", "equivalent"],
     "identity_sets": "planned-equals-categorized-equals-executed",
+    "exclusion_accounting": "unfiltered --no-config listing minus planned denominator; every excluded identity must match a checked-in narrow regex",
     "quality_denominator": "all planned outcomes except compile-unviable; unviable identities remain mandatory and reported",
     "pass_requires": {
       "exit_code": 0,

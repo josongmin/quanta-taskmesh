@@ -278,13 +278,87 @@ pub fn queued_behind_index(
 
 #[cfg(test)]
 mod tests {
-    use super::queued_behind_index;
+    use super::{cycle_witness, queued_behind_index, BlockerSet};
+    use crate::engine::state::{ClassState, GovernedState};
+    use crate::shared::{CapabilityRequirementSet, PolicySet, Provenance, ResolvedCapability};
+    use std::collections::BTreeMap;
+    use taskmesh_contract::{
+        ClassPolicy, ResourceBudget, TaskClass, TaskScope, TaskSpec, TaskStage,
+    };
 
     #[test]
     fn an_unknown_queue_position_fails_closed_as_queued_behind() {
         assert!(
             queued_behind_index(&std::collections::VecDeque::new(), 0),
             "an index outside the frozen queue must not become runnable"
+        );
+    }
+
+    #[test]
+    fn unrelated_capacity_cannot_be_reported_as_held_by_the_waiting_parent() {
+        let requested_class = TaskClass::new("child");
+        let parent_class = TaskClass::new("parent");
+        let policy = PolicySet::new(
+            ResourceBudget::new().cpu_units(1).memory_units(1),
+            BTreeMap::from([(requested_class.clone(), ClassPolicy::new().max_inflight(1))]),
+        )
+        .with_capability_limits(BTreeMap::from([("cpu".to_owned(), 1)]))
+        .expect("built-in cpu capability");
+        let capability = policy.resolve_capability("cpu").expect("registered");
+        assert!(
+            matches!(capability, ResolvedCapability::Registered(_)),
+            "cpu is a governed built-in capability"
+        );
+        let ResolvedCapability::Registered(capability) = capability else {
+            return;
+        };
+
+        let parent_spec = TaskSpec::io(parent_class.clone()).operation("parent");
+        let mut state = GovernedState::default();
+        // Admit the exact parent with zero cost, then inject unrelated pressure.
+        // The cycle detector must attribute only capacity held by this parent.
+        state.grant(crate::engine::state::GrantRequest {
+            permit_id: 7,
+            class: &parent_class,
+            operation: "parent",
+            root_operation_id: "root",
+            scope: TaskScope::Root,
+            target_stage: TaskStage::new("io"),
+            provenance: Provenance::of(&parent_spec),
+            capabilities: CapabilityRequirementSet::empty(),
+            cost: crate::shared::ResolvedCost::default(),
+            reserved_units: 0,
+            now_ms: 0,
+            pending_ticket: None,
+            claim_waker: None,
+        });
+        state.classes.insert(
+            requested_class.clone(),
+            ClassState {
+                inflight: 1,
+                ..ClassState::default()
+            },
+        );
+        state.cpu_units_held = 1;
+        state.memory_units_held = 1;
+        state.capability_in_use.insert(capability.clone(), 1);
+
+        let blockers = BlockerSet {
+            class_inflight: true,
+            capabilities: vec![capability],
+            cpu: true,
+            memory: true,
+            ..BlockerSet::default()
+        };
+        let scope = TaskScope::Child {
+            parent_operation_id: "parent".to_owned(),
+            parent_stage: TaskStage::new("io"),
+            parent_awaits: true,
+        };
+        assert_eq!(
+            cycle_witness(&state, &policy, "root", &scope, &requested_class, &blockers,),
+            None,
+            "capacity held only by unrelated work is reversible for this parent"
         );
     }
 }

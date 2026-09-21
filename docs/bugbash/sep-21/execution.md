@@ -25,10 +25,10 @@ The commit is a source checkpoint, not implementation or qualification proof.
 | --- | --- | --- | --- | --- |
 | contract | C01 | `sep21_contract` | LOCALLY_VERIFIED | `C01_CONTRACT_READY` accepted |
 | engine-core | E01,E02,E03,E04 | `sep21_engine` | LOCALLY_VERIFIED | `E04_RESOLVER_READY` accepted at `0fb1874` |
-| proof-envelope | V01 | `sep21_v01` | IMPLEMENTED_UNQUALIFIED | integrated at `9db7903`; hosted receipt NOT_RUN |
+| proof-envelope | V01 | `sep21_v01` | IMPLEMENTED_UNQUALIFIED | CP16 hosted receipt ran and returned `NOT_QUALIFIED` because generated mutation failed |
 | host | H01,H03,H02 | `sep21_host` | LOCALLY_VERIFIED | `HOST_PACKET_READY` accepted at `ba643a1` |
-| mutation | V02 | `sep21_v02` | IMPLEMENTED_UNQUALIFIED | producer checkpoint `df08a59`; full generated sweep remains NOT_RUN |
-| concurrency | V03 | `sep21_v03` | LOCALLY_VERIFIED | producer checkpoint `3969063`; hosted exact-source replay remains NOT_RUN |
+| mutation | V02 | `sep21_v02` | IMPLEMENTED_UNQUALIFIED | CP16 full generated sweep ran: 953 caught, 170 missed, 14 timeout, 170 unviable |
+| concurrency | V03 | `sep21_v03` | HOSTED_VERIFIED | CP16 Loom, Shuttle, bounded model replay and TSan rails passed |
 | release | R01 | `sep21_release_r01` | IMPLEMENTING_UNQUALIFIED | release-only implementation; final source and version decision remain open |
 
 ## Checkpoints
@@ -51,7 +51,7 @@ The commit is a source checkpoint, not implementation or qualification proof.
 | CP13 benchmark/mutation authority | `378e0c2` (tree `a091b1d`) | Wall-clock alerts remain published/profile-triggering but no longer overrule deterministic IAI. Generated schema v2 keeps complete identities, excludes only compile-unviable outcomes from the quality denominator, removes inherited absolute `CARGO_TARGET_DIR`, and uses cargo-mutants jobs=2 isolation. Local tools 525/525 (2 slow deselected), Ruff, format, inventory 27/26/27 and plan structure passed; real rayon subset had identity 10/10, caught 5, unviable 5, quality 5/5, process 0 and unchanged source. Hosted bench `35552028239` passed. CI `35552028216` passed all non-mutation rails; curated had 103 KILLED + 1 CONTROL_GREEN + one exact cofailure inventory drift, while full generated remained in progress. | pushed to `origin/main`; curated failure is not waived and requires exact inventory correction |
 | CP14 observed cofailure binding | `c728a89` (tree `edfe3c7`) | The first hosted raw failure set was bound exactly and the focused local rerun observed the same two failures. On hosted rerun `35554897519`, the primary drain oracle failed but its racing peer passed, proving the peer cofailure is scheduler-dependent rather than a stable semantic obligation. All completed non-mutation rails passed; generated remained in progress. | pushed to `origin/main`; exact cofailure declaration rejected as unstable, representative-oracle isolation required |
 | CP15 scheduler-sensitive oracle probe | `56b1c27` (tree `912b445`) | Clean exact-source finding proof passed 23/23 with manifest SHA-256 `0bc97696b8e58e33c57869257599a87746fb3d4e417c8dbb9e303b1b70469c4b`. Hosted CI `35555520124` passed every completed non-mutation rail, but curated failed on a different drain mutation when another scheduler-dependent peer did not reproduce. This disproved entry-local cofailure binding as a general solution. | pushed to `origin/main`; curated FAILED and generated evidence from this source is superseded by the next source checkpoint |
-| CP16 exact-primary curated policy | this checkpoint commit | Every non-control cargo mutation runs only its named primary Rust oracle with `--exact --test-threads 1`; cargo cofailure declarations are rejected. Pytest mutations keep exact observed failure-set classification at file scope and the control keeps its green suite. The full local campaign executed 105/105 with 104 KILLED + 1 CONTROL_GREEN, zero problems, unchanged source and receipt SHA-256 `c6f9421f05232044f8b1a99ba6bdc204f955e4ccf6629bc3bf03d550e63d3a80`. | local dirty-overlay structural proof only; clean hosted qualification required |
+| CP16 exact-primary curated policy | `d58be6f` (tree `4c38726`) | Every non-control cargo mutation runs only its named primary Rust oracle with `--exact --test-threads 1`; cargo cofailure declarations are rejected. The clean hosted campaign executed 105/105 with 104 KILLED + 1 CONTROL_GREEN. CI run `35556956457` passed fast gate, feature/doc/bench matrix, MSRV, Loom, Shuttle, model replay, TSan, fuzz, coverage and curated mutation. Its full generated sweep executed 1,307 identities: 953 caught, 170 missed, 14 timeout, 170 unviable, zero equivalent; therefore the qualification receipt correctly returned `NOT_QUALIFIED`. Bench run `35556956580` passed. | pushed to `origin/main`; generated mutation failed and remains the release blocker |
 
 The earlier H01-only detached checkpoint (focused 21/21, default/rayon 154/154) is superseded by
 the integrated CP4 host transaction. H01, H03 and H02 are not treated as independently mergeable
@@ -120,10 +120,9 @@ unexecuted items and dependency signals. A commit or push alone is not closure.
   there is no release tag. R01 must freeze an immutable baseline SHA and a final candidate SHA.
   Ordinary hosted qualification of a PR merge SHA is evidence only for that SHA, not a release
   verdict for a different final source.
-- `docs/release-checklist.md` still describes the generated mutation surface as `NOT_RUN` and
-  excluded, while V01's ordinary required set requires a full generated result. The earlier V02
-  rule incorrectly rejected compile-unviable outcomes. Producer schema v2 now keeps every unviable
-  identity in the full denominator and reports it as an unscored limitation; missed, timeout and
-  equivalent still fail. A real jobs=2 `taskmesh-rayon` rerun produced complete 10/10 identity
-  parity, 5 caught, 5 unviable, quality 5/5 and semantic PASS. The full workspace sweep remains
-  `NOT_RUN`; neither this subset nor `REPORTED` can substitute for full generated quality evidence.
+- CP16 supplied the first complete hosted generated workspace denominator: 1,307 identities with
+  953 caught, 170 missed, 14 timeout, 170 unviable and zero equivalent. The result is a real
+  `FAILED` quality verdict, not `NOT_RUN` and not a 100% curated score. The remediation wave keeps
+  compile-unviable identities visible, requires every configured exclusion to reconcile against
+  an unfiltered `--no-config` discovery, and targets every prior missed/timeout family before the
+  next exact-source hosted sweep. No focused subset can substitute for that next full result.

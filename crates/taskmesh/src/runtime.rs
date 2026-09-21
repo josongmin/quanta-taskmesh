@@ -175,12 +175,10 @@ impl TokioRuntime {
                     ticket: Some(ticket),
                 };
                 let result = self.await_promotion(ticket, &waker, arbiter).await;
-                if result.is_ok()
-                    || matches!(
-                        self.governor.ticket_status(ticket),
-                        ClaimOutcome::Terminal(_) | ClaimOutcome::Invalid
-                    )
-                {
+                if matches!(
+                    self.governor.ticket_status(ticket),
+                    ClaimOutcome::Terminal(_) | ClaimOutcome::Invalid
+                ) {
                     guard.disarm();
                 }
                 result
@@ -239,11 +237,23 @@ impl TokioRuntime {
                 }
                 ClaimOutcome::Invalid => return Err(GovernorError::InvalidTicketClaim { ticket }),
             }
+            let cancel = arbiter.cancel_token();
+            let wake_deadline = arbiter.wake_deadline().map(Instant::from_std);
             tokio::select! {
                 biased;
-                () = cancellation_requested_v1(arbiter.cancel_token()), if arbiter.cancel_token().is_some() => {}
+                () = async {
+                    match cancel {
+                        Some(token) => token.cancelled().await,
+                        None => std::future::pending::<()>().await,
+                    }
+                }, if cancel.is_some() => {}
                 () = waker.notified() => {}
-                () = acquisition_deadline_reached_v1(arbiter.wake_deadline().map(Instant::from_std)), if arbiter.wake_deadline().is_some() => {}
+                () = async {
+                    match wake_deadline {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending::<()>().await,
+                    }
+                }, if wake_deadline.is_some() => {}
             }
         }
     }
@@ -1070,20 +1080,6 @@ async fn run_cancellable<T, E>(
     }
 }
 
-async fn cancellation_requested_v1(token: Option<&CancellationToken>) {
-    match token {
-        Some(token) => token.cancelled().await,
-        None => std::future::pending::<()>().await,
-    }
-}
-
-async fn acquisition_deadline_reached_v1(deadline: Option<Instant>) {
-    match deadline {
-        Some(deadline) => tokio::time::sleep_until(deadline).await,
-        None => std::future::pending::<()>().await,
-    }
-}
-
 /// Owns one execution's governed capacity: the semantic permit and, through it,
 /// the capability-pool slot the engine reserved in the same transition.
 ///
@@ -1213,12 +1209,10 @@ impl Drop for ExecutionLease {
                 // asserted while unwinding: a panic in a destructor during a
                 // panic aborts the process.)
                 let outcome = self.governor.release_leased(token);
-                if !std::thread::panicking() {
-                    debug_assert!(
-                        outcome == ReleaseOutcome::Released,
-                        "permit {permit}: its runtime lease could not release it ({outcome:?})"
-                    );
-                }
+                debug_assert!(
+                    std::thread::panicking() || outcome == ReleaseOutcome::Released,
+                    "permit {permit}: its runtime lease could not release it ({outcome:?})"
+                );
             }
         }
         // Whichever way the permit went — released here, or already reclaimed
@@ -1252,5 +1246,23 @@ impl Drop for TicketGuard {
             self.governor.abandon(ticket);
             self.drain.settled();
         }
+    }
+}
+
+#[cfg(test)]
+mod mutation_semantics {
+    use super::{DrainSignal, TicketGuard};
+    use std::sync::Arc;
+
+    #[test]
+    fn ticket_guard_disarm_transfers_ownership_without_abandoning() {
+        let runtime = crate::Builder::new().build().expect("default runtime");
+        let mut guard = TicketGuard {
+            governor: Arc::clone(&runtime.governor),
+            drain: Arc::new(DrainSignal::default()),
+            ticket: Some(41),
+        };
+        guard.disarm();
+        assert_eq!(guard.ticket, None);
     }
 }

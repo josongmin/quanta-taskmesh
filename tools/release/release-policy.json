@@ -2,7 +2,7 @@
   "schema_version": 1,
   "baseline_sha": "39bee682d7daa1efaf1c10993ba6221fd0a90871",
   "baseline_version": "0.2.0",
-  "candidate_version": null,
+  "candidate_version": "0.3.0",
   "release_type": "minor",
   "semver_tool": "cargo-semver-checks 0.50.0",
   "features": ["--default-features"],
@@ -12,7 +12,7 @@
     "taskmesh",
     "taskmesh-rayon"
   ],
-  "version_decision": "PENDING",
-  "version_reviewer": null,
+  "version_decision": "APPROVED",
+  "version_reviewer": "josongmin",
   "generated_policy": "full-workspace viable mutants all caught; unviable reported and excluded; missed/timeout/equivalent fail"
 }

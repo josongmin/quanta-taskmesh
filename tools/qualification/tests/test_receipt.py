@@ -1153,11 +1153,15 @@ def test_real_v02_artifacts_share_receipt_source_identity_and_reject_byte_drift(
     # This fixture is an explicit local producer rooted in a synthetic git
     # repository. A hosted outer pytest process must not rewrite its identity.
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    for relative in (
+    all_specs = receipt.registrations(receipt.INVENTORY)
+    v02_specs = [spec for spec in all_specs if spec["surface"] in {"curated", "generated"}]
+    fixture_inputs = {
         "tools/verification/mutation-gate.json",
         "tools/verification/mutations.json",
         ".github/workflows/ci.yml",
-    ):
+    }
+    fixture_inputs.update(path for spec in v02_specs for path in spec["required_configs"])
+    for relative in sorted(fixture_inputs):
         destination = repo / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         source = REPO / relative
@@ -1176,9 +1180,6 @@ def test_real_v02_artifacts_share_receipt_source_identity_and_reject_byte_drift(
         }
         required = json.loads((REPO / "tools" / "gates" / "required.json").read_text())["required"]
         results = [{"id": gate, "status": "PASS", "exit_code": 0} for gate in required]
-        all_specs = receipt.registrations(receipt.INVENTORY)
-        v02_specs = [spec for spec in all_specs if spec["surface"] in {"curated", "generated"}]
-
         synthetic = _producer_records(source, results)
         by_surface = {record["surface"]: record for record in synthetic}
         for spec in v02_specs:

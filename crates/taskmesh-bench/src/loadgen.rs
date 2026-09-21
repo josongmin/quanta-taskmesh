@@ -19,7 +19,6 @@
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
-use std::sync::Barrier;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -47,8 +46,6 @@ pub struct LatencyRecorder {
     mode: RecorderMode,
     /// `record` calls, regardless of how many histogram entries they produced.
     recorded_calls: u64,
-    /// Samples the histogram refused (would understate the tail if ignored).
-    dropped: u64,
 }
 
 impl LatencyRecorder {
@@ -58,7 +55,6 @@ impl LatencyRecorder {
             hist: Histogram::new(3).expect("histogram"),
             mode,
             recorded_calls: 0,
-            dropped: 0,
         }
     }
 
@@ -78,28 +74,23 @@ impl LatencyRecorder {
         self.mode
     }
 
-    /// Record a measured latency (ns). A refused sample is counted, never
-    /// silently dropped — `dropped()` must stay 0 for a trustworthy tail.
+    /// Record a measured latency (ns). The histogram is auto-resizing across
+    /// the complete `u64` value domain, so every call contributes a sample.
     pub fn record(&mut self, latency_ns: u64) {
         self.recorded_calls += 1;
-        let outcome = match self.mode {
-            RecorderMode::Raw => self.hist.record(latency_ns).map_err(|_| ()),
+        match self.mode {
+            RecorderMode::Raw => self.hist.record(latency_ns),
             RecorderMode::OmissionCorrected {
                 expected_interval_ns,
-            } => self
-                .hist
-                .record_correct(latency_ns, expected_interval_ns)
-                .map_err(|_| ()),
-        };
-        if outcome.is_err() {
-            self.dropped += 1;
+            } => self.hist.record_correct(latency_ns, expected_interval_ns),
         }
+        .expect("auto-resizing u64 histogram accepts every u64 latency");
     }
 
-    /// Count of samples the histogram could not record. A non-zero value means
-    /// the reported quantiles understate the true tail.
+    /// Compatibility metric. Auto-resizing makes refusal unreachable for the
+    /// `u64` latency domain, so this is always zero.
     pub fn dropped(&self) -> u64 {
-        self.dropped
+        0
     }
 
     /// Number of latencies handed to `record`. In `Raw` mode this equals
@@ -112,9 +103,7 @@ impl LatencyRecorder {
     /// Histogram entries that were synthesized by omission correction. Always
     /// zero in `Raw` mode.
     pub fn synthetic_samples(&self) -> u64 {
-        self.hist
-            .len()
-            .saturating_sub(self.recorded_calls - self.dropped)
+        self.hist.len().saturating_sub(self.recorded_calls)
     }
 
     pub fn quantile(&self, q: f64) -> u64 {
@@ -171,6 +160,12 @@ impl SimResult {
 /// A scheduled completion in the discrete-event simulation.
 type Completion = (u64, PermitId); // (completion_time_ns, permit)
 
+const NANOS_PER_MILLI: u64 = 1_000_000;
+
+fn virtual_millis(nanos: u64) -> u64 {
+    nanos / NANOS_PER_MILLI
+}
+
 /// Open-loop discrete-event simulation of `arrivals` against `fx`'s governor
 /// (ADR 9000 / P1 + P5). Each request holds a permit for `service_ns` of virtual
 /// time; queued requests are promoted as inflight work completes. The recorded
@@ -217,7 +212,7 @@ pub fn simulate(
                 break;
             }
             let Reverse((ct, permit)) = heap.pop().expect("peeked");
-            fx.clock.set(ct / 1_000_000);
+            fx.clock.set(virtual_millis(ct));
             assert_eq!(g.release(permit), ReleaseOutcome::Released);
             res.completed += 1;
             claim_promoted(
@@ -231,7 +226,7 @@ pub fn simulate(
             )?;
         }
 
-        fx.clock.set(t / 1_000_000);
+        fx.clock.set(virtual_millis(t));
         let op = format!("op-{idx}");
         let spec = root_spec(&arrival.class, &op);
         match g.admit(&spec) {
@@ -252,7 +247,7 @@ pub fn simulate(
 
     // Drain the tail: complete all remaining inflight work, promoting as we go.
     while let Some(Reverse((ct, permit))) = heap.pop() {
-        fx.clock.set(ct / 1_000_000);
+        fx.clock.set(virtual_millis(ct));
         assert_eq!(g.release(permit), ReleaseOutcome::Released);
         res.completed += 1;
         claim_promoted(
@@ -377,36 +372,51 @@ pub fn contention_run(threads: usize, total_ops: usize) -> ContentionRun {
     let fx = fixture(vec![("bench", ClassPolicy::new())], 0, 0);
     let g = fx.governor.clone();
     let shares = distribute_ops(total_ops, threads);
-    let ready = Barrier::new(threads + 1);
+    assert_eq!(shares.len(), threads, "one exact share per worker");
+    assert_eq!(
+        shares.iter().sum::<usize>(),
+        total_ops,
+        "shares conserve ops"
+    );
 
     let (elapsed, completed) = thread::scope(|scope| {
-        let handles: Vec<_> = shares
-            .iter()
-            .enumerate()
-            .map(|(tid, &share)| {
-                let g = g.clone();
-                let ready = &ready;
-                scope.spawn(move || {
-                    let op = worker_key(tid);
-                    let spec = root_spec("bench", op);
-                    ready.wait();
-                    let mut admitted = 0usize;
-                    for _ in 0..share {
-                        match g.admit(&spec) {
-                            AdmissionDecision::Admitted { permit_id } => {
-                                admitted += 1;
-                                assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
-                            }
-                            other => panic!("contention admit must succeed, got {other:?}"),
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let mut starters = Vec::with_capacity(threads);
+        let mut handles = Vec::with_capacity(threads);
+        for (tid, &share) in shares.iter().enumerate() {
+            let g = g.clone();
+            let ready_tx = ready_tx.clone();
+            let (start_tx, start_rx) = std::sync::mpsc::sync_channel(0);
+            starters.push(start_tx);
+            handles.push(scope.spawn(move || {
+                let op = worker_key(tid);
+                let spec = root_spec("bench", op);
+                ready_tx.send(()).expect("coordinator waits for readiness");
+                start_rx.recv().expect("coordinator starts every worker");
+                let mut admitted = 0usize;
+                for _ in 0..share {
+                    match g.admit(&spec) {
+                        AdmissionDecision::Admitted { permit_id } => {
+                            admitted += 1;
+                            assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
                         }
+                        other => panic!("contention admit must succeed, got {other:?}"),
                     }
-                    admitted
-                })
-            })
-            .collect();
+                }
+                admitted
+            }));
+        }
+        drop(ready_tx);
         // Every worker is spawned and parked; now the clock starts.
-        ready.wait();
+        for _ in 0..handles.len() {
+            ready_rx
+                .recv()
+                .expect("every worker reaches the start gate");
+        }
         let start = Instant::now();
+        for start_tx in starters {
+            start_tx.send(()).expect("worker is parked at start gate");
+        }
         let completed: usize = handles
             .into_iter()
             .map(|h| h.join().expect("contention worker panicked"))
@@ -428,7 +438,10 @@ pub fn contention_run(threads: usize, total_ops: usize) -> ContentionRun {
 /// running `ops_per_thread` cycles. Convenience over [`contention_run`].
 pub fn contention_throughput(threads: usize, ops_per_thread: usize) -> f64 {
     assert!(threads >= 1 && ops_per_thread >= 1);
-    contention_run(threads, threads * ops_per_thread).throughput_per_sec()
+    let total_ops = threads
+        .checked_mul(ops_per_thread)
+        .expect("requested contention operation count fits usize");
+    contention_run(threads, total_ops).throughput_per_sec()
 }
 
 #[cfg(test)]
@@ -461,6 +474,81 @@ mod tests {
         assert_eq!(rec.recorded_calls(), 4);
         assert_eq!(rec.synthetic_samples(), 0);
         assert_eq!(rec.dropped(), 0);
+    }
+
+    #[test]
+    fn recorder_accessors_observe_nonzero_quantiles_and_full_u64_domain() {
+        let mut rec = LatencyRecorder::raw();
+        assert!(rec.is_empty());
+        for latency in [10u64, 20, 30] {
+            rec.record(latency);
+        }
+        assert!(!rec.is_empty());
+        assert!(rec.p50() >= 10);
+        assert_eq!(rec.recorded_calls(), 3);
+
+        rec.record(u64::MAX);
+        assert_eq!(rec.recorded_calls(), 4);
+        assert_eq!(rec.dropped(), 0);
+        assert_eq!(rec.synthetic_samples(), 0);
+    }
+
+    #[test]
+    fn conservation_rejects_each_independent_ledger_mismatch() {
+        let valid = SimResult {
+            offered: 3,
+            admitted_immediately: 1,
+            queued_then_promoted: 1,
+            rejected: 1,
+            completed: 2,
+            max_queue_observed: 1,
+            leftover_queued: 0,
+        };
+        assert!(valid.is_conserved());
+        assert!(!SimResult {
+            offered: 4,
+            ..valid
+        }
+        .is_conserved());
+        assert!(!SimResult {
+            completed: 1,
+            ..valid
+        }
+        .is_conserved());
+        assert!(!SimResult {
+            leftover_queued: 1,
+            ..valid
+        }
+        .is_conserved());
+        assert!(!SimResult {
+            offered: 2,
+            leftover_queued: 1,
+            ..valid
+        }
+        .is_conserved());
+    }
+
+    #[test]
+    fn throughput_handles_zero_time_and_has_exact_units() {
+        let zero = ContentionRun {
+            threads: 2,
+            completed_ops: 4,
+            elapsed: Duration::ZERO,
+        };
+        assert_eq!(zero.throughput_per_sec(), 0.0);
+        let measured = ContentionRun {
+            elapsed: Duration::from_secs(2),
+            ..zero
+        };
+        assert_eq!(measured.throughput_per_sec(), 2.0);
+    }
+
+    #[test]
+    fn virtual_clock_conversion_uses_floor_milliseconds() {
+        assert_eq!(virtual_millis(0), 0);
+        assert_eq!(virtual_millis(999_999), 0);
+        assert_eq!(virtual_millis(1_000_000), 1);
+        assert_eq!(virtual_millis(2_500_001), 2);
     }
 
     #[test]
@@ -523,6 +611,29 @@ mod tests {
         independent.record(9_999);
         assert_eq!(lat.p50(), independent.p50());
         assert_eq!(lat.p99(), independent.p99());
+    }
+
+    #[test]
+    fn completion_at_the_exact_arrival_boundary_frees_capacity_first() {
+        let fx = fixture(vec![("retrieval", retrieval_policy(1, 8))], 0, 0);
+        let arrivals = ValidatedArrivals::new(vec![
+            Arrival {
+                send_time_secs: 0.0,
+                class: "retrieval".into(),
+            },
+            Arrival {
+                send_time_secs: 10.0e-9,
+                class: "retrieval".into(),
+            },
+        ])
+        .expect("exact-boundary schedule");
+
+        let (latency, result) = simulate(&fx, &arrivals, 10).expect("simulation");
+
+        assert_eq!(result.admitted_immediately, 2);
+        assert_eq!(result.queued_then_promoted, 0);
+        assert_eq!(latency.p999(), 0);
+        assert!(result.is_conserved());
     }
 
     #[test]
@@ -649,7 +760,9 @@ mod tests {
     #[test]
     fn contention_runner_reports_positive_throughput() {
         let run = contention_run(2, 4_000);
-        assert!(run.throughput_per_sec() > 0.0, "{run:?}");
-        assert!(contention_throughput(2, 2_000) > 0.0);
+        assert!(run.throughput_per_sec() > 1.0, "{run:?}");
+        let convenience = contention_throughput(2, 2_000);
+        assert!(convenience.is_finite());
+        assert!(convenience > 1.0, "{convenience}");
     }
 }

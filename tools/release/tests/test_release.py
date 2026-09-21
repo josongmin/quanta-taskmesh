@@ -43,7 +43,9 @@ def test_baseline_is_the_immutable_020_release_commit() -> None:
         check=True,
     )
     assert result.stdout.startswith(baseline + " release: 0.2.0")
-    assert policy["candidate_version"] is None
+    assert policy["candidate_version"] == "0.3.0"
+    assert policy["version_decision"] == "APPROVED"
+    assert policy["version_reviewer"] == "josongmin"
     assert (
         semver.workspace_version(
             subprocess.run(

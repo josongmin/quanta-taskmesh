@@ -285,7 +285,9 @@ pub fn generate(cfg: &WorkloadConfig) -> Result<ValidatedArrivals, WorkloadError
         t += inter.sample(&mut rng);
         // Zipf yields a value in [1, n]; map to a 0-based class index.
         let rank = zipf.sample(&mut rng) as usize;
-        let idx = rank.saturating_sub(1).min(cfg.classes.len() - 1);
+        let idx = rank
+            .checked_sub(1)
+            .expect("Zipf distribution returns ranks starting at one");
         out.push(Arrival {
             send_time_secs: t,
             class: cfg.classes[idx].clone(),
@@ -427,7 +429,7 @@ pub fn generate_bursty(cfg: &BurstConfig) -> Result<ValidatedArrivals, WorkloadE
                 off.sample(&mut rng)
             };
             let candidate = t + inter;
-            if candidate < phase_end {
+            if arrival_precedes_boundary(candidate, phase_end) {
                 t = candidate;
                 break;
             }
@@ -437,21 +439,34 @@ pub fn generate_bursty(cfg: &BurstConfig) -> Result<ValidatedArrivals, WorkloadE
             in_burst = !in_burst;
             let dwell = if in_burst { &on_dwell } else { &off_dwell };
             phase_end = t + dwell.sample(&mut rng);
-            boundaries_crossed += 1;
-            if boundaries_crossed > MAX_BOUNDARIES_WITHOUT_ARRIVAL {
-                return Err(WorkloadError::NoProgress {
-                    after_boundaries: boundaries_crossed,
-                });
-            }
+            boundaries_crossed = count_crossed_boundary(boundaries_crossed)?;
         }
         let rank = zipf.sample(&mut rng) as usize;
-        let idx = rank.saturating_sub(1).min(cfg.classes.len() - 1);
+        let idx = rank
+            .checked_sub(1)
+            .expect("Zipf distribution returns ranks starting at one");
         out.push(Arrival {
             send_time_secs: t,
             class: cfg.classes[idx].clone(),
         });
     }
     ValidatedArrivals::new(out)
+}
+
+fn arrival_precedes_boundary(candidate: f64, phase_end: f64) -> bool {
+    candidate < phase_end
+}
+
+fn count_crossed_boundary(current: usize) -> Result<usize, WorkloadError> {
+    let next = current.checked_add(1).ok_or(WorkloadError::NoProgress {
+        after_boundaries: usize::MAX,
+    })?;
+    if next > MAX_BOUNDARIES_WITHOUT_ARRIVAL {
+        return Err(WorkloadError::NoProgress {
+            after_boundaries: next,
+        });
+    }
+    Ok(next)
 }
 
 /// Sampling-order version of [`generate`] / [`generate_bursty`]. See the
@@ -562,22 +577,23 @@ pub fn trace_from_csv(text: &str) -> Result<ValidatedArrivals, String> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
+        let line_number = human_line_number(lineno);
         let (secs, class) = line
             .split_once(',')
-            .ok_or_else(|| format!("line {}: missing comma: {raw:?}", lineno + 1))?;
+            .ok_or_else(|| format!("line {line_number}: missing comma: {raw:?}"))?;
         let send_time_secs = secs
             .trim()
             .parse::<f64>()
-            .map_err(|e| format!("line {}: bad send_time {secs:?}: {e}", lineno + 1))?;
+            .map_err(|e| format!("line {line_number}: bad send_time {secs:?}: {e}"))?;
         let class = class.trim();
         if class.is_empty() {
-            return Err(format!("line {}: empty class", lineno + 1));
+            return Err(format!("line {line_number}: empty class"));
         }
         out.push(Arrival {
             send_time_secs,
             class: class.to_string(),
         });
-        line_of.push(lineno + 1);
+        line_of.push(line_number);
     }
     ValidatedArrivals::new(out).map_err(|error| {
         let index = match &error {
@@ -595,6 +611,12 @@ pub fn trace_from_csv(text: &str) -> Result<ValidatedArrivals, String> {
     })
 }
 
+fn human_line_number(zero_based: usize) -> usize {
+    zero_based
+        .checked_add(1)
+        .expect("a Rust string cannot contain usize::MAX lines")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,6 +625,174 @@ mod tests {
     fn generation_is_deterministic_for_seed() {
         let cfg = WorkloadConfig::default();
         assert_eq!(generate(&cfg).unwrap(), generate(&cfg).unwrap());
+    }
+
+    #[test]
+    fn validated_arrival_accessors_preserve_empty_and_owned_values() {
+        let empty = ValidatedArrivals::new(vec![]).expect("empty schedule is valid");
+        assert!(empty.is_empty());
+        let arrivals = vec![Arrival {
+            send_time_secs: 0.25,
+            class: "c".to_owned(),
+        }];
+        let validated = ValidatedArrivals::from_slice(&arrivals).expect("valid");
+        assert!(!validated.is_empty());
+        assert_eq!(validated.into_inner(), arrivals);
+    }
+
+    #[test]
+    fn config_validation_owns_class_and_zipf_boundaries() {
+        let no_classes = WorkloadConfig {
+            classes: vec![],
+            ..WorkloadConfig::default()
+        };
+        assert!(matches!(
+            no_classes.validate(),
+            Err(WorkloadError::InvalidConfig {
+                field: "classes",
+                ..
+            })
+        ));
+        let empty_class = WorkloadConfig {
+            classes: vec![String::new()],
+            ..WorkloadConfig::default()
+        };
+        assert!(matches!(
+            empty_class.validate(),
+            Err(WorkloadError::InvalidConfig {
+                field: "classes",
+                ..
+            })
+        ));
+        assert!(WorkloadConfig {
+            zipf_exponent: 0.0,
+            ..WorkloadConfig::default()
+        }
+        .validate()
+        .is_ok());
+        for exponent in [-1.0, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                WorkloadConfig {
+                    zipf_exponent: exponent,
+                    ..WorkloadConfig::default()
+                }
+                .validate(),
+                Err(WorkloadError::InvalidConfig {
+                    field: "zipf_exponent",
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn interval_helpers_have_exact_small_boundaries() {
+        assert_eq!(interarrival_cv(&[]), 0.0);
+        assert_eq!(
+            interarrival_cv(&[
+                Arrival {
+                    send_time_secs: 0.0,
+                    class: "c".into()
+                },
+                Arrival {
+                    send_time_secs: 1.0,
+                    class: "c".into()
+                },
+            ]),
+            0.0
+        );
+        let varied = [
+            Arrival {
+                send_time_secs: 0.0,
+                class: "c".into(),
+            },
+            Arrival {
+                send_time_secs: 1.0,
+                class: "c".into(),
+            },
+            Arrival {
+                send_time_secs: 3.0,
+                class: "c".into(),
+            },
+        ];
+        assert!(interarrival_cv(&varied) > 0.0);
+        assert_eq!(mean_interval_ns(0.0), 1);
+        assert_eq!(mean_interval_ns(-1.0), 1);
+        assert_eq!(mean_interval_ns(2.0), 500_000_000);
+        assert_eq!(mean_interval_ns(2.0e9), 1);
+    }
+
+    #[test]
+    fn burst_event_order_and_progress_boundaries_are_exact() {
+        assert!(arrival_precedes_boundary(0.9, 1.0));
+        assert!(!arrival_precedes_boundary(1.0, 1.0));
+        assert!(!arrival_precedes_boundary(1.1, 1.0));
+
+        assert_eq!(count_crossed_boundary(0).expect("first boundary"), 1);
+        assert_eq!(
+            count_crossed_boundary(MAX_BOUNDARIES_WITHOUT_ARRIVAL - 1)
+                .expect("last permitted boundary"),
+            MAX_BOUNDARIES_WITHOUT_ARRIVAL
+        );
+        assert!(matches!(
+            count_crossed_boundary(MAX_BOUNDARIES_WITHOUT_ARRIVAL),
+            Err(WorkloadError::NoProgress { after_boundaries })
+                if after_boundaries == MAX_BOUNDARIES_WITHOUT_ARRIVAL + 1
+        ));
+    }
+
+    #[test]
+    fn seeded_generators_have_versioned_golden_prefixes() {
+        let poisson = generate(&WorkloadConfig {
+            classes: vec!["a".into(), "b".into()],
+            lambda: 10.0,
+            zipf_exponent: 1.0,
+            count: 4,
+            seed: 7,
+        })
+        .expect("valid poisson");
+        let poisson_prefix: Vec<_> = poisson
+            .as_slice()
+            .iter()
+            .map(|arrival| (arrival.send_time_secs.to_bits(), arrival.class.as_str()))
+            .collect();
+        assert_eq!(
+            poisson_prefix,
+            vec![
+                (4_568_936_400_497_789_564, "a"),
+                (4_590_247_640_846_338_216, "a"),
+                (4_591_202_390_223_696_143, "a"),
+                (4_597_518_169_406_491_358, "b"),
+            ],
+            "update only with an intentional GENERATOR_VERSION bump"
+        );
+
+        let burst = generate_bursty(&BurstConfig {
+            classes: vec!["a".into(), "b".into()],
+            zipf_exponent: 1.0,
+            count: 4,
+            seed: 7,
+            low_lambda: 10.0,
+            high_lambda: 100.0,
+            mean_off_secs: 0.1,
+            mean_on_secs: 0.02,
+        })
+        .expect("valid burst");
+        let burst_prefix: Vec<_> = burst
+            .as_slice()
+            .iter()
+            .map(|arrival| (arrival.send_time_secs.to_bits(), arrival.class.as_str()))
+            .collect();
+        assert_eq!(
+            burst_prefix,
+            vec![
+                (4_587_824_009_267_638_135, "a"),
+                (4_592_769_853_735_162_850, "b"),
+                (4_598_458_304_146_356_875, "a"),
+                (4_599_724_429_072_124_686, "a"),
+            ],
+            "update only with an intentional GENERATOR_VERSION bump"
+        );
     }
 
     #[test]
@@ -652,6 +842,10 @@ mod tests {
         assert!(trace_from_csv("not_a_number,retrieval").is_err());
         assert!(trace_from_csv("0.5").is_err()); // missing comma
         assert!(trace_from_csv("0.5,").is_err()); // empty class
+        assert!(trace_from_csv("# header\n\nmissing")
+            .is_err_and(|error| { error.starts_with("line 3: missing comma") }));
+        assert_eq!(human_line_number(0), 1);
+        assert_eq!(human_line_number(41), 42);
     }
 
     // ---- TM16-027: a float that parses is not a valid event time ----------

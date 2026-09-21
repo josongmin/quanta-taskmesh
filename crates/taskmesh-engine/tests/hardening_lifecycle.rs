@@ -94,6 +94,18 @@ fn queue(g: &Governor, op: &str) -> u64 {
 }
 
 #[test]
+fn governor_debug_is_nonempty_and_exposes_only_stable_control_metadata() {
+    let (governor, _, _) = gov(leak_detecting_single_slot());
+    let rendered = format!("{governor:?}");
+
+    assert!(rendered.starts_with("Governor { classes: ["), "{rendered}");
+    assert!(rendered.contains("next_permit: 1"), "{rendered}");
+    assert!(rendered.contains("next_ticket: 1"), "{rendered}");
+    assert!(rendered.ends_with(".. }"), "{rendered}");
+    assert!(!rendered.contains("state"), "must not lock or expose state");
+}
+
+#[test]
 fn a_swept_promotion_hands_the_waiter_a_terminal_outcome_not_a_dead_permit() {
     let (g, clock, class) = gov(leak_detecting_single_slot());
     let holder = admit(&g, "holder");

@@ -9,7 +9,7 @@
 - 입력: [`../findings.md`](../findings.md)의 확정 finding 23건
 - 재현성: `plan.json`이 HEAD/tree뿐 아니라 tracked dirty diff, untracked audit 입력,
   체크리스트와 finding SHA-256을 고정한다. `docs/bugbash/sep-21/`만 audit 산출물로 제외한다.
-- 상태: **PLANNED / implementation NOT_STARTED / release NO-GO**
+- 상태: **IMPLEMENTED / exact-source release qualification IN_PROGRESS / release NO-GO**
 - 목표: finding별 국소 패치가 아니라 authority와 불변식 단위로 원인을 제거한다.
 - 비목표: 이 문서 작성, focused test 또는 ticket 체크만으로 qualification을 주장하지 않는다.
 - 실행 상태와 checkpoint: [`../execution.md`](../execution.md)

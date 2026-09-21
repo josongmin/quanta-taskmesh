@@ -6,9 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
+
+import tomllib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -247,6 +250,66 @@ def command(args: argparse.Namespace, raw_parent: Path) -> list[str]:
     return argv
 
 
+def unfiltered_list_command(args: argparse.Namespace) -> list[str]:
+    """Enumerate the pre-exclusion denominator for auditable scope accounting."""
+    argv = [
+        "cargo",
+        "mutants",
+        "--workspace",
+        "--list",
+        "--json",
+        "--no-config",
+    ]
+    for package in args.package:
+        argv.extend(["--package", package])
+    return argv
+
+
+def parse_unfiltered_listing(stdout: str) -> list[str]:
+    rows = json.loads(stdout)
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("cargo-mutants unfiltered listing has no mutants")
+    names = [mutant_name(row, context="unfiltered") for row in rows]
+    if len(names) != len(set(names)):
+        raise ValueError("duplicate mutant names in unfiltered listing")
+    return sorted(names)
+
+
+def excluded_mutants(
+    unfiltered: list[str], planned: list[str], config_path: Path, *, require_every_pattern: bool
+) -> list[str]:
+    """Prove every omitted identity is selected by a checked-in narrow regex."""
+    unfiltered_set = set(unfiltered)
+    planned_set = set(planned)
+    if not planned_set <= unfiltered_set:
+        raise ValueError(
+            "planned cargo-mutants denominator is not a subset of the unfiltered listing: "
+            f"planned_only={sorted(planned_set - unfiltered_set)}"
+        )
+    config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    patterns = config.get("exclude_re")
+    if (
+        not isinstance(patterns, list)
+        or not patterns
+        or not all(isinstance(pattern, str) and pattern for pattern in patterns)
+    ):
+        raise ValueError("mutants config requires non-empty exclude_re patterns")
+    compiled = [re.compile(pattern) for pattern in patterns]
+    excluded = sorted(unfiltered_set - planned_set)
+    unmatched = [name for name in excluded if not any(pattern.search(name) for pattern in compiled)]
+    if unmatched:
+        raise ValueError(f"unapproved excluded mutant identities: {unmatched}")
+    if require_every_pattern:
+        unused = [
+            pattern.pattern
+            for pattern in compiled
+            if not any(pattern.search(name) for name in excluded)
+        ]
+        if unused:
+            raise ValueError(f"mutation exclusion patterns matched no identities: {unused}")
+    return excluded
+
+
 def tool_identity(source: Path) -> list[dict[str, str]]:
     versions = {
         "cargo-mutants": exact_tool_version(["cargo", "mutants", "--version"], cwd=source),
@@ -294,6 +357,13 @@ def main(argv: list[str] | None = None) -> int:
         # builds back onto one shared Cargo lock and target tree, so remove it.
         execution_env = execution_environment(dict(os.environ))
         recorded_env: dict[str, str] = {}
+        discovery_argv = unfiltered_list_command(args)
+        discovery = execute(
+            discovery_argv,
+            cwd=campaign.source,
+            env=execution_env,
+            timeout_seconds=min(args.campaign_timeout, 600),
+        )
         result = execute(
             argv_command,
             cwd=campaign.source,
@@ -305,6 +375,12 @@ def main(argv: list[str] | None = None) -> int:
         if raw_source.is_dir():
             shutil.copytree(raw_source, raw_destination)
         (output_dir / "raw").mkdir(parents=True, exist_ok=True)
+        (output_dir / "raw" / "unfiltered-mutants.json").write_text(
+            discovery.stdout, encoding="utf-8"
+        )
+        (output_dir / "raw" / "unfiltered-mutants.stderr.log").write_text(
+            discovery.stderr, encoding="utf-8"
+        )
         (output_dir / "raw" / "runner.stdout.log").write_text(result.stdout, encoding="utf-8")
         (output_dir / "raw" / "runner.stderr.log").write_text(result.stderr, encoding="utf-8")
 
@@ -313,6 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         planned_mutants: list[str] = []
         baseline_sha256: str | None = None
         equivalents: list[dict[str, str]] = []
+        excluded: list[str] = []
         counts = {**{category: 0 for category in CATEGORIES}, "equivalent": 0}
         semantic_status = "FAIL"
         problems: list[str] = []
@@ -321,8 +398,16 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("cargo-mutants campaign timed out")
             if result.signal is not None:
                 raise ValueError(f"cargo-mutants terminated by signal {result.signal}")
+            if discovery.timed_out or discovery.signal is not None or discovery.exit_code != 0:
+                raise ValueError("cargo-mutants unfiltered discovery did not complete successfully")
             outcomes = parse_outcomes(raw_destination)
             planned_mutants, baseline_sha256 = planned_baseline_identity(raw_destination)
+            excluded = excluded_mutants(
+                parse_unfiltered_listing(discovery.stdout),
+                planned_mutants,
+                campaign.source / ".cargo/mutants.toml",
+                require_every_pattern=not args.package,
+            )
             equivalents = load_equivalents(args.equivalents, outcomes["missed"])
             counts, semantic_status, problems = classify_generated(outcomes, equivalents)
             semantic_status, problems = apply_process_truth(semantic_status, problems, result)
@@ -358,6 +443,13 @@ def main(argv: list[str] | None = None) -> int:
                 "finished_at": result.finished_at,
                 "duration_s": result.duration_s,
             },
+            "discovery_process": {
+                "argv": discovery_argv,
+                "exit_code": discovery.exit_code,
+                "signal": discovery.signal,
+                "timed_out": discovery.timed_out,
+                "duration_s": discovery.duration_s,
+            },
             "status": semantic_status,
             "parse_error": parse_error,
             "counts": counts,
@@ -367,6 +459,8 @@ def main(argv: list[str] | None = None) -> int:
             "problems": sorted(set(problems)),
             "outcomes": outcomes,
             "planned_mutants": planned_mutants,
+            "excluded_mutants": excluded,
+            "excluded_count": len(excluded),
             "baseline_sha256": baseline_sha256,
             "equivalents": equivalents,
             "raw_artifacts": raw_files,
@@ -382,7 +476,10 @@ def main(argv: list[str] | None = None) -> int:
             command=argv_command,
             environment=recorded_env,
             tools=receipt["tools"],
-            config_paths=[REPO / "tools/verification/mutation-gate.json"],
+            config_paths=[
+                REPO / "tools/verification/mutation-gate.json",
+                REPO / ".cargo/mutants.toml",
+            ],
             artifact_paths=[
                 *[(path, "raw") for path in raw_paths],
                 (receipt_path, "summary"),

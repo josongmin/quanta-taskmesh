@@ -139,6 +139,38 @@ fn identifiers_reject_empty_whitespace_oversize_and_noncanonical_characters() {
 }
 
 #[test]
+fn identifier_maximum_is_inclusive_and_field_display_is_exact() {
+    let maximum = "x".repeat(MAX_TASK_IDENTIFIER_LEN);
+    assert_eq!(
+        PlanSource::new(maximum)
+            .expect("maximum is valid")
+            .as_str()
+            .len(),
+        MAX_TASK_IDENTIFIER_LEN
+    );
+    assert_eq!(TaskIdentifierField::PlanSource.to_string(), "source");
+    assert_eq!(TaskIdentifierField::Class.to_string(), "class");
+    assert_eq!(TaskIdentifierField::Operation.to_string(), "operation");
+    assert_eq!(
+        TaskIdentifierField::RootOperationId.to_string(),
+        "root_operation_id"
+    );
+    assert_eq!(
+        TaskIdentifierField::ParentOperationId.to_string(),
+        "parent_operation_id"
+    );
+    assert_eq!(TaskIdentifierField::ParentStage.to_string(), "parent_stage");
+    assert_eq!(
+        TaskIdentifierField::Stage { index: 7 }.to_string(),
+        "stages[7].stage"
+    );
+    assert_eq!(
+        TaskIdentifierField::ReduceKey { index: 9 }.to_string(),
+        "stages[9].reduce_policy.stable_sort_key"
+    );
+}
+
+#[test]
 fn reduce_key_is_validated_as_an_identifier() {
     let raw = root().reduce_stage(
         TaskStage::new("merge"),

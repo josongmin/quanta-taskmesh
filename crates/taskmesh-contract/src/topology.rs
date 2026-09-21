@@ -344,8 +344,17 @@ impl TopologyConfig {
             ),
             (PHYSICAL_DEDICATED, self.physical_domains.dedicated),
         ] {
-            if mode == PhysicalDomainMode::Fixed(0) {
-                return Err(TopologyError::ZeroFixedPhysicalDomain { domain });
+            if let PhysicalDomainMode::Fixed(workers) = mode {
+                if workers == 0 {
+                    return Err(TopologyError::ZeroFixedPhysicalDomain { domain });
+                }
+                if workers > MAX_CAPABILITY_SLOTS {
+                    return Err(TopologyError::SlotCountTooLarge {
+                        pool: domain,
+                        slots: workers,
+                        max: MAX_CAPABILITY_SLOTS,
+                    });
+                }
             }
         }
         for (pool, slots) in self.declared_slots() {
@@ -403,7 +412,15 @@ impl TopologyConfig {
     /// Returns the validation error rather than clamping an impossible window.
     pub fn try_resolved_cpu_workers(&self, available: usize) -> Result<usize, TopologyError> {
         self.validate()?;
-        Ok(self.resolve_cpu_workers_unchecked(available))
+        let workers = self.resolve_cpu_workers_unchecked(available);
+        if workers > MAX_CAPABILITY_SLOTS {
+            return Err(TopologyError::SlotCountTooLarge {
+                pool: "cpu",
+                slots: workers,
+                max: MAX_CAPABILITY_SLOTS,
+            });
+        }
+        Ok(workers)
     }
 
     /// Resolve the worker count for the shared CPU pool.

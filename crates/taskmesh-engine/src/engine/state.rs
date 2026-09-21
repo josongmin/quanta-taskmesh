@@ -984,3 +984,84 @@ impl GovernedState {
     #[inline]
     pub fn assert_consistent(&self) {}
 }
+
+#[cfg(test)]
+mod mutation_semantics {
+    use super::*;
+
+    #[test]
+    fn operation_index_distinguishes_root_descendant_and_absence() {
+        let mut operations = RootOperationPermits::default();
+        assert!(operations.is_empty());
+        operations.insert("root", "root", 11);
+        operations.insert("root", "child", 12);
+        assert!(!operations.is_empty());
+        assert_eq!(operations.get("root", "root"), Some(11));
+        assert_eq!(operations.get("root", "child"), Some(12));
+        assert_eq!(operations.get("root", "missing"), None);
+        assert_eq!(operations.remove("root", "root"), Some(11));
+        assert!(!operations.is_empty());
+        assert_eq!(operations.remove("root", "child"), Some(12));
+        assert!(operations.is_empty());
+    }
+
+    #[test]
+    fn governed_state_operation_identity_uses_exact_root_and_operation() {
+        let mut state = GovernedState::default();
+        let mut operations = RootOperationPermits::default();
+        operations.insert("root", "child", 7);
+        state
+            .operation_permits
+            .insert("root".to_owned(), operations);
+
+        assert!(state.has_operation_identity("root", "child"));
+        assert!(!state.has_operation_identity("root", "other"));
+        assert!(!state.has_operation_identity("other", "child"));
+
+        // Exercise the queued identity branch independently of the permit
+        // index; otherwise the first positive assertion short-circuits before
+        // evaluating its exact `(root, operation)` predicate.
+        let class = TaskClass::new("queued");
+        let spec = taskmesh_contract::TaskSpec::io(class.clone()).operation("queue-root");
+        state.class_mut(&class).queue.push_back(PendingRequest {
+            ticket: 1,
+            seq_no: 1,
+            class,
+            request_key: RequestKey::from_root("queue-root"),
+            operation: "queue-child".to_owned(),
+            root_operation_id: "queue-root".to_owned(),
+            scope: TaskScope::Root,
+            target_stage: TaskStage::new("io"),
+            provenance: Provenance::of(&spec),
+            cost: ResolvedCost::default(),
+            capabilities: CapabilityRequirementSet::empty(),
+            enqueued_at_ms: 0,
+            deadline_ms: u64::MAX,
+            finish_tag: 0,
+            blocked_on: CapacityBlock::Cpu,
+            waker: None,
+        });
+        assert!(state.has_operation_identity("queue-root", "queue-child"));
+        assert!(!state.has_operation_identity("queue-root", "other"));
+        assert!(!state.has_operation_identity("other", "queue-child"));
+    }
+
+    #[test]
+    fn accounting_fault_is_first_failure_sticky() {
+        let mut state = GovernedState::default();
+        state.record_accounting_fault("overflow");
+        state.record_accounting_fault("later");
+        assert_eq!(state.accounting_fault, Some("overflow"));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "per-class cpu sum != global")]
+    fn consistency_oracle_detects_independent_ledger_drift() {
+        let state = GovernedState {
+            cpu_units_held: 1,
+            ..GovernedState::default()
+        };
+        state.assert_consistent();
+    }
+}

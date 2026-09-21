@@ -71,6 +71,15 @@ pub fn builtin_records() -> Vec<SubstrateRecord> {
     ]
 }
 
+/// Whether this record executes work against the named capability authority.
+/// Authority-only records document a pool but never provide execution capacity.
+pub fn provides_capability(record: &SubstrateRecord, capability: &str) -> bool {
+    match record.kind {
+        SubstrateKind::AuthorityOnly => false,
+        _ => record.capability_pool.as_deref() == Some(capability),
+    }
+}
+
 // ---- service (stateful) ---------------------------------------------------
 
 /// Register a substrate, rejecting duplicates and invalid records.
@@ -92,4 +101,22 @@ pub fn register(
 /// Deterministic snapshot view (ordered by name).
 pub fn snapshot(registry: &BTreeMap<String, SubstrateRecord>) -> Vec<SubstrateRecord> {
     registry.values().cloned().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::provides_capability;
+    use taskmesh_contract::{SubstrateKind, SubstrateRecord};
+
+    #[test]
+    fn capability_provider_requires_both_execution_and_exact_pool_identity() {
+        let executing =
+            SubstrateRecord::new("gpu-runner", SubstrateKind::CompetingExecution, Some("gpu"));
+        let authority =
+            SubstrateRecord::new("gpu-authority", SubstrateKind::AuthorityOnly, Some("gpu"));
+
+        assert!(provides_capability(&executing, "gpu"));
+        assert!(!provides_capability(&executing, "cpu"));
+        assert!(!provides_capability(&authority, "gpu"));
+    }
 }

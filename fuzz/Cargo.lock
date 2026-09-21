@@ -311,7 +311,7 @@ dependencies = [
 
 [[package]]
 name = "taskmesh"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "taskmesh-contract",
  "taskmesh-engine",
@@ -321,14 +321,14 @@ dependencies = [
 
 [[package]]
 name = "taskmesh-contract"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "taskmesh-engine"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "parking_lot",
  "taskmesh-contract",

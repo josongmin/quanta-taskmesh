@@ -1258,7 +1258,7 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "taskmesh"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "taskmesh-contract",
@@ -1270,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "taskmesh-bench"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "hdrhistogram",
@@ -1286,7 +1286,7 @@ dependencies = [
 
 [[package]]
 name = "taskmesh-contract"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1294,7 +1294,7 @@ dependencies = [
 
 [[package]]
 name = "taskmesh-doc-examples"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "taskmesh",
@@ -1303,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "taskmesh-engine"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "loom",
  "parking_lot",
@@ -1316,7 +1316,7 @@ dependencies = [
 
 [[package]]
 name = "taskmesh-rayon"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rayon",
  "taskmesh-contract",

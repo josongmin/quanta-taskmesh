@@ -38,6 +38,17 @@ fn run_error_display_and_source() {
     assert!(gov.to_string().contains("local runtime"));
 }
 
+#[test]
+fn run_error_boolean_classification_is_exclusive() {
+    let governor: RunError<&str> = RunError::Governor(GovernorError::Cancelled);
+    assert!(governor.is_governor());
+    assert!(!governor.is_task());
+
+    let task: RunError<&str> = RunError::Task("failure");
+    assert!(!task.is_governor());
+    assert!(task.is_task());
+}
+
 // ---- exact renderings -------------------------------------------------------
 
 #[test]

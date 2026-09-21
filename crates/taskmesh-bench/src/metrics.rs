@@ -87,6 +87,16 @@ pub fn argmax_throughput(samples: &[(f64, f64)]) -> Option<(f64, f64)> {
         .reduce(|a, b| if b.1 > a.1 { b } else { a })
 }
 
+const MIN_NORMAL_EQUATION_DETERMINANT: f64 = 1e-12;
+
+fn singular_normal_equation(determinant: f64) -> bool {
+    determinant.abs() <= MIN_NORMAL_EQUATION_DETERMINANT
+}
+
+fn has_finite_usl_peak(alpha: f64, beta: f64) -> bool {
+    beta > 0.0 && alpha < 1.0
+}
+
 /// Fit the USL from `(concurrency, throughput)` samples. Requires the `n=1`
 /// baseline plus at least two further points.
 ///
@@ -104,11 +114,13 @@ pub fn fit_usl(samples: &[(f64, f64)]) -> Option<UslFit> {
     }
 
     let (mut s11, mut s12, mut s22, mut b1, mut b2) = (0.0, 0.0, 0.0, 0.0, 0.0);
-    let mut used = 0usize;
     for &(n, x) in samples {
-        if n <= n1 || x <= 0.0 {
-            continue; // the baseline contributes y=0 with zero regressors
+        if x <= 0.0 {
+            continue;
         }
+        // `n1` is the minimum, so the baseline and any duplicate of it
+        // contribute zero regressors naturally. There is no second ordering
+        // predicate here that can disagree with baseline selection.
         let nn = n / n1; // normalize so the baseline maps to 1
         let c = x / x1;
         let y = nn / c - 1.0;
@@ -119,19 +131,15 @@ pub fn fit_usl(samples: &[(f64, f64)]) -> Option<UslFit> {
         s22 += u2 * u2;
         b1 += u1 * y;
         b2 += u2 * y;
-        used += 1;
-    }
-    if used < 2 {
-        return None;
     }
     let det = s11 * s22 - s12 * s12;
-    if det.abs() < 1e-12 {
+    if singular_normal_equation(det) {
         return None;
     }
     let alpha = (b1 * s22 - b2 * s12) / det;
     let beta = (s11 * b2 - s12 * b1) / det;
 
-    let (n_max, peak) = if beta > 0.0 && alpha < 1.0 {
+    let (n_max, peak) = if has_finite_usl_peak(alpha, beta) {
         let nm = ((1.0 - alpha) / beta).sqrt();
         let peak = x1 * nm / (1.0 + alpha * (nm - 1.0) + beta * nm * (nm - 1.0));
         (Some(nm * n1), Some(peak))
@@ -220,6 +228,101 @@ mod tests {
         let s = [(1.0, 2.7e6), (2.0, 1.9e6), (4.0, 1.6e6), (8.0, 1.9e6)];
         assert_eq!(argmax_throughput(&s), Some((1.0, 2.7e6)));
         assert_eq!(argmax_throughput(&[]), None);
+    }
+
+    #[test]
+    fn argmax_is_order_sensitive_only_for_exact_ties() {
+        assert_eq!(
+            argmax_throughput(&[(1.0, 10.0), (2.0, 20.0), (3.0, 15.0)]),
+            Some((2.0, 20.0))
+        );
+        assert_eq!(
+            argmax_throughput(&[(1.0, 20.0), (2.0, 20.0)]),
+            Some((1.0, 20.0)),
+            "stable first sample wins an exact throughput tie"
+        );
+    }
+
+    #[test]
+    fn usl_domain_requires_both_coefficient_constraints() {
+        let fit = |alpha, beta| UslFit {
+            alpha,
+            beta,
+            x1: 1.0,
+            n1: 1.0,
+            n_max: None,
+            peak_throughput: None,
+        };
+        assert!(fit(0.5, 0.0).is_in_domain());
+        assert!(!fit(1.0, 0.1).is_in_domain());
+        assert!(!fit(0.5, -0.1).is_in_domain());
+    }
+
+    #[test]
+    fn usl_fit_selects_the_smallest_unsorted_baseline_and_reports_peak() {
+        let (alpha, beta, x1, n1) = (0.04_f64, 0.002_f64, 700.0_f64, 2.0_f64);
+        let model = |n: f64| {
+            let nn = n / n1;
+            x1 * nn / (1.0 + alpha * (nn - 1.0) + beta * nn * (nn - 1.0))
+        };
+        let samples = [
+            (8.0, model(8.0)),
+            (2.0, model(2.0)),
+            (16.0, model(16.0)),
+            (4.0, model(4.0)),
+        ];
+        let fit = fit_usl(&samples).expect("non-singular fit");
+        assert!((fit.alpha - alpha).abs() < 1e-9);
+        assert!((fit.beta - beta).abs() < 1e-9);
+        assert_eq!(fit.n1, n1);
+        assert_eq!(fit.x1, x1);
+        let normalized_peak = ((1.0 - alpha) / beta).sqrt();
+        assert!((fit.n_max.expect("finite peak") - normalized_peak * n1).abs() < 1e-9);
+        let expected_peak = x1 * normalized_peak
+            / (1.0
+                + alpha * (normalized_peak - 1.0)
+                + beta * normalized_peak * (normalized_peak - 1.0));
+        assert!(
+            (fit.peak_throughput.expect("peak") - expected_peak).abs() < 1e-9,
+            "peak formula is part of the reported benchmark result"
+        );
+    }
+
+    #[test]
+    fn usl_fit_rejects_each_invalid_baseline_axis_and_accepts_two_regressors() {
+        assert!(fit_usl(&[(1.0, 0.0), (2.0, 1.0), (3.0, 1.0)]).is_none());
+        assert!(fit_usl(&[(0.0, 1.0), (2.0, 2.0), (3.0, 3.0)]).is_none());
+        assert!(fit_usl(&[(1.0, 1.0), (2.0, 1.5), (3.0, 1.8)]).is_some());
+    }
+
+    #[test]
+    fn usl_fit_keeps_the_first_duplicate_baseline_and_skips_invalid_followups() {
+        let fit = fit_usl(&[
+            (1.0, 100.0),
+            (1.0, 200.0),
+            (2.0, -1.0),
+            (3.0, 180.0),
+            (4.0, 200.0),
+        ])
+        .expect("two positive non-baseline regressors remain");
+        assert_eq!(fit.n1, 1.0);
+        assert_eq!(fit.x1, 100.0, "stable first baseline is authoritative");
+    }
+
+    #[test]
+    fn singularity_threshold_is_closed_at_the_declared_boundary() {
+        assert!(singular_normal_equation(0.0));
+        assert!(singular_normal_equation(MIN_NORMAL_EQUATION_DETERMINANT));
+        assert!(singular_normal_equation(-MIN_NORMAL_EQUATION_DETERMINANT));
+        let just_above = f64::from_bits(MIN_NORMAL_EQUATION_DETERMINANT.to_bits() + 1);
+        assert!(!singular_normal_equation(just_above));
+    }
+
+    #[test]
+    fn finite_peak_domain_excludes_both_closed_boundaries() {
+        assert!(has_finite_usl_peak(0.5, 0.1));
+        assert!(!has_finite_usl_peak(1.0, 0.1));
+        assert!(!has_finite_usl_peak(0.5, 0.0));
     }
 
     #[test]

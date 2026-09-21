@@ -471,8 +471,10 @@ spec 문자열을 빌려 allocation 없이 한다.
 - semgrep test-quality 규칙은 `#[tokio::test]`(flavor 포함)를 인식하고, 38개 규칙 전부
   fire/clean fixture를 가진다(fixture 없는 규칙은 test가 실패시킨다). boundary 규칙은
   `src/**` 전체(in-src test module 포함)와 fully-qualified path를 본다.
-- allocation gate threshold는 측정값(3.0)과 같고, probe는 알려진 1,000회 allocation을
-  세는 self-check를 보고한다(`counter_check`). reject 경로는 real producer로 test된다.
+- allocation gate threshold는 SEP-21의 current-source 측정값(8.0)과 같고 여유분이 없다.
+  이전 3.0 대비 +5 regression은 추가 governance state 비용으로 명시 승인했으며 개선 주장이
+  아니다. Probe는 알려진 1,000회 allocation을 세는 self-check를 보고한다
+  (`counter_check`). Reject 경로는 real producer로 test된다.
 
 **근거.** 감사 A2 P1-1/P1-3/P1-4/P1-5, A3 P0-1/P1-1/P1-2/P1-3/P1-4/P2-*.
 

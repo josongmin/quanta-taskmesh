@@ -119,7 +119,7 @@ input, not a release verdict. Run the registered recipes through `just`:
       new placeholder gets it in `tools/doc-examples/src/lib.rs::prelude`).
 - [ ] `taskmesh-rayon` included; workspace green with and without the `rayon`
       feature.
-- [ ] Crate versions in sync (workspace `version` in the root `Cargo.toml`,
+- [x] Crate versions in sync (workspace `version` in the root `Cargo.toml`,
       the `[workspace.dependencies]` path entries that pin it, the root
       `Cargo.lock`, and `tools/consumer-msrv/Cargo.lock`). Update the locks
       with `cargo update -p taskmesh -p taskmesh-engine -p taskmesh-contract
@@ -127,16 +127,17 @@ input, not a release verdict. Run the registered recipes through `just`:
       `-p taskmesh-bench`, under `cargo +<msrv>` inside `tools/consumer-msrv`)
       — never a wholesale regenerate. `cargo metadata --locked` must succeed
       in both places on stable and on the declared MSRV toolchain.
-- [ ] `CHANGELOG.md` has a section for the version being released, with
+- [x] `CHANGELOG.md` has a section for the version being released, with
       `### Breaking changes and migration` carrying before/after code for every
       breaking item (signature, wire, *and* behavioural).
 
 ## Semver gate
 
-- [ ] Version decision: `tools/release/release-policy.json` names immutable
+- [x] Version decision: `tools/release/release-policy.json` names immutable
       `39bee682d7daa1efaf1c10993ba6221fd0a90871` (the 0.2.0 release commit;
-      there is no tag) as baseline but leaves `candidate_version` and reviewer
-      `PENDING`. Do not infer a version from a green test or silently reuse 0.2.0.
+      there is no tag) as baseline and records the explicit `0.3.0` minor candidate
+      decision by authenticated repository actor `josongmin`. This approves the
+      version selection only; it does not approve blind spots or issue a release verdict.
 - [ ] `just semver-release` runs pinned `cargo-semver-checks 0.50.0` separately for
       `taskmesh-contract`, `taskmesh-engine`, `taskmesh`, and `taskmesh-rayon`,
       `--default-features --release-type minor --baseline-rev <full SHA>`. It

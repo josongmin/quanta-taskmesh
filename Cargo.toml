@@ -14,7 +14,7 @@ exclude = ["tools/consumer-msrv", "fuzz"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 # Floor set by the `#[allow(..., reason = "...")]` lint-reason syntax (Rust 1.81).
 rust-version = "1.81"
@@ -22,9 +22,9 @@ license = "MIT OR Apache-2.0"
 authors = ["Song Min"]
 
 [workspace.dependencies]
-taskmesh-contract = { version = "0.2.0", path = "crates/taskmesh-contract" }
-taskmesh-engine = { version = "0.2.0", path = "crates/taskmesh-engine" }
-taskmesh-rayon = { version = "0.2.0", path = "crates/taskmesh-rayon" }
+taskmesh-contract = { version = "0.3.0", path = "crates/taskmesh-contract" }
+taskmesh-engine = { version = "0.3.0", path = "crates/taskmesh-engine" }
+taskmesh-rayon = { version = "0.3.0", path = "crates/taskmesh-rayon" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

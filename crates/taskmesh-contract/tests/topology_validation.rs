@@ -88,6 +88,43 @@ fn slot_counts_beyond_the_governed_maximum_are_rejected() {
     );
 }
 
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn resolved_cpu_and_physical_domains_reject_unrepresentable_capacity() {
+    let too_many = MAX_CAPABILITY_SLOTS + 1;
+    assert_eq!(
+        TopologyConfig::new()
+            .cpu_fixed(too_many)
+            .try_resolved_cpu_workers(1),
+        Err(TopologyError::SlotCountTooLarge {
+            pool: "cpu",
+            slots: too_many,
+            max: MAX_CAPABILITY_SLOTS,
+        })
+    );
+    assert_eq!(
+        TopologyConfig::new()
+            .min_workers(too_many)
+            .try_resolved_cpu_workers(1),
+        Err(TopologyError::SlotCountTooLarge {
+            pool: "cpu",
+            slots: too_many,
+            max: MAX_CAPABILITY_SLOTS,
+        }),
+        "the auto-mode floor is governed capacity too"
+    );
+    assert_eq!(
+        TopologyConfig::new()
+            .shared_blocking_domain(PhysicalDomainMode::Fixed(too_many))
+            .validate(),
+        Err(TopologyError::SlotCountTooLarge {
+            pool: PHYSICAL_SHARED_BLOCKING,
+            slots: too_many,
+            max: MAX_CAPABILITY_SLOTS,
+        })
+    );
+}
+
 #[test]
 fn valid_topologies_resolve_as_documented() {
     // Auto minus reserved cores, clamped into the window.
@@ -105,6 +142,24 @@ fn valid_topologies_resolve_as_documented() {
     // `0` slot counts keep their published "no limit" meaning and stay valid.
     assert_eq!(TopologyConfig::default().validate(), Ok(()));
     assert_eq!(TopologyConfig::default().cpu.mode, CpuMode::Auto);
+}
+
+#[test]
+fn total_cpu_resolver_observes_floor_ceiling_reserve_and_fixed_mode() {
+    let automatic = TopologyConfig::new()
+        .cpu_auto()
+        .reserve_cores(2)
+        .min_workers(3)
+        .max_workers(7);
+    assert_eq!(automatic.resolved_cpu_workers(2), 3);
+    assert_eq!(automatic.resolved_cpu_workers(8), 6);
+    assert_eq!(automatic.resolved_cpu_workers(100), 7);
+
+    let fixed = TopologyConfig::new()
+        .cpu_fixed(5)
+        .min_workers(1)
+        .max_workers(8);
+    assert_eq!(fixed.resolved_cpu_workers(1), 5);
 }
 
 #[test]

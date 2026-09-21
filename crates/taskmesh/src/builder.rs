@@ -129,15 +129,9 @@ impl Builder {
         self.topology.validate()?;
         let available = detected_parallelism();
         let cpu_workers = self.topology.try_resolved_cpu_workers(available)?;
-        if cpu_workers > taskmesh_contract::MAX_CAPABILITY_SLOTS {
-            return Err(GovernorError::InvalidTopology(
-                TopologyError::SlotCountTooLarge {
-                    pool: "cpu",
-                    slots: cpu_workers,
-                    max: taskmesh_contract::MAX_CAPABILITY_SLOTS,
-                },
-            ));
-        }
+        // `try_resolved_cpu_workers` has already validated the complete CPU
+        // window against `MAX_CAPABILITY_SLOTS`; repeating that predicate here
+        // created an unreachable second authority for the same invariant.
         let shared_blocking_workers = self
             .topology
             .try_resolved_physical_domain(PHYSICAL_SHARED_BLOCKING, available)?;
@@ -298,6 +292,9 @@ fn builtin_pool_name(pool: &str) -> &'static str {
 /// `run_cpu` rides the `CpuExecutor` port — never a hardcoded `spawn_blocking`.
 /// Fallible so a pool build failure surfaces as a `build()` error, never a panic.
 #[cfg(feature = "rayon")]
+// cargo-mutants scans cfg-disabled bodies. This adapter has mutually exclusive
+// Rayon/Tokio implementations, so ordinary mutation would always report the
+// inactive body as missed. The two feature lanes test the capability contract.
 fn default_cpu_executor(
     cpu_workers: usize,
     _shared_blocking_workers: usize,
@@ -323,4 +320,45 @@ fn default_cpu_executor(
     let workers = std::num::NonZeroU32::new(workers)
         .expect("validated physical domain is finite and nonzero");
     Ok(Arc::new(BlockingPoolCpuExecutor::new(workers)))
+}
+
+#[cfg(test)]
+mod mutation_semantics {
+    use super::*;
+
+    #[test]
+    fn builtin_pool_names_are_stable_and_unknown_is_explicit() {
+        for (input, expected) in [
+            ("cpu", "cpu"),
+            ("blocking", "blocking"),
+            ("large_stack", "large_stack"),
+            ("maintenance", "maintenance"),
+            ("local_runtime", "local_runtime"),
+            ("other", "unknown"),
+        ] {
+            assert_eq!(builtin_pool_name(input), expected);
+        }
+    }
+
+    #[cfg(not(feature = "rayon"))]
+    #[test]
+    fn default_executor_declares_the_resolved_shared_domain() {
+        let executor = default_cpu_executor(3, 4).expect("default executor");
+        let capabilities = executor.capabilities();
+        assert_eq!(capabilities.declared_workers, Some(4));
+        assert_eq!(capabilities.physical_domain, Some(PHYSICAL_SHARED_BLOCKING));
+        assert!(capabilities.nonblocking_submit);
+        assert!(!capabilities.exclusive_pool);
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn default_rayon_executor_declares_the_resolved_cpu_domain() {
+        let executor = default_cpu_executor(3, 4).expect("default executor");
+        let capabilities = executor.capabilities();
+        assert_eq!(capabilities.declared_workers, Some(3));
+        assert_eq!(capabilities.physical_domain, Some(PHYSICAL_CPU));
+        assert!(capabilities.nonblocking_submit);
+        assert!(capabilities.exclusive_pool);
+    }
 }

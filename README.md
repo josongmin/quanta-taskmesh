@@ -78,7 +78,7 @@ async fn main() {
 | 객관 지표 | 실행된 production code (threshold 아님) | `just coverage-report` (lines/regions/functions/instantiations; branch·MCDC 미수집 시 `NOT_COLLECTED`) |
 | 소비자 계약 | Rust 1.81에서 default·rayon 표면 컴파일 | `just consumer-msrv` |
 | 문서가 컴파일되는가 | 이 README·`docs/taskmesh-external-interface.md`·`CHANGELOG.md`의 모든 ```rust 블록이 *그대로* facade에 대해 type-check (build.rs가 추출; hidden line 없음; fence attribute `body`/`arms`/`builder`로 scaffold 선택, `rust,ignore`는 CHANGELOG의 `// 0.1.0` 인용에만 허용) | `cargo test -p taskmesh-doc-examples` (`just test`에 포함) |
-| 성능 | allocs/op(=측정값 3.0), Linux instruction count | `just bench-gate`, `just bench-iai` |
+| 성능 | admit→release allocs/op(=현재 기준 8.0, 무여유), Linux instruction count | `just bench-gate`, `just bench-iai` |
 
 자격(QUALIFIED)은 `tools/qualification/receipt.py collect`가 **clean checkout**에서 만든 receipt에만
 붙는다(CI `qualification` job). local receipt는 증거일 뿐이다. `docs/release-checklist.md` 참조.
@@ -109,9 +109,9 @@ feature 플래그:
    - shared CPU executor 어댑터를 켠다. `run_cpu` 경로의 실제 CPU 풀 구현.
    - 끄면 CPU 작업도 blocking 풀로 폴백한다.
 
-**버전 / 호환성.** 네 crate는 하나의 workspace 버전을 공유하며 현재 manifest는 `0.2.0`이다.
-SEP-21 변경은 아직 release version/호환성 승인이 없는 미출시 후보이며,
-`0.2.0` 배포 증거로 취급하지 않는다.
+**버전 / 호환성.** 네 crate는 하나의 workspace 버전을 공유하며 현재 manifest는 `0.3.0`이다.
+SEP-21 변경은 승인된 minor-version 후보지만 exact-source release qualification과 publication이
+끝나지 않은 미출시 상태다. `0.2.0` 배포 증거나 `0.3.0` publication으로 취급하지 않는다.
 `0.x`에서는 minor bump(`0.1 → 0.2`)에 breaking change가 포함될 수 있고, 그 전부는
 [CHANGELOG.md](CHANGELOG.md)의 *Breaking changes and migration* 절에 before/after 코드와
 함께 열거된다 (`Governor::claim → ClaimOutcome`, `Governor::release → ReleaseOutcome`,
@@ -121,8 +121,8 @@ SEP-21 변경은 아직 release version/호환성 승인이 없는 미출시 후
 public surface는 `taskmesh` (+ `taskmesh::ext`)이며, release 후보마다 immutable baseline SHA에
 대한 4-crate `just semver-release`, 수동 API/wire/behavior 판정, MSRV(1.81) 소비자 fixture
 (`just consumer-msrv`, [tools/consumer-msrv](tools/consumer-msrv/src/main.rs))로 검증한다.
-ordinary CI `QUALIFIED`는 별도의 release receipt가 아니며, release version과 human adjudication은
-현재 `PENDING`이다 —
+ordinary CI `QUALIFIED`는 별도의 release receipt가 아니며, 최종 SHA에 묶인 human
+API/wire/behavior adjudication과 release receipt는 별도로 필요하다 —
 [docs/release-checklist.md](docs/release-checklist.md) 참조.
 
 ### 2. 런타임 구성

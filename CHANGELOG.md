@@ -15,13 +15,13 @@ entries cite the decision (`D..`) or audit finding (`TM16-..`) they implement.
 The public surface a downstream consumer depends on is the `taskmesh` crate
 (everyday SDK) and `taskmesh::ext` (direct engine embedding, custom adapters).
 
-## Unreleased — SEP-21 candidate (NOT_QUALIFIED)
+## [0.3.0] - Unreleased (NOT_QUALIFIED)
 
-The workspace manifest still says `0.2.0`; this section is not a 0.2.0
-release or a selected successor version. The immutable compatibility baseline
-is the 0.2.0 release commit `39bee682d7daa1efaf1c10993ba6221fd0a90871`
-(no tag). Version, human API/wire/behavior adjudication, full generated mutation
-quality, and hosted exact-source release receipt remain pending. See
+The workspace manifest and release policy select `0.3.0`; this heading does not
+claim publication or qualification. The immutable compatibility baseline is the
+0.2.0 release commit `39bee682d7daa1efaf1c10993ba6221fd0a90871`
+(no tag). Final-SHA human API/wire/behavior adjudication, full generated mutation
+quality, and hosted exact-source release receipt remain required. See
 `tools/release/release-policy.json` and `docs/release-checklist.md`.
 
 ### Breaking changes and migration

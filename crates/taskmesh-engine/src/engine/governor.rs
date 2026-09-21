@@ -53,6 +53,13 @@ use crate::sync::{AtomicU64, Mutex, Ordering};
 /// stops early says so, and the caller resumes immediately.
 pub const PROMOTION_BUDGET: usize = 64;
 
+/// Typed result keeps the promotion loop total and makes "nothing removed"
+/// distinct from a truthy continuation convention.
+enum CycleTerminalization {
+    Removed,
+    None,
+}
+
 /// The governed execution control point. Cheap to wrap in `Arc` and share.
 ///
 /// `Debug` prints the policy's class set and the id counters — never the
@@ -300,8 +307,10 @@ impl Governor {
             {
                 let mut state = self.state.lock();
                 let now = state.commit_time(sampled);
-                if matches!(state.tickets.get(&ticket), Some(TicketState::Claiming(id)) if *id == permit_id)
-                {
+                // Ticket identifiers are monotonic and never rebound. If this
+                // claim is still in the transient state, it necessarily owns
+                // `permit_id`; abandon/reap remove or terminalize it instead.
+                if matches!(state.tickets.get(&ticket), Some(TicketState::Claiming(_))) {
                     state.unwind(
                         permit_id,
                         TerminalReason::ClaimDeliveryFailed,
@@ -318,23 +327,23 @@ impl Governor {
         let mut state = self.state.lock();
         let now = state.commit_time(sampled);
         match state.tickets.get(&ticket).cloned() {
-            Some(TicketState::Claiming(id)) if id == permit_id => {
-                let Some(record) = state.permits.get_mut(&permit_id) else {
+            // A ticket is never rebound, so the authoritative post-effect
+            // permit identity is the one stored in its transient state.
+            Some(TicketState::Claiming(claimed_permit)) => {
+                let Some(record) = state.permits.get_mut(&claimed_permit) else {
                     state.record_terminal_ticket(ticket, TerminalReason::Released);
                     return ClaimOutcome::Terminal(TerminalReason::Released);
                 };
                 record.pending_ticket = None;
                 record.ledger.last_touched_ms = record.ledger.last_touched_ms.max(now);
                 state.tickets.remove(&ticket);
-                ClaimOutcome::Ready(permit_id)
+                ClaimOutcome::Ready(claimed_permit)
             }
             Some(TicketState::Terminal(reason)) => {
                 state.forget_terminal_ticket(ticket);
                 ClaimOutcome::Terminal(reason)
             }
-            Some(
-                TicketState::Granted(_) | TicketState::Queued { .. } | TicketState::Claiming(_),
-            ) => ClaimOutcome::Pending,
+            Some(TicketState::Granted(_) | TicketState::Queued { .. }) => ClaimOutcome::Pending,
             None => ClaimOutcome::Invalid,
         }
     }
@@ -502,21 +511,11 @@ impl Governor {
     #[must_use]
     fn promote(&self, state: &mut GovernedState, now: u64) -> TransitionEffects {
         let mut effects = TransitionEffects::default();
-        let mut granted = 0usize;
-        loop {
-            while self.terminalize_wait_cycle(state, &mut effects) {}
-            if granted >= PROMOTION_BUDGET {
-                // Out of budget. Ask — without selecting — whether runnable work
-                // remains: `select` charges the chosen class (DRR deficit, ring
-                // cursor, WFQ virtual time) for a dispatch, and a dispatch that
-                // is then not made would skew the next pass. If work remains,
-                // nothing external will necessarily arrive to notice it, so say
-                // so; the caller re-enters after releasing the lock.
-                effects.more_runnable = fairness::has_runnable(state, &self.policy);
-                break;
-            }
+        for _ in 0..PROMOTION_BUDGET {
+            self.terminalize_wait_cycles(state, &mut effects);
             let Some(selection) = fairness::select(state, &self.policy) else {
-                break;
+                state.promotion_pending = false;
+                return effects;
             };
             let class = selection.class;
             let Some(head) = state.class_mut(&class).queue.remove(selection.queue_index) else {
@@ -545,8 +544,13 @@ impl Governor {
             if let Some(waker) = head.waker {
                 effects.wake.push(waker);
             }
-            granted += 1;
         }
+        // The final grant can make another parent's wait irreversible, so
+        // reassess once before deciding whether a continuation is required.
+        self.terminalize_wait_cycles(state, &mut effects);
+        // Ask without selecting: `select` would charge a class for a dispatch
+        // that this bounded pass cannot make.
+        effects.more_runnable = fairness::has_runnable(state, &self.policy);
         // Every pass records whether a continuation is owed. A pass that drained
         // the runnable set (or found nothing) clears the flag, whichever
         // transition ran it.
@@ -554,11 +558,23 @@ impl Governor {
         effects
     }
 
+    fn terminalize_wait_cycles(&self, state: &mut GovernedState, effects: &mut TransitionEffects) {
+        // One call removes at most one queued request. The snapshot bound keeps
+        // this path total; requests queued later belong to the next transition.
+        let queued = state.classes.values().map(|class| class.queue.len()).sum();
+        for _ in 0..queued {
+            match self.terminalize_wait_cycle(state, effects) {
+                CycleTerminalization::Removed => {}
+                CycleTerminalization::None => break,
+            }
+        }
+    }
+
     fn terminalize_wait_cycle(
         &self,
         state: &mut GovernedState,
         effects: &mut TransitionEffects,
-    ) -> bool {
+    ) -> CycleTerminalization {
         let candidate = state.classes.iter().find_map(|(class, cstate)| {
             let policy = self.policy.class(class)?;
             cstate
@@ -581,10 +597,10 @@ impl Governor {
                 })
         });
         let Some((class, index, witness)) = candidate else {
-            return false;
+            return CycleTerminalization::None;
         };
         let Some(request) = state.class_mut(&class).queue.remove(index) else {
-            return false;
+            return CycleTerminalization::None;
         };
         fairness::on_queue_changed(state, &class);
         state.vacate_recursion_guard(&request.root_operation_id, &request.target_stage);
@@ -600,7 +616,7 @@ impl Governor {
         if let Some(waker) = request.waker {
             effects.wake.push(waker);
         }
-        true
+        CycleTerminalization::Removed
     }
 
     /// Fire and retire host references collected by a transition, then resume
@@ -627,12 +643,13 @@ impl Governor {
             if let Some(payload) = self.apply_effects(std::mem::take(&mut effects)) {
                 first_panic.get_or_insert(payload);
             }
-            if !more {
+            if more {
+                let mut state = self.state.lock();
+                let now = state.commit_time(sampled);
+                effects = self.promote(&mut state, now);
+            } else {
                 break;
             }
-            let mut state = self.state.lock();
-            let now = state.commit_time(sampled);
-            effects = self.promote(&mut state, now);
         }
         first_panic
     }
@@ -803,10 +820,11 @@ impl Governor {
                 sequence,
                 now,
             );
-            if outcome.freed_units() > 0 {
-                let pass = self.promote(&mut state, now);
-                effects.absorb(pass);
-            }
+            // Promotion is safe on a no-op release and also repairs any
+            // pending runnable queue. Avoid a second, subtly different
+            // resource-change predicate at this composition boundary.
+            let pass = self.promote(&mut state, now);
+            effects.absorb(pass);
             outcome
         };
         self.drain_effects(effects, sampled);
@@ -830,10 +848,11 @@ impl Governor {
             let now = state.commit_time(sampled);
             let report =
                 memory::reap_leaks(&mut state, &self.policy, now, stale_after_ms, &mut effects);
-            if report.reclaimed_permits > 0 {
-                let pass = self.promote(&mut state, now);
-                effects.absorb(pass);
-            }
+            // The memory service owns reclamation truth; promotion is an
+            // idempotent follow-up and must not depend on a duplicated
+            // `reclaimed_permits > 0` interpretation here.
+            let pass = self.promote(&mut state, now);
+            effects.absorb(pass);
             report
         };
         self.drain_effects(effects, sampled);
@@ -1270,10 +1289,9 @@ impl Governor {
             }
         }
         for capability in policy.capability_records() {
-            let bound = registry.values().any(|record| {
-                record.kind != SubstrateKind::AuthorityOnly
-                    && record.capability_pool.as_deref() == Some(capability.name())
-            });
+            let bound = registry
+                .values()
+                .any(|record| inventory::provides_capability(record, capability.name()));
             if !bound {
                 return Err(violation(format!(
                     "capability authority declared for pool {}, which no executing substrate provides",
@@ -1339,4 +1357,25 @@ pub struct PermitLedgerView {
     pub leased_at_ms: u64,
     /// Logical commit time of the most recent accepted activity.
     pub last_touched_ms: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accounting_fault_accessor_reports_the_sticky_state_reason() {
+        let governor = Governor::new(
+            PolicySet::new(taskmesh_contract::ResourceBudget::new(), BTreeMap::new()),
+            Arc::new(taskmesh_contract::ManualClock::new(0)),
+        )
+        .expect("empty policy is valid");
+
+        governor
+            .state
+            .lock()
+            .record_accounting_fault("test overflow");
+
+        assert_eq!(governor.accounting_fault(), Some("test overflow"));
+    }
 }

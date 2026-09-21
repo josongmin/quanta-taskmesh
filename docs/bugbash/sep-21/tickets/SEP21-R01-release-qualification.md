@@ -104,7 +104,9 @@ uv run python tools/qualification/receipt.py validate release-receipt.json
 - Baseline candidate is immutable commit
   `39bee682d7daa1efaf1c10993ba6221fd0a90871` (`release: 0.2.0`);
   `git tag --list` and `git ls-remote --tags origin` returned no release tag.
-  Current manifest remains `0.2.0`; no successor version is selected or approved.
+  The repository owner selected candidate version `0.3.0`; the tracked policy records
+  authenticated actor `josongmin` as version reviewer. This is a version decision only,
+  not blind-spot adjudication or a release verdict.
 - `tools/release/semver.py` checks clean source, full baseline SHA, pinned
   cargo-semver-checks 0.50.0, default-feature/minor audit command and four
   public crates separately. Exit 0 is CLEAN, deny-level exit 100 is FINDINGS
@@ -134,13 +136,14 @@ uv run python tools/qualification/receipt.py validate release-receipt.json
   by run ID, and always
   uploads the release decision artifact. It does not publish, merge, deploy or
   activate anything.
-- Current producer-policy audit reran the exact `taskmesh-rayon` 10-mutant subset:
-  5 caught, 0 missed, 5 compile-unviable, 0 timeout/equivalent, quality 5/5 and semantic PASS.
-  The unviable replacements use `Default::default()` for fail-closed types without `Default`;
-  they remain visible limitations and are excluded from quality scoring, not relabeled as
-  caught/equivalent. Full workspace sweep remains NOT_RUN, so this does not qualify R01.
-- R01-A01 is represented but version/reviewer pending; A02 pending human
-  adjudication; A03 full hosted matrix NOT_RUN; A04 full-validator negative
+- CP16 hosted CI run `35556956457` supplied the first full workspace generated denominator:
+  1,307 identities, 953 caught, 170 missed, 14 timeout, 170 compile-unviable and zero equivalent.
+  The generated job failed and the hosted receipt correctly returned `NOT_QUALIFIED`. The result
+  supersedes the earlier `NOT_RUN` status but does not qualify R01. Compile-unviable identities
+  remain visible non-scored limitations; no missed/timeout identity is waived.
+- R01-A01 now has an approved `0.3.0` version/reviewer decision; A02 pending human
+  adjudication; A03 CP16's non-generated hosted matrix passed but generated mutation failed;
+  A04 full-validator negative
   fixtures are owner-local only; A05 preserved as explicit non-release
   downstream states. A06 maps all 23 findings to existing exact test names,
   with raw/source-bound producer and negative validator fixtures, but the

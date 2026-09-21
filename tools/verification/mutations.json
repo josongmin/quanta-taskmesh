@@ -1102,7 +1102,7 @@
       "package": "taskmesh",
       "test_target": "hardening_drain",
       "expect_failing_test": "queued_and_inflight_work_finish_before_drain_reports_ok",
-      "expect_cofailures": ["no_submission_is_admitted_after_is_draining_became_observable"],
+      "test_filter": "queued_and_inflight_work_finish_before_drain_reports_ok",
       "expect_message": "drain after release: the caller was still waiting after"
     },
     {

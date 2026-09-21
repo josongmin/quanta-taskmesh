@@ -197,7 +197,12 @@ just mutants-critical --require-clean
   같은 custody-return notification을 검증하는 두 테스트를 정확히 실패시켰다. Baseline 8/8은
   PASS였다. Inventory에 그 exact cofailure를 추가한 focused rerun은 두 expected/observed ID가
   완전히 일치하고 exit 101, selected/executed 1/1, problems 0으로 KILLED였다. 이는 allow-all이
-  아니라 raw hosted failure set에 대한 최소 oracle 보정이다.
+  아니라 raw hosted failure set에 대한 최소 oracle 보정이었다. 그러나 CP14 hosted rerun은
+  primary oracle만 실패하고 racing peer는 통과해 그 cofailure가 scheduler-dependent임을
+  증명했다. 따라서 cofailure를 고정하지 않고 이 entry의 대표 oracle 하나를 `--exact`,
+  `--test-threads 1`로 baseline/mutant 양쪽에서 동일 실행한다. Filter는 primary failure와
+  동일한 Rust test-name만 허용하고 control/cofailure와 병용할 수 없다. Focused 실제 실행은
+  baseline 1/1 PASS, mutant 1/1 exact failure, exit 101, problems 0으로 KILLED였다.
 
 - Hosted `main@1378383b63728eedd2a38d5e7f7d87c828d2f0d0`, run
   `35543694307`의 curated raw artifact는 105개 중 `KILLED=71`,

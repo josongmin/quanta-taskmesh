@@ -201,6 +201,17 @@ def test_inventory_contract_and_command_identity_are_deterministic(tmp_path: Pat
     assert rm.test_command(MUT)[:5] == ["cargo", "test", "-p", "p", "--test"]
 
 
+def test_exact_oracle_filter_is_after_harness_separator_and_single_threaded() -> None:
+    mutation = {**MUT, "test_filter": "the_test"}
+    assert rm.test_command(mutation)[-5:] == [
+        "--",
+        "the_test",
+        "--exact",
+        "--test-threads",
+        "1",
+    ]
+
+
 @pytest.mark.parametrize(
     ("broken", "reason"),
     [
@@ -209,6 +220,13 @@ def test_inventory_contract_and_command_identity_are_deterministic(tmp_path: Pat
         ({**MUT, "runner": "unknown"}, "unknown runner"),
         ({**MUT, "expect_cofailures": "peer"}, "expect_cofailures"),
         ({**MUT, "env": {"X": 1}}, "env must be"),
+        ({**MUT, "test_filter": ""}, "test_filter"),
+        ({**MUT, "test_filter": "--ignored"}, "exact Rust test name"),
+        ({**MUT, "test_filter": "other"}, "must equal expect_failing_test"),
+        (
+            {**MUT, "test_filter": "the_test", "expect_cofailures": ["peer"]},
+            "cannot declare control/cofailures",
+        ),
     ],
 )
 def test_invalid_inventory_entries_fail_closed(broken: dict, reason: str) -> None:

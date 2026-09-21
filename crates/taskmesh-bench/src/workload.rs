@@ -21,7 +21,8 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, Exp, Zipf};
 use taskmesh_contract::{
-    ClassPolicy, ManualClock, OverflowPolicy, ResourceBudget, RetryAfterPolicy, TaskClass, TaskSpec,
+    ClassPolicy, ManualClock, OverflowPolicy, ResourceBudget, RetryAfterPolicy, TaskClass,
+    TaskSpec, ValidatedTaskPlan,
 };
 use taskmesh_engine::{Governor, PolicySet};
 
@@ -60,6 +61,12 @@ pub enum WorkloadError {
     },
     /// An arrival names an empty class.
     EmptyClass { index: usize },
+    /// An arrival class violates the public task-identifier contract.
+    InvalidClass {
+        index: usize,
+        value: String,
+        reason: String,
+    },
     /// A configuration value is not usable as stated.
     InvalidConfig { field: &'static str, reason: String },
     /// `t + service` does not fit the simulator's `u64` nanosecond clock.
@@ -92,6 +99,11 @@ impl fmt::Display for WorkloadError {
                 "arrival {index}: send time {value} precedes the previous arrival at {previous}"
             ),
             Self::EmptyClass { index } => write!(f, "arrival {index}: empty class"),
+            Self::InvalidClass {
+                index,
+                value,
+                reason,
+            } => write!(f, "arrival {index}: invalid class {value:?}: {reason}"),
             Self::InvalidConfig { field, reason } => write!(f, "config.{field}: {reason}"),
             Self::CompletionTimeOverflow {
                 arrival_ns,
@@ -148,6 +160,13 @@ impl ValidatedArrivals {
             }
             if arrival.class.is_empty() {
                 return Err(WorkloadError::EmptyClass { index });
+            }
+            if let Err(reason) = validate_class_name(&arrival.class) {
+                return Err(WorkloadError::InvalidClass {
+                    index,
+                    value: arrival.class.clone(),
+                    reason,
+                });
             }
             previous = Some(value);
             // Exact for every value inside MAX_SEND_TIME_SECS (see its docs).
@@ -214,7 +233,25 @@ fn require_classes(classes: &[String]) -> Result<(), WorkloadError> {
             reason: format!("class {index} is empty"),
         });
     }
+    if let Some((index, value, reason)) = classes.iter().enumerate().find_map(|(index, value)| {
+        validate_class_name(value)
+            .err()
+            .map(|reason| (index, value, reason))
+    }) {
+        return Err(WorkloadError::InvalidConfig {
+            field: "classes",
+            reason: format!("class {index} {value:?} is invalid: {reason}"),
+        });
+    }
     Ok(())
+}
+
+fn validate_class_name(value: &str) -> Result<(), String> {
+    let probe =
+        TaskSpec::blocking(TaskClass::new(value.to_owned())).operation("workload-validation");
+    ValidatedTaskPlan::try_from(probe)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 fn require_zipf(exponent: f64) -> Result<(), WorkloadError> {
@@ -601,7 +638,8 @@ pub fn trace_from_csv(text: &str) -> Result<ValidatedArrivals, String> {
             | WorkloadError::NegativeSendTime { index, .. }
             | WorkloadError::SendTimeOutOfRange { index, .. }
             | WorkloadError::NonMonotonicSendTime { index, .. }
-            | WorkloadError::EmptyClass { index } => Some(*index),
+            | WorkloadError::EmptyClass { index }
+            | WorkloadError::InvalidClass { index, .. } => Some(*index),
             _ => None,
         };
         match index.and_then(|i| line_of.get(i)) {
@@ -659,6 +697,17 @@ mod tests {
         };
         assert!(matches!(
             empty_class.validate(),
+            Err(WorkloadError::InvalidConfig {
+                field: "classes",
+                ..
+            })
+        ));
+        let invalid_class = WorkloadConfig {
+            classes: vec!["bad?class".to_owned()],
+            ..WorkloadConfig::default()
+        };
+        assert!(matches!(
+            invalid_class.validate(),
             Err(WorkloadError::InvalidConfig {
                 field: "classes",
                 ..
@@ -842,6 +891,8 @@ mod tests {
         assert!(trace_from_csv("not_a_number,retrieval").is_err());
         assert!(trace_from_csv("0.5").is_err()); // missing comma
         assert!(trace_from_csv("0.5,").is_err()); // empty class
+        assert!(trace_from_csv("0.5,bad?class")
+            .is_err_and(|error| error.starts_with("line 1: arrival 0: invalid class")));
         assert!(trace_from_csv("# header\n\nmissing")
             .is_err_and(|error| { error.starts_with("line 3: missing comma") }));
         assert_eq!(human_line_number(0), 1);

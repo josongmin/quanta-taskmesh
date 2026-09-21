@@ -511,11 +511,14 @@ impl Governor {
     #[must_use]
     fn promote(&self, state: &mut GovernedState, now: u64) -> TransitionEffects {
         let mut effects = TransitionEffects::default();
+        let removed_before_grants = matches!(
+            self.terminalize_wait_cycle(state, &mut effects),
+            CycleTerminalization::Removed
+        );
+        let mut granted = 0usize;
         for _ in 0..PROMOTION_BUDGET {
-            self.terminalize_wait_cycles(state, &mut effects);
             let Some(selection) = fairness::select(state, &self.policy) else {
-                state.promotion_pending = false;
-                return effects;
+                break;
             };
             let class = selection.class;
             let Some(head) = state.class_mut(&class).queue.remove(selection.queue_index) else {
@@ -544,30 +547,25 @@ impl Governor {
             if let Some(waker) = head.waker {
                 effects.wake.push(waker);
             }
+            granted += 1;
         }
-        // The final grant can make another parent's wait irreversible, so
-        // reassess once before deciding whether a continuation is required.
-        self.terminalize_wait_cycles(state, &mut effects);
+        // A removed cycle or a grant changes the pending-state assessment. Scan
+        // once more, never once per removal: repeated full-queue scans under one
+        // mutex make N cycle requests O(N^2). If this removes another request,
+        // the continuation flag below releases the lock before scanning again.
+        let removed_after_change = (removed_before_grants || granted > 0)
+            && matches!(
+                self.terminalize_wait_cycle(state, &mut effects),
+                CycleTerminalization::Removed
+            );
         // Ask without selecting: `select` would charge a class for a dispatch
         // that this bounded pass cannot make.
-        effects.more_runnable = fairness::has_runnable(state, &self.policy);
+        effects.more_runnable = removed_after_change || fairness::has_runnable(state, &self.policy);
         // Every pass records whether a continuation is owed. A pass that drained
         // the runnable set (or found nothing) clears the flag, whichever
         // transition ran it.
         state.promotion_pending = effects.more_runnable;
         effects
-    }
-
-    fn terminalize_wait_cycles(&self, state: &mut GovernedState, effects: &mut TransitionEffects) {
-        // One call removes at most one queued request. The snapshot bound keeps
-        // this path total; requests queued later belong to the next transition.
-        let queued = state.classes.values().map(|class| class.queue.len()).sum();
-        for _ in 0..queued {
-            match self.terminalize_wait_cycle(state, effects) {
-                CycleTerminalization::Removed => {}
-                CycleTerminalization::None => break,
-            }
-        }
     }
 
     fn terminalize_wait_cycle(

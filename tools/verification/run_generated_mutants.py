@@ -294,7 +294,10 @@ def excluded_mutants(
         or not all(isinstance(pattern, str) and pattern for pattern in patterns)
     ):
         raise ValueError("mutants config requires non-empty exclude_re patterns")
-    compiled = [re.compile(pattern) for pattern in patterns]
+    try:
+        compiled = [re.compile(pattern) for pattern in patterns]
+    except re.error as error:
+        raise ValueError(f"invalid mutation exclusion regex: {error}") from error
     excluded = sorted(unfiltered_set - planned_set)
     unmatched = [name for name in excluded if not any(pattern.search(name) for pattern in compiled)]
     if unmatched:

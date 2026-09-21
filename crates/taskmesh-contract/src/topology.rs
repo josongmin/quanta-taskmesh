@@ -385,10 +385,18 @@ impl TopologyConfig {
             PHYSICAL_DEDICATED => self.physical_domains.dedicated,
             _ => return Err(TopologyError::UnknownExecutorPhysicalDomain { domain }),
         };
-        Ok(match mode {
+        let workers = match mode {
             PhysicalDomainMode::Auto => available.max(1),
             PhysicalDomainMode::Fixed(workers) => workers,
-        })
+        };
+        if workers > MAX_CAPABILITY_SLOTS {
+            return Err(TopologyError::SlotCountTooLarge {
+                pool: domain,
+                slots: workers,
+                max: MAX_CAPABILITY_SLOTS,
+            });
+        }
+        Ok(workers)
     }
 
     /// The explicitly-declared slot counts, by capability-pool name. The `cpu`

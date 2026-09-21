@@ -110,8 +110,9 @@ feature 플래그:
    - 끄면 CPU 작업도 blocking 풀로 폴백한다.
 
 **버전 / 호환성.** 네 crate는 하나의 workspace 버전을 공유하며 현재 manifest는 `0.3.0`이다.
-SEP-21 변경은 승인된 minor-version 후보지만 exact-source release qualification과 publication이
-끝나지 않은 미출시 상태다. `0.2.0` 배포 증거나 `0.3.0` publication으로 취급하지 않는다.
+SEP-21 변경은 선택된 minor-version 후보지만 human version approval, exact-source release
+qualification과 publication이 끝나지 않은 미출시 상태다. `0.2.0` 배포 증거나 `0.3.0`
+publication으로 취급하지 않는다.
 `0.x`에서는 minor bump(`0.1 → 0.2`)에 breaking change가 포함될 수 있고, 그 전부는
 [CHANGELOG.md](CHANGELOG.md)의 *Breaking changes and migration* 절에 before/after 코드와
 함께 열거된다 (`Governor::claim → ClaimOutcome`, `Governor::release → ReleaseOutcome`,

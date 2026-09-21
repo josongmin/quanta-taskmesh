@@ -17,7 +17,6 @@ pub const ADAPTIVE_INFLIGHT_STEP_MS: u64 = 5;
 
 // Fairness-discipline adjustments (deterministic, test-fixed).
 const WEIGHT_RELIEF_MS: u64 = 2; // heavier weight -> sooner retry
-const QUANTUM_STEP_MS: u64 = 1; // larger quantum -> longer round
 const SLACK_DIVISOR: u64 = 10; // slacker deadline -> longer wait
 const SCAVENGER_PENALTY_MS: u64 = 200; // best-effort backs off hardest
 
@@ -47,9 +46,7 @@ fn apply_fairness(base: u64, fairness: FairnessPolicy) -> u64 {
         FairnessPolicy::WeightedFairQueue { weight, .. } => {
             base.saturating_sub(u64::from(weight).saturating_mul(WEIGHT_RELIEF_MS))
         }
-        FairnessPolicy::DeficitRoundRobin { quantum } => {
-            base + u64::from(quantum) * QUANTUM_STEP_MS
-        }
+        FairnessPolicy::DeficitRoundRobin { quantum } => base + u64::from(quantum),
         FairnessPolicy::DeadlineAware { slack_ms } => base + slack_ms / SLACK_DIVISOR,
         FairnessPolicy::BestEffortScavenger => base + SCAVENGER_PENALTY_MS,
     }

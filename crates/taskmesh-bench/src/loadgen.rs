@@ -19,6 +19,7 @@
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
+use std::sync::Barrier;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -379,44 +380,41 @@ pub fn contention_run(threads: usize, total_ops: usize) -> ContentionRun {
         "shares conserve ops"
     );
 
+    let ready = Barrier::new(threads + 1);
+    let start_gate = Barrier::new(threads + 1);
     let (elapsed, completed) = thread::scope(|scope| {
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-        let mut starters = Vec::with_capacity(threads);
-        let mut handles = Vec::with_capacity(threads);
-        for (tid, &share) in shares.iter().enumerate() {
-            let g = g.clone();
-            let ready_tx = ready_tx.clone();
-            let (start_tx, start_rx) = std::sync::mpsc::sync_channel(0);
-            starters.push(start_tx);
-            handles.push(scope.spawn(move || {
-                let op = worker_key(tid);
-                let spec = root_spec("bench", op);
-                ready_tx.send(()).expect("coordinator waits for readiness");
-                start_rx.recv().expect("coordinator starts every worker");
-                let mut admitted = 0usize;
-                for _ in 0..share {
-                    match g.admit(&spec) {
-                        AdmissionDecision::Admitted { permit_id } => {
-                            admitted += 1;
-                            assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
+        let handles: Vec<_> = shares
+            .iter()
+            .enumerate()
+            .map(|(tid, &share)| {
+                let g = g.clone();
+                let ready = &ready;
+                let start_gate = &start_gate;
+                scope.spawn(move || {
+                    let op = worker_key(tid);
+                    let spec = root_spec("bench", op);
+                    ready.wait();
+                    start_gate.wait();
+                    let mut admitted = 0usize;
+                    for _ in 0..share {
+                        match g.admit(&spec) {
+                            AdmissionDecision::Admitted { permit_id } => {
+                                admitted += 1;
+                                assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
+                            }
+                            other => panic!("contention admit must succeed, got {other:?}"),
                         }
-                        other => panic!("contention admit must succeed, got {other:?}"),
                     }
-                }
-                admitted
-            }));
-        }
-        drop(ready_tx);
-        // Every worker is spawned and parked; now the clock starts.
-        for _ in 0..handles.len() {
-            ready_rx
-                .recv()
-                .expect("every worker reaches the start gate");
-        }
+                    admitted
+                })
+            })
+            .collect();
+        // Phase one proves every worker is spawned. Phase two releases all
+        // workers together after the measurement clock starts; no sequential
+        // coordinator sends are part of the measured workload.
+        ready.wait();
         let start = Instant::now();
-        for start_tx in starters {
-            start_tx.send(()).expect("worker is parked at start gate");
-        }
+        start_gate.wait();
         let completed: usize = handles
             .into_iter()
             .map(|h| h.join().expect("contention worker panicked"))

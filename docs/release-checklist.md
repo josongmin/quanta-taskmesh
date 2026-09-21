@@ -133,11 +133,11 @@ input, not a release verdict. Run the registered recipes through `just`:
 
 ## Semver gate
 
-- [x] Version decision: `tools/release/release-policy.json` names immutable
+- [ ] Version decision: `tools/release/release-policy.json` names immutable
       `39bee682d7daa1efaf1c10993ba6221fd0a90871` (the 0.2.0 release commit;
-      there is no tag) as baseline and records the explicit `0.3.0` minor candidate
-      decision by authenticated repository actor `josongmin`. This approves the
-      version selection only; it does not approve blind spots or issue a release verdict.
+      there is no tag) as baseline and records `0.3.0` as the technical minor
+      candidate. Human version approval and reviewer identity remain pending; a
+      build or agent run cannot supply that authority.
 - [ ] `just semver-release` runs pinned `cargo-semver-checks 0.50.0` separately for
       `taskmesh-contract`, `taskmesh-engine`, `taskmesh`, and `taskmesh-rayon`,
       `--default-features --release-type minor --baseline-rev <full SHA>`. It

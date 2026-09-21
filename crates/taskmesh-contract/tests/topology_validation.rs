@@ -94,6 +94,28 @@ fn resolved_cpu_and_physical_domains_reject_unrepresentable_capacity() {
     let too_many = MAX_CAPABILITY_SLOTS + 1;
     assert_eq!(
         TopologyConfig::new()
+            .cpu_auto()
+            .min_workers(MAX_CAPABILITY_SLOTS)
+            .max_workers(MAX_CAPABILITY_SLOTS)
+            .try_resolved_cpu_workers(MAX_CAPABILITY_SLOTS),
+        Ok(MAX_CAPABILITY_SLOTS),
+        "the maximum representable CPU capacity remains admissible"
+    );
+    assert_eq!(
+        TopologyConfig::new()
+            .shared_blocking_domain(PhysicalDomainMode::Fixed(MAX_CAPABILITY_SLOTS))
+            .validate(),
+        Ok(()),
+        "the maximum representable fixed physical capacity remains admissible"
+    );
+    assert_eq!(
+        TopologyConfig::new()
+            .try_resolved_physical_domain(PHYSICAL_SHARED_BLOCKING, MAX_CAPABILITY_SLOTS),
+        Ok(MAX_CAPABILITY_SLOTS),
+        "the maximum representable auto physical capacity remains admissible"
+    );
+    assert_eq!(
+        TopologyConfig::new()
             .cpu_fixed(too_many)
             .try_resolved_cpu_workers(1),
         Err(TopologyError::SlotCountTooLarge {
@@ -122,6 +144,15 @@ fn resolved_cpu_and_physical_domains_reject_unrepresentable_capacity() {
             slots: too_many,
             max: MAX_CAPABILITY_SLOTS,
         })
+    );
+    assert_eq!(
+        TopologyConfig::new().try_resolved_physical_domain(PHYSICAL_SHARED_BLOCKING, too_many),
+        Err(TopologyError::SlotCountTooLarge {
+            pool: PHYSICAL_SHARED_BLOCKING,
+            slots: too_many,
+            max: MAX_CAPABILITY_SLOTS,
+        }),
+        "auto physical domains must reject detected capacity outside the governed domain"
     );
 }
 

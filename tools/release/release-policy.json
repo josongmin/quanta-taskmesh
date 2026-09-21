@@ -12,7 +12,7 @@
     "taskmesh",
     "taskmesh-rayon"
   ],
-  "version_decision": "APPROVED",
-  "version_reviewer": "josongmin",
+  "version_decision": "PENDING",
+  "version_reviewer": null,
   "generated_policy": "full-workspace viable mutants all caught; unviable reported and excluded; missed/timeout/equivalent fail"
 }

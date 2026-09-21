@@ -111,6 +111,57 @@ fn rebase_virtual_time(state: &mut GovernedState) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{has_runnable, rebase_virtual_time};
+    use crate::engine::state::{ClassState, GovernedState};
+    use crate::shared::PolicySet;
+    use std::collections::BTreeMap;
+    use taskmesh_contract::{ClassPolicy, ResourceBudget, TaskClass};
+
+    #[test]
+    fn has_runnable_is_false_when_every_class_queue_is_empty() {
+        let class = TaskClass::new("idle");
+        let policies = PolicySet::new(
+            ResourceBudget::new(),
+            BTreeMap::from([(class.clone(), ClassPolicy::new())]),
+        );
+        let mut state = GovernedState::default();
+        state.classes.insert(class, ClassState::default());
+
+        assert!(
+            !has_runnable(&state, &policies),
+            "an empty active-class ring cannot owe a promotion continuation"
+        );
+    }
+
+    #[test]
+    fn virtual_time_rebase_preserves_relative_finish_distances() {
+        let mut state = GovernedState::default();
+        state.virtual_time = 40;
+        state.classes.insert(
+            TaskClass::new("a"),
+            ClassState {
+                last_finish_tag: 55,
+                ..ClassState::default()
+            },
+        );
+        state.classes.insert(
+            TaskClass::new("b"),
+            ClassState {
+                last_finish_tag: 75,
+                ..ClassState::default()
+            },
+        );
+
+        rebase_virtual_time(&mut state);
+
+        assert_eq!(state.virtual_time, 0);
+        assert_eq!(state.classes[&TaskClass::new("a")].last_finish_tag, 15);
+        assert_eq!(state.classes[&TaskClass::new("b")].last_finish_tag, 35);
+    }
+}
+
 /// Re-derive a class's WFQ baseline after a queued request was removed without
 /// being served.
 ///

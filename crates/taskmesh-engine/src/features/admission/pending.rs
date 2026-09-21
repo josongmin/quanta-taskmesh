@@ -237,28 +237,43 @@ fn cycle_witness(
     }
 
     let mut held = Vec::new();
-    if blockers.class_inflight && parent_in_class > 0 && state.inflight(class) == parent_in_class {
+    if blockers.class_inflight
+        && parent_exclusively_holds(
+            u128::from(state.inflight(class)),
+            u128::from(parent_in_class),
+        )
+    {
         held.push(HeldCapacity::ClassInflight {
             class: class.clone(),
         });
     }
     for id in &blockers.capabilities {
         let by_parent = parent_capabilities.get(id).copied().unwrap_or(0);
-        if by_parent > 0 && state.capability_in_use(id) == by_parent {
+        if parent_exclusively_holds(
+            u128::from(state.capability_in_use(id)),
+            u128::from(by_parent),
+        ) {
             let pool = policies.capability_record(id)?.name().to_owned();
             held.push(HeldCapacity::CapabilityPool { pool });
         }
     }
-    if blockers.cpu && parent_cpu > 0 && state.cpu_units_held == parent_cpu {
+    if blockers.cpu && parent_exclusively_holds(state.cpu_units_held, parent_cpu) {
         held.push(HeldCapacity::CpuBudget);
     }
-    if blockers.memory && parent_memory > 0 && state.memory_units_held == parent_memory {
+    if blockers.memory && parent_exclusively_holds(state.memory_units_held, parent_memory) {
         held.push(HeldCapacity::MemoryBudget);
     }
     (!held.is_empty()).then(|| CycleWitness {
         parent_operation_id: parent_operation_id.clone(),
         held,
     })
+}
+
+/// A wait is cyclic only when the immediate parent owns a positive amount of
+/// every unit currently occupying the blocked capacity. Equality alone is not
+/// enough: an oversized child can exceed a budget while the parent owns zero.
+fn parent_exclusively_holds(total_held: u128, held_by_parent: u128) -> bool {
+    held_by_parent > 0 && total_held == held_by_parent
 }
 
 /// Whether a request has an earlier same-domain predecessor in its class queue.
@@ -278,7 +293,10 @@ pub fn queued_behind_index(
 
 #[cfg(test)]
 mod tests {
-    use super::{cycle_witness, queued_behind_index, BlockerSet};
+    use super::{
+        cycle_witness, parent_exclusively_holds, queued_behind_index, BlockerSet,
+        CapacityAssessment,
+    };
     use crate::engine::state::{ClassState, GovernedState};
     use crate::shared::{CapabilityRequirementSet, PolicySet, Provenance, ResolvedCapability};
     use std::collections::BTreeMap;
@@ -292,6 +310,34 @@ mod tests {
             queued_behind_index(&std::collections::VecDeque::new(), 0),
             "an index outside the frozen queue must not become runnable"
         );
+    }
+
+    #[test]
+    fn capacity_assessment_exposes_blockers_only_for_reversible_waits() {
+        let blockers = BlockerSet {
+            cpu: true,
+            ..BlockerSet::default()
+        };
+        assert_eq!(CapacityAssessment::Runnable.blockers(), None);
+        assert_eq!(
+            CapacityAssessment::ReversiblyBlocked(blockers.clone()).blockers(),
+            Some(&blockers)
+        );
+        assert_eq!(
+            CapacityAssessment::IrreversibleWaitCycle(super::CycleWitness {
+                parent_operation_id: "parent".to_owned(),
+                held: vec![taskmesh_contract::HeldCapacity::CpuBudget],
+            })
+            .blockers(),
+            None
+        );
+    }
+
+    #[test]
+    fn exclusive_parent_capacity_requires_positive_exact_ownership() {
+        assert!(!parent_exclusively_holds(0, 0));
+        assert!(!parent_exclusively_holds(2, 1));
+        assert!(parent_exclusively_holds(2, 2));
     }
 
     #[test]

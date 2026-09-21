@@ -1250,19 +1250,52 @@ impl Drop for TicketGuard {
 }
 
 #[cfg(test)]
-mod mutation_semantics {
+mod tests {
     use super::{DrainSignal, TicketGuard};
     use std::sync::Arc;
+    use taskmesh_contract::{ClassPolicy, OverflowPolicy, TaskClass, TaskSpec};
+    use taskmesh_engine::{AdmissionDecision, ClaimOutcome, ReleaseOutcome};
 
     #[test]
     fn ticket_guard_disarm_transfers_ownership_without_abandoning() {
-        let runtime = crate::Builder::new().build().expect("default runtime");
+        let class = TaskClass::new("guard-test");
+        let runtime = crate::Builder::new()
+            .class_policy(
+                class.clone(),
+                ClassPolicy::new()
+                    .max_inflight(1)
+                    .max_queue_depth(1)
+                    .overflow_policy(OverflowPolicy::QueueWithinDepth),
+            )
+            .build()
+            .expect("valid runtime");
+        let holder_decision = runtime
+            .governor
+            .admit(&TaskSpec::io(class.clone()).operation("holder"));
+        let AdmissionDecision::Admitted { permit_id: holder } = holder_decision else {
+            panic!("holder must admit, got {holder_decision:?}");
+        };
+        let queued_decision = runtime
+            .governor
+            .admit(&TaskSpec::io(class).operation("queued"));
+        let AdmissionDecision::Queued { ticket } = queued_decision else {
+            panic!("second request must queue, got {queued_decision:?}");
+        };
         let mut guard = TicketGuard {
             governor: Arc::clone(&runtime.governor),
             drain: Arc::new(DrainSignal::default()),
-            ticket: Some(41),
+            ticket: Some(ticket),
         };
         guard.disarm();
-        assert_eq!(guard.ticket, None);
+        drop(guard);
+
+        assert_eq!(runtime.governor.release(holder), ReleaseOutcome::Released);
+        let claim = runtime.governor.claim(ticket);
+        let ClaimOutcome::Ready(permit) = claim else {
+            panic!(
+                "dropping a disarmed guard must leave the transferred ticket claimable: {claim:?}"
+            );
+        };
+        assert_eq!(runtime.governor.release(permit), ReleaseOutcome::Released);
     }
 }

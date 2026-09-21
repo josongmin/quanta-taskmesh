@@ -322,6 +322,10 @@ def test_exclusion_accounting_rejects_unapproved_or_stale_scope(tmp_path: Path) 
     with pytest.raises(ValueError, match="matched no identities"):
         gm.excluded_mutants(["a", "approved"], ["a"], config, require_every_pattern=True)
 
+    config.write_text('exclude_re = ["["]\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid mutation exclusion regex"):
+        gm.excluded_mutants(["a"], ["a"], config, require_every_pattern=True)
+
 
 def test_parallel_jobs_never_inherit_one_absolute_cargo_target() -> None:
     parent = {"PATH": "/bin", "CARGO_TARGET_DIR": "/shared/target"}

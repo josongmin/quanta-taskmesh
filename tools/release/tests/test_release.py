@@ -17,7 +17,11 @@ REPO = Path(__file__).resolve().parents[3]
 
 @pytest.mark.parametrize(
     ("workflow_name", "job_name"),
-    [("ci.yml", "gate"), ("release.yml", "release")],
+    [
+        ("ci.yml", "gate"),
+        ("ci.yml", "qualification"),
+        ("release.yml", "release"),
+    ],
 )
 def test_baseline_consumers_fetch_immutable_history(workflow_name: str, job_name: str) -> None:
     workflow = yaml.safe_load(
@@ -44,8 +48,8 @@ def test_baseline_is_the_immutable_020_release_commit() -> None:
     )
     assert result.stdout.startswith(baseline + " release: 0.2.0")
     assert policy["candidate_version"] == "0.3.0"
-    assert policy["version_decision"] == "APPROVED"
-    assert policy["version_reviewer"] == "josongmin"
+    assert policy["version_decision"] == "PENDING"
+    assert policy["version_reviewer"] is None
     assert (
         semver.workspace_version(
             subprocess.run(

@@ -491,3 +491,48 @@ fn a_class_that_degrades_to_a_fallback_with_room_is_admitted_not_refused() {
     assert_eq!(g.release(child), ReleaseOutcome::Released);
     assert_eq!(g.release(parent), ReleaseOutcome::Released);
 }
+
+#[test]
+fn memory_fallback_cannot_bypass_a_cpu_wait_cycle() {
+    let parent_shape = Shape {
+        cpu_units: 2,
+        memory_units: 0,
+        ..Shape::queueing(4)
+    };
+    let degrading = Shape {
+        cpu_units: 1,
+        memory_units: 0,
+        overcommit: MemoryOvercommitPolicy::DegradeToLight {
+            fallback_class: class("light"),
+        },
+        ..Shape::queueing(4)
+    };
+    let light = Shape {
+        cpu_units: 0,
+        memory_units: 0,
+        ..Shape::queueing(4)
+    };
+    let g = governor(
+        vec![
+            ("parent", parent_shape),
+            ("child", degrading),
+            ("light", light),
+        ],
+        2,
+        100,
+        0,
+    );
+    let parent = admit(&g, &root("parent", "parent"));
+
+    refused_as_cycle(
+        "a memory-only fallback must not bypass a CPU cycle",
+        g.admit(&awaited_child("child", "parent")),
+        &HeldCapacity::CpuBudget,
+    );
+    assert_eq!(
+        g.snapshot().classes[&class("light")].inflight,
+        0,
+        "the fallback class is irrelevant when memory is not the blocker"
+    );
+    assert_eq!(g.release(parent), ReleaseOutcome::Released);
+}

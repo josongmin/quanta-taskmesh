@@ -264,8 +264,8 @@
       "finding": "A1-P1-1",
       "rationale": "Selecting before checking the budget lets the 65th selection debit a DRR deficit / move the ring cursor / advance WFQ virtual time for a dispatch that is not made; the continuation pass then starts one class late.",
       "file": "crates/taskmesh-engine/src/engine/governor.rs",
-      "find": "        effects.more_runnable = fairness::has_runnable(state, &self.policy);",
-      "replace": "        effects.more_runnable = fairness::select(state, &self.policy).is_some();",
+      "find": "        effects.more_runnable = removed_after_change || fairness::has_runnable(state, &self.policy);",
+      "replace": "        effects.more_runnable = removed_after_change || fairness::select(state, &self.policy).is_some();",
       "package": "taskmesh-engine",
       "test_target": "hardening_fairness_reference",
       "expect_failing_test": "drr_order_is_exact_across_the_promotion_budget_boundary",
@@ -592,8 +592,8 @@
       "finding": "R3-shuttle",
       "rationale": "If the pending-continuation flag only ever accumulates, every direct admit after the first budget overflow is queued forever (`QueuedBehind` with nothing to wait for). Only the shuttle gap model observes the post-drain direct admit under concurrency.",
       "file": "crates/taskmesh-engine/src/engine/governor.rs",
-      "find": "            let Some(selection) = fairness::select(state, &self.policy) else {\n                state.promotion_pending = false;\n                return effects;\n            };",
-      "replace": "            let Some(selection) = fairness::select(state, &self.policy) else {\n                return effects;\n            };",
+      "find": "        state.promotion_pending = effects.more_runnable;",
+      "replace": "        if effects.more_runnable {\n            state.promotion_pending = true;\n        }",
       "package": "taskmesh-engine",
       "test_target": "shuttle_governance",
       "profile": "release",
@@ -774,14 +774,14 @@
     {
       "id": "has-runnable-always-true",
       "finding": "R3-mutants",
-      "rationale": "A pass that ends exactly at its budget asks the pure oracle whether work remains, and records the answer as the pending continuation every gap arrival consults. An oracle that always says yes queues a queueable newcomer behind an empty ring; the single-threaded waker fixture observes it directly.",
+      "rationale": "A pass that ends exactly at its budget asks the pure oracle whether work remains. The oracle itself must return false for an empty active-class ring; otherwise the continuation scheduler can spin without releasing that obligation.",
       "file": "crates/taskmesh-engine/src/features/fairness/scheduler.rs",
       "find": "    !runnable_candidates(state, policies).is_empty()",
       "replace": "    true",
       "package": "taskmesh-engine",
-      "test_target": "hardening_fairness_reference",
-      "expect_failing_test": "no_continuation_is_owed_when_a_pass_ends_exactly_at_its_budget",
-      "expect_message": "no continuation is owed at exactly the budget"
+      "test_target": "lib",
+      "expect_failing_test": "features::fairness::scheduler::tests::has_runnable_is_false_when_every_class_queue_is_empty",
+      "expect_message": "an empty active-class ring cannot owe a promotion continuation"
     },
     {
       "id": "class-can-queue-ignores-the-memory-queue",
@@ -1001,14 +1001,14 @@
       "id": "close-admission-stops-promotion",
       "finding": "B1-drain",
       "runner": "cargo",
-      "rationale": "Closing refuses new work; it must not strand work already queued. A promotion pass that stops selecting once closed leaves queued requests parked forever and the drain never completes.",
-      "file": "crates/taskmesh-engine/src/engine/governor.rs",
-      "find": "            let Some(selection) = fairness::select(state, &self.policy) else {",
-      "replace": "            let Some(selection) = fairness::select(state, &self.policy).filter(|_| !state.admission_closed) else {",
+      "rationale": "Closing refuses new work; it must not strand work already queued. A close transition that discards an accepted queue leaves its tickets parked forever and the drain cannot converge.",
+      "file": "crates/taskmesh-engine/src/engine/state.rs",
+      "find": "        self.admission_closed = true;",
+      "replace": "        self.admission_closed = true;\n        for cstate in self.classes.values_mut() {\n            cstate.queue.clear();\n        }",
       "package": "taskmesh-engine",
       "test_target": "hardening_close_admission",
       "expect_failing_test": "work_held_at_close_still_promotes_claims_and_releases_to_zero",
-      "expect_message": "a queued request must still be promoted after the close"
+      "expect_message": "closing must cancel neither the holder nor the queued request"
     },
     {
       "id": "close-admission-decided-outside-the-lock",
@@ -1219,7 +1219,7 @@
       "runner": "cargo",
       "rationale": "The whole block must be the root's. If the rule fires whenever the root holds any slot of the class, a child blocked partly by a stranger — who can release — is refused instead of queued.",
       "file": "crates/taskmesh-engine/src/features/admission/pending.rs",
-      "find": "    if blockers.class_inflight && parent_in_class > 0 && state.inflight(class) == parent_in_class {",
+      "find": "    if blockers.class_inflight\n        && parent_exclusively_holds(\n            u128::from(state.inflight(class)),\n            u128::from(parent_in_class),\n        )\n    {",
       "replace": "    if blockers.class_inflight && parent_in_class > 0 {",
       "package": "taskmesh-engine",
       "test_target": "hardening_nested_wait",
@@ -1286,8 +1286,8 @@
       "test_target": "hardening_nested_wait",
       "id": "nested-wait-pool-shared-with-a-stranger-is-a-cycle",
       "rationale": "Found by the objective delta sweep. Only the class-inflight stranger case was tested; if the pool check stops requiring the whole pool to be the root's, a child waiting on a slot a stranger can release is refused.",
-      "find": "        if by_parent > 0 && state.capability_in_use(id) == by_parent {",
-      "replace": "        if by_parent > 0 || state.capability_in_use(id) == by_parent {",
+      "find": "        if parent_exclusively_holds(\n            u128::from(state.capability_in_use(id)),\n            u128::from(by_parent),\n        ) {",
+      "replace": "        if by_parent > 0 {",
       "expect_failing_test": "a_pool_cpu_or_memory_budget_shared_with_a_stranger_is_a_wait_not_a_cycle",
       "expect_message": "pool shared with a stranger: a wait that can end must queue"
     },
@@ -1299,7 +1299,7 @@
       "test_target": "hardening_nested_wait",
       "id": "nested-wait-cpu-shared-with-a-stranger-is-a-cycle",
       "rationale": "Found by the objective delta sweep: the same whole-block rule on the cpu budget had no test.",
-      "find": "    if blockers.cpu && parent_cpu > 0 && state.cpu_units_held == parent_cpu {",
+      "find": "    if blockers.cpu && parent_exclusively_holds(state.cpu_units_held, parent_cpu) {",
       "replace": "    if blockers.cpu && parent_cpu > 0 {",
       "expect_failing_test": "a_pool_cpu_or_memory_budget_shared_with_a_stranger_is_a_wait_not_a_cycle",
       "expect_message": "cpu shared with a stranger: a wait that can end must queue"
@@ -1312,7 +1312,7 @@
       "test_target": "hardening_nested_wait",
       "id": "nested-wait-memory-shared-with-a-stranger-is-a-cycle",
       "rationale": "Found by the objective delta sweep: the same whole-block rule on the memory budget had no test.",
-      "find": "    if blockers.memory && parent_memory > 0 && state.memory_units_held == parent_memory {",
+      "find": "    if blockers.memory && parent_exclusively_holds(state.memory_units_held, parent_memory) {",
       "replace": "    if blockers.memory && parent_memory > 0 {",
       "expect_failing_test": "a_pool_cpu_or_memory_budget_shared_with_a_stranger_is_a_wait_not_a_cycle",
       "expect_message": "memory shared with a stranger: a wait that can end must queue"
@@ -1325,10 +1325,10 @@
       "test_target": "hardening_nested_wait",
       "id": "nested-wait-counts-the-root-toward-a-pool-it-does-not-hold",
       "rationale": "A root holding one slot of a full two-slot pool cannot by itself cause an awaited-child cycle; a stranger owns the other slot and can release. Treating any root-held portion as the whole blocker rejects a wait that can end.",
-      "find": "        if by_parent > 0 && state.capability_in_use(id) == by_parent {",
-      "replace": "        if by_parent > 0 && state.capability_in_use(id) >= by_parent {",
-      "expect_failing_test": "a_pool_cpu_or_memory_budget_shared_with_a_stranger_is_a_wait_not_a_cycle",
-      "expect_message": "pool shared with a stranger: a wait that can end must queue"
+      "find": "        if parent_exclusively_holds(\n            u128::from(state.capability_in_use(id)),\n            u128::from(by_parent),\n        ) {",
+      "replace": "        if parent_cpu > 0 || parent_exclusively_holds(\n            u128::from(state.capability_in_use(id)),\n            u128::from(by_parent),\n        ) {",
+      "expect_failing_test": "a_root_that_holds_none_of_the_pool_is_not_what_the_child_waits_for",
+      "expect_message": "child behind a stranger's pool slot: a wait that can end must queue"
     }
   ]
 }

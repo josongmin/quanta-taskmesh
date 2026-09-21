@@ -313,10 +313,13 @@ fn worker_key(tid: usize) -> &'static str {
     static POOL: OnceLock<Mutex<Vec<&'static str>>> = OnceLock::new();
     let pool = POOL.get_or_init(|| Mutex::new(Vec::new()));
     let mut pool = pool.lock().expect("key pool");
-    while pool.len() <= tid {
-        let s: &'static str = Box::leak(format!("worker-{}", pool.len()).into_boxed_str());
-        pool.push(s);
-    }
+    let required_len = tid.checked_add(1).expect("worker id fits usize");
+    let mut next = pool.len();
+    pool.resize_with(required_len, || {
+        let s: &'static str = Box::leak(format!("worker-{next}").into_boxed_str());
+        next = next.checked_add(1).expect("worker key index fits usize");
+        s
+    });
     pool[tid]
 }
 
@@ -380,8 +383,14 @@ pub fn contention_run(threads: usize, total_ops: usize) -> ContentionRun {
         "shares conserve ops"
     );
 
-    let ready = Barrier::new(threads + 1);
-    let start_gate = Barrier::new(threads + 1);
+    // Derive the exact barrier cardinality without an open-ended worker-side
+    // loop. A malformed count must fail immediately instead of leaving every
+    // participant parked forever.
+    let parties = threads
+        .checked_add(1)
+        .expect("contention participant count fits usize");
+    let ready = Barrier::new(parties);
+    let start_gate = Barrier::new(parties);
     let (elapsed, completed) = thread::scope(|scope| {
         let handles: Vec<_> = shares
             .iter()

@@ -515,8 +515,14 @@ impl Governor {
             self.terminalize_wait_cycle(state, &mut effects),
             CycleTerminalization::Removed
         );
-        let mut granted = 0usize;
-        for _ in 0..PROMOTION_BUDGET {
+        let mut pending_state_changed = removed_before_grants;
+        let mut budget_exhausted = false;
+        let mut grant_slots = [(); PROMOTION_BUDGET].into_iter();
+        loop {
+            let Some(()) = grant_slots.next() else {
+                budget_exhausted = true;
+                break;
+            };
             let Some(selection) = fairness::select(state, &self.policy) else {
                 break;
             };
@@ -547,20 +553,24 @@ impl Governor {
             if let Some(waker) = head.waker {
                 effects.wake.push(waker);
             }
-            granted += 1;
+            pending_state_changed = true;
         }
         // A removed cycle or a grant changes the pending-state assessment. Scan
         // once more, never once per removal: repeated full-queue scans under one
         // mutex make N cycle requests O(N^2). If this removes another request,
         // the continuation flag below releases the lock before scanning again.
-        let removed_after_change = (removed_before_grants || granted > 0)
+        let removed_after_change = pending_state_changed
             && matches!(
                 self.terminalize_wait_cycle(state, &mut effects),
                 CycleTerminalization::Removed
             );
-        // Ask without selecting: `select` would charge a class for a dispatch
-        // that this bounded pass cannot make.
-        effects.more_runnable = removed_after_change || fairness::has_runnable(state, &self.policy);
+        // Ask without selecting only after the bounded pass spent every grant
+        // slot. If the selector and the pure runnable probe ever disagree, a
+        // continuation must fail closed instead of spinning forever under a
+        // host transition. Removing a cycle is separate progress and earns one
+        // fresh pass because it may expose a newly runnable head.
+        effects.more_runnable = removed_after_change
+            || (budget_exhausted && fairness::has_runnable(state, &self.policy));
         // Every pass records whether a continuation is owed. A pass that drained
         // the runnable set (or found nothing) clears the flag, whichever
         // transition ran it.

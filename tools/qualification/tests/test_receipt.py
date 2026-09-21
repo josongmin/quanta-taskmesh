@@ -1113,8 +1113,12 @@ def test_a_content_change_to_a_tracked_file_changes_the_digest(repo: Path) -> No
 
 def test_real_v02_artifacts_share_receipt_source_identity_and_reject_byte_drift(
     repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Exercise the actual V02 envelope builder, disk collector, and receipt evaluator."""
+    # This fixture is an explicit local producer rooted in a synthetic git
+    # repository. A hosted outer pytest process must not rewrite its identity.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     for relative in (
         "tools/verification/mutation-gate.json",
         "tools/verification/mutations.json",

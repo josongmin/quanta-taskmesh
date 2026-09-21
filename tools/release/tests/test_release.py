@@ -8,10 +8,29 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tools.release import finding_proof, receipt, semver
 
 REPO = Path(__file__).resolve().parents[3]
+
+
+@pytest.mark.parametrize(
+    ("workflow_name", "job_name"),
+    [("ci.yml", "gate"), ("release.yml", "release")],
+)
+def test_baseline_consumers_fetch_immutable_history(
+    workflow_name: str, job_name: str
+) -> None:
+    workflow = yaml.safe_load(
+        (REPO / ".github" / "workflows" / workflow_name).read_text(encoding="utf-8")
+    )
+    checkout = next(
+        step
+        for step in workflow["jobs"][job_name]["steps"]
+        if step.get("uses", "").startswith("actions/checkout@")
+    )
+    assert checkout.get("with", {}).get("fetch-depth") == 0
 
 
 def test_baseline_is_the_immutable_020_release_commit() -> None:

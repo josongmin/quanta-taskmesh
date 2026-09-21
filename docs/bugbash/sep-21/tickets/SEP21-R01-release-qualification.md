@@ -148,3 +148,20 @@ uv run python tools/qualification/receipt.py validate release-receipt.json
   IMPLEMENTED_UNQUALIFIED; raw regression closure is not final.
 
 No R01 `QUALIFIED` or `HOSTED_QUALIFIED` claim is made here.
+
+## CP11 checkpoint evidence (still not a release verdict)
+
+- Clean source `d7c745bae9268552e1b0d314702de9a1a1ffb398`, tree
+  `a35206a0935588b4db4d536599a8c03f193932eb`, ran the real
+  `tools/release/finding_proof.py` producer with a taskmesh-only target directory.
+  All 23 exact finding witnesses passed and the before/after tracked-path digest remained
+  `9b19be953a5062aac2b0b020d4b983a4b08c4f79c99598958afcad573475b964`.
+- This closes the earlier CP9 `NOT_RUN` for the CP11 snapshot only. Subsequent workflow/test/doc
+  edits require a new final-source producer run; CP11 evidence cannot be rebound to them.
+- Hosted CP11 exposed two release-rail prerequisites rather than product failures: the CI checkout
+  did not contain immutable baseline `39bee682...`, and a synthetic local producer fixture inherited
+  the outer GitHub Actions identity. Both are reopened until a later exact-source hosted run passes.
+- Linux IAI CP11 attempt 1 selected and executed 3/3 summaries without problems but returned
+  `BASELINE_CREATED`. Same-SHA attempt 2 restored that exact fingerprint and returned `QUALIFIED`
+  with 3/3 old-vs-new comparisons and no problems. The comparison is valid CP11 benchmark proof,
+  but subsequent source changes still require an exact-source release receipt.

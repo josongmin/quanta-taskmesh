@@ -47,6 +47,7 @@ The commit is a source checkpoint, not implementation or qualification proof.
 | CP9 integrated repair and R01 producer | `a8c7d3f` | Local bench compile, doc examples 3/3, Python tools 516/516, R01 tests 46/46, fmt, Ruff, inventory, architecture and dependency audit PASS; local Rust 1.98 Clippy all-target phase PASS but full command was interrupted after later source changes. Hosted run `35547086905`: fuzz, MSRV, Loom, Shuttle, model replay, TSan, coverage PASS; fast gate failed at cargo-deny 0.20.2 CLI drift, bench-smoke failed on a malformed child fixture, curated 105 yielded 102 KILLED + 1 CONTROL_GREEN + 1 UNRELATED_FAILURE_SET + 1 SURVIVED. Generated sweep remained in progress at this ledger edit. | pushed to `origin/main`; hosted qualification FAILED, not closure |
 | CP10 hosted oracle and CLI repair | `a3e3b3c` | Local focused nonce/drain mutants each KILLED with clean baseline and unchanged source; lease tests 8/8, bench-smoke compile, cargo-deny 0.19.7 and inventory passed. Hosted run `35548603010`: MSRV, Loom, Shuttle, TSan, model replay, fuzz, coverage and bench-smoke passed; fast gate failed on 21 Semgrep findings. Curated 105 yielded 103 KILLED + 1 CONTROL_GREEN + 1 UNRELATED_FAILURE_SET: the unique-nonce mutant also failed the newly added two-live-proofs test, which was absent from its exact expected-failure set. Generated sweep was still in progress. Separate `bench-gates` run `35548603153` failed: IAI runner rejected `SAVE_SUMMARY=yes` (requires `json` or `pretty-json`), and Criterion tried to read an incomplete cached `base/sample.json`. | pushed to `origin/main`; hosted qualification FAILED, not closure |
 | CP11 static and benchmark producer repair | `d7c745b` (tree `a35206a`) | Local full Rust workspace tests, three Clippy lanes, deny, Semgrep 0 findings, architecture, Python 516/516, allocation 8.0, inventory 27/26/27 and fuzz-check passed; exact nonce mutant KILLED with 2/2 expected failures and unchanged source. The exact-source 23-finding witness producer passed 23/23 with unchanged digest. Hosted CI `35550137221` passed MSRV, matrix, Loom, Shuttle, model replay, TSan, fuzz and coverage, but fast gate found two CI-context test defects: a synthetic local V02 fixture inherited hosted identity, and shallow checkout omitted the immutable `0.2.0` baseline. Bench run `35550137226` attempt 1 produced 3/3 valid IAI summaries as `BASELINE_CREATED`; wall-clock publication measured correctly but failed on three 1.54–1.61x alerts. Same-SHA attempt 2 completed success: IAI `QUALIFIED` with 3/3 comparisons and wall-clock 472ns/111ns/686ns for the three alerted paths, below the prior 489ns/113ns/702ns values. | pushed to `origin/main`; benchmark rail qualified on same-SHA repeat, fast gate still FAILED |
+| CP12 CI-hermetic release baseline | `cc40625` (tree `f46b577`) | Synthetic V02 tests now force local identity; CI/release baseline consumers fetch immutable history and tests enforce both checkout depths. Local Python 518/518 passed. Exact-source 23-finding producer passed 23/23 with stable digest. Four-crate semver audit completed as `REPORTED`: `taskmesh-rayon` CLEAN; contract, engine and facade returned deny-level FINDINGS requiring human mapping. Hosted run `35550659308` passed fast gate, curated 104 KILLED + 1 CONTROL_GREEN, MSRV, matrix, Loom, Shuttle, model replay, TSan, fuzz and coverage; generated sweep remained in progress at this ledger edit. Bench run `35550659280` had IAI `QUALIFIED` 3/3 but a shared-runner wall-clock alert (all blocking controls moved together) failed the job. | pushed to `origin/main`; generated and final qualification pending; single-sample wall-clock authority reopened |
 
 The earlier H01-only detached checkpoint (focused 21/21, default/rayon 154/154) is superseded by
 the integrated CP4 host transaction. H01, H03 and H02 are not treated as independently mergeable
@@ -88,6 +89,11 @@ unexecuted items and dependency signals. A commit or push alone is not closure.
   first wall-clock alert was contradicted by a same-SHA repeat while the IAI repeat produced real
   comparison proof. The noisy first point remains reported; only attempt 2 is the CP11 benchmark
   qualification evidence.
+- CP12 confirmed that a single GitHub-hosted wall-clock point can invert without a source change:
+  the same benchmark source ranged from 16–18us to 27–29us across blocking control paths while
+  IAI stayed `QUALIFIED`. ADR 9000 already defines wall-clock as noisy and IAI as the regression
+  gate. The workflow is therefore being aligned so a 150% wall-clock alert remains visible and
+  triggers PR profiling but cannot issue or revoke qualification by itself.
 - The committed pre-SEP-21 allocation baseline was 3 allocations/admit→release. The integrated
   source initially measured 16; borrowed validation plus an exact-operation permit index reduced
   it to 8. Three current-source 200,000-op probe runs each measured 8.000 with self-check 1000/1000
@@ -100,8 +106,9 @@ unexecuted items and dependency signals. A commit or push alone is not closure.
   Ordinary hosted qualification of a PR merge SHA is evidence only for that SHA, not a release
   verdict for a different final source.
 - `docs/release-checklist.md` still describes the generated mutation surface as `NOT_RUN` and
-  excluded, while V01's candidate ordinary required set requires a full generated result. V02's
-  candidate PASS rule additionally rejects missed, unviable, timeout and equivalent outcomes;
-  the observed `taskmesh-rayon` subset had one missed and five unviable. The full workspace sweep
-  is `NOT_RUN`. R01 must reconcile policy and documentation without promoting `REPORTED` to
-  mutation-quality PASS or silently waiving a non-caught outcome.
+  excluded, while V01's ordinary required set requires a full generated result. The earlier V02
+  rule incorrectly rejected compile-unviable outcomes. Producer schema v2 now keeps every unviable
+  identity in the full denominator and reports it as an unscored limitation; missed, timeout and
+  equivalent still fail. A real jobs=2 `taskmesh-rayon` rerun produced complete 10/10 identity
+  parity, 5 caught, 5 unviable, quality 5/5 and semantic PASS. The full workspace sweep remains
+  `NOT_RUN`; neither this subset nor `REPORTED` can substitute for full generated quality evidence.

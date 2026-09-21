@@ -70,7 +70,7 @@ mutants-critical *ARGS:
 # from the curated single-edit inventory above; a subset or survivor is FAIL,
 # never evidence for the curated gate.
 mutants-generated *ARGS:
-    uv run python tools/verification/run_generated_mutants.py --jobs 1 {{ARGS}}
+    uv run python tools/verification/run_generated_mutants.py --jobs 2 {{ARGS}}
 
 lint-rust: fmt-check clippy
 

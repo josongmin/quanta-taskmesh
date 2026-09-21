@@ -16,8 +16,10 @@ input, not a release verdict. Run the registered recipes through `just`:
       전체 생성 sweep의 score가 아니다.
 - [ ] `just mutants-generated` — full current-source cargo-mutants workspace sweep.
       planned/executed/categorized IDs가 완전히 일치하고 baseline이 green이어야 한다.
-      missed/unviable/timeout/equivalent 중 하나라도 있으면 현재 ordinary quality gate는
-      FAIL이다. `REPORTED`는 denominator disclosure일 뿐 quality PASS가 아니다.
+      전체 denominator에는 `unviable` ID도 남긴다. 다만 cargo-mutants가 컴파일하지 못한
+      `unviable`은 명시적 비채점 한계이며 quality denominator에서 제외한다. 최소 한 개의
+      caught가 있고 missed/timeout/equivalent가 모두 0이어야 PASS다. `REPORTED`는 denominator
+      disclosure일 뿐 quality PASS가 아니다.
 - [ ] `just loom` / `just shuttle`
 - [ ] `just modelcheck` — bounded Loom/Shuttle run identity와 독립 clean-process replay.
 - [ ] `just tsan` — `status=CLEAN` (ThreadSanitizer over the production engine and

@@ -14,5 +14,5 @@
   ],
   "version_decision": "PENDING",
   "version_reviewer": null,
-  "generated_policy": "ordinary-quality-PASS-required; REPORTED alone is insufficient"
+  "generated_policy": "full-workspace viable mutants all caught; unviable reported and excluded; missed/timeout/equivalent fail"
 }

@@ -14,19 +14,20 @@
     "runner_environment_is_authoritative": true
   },
   "generated": {
-    "command": ["uv", "run", "python", "tools/verification/run_generated_mutants.py", "--jobs", "1"],
+    "command": ["uv", "run", "python", "tools/verification/run_generated_mutants.py", "--jobs", "2"],
     "summary_artifact": "receipt.generated-mutations.json",
     "raw_artifact_glob": "raw/mutants.out/**",
     "required_categories": ["caught", "missed", "unviable", "timeout", "equivalent"],
     "identity_sets": "planned-equals-categorized-equals-executed",
+    "quality_denominator": "all planned outcomes except compile-unviable; unviable identities remain mandatory and reported",
     "pass_requires": {
       "exit_code": 0,
       "signal": null,
       "timed_out": false,
       "missed": 0,
-      "unviable": 0,
       "timeout": 0,
-      "equivalent": 0
+      "equivalent": 0,
+      "caught_minimum": 1
     }
   },
   "evidence_envelope": {

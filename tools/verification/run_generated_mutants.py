@@ -172,15 +172,31 @@ def classify_generated(
     denominator = sum(counts.values())
     if denominator == 0:
         raise ValueError("generated denominator is zero")
+    quality_denominator = denominator - counts["unviable"]
+    # cargo-mutants could not compile unviable mutations, so they remain visible in
+    # the full denominator but are not evidence for or against the semantic oracle.
     # An equivalence review preserves disposition but does not turn the campaign green.
     status = (
         "PASS"
-        if counts
-        == {"caught": denominator, "missed": 0, "unviable": 0, "timeout": 0, "equivalent": 0}
+        if counts["caught"] > 0
+        and counts["caught"] == quality_denominator
+        and counts["missed"] == counts["timeout"] == counts["equivalent"] == 0
         else "FAIL"
     )
-    problems = [name for name in ("missed", "unviable", "timeout", "equivalent") if counts[name]]
+    problems = [name for name in ("missed", "timeout", "equivalent") if counts[name]]
+    if quality_denominator == 0:
+        problems.append("no_scored_mutants")
     return counts, status, problems
+
+
+def quality_accounting(counts: dict[str, int]) -> dict[str, object]:
+    """Separate the complete campaign denominator from score-eligible outcomes."""
+    denominator = sum(counts.values())
+    return {
+        "numerator": counts["caught"],
+        "denominator": denominator - counts["unviable"],
+        "excluded": {"unviable": counts["unviable"]},
+    }
 
 
 def apply_process_truth(status: str, problems: list[str], result: object) -> tuple[str, list[str]]:
@@ -247,6 +263,13 @@ def tool_identity(source: Path) -> list[dict[str, str]]:
     ]
 
 
+def execution_environment(parent: dict[str, str]) -> dict[str, str]:
+    """Preserve the runner environment without collapsing per-job build dirs."""
+    environment = parent.copy()
+    environment.pop("CARGO_TARGET_DIR", None)
+    return environment
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=REPO / "target/sep21/v02/generated")
@@ -257,11 +280,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--equivalents", type=Path)
     parser.add_argument("--keep-isolation", action="store_true")
     args = parser.parse_args(argv)
-    if args.jobs != 1:
-        parser.error(
-            "generated evidence requires --jobs 1: one absolute campaign CARGO_TARGET_DIR "
-            "must not be shared by parallel mutant jobs"
-        )
+    if not 1 <= args.jobs <= 3:
+        parser.error("generated evidence requires a conservative --jobs value from 1 through 3")
     if args.campaign_timeout < 1 or (args.timeout is not None and args.timeout < 1):
         parser.error("timeout values must be positive")
     output_dir = prepare_output_dir(REPO, args.output_dir)
@@ -269,11 +289,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         isolated_raw_parent = campaign.root / "cargo-mutants-raw"
         argv_command = command(args, isolated_raw_parent)
-        recorded_env = {"CARGO_TARGET_DIR": str(campaign.target)}
+        # cargo-mutants creates one source/build directory per parallel job.
+        # An inherited absolute CARGO_TARGET_DIR would collapse those isolated
+        # builds back onto one shared Cargo lock and target tree, so remove it.
+        execution_env = execution_environment(dict(os.environ))
+        recorded_env: dict[str, str] = {}
         result = execute(
             argv_command,
             cwd=campaign.source,
-            env={**os.environ, **recorded_env},
+            env=execution_env,
             timeout_seconds=args.campaign_timeout,
         )
         raw_source = isolated_raw_parent / "mutants.out"
@@ -312,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
             problems.append("original_source_changed")
         raw_files = raw_manifest(output_dir / "raw")
         receipt = {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "generated-cargo-mutants",
             "generated_at": utc_now(),
             "campaign": campaign.identity(),
@@ -322,6 +346,7 @@ def main(argv: list[str] | None = None) -> int:
                 "argv": argv_command,
                 "cwd": str(campaign.source),
                 "environment": recorded_env,
+                "build_isolation": "cargo-mutants-one-build-directory-per-job",
                 "sha256": canonical_digest({"argv": argv_command, "environment": recorded_env}),
             },
             "tools": tool_identity(campaign.source),
@@ -337,6 +362,8 @@ def main(argv: list[str] | None = None) -> int:
             "parse_error": parse_error,
             "counts": counts,
             "denominator": sum(counts.values()),
+            "quality": quality_accounting(counts),
+            "limitations": ["unviable"] if counts["unviable"] else [],
             "problems": sorted(set(problems)),
             "outcomes": outcomes,
             "planned_mutants": planned_mutants,

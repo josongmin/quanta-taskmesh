@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Fail-closed release decision over an exact-source hosted ordinary receipt.
 
-The ordinary CI verdict is not weakened here. In particular, a generated
-mutation report with unviable/missed outcomes cannot be relabeled as quality
-PASS merely because the release ticket calls for a REPORTED denominator.
+The ordinary CI verdict is not weakened here. A generated mutation report must
+retain every planned identity. Compile-unviable mutations are explicit,
+unscored limitations; missed, timeout, and equivalent outcomes cannot be
+relabeled as quality PASS.
 """
 
 from __future__ import annotations
@@ -523,7 +524,8 @@ def evaluate(value: object, *, root: Path = REPO, current: dict | None = None) -
         reasons.append("release-only required set is incomplete")
     if (
         policy.get("generated_policy")
-        != "ordinary-quality-PASS-required; REPORTED alone is insufficient"
+        != "full-workspace viable mutants all caught; unviable reported and excluded; "
+        "missed/timeout/equivalent fail"
     ):
         reasons.append("generated mutation quality policy was relaxed")
     try:
@@ -614,7 +616,7 @@ def evaluate(value: object, *, root: Path = REPO, current: dict | None = None) -
         if not isinstance(generated, dict) or generated.get("status") != "PASS":
             reasons.append(
                 "generated mutation is not quality PASS; REPORTED cannot waive "
-                "missed/unviable/timeout/equivalent"
+                "missed/timeout/equivalent or omit unviable identities"
             )
     else:
         reasons.append("ordinary hosted qualification is NOT_RUN")

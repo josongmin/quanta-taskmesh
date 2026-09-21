@@ -88,7 +88,7 @@ def test_exact_generated_denominator_and_non_green_categories(tmp_path: Path) ->
     }
     assert sum(counts.values()) == 5
     assert status == "FAIL"
-    assert problems == ["missed", "unviable", "timeout"]
+    assert problems == ["missed", "timeout"]
 
 
 def test_all_caught_is_the_only_automatic_pass(tmp_path: Path) -> None:
@@ -96,6 +96,30 @@ def test_all_caught_is_the_only_automatic_pass(tmp_path: Path) -> None:
     write_outcomes(root, {"caught": ["m1", "m2"]})
     counts, status, problems = gm.classify_generated(gm.parse_outcomes(root), [])
     assert counts["caught"] == 2 and status == "PASS" and problems == []
+
+
+def test_unviable_is_reported_but_excluded_from_quality_denominator() -> None:
+    outcomes = {
+        "caught": ["m1", "m2"],
+        "missed": [],
+        "unviable": ["m3"],
+        "timeout": [],
+    }
+    counts, status, problems = gm.classify_generated(outcomes, [])
+    assert status == "PASS" and problems == []
+    assert gm.quality_accounting(counts) == {
+        "numerator": 2,
+        "denominator": 2,
+        "excluded": {"unviable": 1},
+    }
+
+
+def test_all_unviable_campaign_has_no_quality_signal() -> None:
+    outcomes = {"caught": [], "missed": [], "unviable": ["m1"], "timeout": []}
+    counts, status, problems = gm.classify_generated(outcomes, [])
+    assert status == "FAIL"
+    assert problems == ["no_scored_mutants"]
+    assert gm.quality_accounting(counts)["denominator"] == 0
 
 
 def test_equivalent_requires_id_reachability_and_reviewer_and_stays_non_pass(
@@ -246,9 +270,16 @@ def test_planned_mutants_and_successful_baseline_have_explicit_identity(tmp_path
     assert baseline_sha256 == gm.canonical_digest({"scenario": "Baseline", "summary": "Success"})
 
 
-def test_parallel_generated_jobs_are_rejected_before_campaign_creation() -> None:
-    with pytest.raises(SystemExit, match="2"):
-        gm.main(["--jobs", "2"])
+def test_generated_command_uses_two_isolated_cargo_mutants_jobs() -> None:
     manifest = json.loads((REPO / "tools/verification/mutation-gate.json").read_text())
     command = manifest["generated"]["command"]
-    assert command[command.index("--jobs") + 1] == "1"
+    assert command[command.index("--jobs") + 1] == "2"
+    args = SimpleNamespace(jobs=2, timeout=None, package=[])
+    generated = gm.command(args, Path("/tmp/raw"))
+    assert generated[generated.index("--jobs") + 1] == "2"
+
+
+def test_parallel_jobs_never_inherit_one_absolute_cargo_target() -> None:
+    parent = {"PATH": "/bin", "CARGO_TARGET_DIR": "/shared/target"}
+    assert gm.execution_environment(parent) == {"PATH": "/bin"}
+    assert parent["CARGO_TARGET_DIR"] == "/shared/target", "do not mutate the caller environment"

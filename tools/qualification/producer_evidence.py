@@ -208,7 +208,7 @@ def _generated_problems(
     problems = []
     categories = {"caught", "missed", "unviable", "timeout", "equivalent"}
     counts = summary.get("counts")
-    if summary.get("schema_version") != 1 or summary.get("kind") != "generated-cargo-mutants":
+    if summary.get("schema_version") != 2 or summary.get("kind") != "generated-cargo-mutants":
         problems.append("generated summary schema/kind mismatch")
     if not isinstance(counts, dict) or set(counts) != categories:
         problems.append("generated mutation categories are incomplete")
@@ -218,6 +218,16 @@ def _generated_problems(
     denominator = sum(value for value in counts.values() if type(value) is int)
     if summary.get("denominator") != denominator or denominator <= 0:
         problems.append("generated mutation denominator is empty or inconsistent")
+    expected_quality = {
+        "numerator": counts.get("caught", 0),
+        "denominator": denominator - counts.get("unviable", 0),
+        "excluded": {"unviable": counts.get("unviable", 0)},
+    }
+    if summary.get("quality") != expected_quality:
+        problems.append("generated mutation quality accounting is inconsistent")
+    expected_limitations = ["unviable"] if counts.get("unviable", 0) else []
+    if summary.get("limitations") != expected_limitations:
+        problems.append("generated mutation limitations are incomplete")
     if result.get("selected_count") != denominator or result.get("executed_count") != denominator:
         problems.append("generated envelope count differs from summary denominator")
     command = summary.get("command")
@@ -277,8 +287,10 @@ def _generated_problems(
         or process.get("timed_out") is not False
     ):
         problems.append("generated mutation process did not complete cleanly")
-    if any(counts.get(name, 0) != 0 for name in ("missed", "unviable", "timeout", "equivalent")):
-        problems.append("generated mutation campaign has non-caught outcomes")
+    if counts.get("caught", 0) <= 0:
+        problems.append("generated mutation campaign has no scored caught mutant")
+    if any(counts.get(name, 0) != 0 for name in ("missed", "timeout", "equivalent")):
+        problems.append("generated mutation campaign has unresolved quality outcomes")
     if summary.get("status") != "PASS" or summary.get("problems") != []:
         problems.append("generated mutation summary is not PASS")
     if summary.get("source_unchanged") is not True:

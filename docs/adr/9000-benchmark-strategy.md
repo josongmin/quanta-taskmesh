@@ -133,7 +133,9 @@ fairness는 ad-hoc 비교 대신 **Jain index**로, reduce 결정성은 다수 s
 
 - `criterion --save-baseline`으로 baseline 저장, PR에서 **상대 회귀**만 게이트
   (절대값은 러너 의존). 명령어-카운트(P2)는 절대 게이트 가능.
-- `github-action-benchmark` 또는 `bencher.dev`로 시계열 추적·알림.
+- `github-action-benchmark` 또는 `bencher.dev`로 시계열 추적·알림. GitHub-hosted runner의
+  wall-clock 단일 표본은 alert/profile trigger이며 qualification gate가 아니다. 같은 source에서
+  runner-wide 동반 변동이 재현됐으므로 결정적 IAI 비교만 회귀 verdict를 발급한다.
 - 회귀 감지 시 자동 **flamegraph**(`pprof-rs`/`cargo-flamegraph`) 첨부 + Linux `perf stat`
   하드웨어 카운터(instructions, cache-misses, branch-misses) 덤프.
 
@@ -224,7 +226,8 @@ overload 4×에서 큐가 depth에 고정되고 reject가 74%를 흡수(fail-clo
 
 - P8 — `.github/workflows/bench.yml`: alloc-gate(blocking) + instruction-count(iai,
   baseline 캐시 비교) + loom + shuttle 잡 + **시계열 대시보드**(github-action-benchmark
-  → gh-pages, alert-threshold 150%·fail-on-alert) + **flamegraph-on-regress**(회귀 시
+  → gh-pages, alert-threshold 150%; alert step은 관측 실패로 남기되 job qualification은
+  IAI가 소유) + **flamegraph-on-regress**(wall-clock alert 시
   flamegraph + `perf stat` 하드웨어 카운터를 아티팩트로 첨부). Justfile
   `bench`/`bench-gate`/`bench-iai`/`loom` 타겟, `gate`에 alloc 게이트 편입.
 

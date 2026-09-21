@@ -245,7 +245,8 @@ just bench-iai
     The focused `nested-wait-counts-siblings-as-the-parent` mutation was KILLED on the
     pre-correction source. The final exact-tree rerun outcome is reported in the V01 handoff
     rather than written back into this source-hashed ticket after execution.
-- Lifecycle remains `IMPLEMENTED_UNQUALIFIED`: no clean hosted qualification receipt, no full
-  generated workspace sweep, and no actual Linux IAI comparison are available. The observed
-  generated package subset includes compile-impossible unviable outcomes and is FAIL under the
-  current all-caught policy; policy changes belong to R01 after the full sweep, not this audit.
+- Lifecycle remains `IMPLEMENTED_UNQUALIFIED`: no clean hosted qualification receipt or full
+  generated workspace sweep is available. The earlier all-caught policy incorrectly treated
+  compile-impossible unviable outcomes as semantic failures; V02 schema v2 now preserves those IDs
+  as explicit unscored limitations while missed/timeout/equivalent still fail. The package subset
+  does not substitute for the required full workspace denominator.

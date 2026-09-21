@@ -2,7 +2,8 @@
 
 - 상태: IMPLEMENTED_UNQUALIFIED
 - producer state: runner와 integrated focused campaign 검증 완료; full current-source generated
-  sweep는 `NOT_RUN`, bounded `taskmesh-rayon` generated subset은 `FAIL`
+  sweep는 `NOT_RUN`, bounded `taskmesh-rayon` generated subset은 5/5 viable caught와
+  5 compile-unviable를 분리해 `PASS`
 - 우선순위: P1 release blocker
 - 포함 finding: TM21-012, TM21-017
 - 선행: V01
@@ -20,6 +21,9 @@ curated mutation과 generated cargo-mutants campaign을 isolated exact-source tr
 - live source를 제자리 변경하고 shared target을 사용한다.
 - `finally` 복원은 concurrent reader와 SIGKILL을 보호하지 못한다.
 - curated kill count와 generated sweep score의 authority가 과거 문구에서 섞였다.
+- generated classifier가 cargo-mutants의 compile-unviable를 semantic survivor와 같은 실패로
+  처리해, fail-closed 타입에 거짓 `Default`를 추가하거나 함수 전체를 제외해야만 PASS가 되는
+  잘못된 유인을 만들었다.
 
 ## 확정 근거
 
@@ -40,7 +44,9 @@ curated mutation과 generated cargo-mutants campaign을 isolated exact-source tr
 - command/env/profile fingerprint별 baseline PASS가 mutant 실행의 prerequisite다.
 - control은 exit 0 + completion marker + failures 0 + tests > 0을 모두 만족한다.
 - mutant kill은 expected nonzero exit + declared exact failure set/reason을 만족한다.
-- unrelated failure, timeout, signal, harness error, unviable는 별도 status다.
+- unrelated failure, timeout, signal, harness error는 실패 status다.
+- unviable ID는 전체 planned/executed/categorized denominator에 남기되 quality denominator에서
+  제외하고 `limitations=["unviable"]`로 공개한다. caught가 0인 all-unviable campaign은 실패한다.
 - curated와 generated schema/denominator/status를 절대 합산하지 않는다.
 
 ## 작업 플랜
@@ -95,6 +101,7 @@ curated mutation과 generated cargo-mutants campaign을 isolated exact-source tr
 - output substring만으로 exit truth 대체.
 - unrelated failures allow-all.
 - generated survivor를 수기 표 한 줄로만 waive.
+- fail-closed public type에 `Default`를 추가하거나 함수 전체를 skip해 unviable 수를 숨김.
 
 ## Producer evidence (2026-09-21)
 
@@ -148,7 +155,9 @@ curated mutation과 generated cargo-mutants campaign을 isolated exact-source tr
 - config: `tools/verification/mutation-gate.json`과 그 digest.
 - curated command: `uv run python tools/verification/run_mutations.py`; required summary
   `receipt.mutations.json`, baseline manifest `mutation-baseline-manifest.json`, raw stdout/stderr logs.
-- generated command: `uv run python tools/verification/run_generated_mutants.py --jobs 1`; required summary
+- generated command: `uv run python tools/verification/run_generated_mutants.py --jobs 2`; cargo-mutants
+  owns one build directory per job and the producer removes any inherited absolute
+  `CARGO_TARGET_DIR`; required summary
   `receipt.generated-mutations.json`, raw `mutants.out/**`, runner stdout/stderr.
 - source fields: HEAD, dirty flag, current-source tree digest, snapshot digest, original after digest,
   isolation root, dedicated target directory.
@@ -156,8 +165,9 @@ curated mutation과 generated cargo-mutants campaign을 isolated exact-source tr
   rustc and cargo-mutants identity as applicable.
 - result rule: curated PASS requires every selected entry `KILLED` or `CONTROL_GREEN`, every command
   baseline PASS, selected/executed equality, and unchanged original source. Generated PASS requires a
-  successful raw baseline, complete planned/categorized/outcome denominator, and zero missed,
-  unviable, timeout, and equivalent outcomes.
+  successful raw baseline, complete planned/categorized/outcome denominator, at least one caught,
+  and zero missed, timeout, and equivalent outcomes. Compile-unviable identities remain mandatory,
+  explicit limitations and are excluded only from the quality denominator.
 - shared files requested from V01 owner only: Justfile recipe, gate inventory record, receipt linkage,
   workflow execution/upload. V02 does not modify those files.
 
@@ -170,6 +180,18 @@ just mutants-critical --require-clean
 ```
 
 ## Hosted CI 재감사와 oracle 정합화 (2026-09-21)
+
+- cargo-mutants upstream contract에 맞춰 generated receipt schema를 v2로 올렸다. Upstream은
+  unviable를 컴파일 불가로 정의하며 별도 조치가 필요하지 않은 결과로 취급하고, exit 0은 모든
+  viable mutant가 caught됐음을 뜻한다. 근거:
+  [using results](https://mutants.rs/using-results.html),
+  [exit codes](https://mutants.rs/exit-codes.html),
+  [algorithm](https://mutants.rs/how-it-works.html).
+- 수정 producer의 실제 `taskmesh-rayon` jobs=2 campaign은 10/10 planned/executed/categorized,
+  caught 5, unviable 5, missed/timeout/equivalent 0, quality 5/5, process exit 0,
+  `source_unchanged=true`, `limitations=["unviable"]`, semantic PASS다. Receipt SHA-256은
+  `c75c398d3eb7da6462d079f9c865a5e4aa2af61a27540fbcea74906211e8abfc`다. 이 package subset은
+  producer semantics 검증일 뿐 full workspace qualification이 아니다.
 
 - Hosted `main@1378383b63728eedd2a38d5e7f7d87c828d2f0d0`, run
   `35543694307`의 curated raw artifact는 105개 중 `KILLED=71`,

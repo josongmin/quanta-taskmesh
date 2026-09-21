@@ -19,9 +19,7 @@ REPO = Path(__file__).resolve().parents[3]
     ("workflow_name", "job_name"),
     [("ci.yml", "gate"), ("release.yml", "release")],
 )
-def test_baseline_consumers_fetch_immutable_history(
-    workflow_name: str, job_name: str
-) -> None:
+def test_baseline_consumers_fetch_immutable_history(workflow_name: str, job_name: str) -> None:
     workflow = yaml.safe_load(
         (REPO / ".github" / "workflows" / workflow_name).read_text(encoding="utf-8")
     )

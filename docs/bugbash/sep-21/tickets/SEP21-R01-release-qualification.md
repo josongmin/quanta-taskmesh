@@ -134,11 +134,11 @@ uv run python tools/qualification/receipt.py validate release-receipt.json
   by run ID, and always
   uploads the release decision artifact. It does not publish, merge, deploy or
   activate anything.
-- Current exact `1378383` `taskmesh-rayon` generated subset: 10 planned,
-  5 caught, 0 missed, 5 unviable, 0 timeout/equivalent. Semantic FAIL.
-  One unviable replacement uses `Default::default()` for an executor without
-  `Default`; do not reclassify it as caught/equivalent. Full workspace sweep
-  remains NOT_RUN and the ordinary generated PASS policy remains unchanged.
+- Current producer-policy audit reran the exact `taskmesh-rayon` 10-mutant subset:
+  5 caught, 0 missed, 5 compile-unviable, 0 timeout/equivalent, quality 5/5 and semantic PASS.
+  The unviable replacements use `Default::default()` for fail-closed types without `Default`;
+  they remain visible limitations and are excluded from quality scoring, not relabeled as
+  caught/equivalent. Full workspace sweep remains NOT_RUN, so this does not qualify R01.
 - R01-A01 is represented but version/reviewer pending; A02 pending human
   adjudication; A03 full hosted matrix NOT_RUN; A04 full-validator negative
   fixtures are owner-local only; A05 preserved as explicit non-release
@@ -165,3 +165,17 @@ No R01 `QUALIFIED` or `HOSTED_QUALIFIED` claim is made here.
   `BASELINE_CREATED`. Same-SHA attempt 2 restored that exact fingerprint and returned `QUALIFIED`
   with 3/3 old-vs-new comparisons and no problems. The comparison is valid CP11 benchmark proof,
   but subsequent source changes still require an exact-source release receipt.
+
+## CP12 checkpoint evidence (still not a release verdict)
+
+- Clean source `cc406254254bcd79cf4fdbfdb5f6b866dbe4113f`, tree
+  `f46b577aeb0f59c2b1d8454b374ddfc131678525`, passed all 23 finding witnesses with
+  before/after digest `bb37c0d65c5bb1e6e39ee86cb08263d8f75becf165487c8c08c6e07c835c7f70`.
+- Pinned `cargo-semver-checks 0.50.0` completed all four public crates against immutable
+  `39bee682d7daa1efaf1c10993ba6221fd0a90871`. `taskmesh-rayon` was CLEAN; contract,
+  engine and facade produced deny-level FINDINGS. Raw outputs and digests are under
+  `target/release/semver-cc40625/`; status is `REPORTED`, not compatibility approval.
+- Findings include the product-neutral `PlanSource` replacement, parent identity in `TaskScope`,
+  `child_of` arity, physical topology fields, typed terminal/lease outcomes, capability projection
+  changes and executor construction shape. These are consistent with the candidate migration
+  section but still require a reviewer-bound final-SHA adjudication and candidate version.

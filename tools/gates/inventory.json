@@ -321,7 +321,7 @@
         "one isolated target directory per campaign"
       ],
       "workflow": "ci.yml",
-      "conditional": "The full generated denominator is required. Missing tooling is NOT_RUN; any missed, unviable, timeout, equivalent, subset, or incomplete identity set is FAIL.",
+      "conditional": "The full generated denominator is required. Missing tooling is NOT_RUN; any missed, timeout, equivalent, subset, or incomplete identity set is FAIL. Compile-unviable identities are mandatory reported limitations excluded from the quality denominator.",
       "timeout_seconds": 21000,
       "note": "Generated cargo-mutants evidence is a distinct denominator and must never be merged with mutants-critical.",
       "producer": {

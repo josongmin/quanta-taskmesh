@@ -75,12 +75,14 @@ def _producer_records(source: dict, results: list[dict]) -> list[dict]:
             selected = len(mutation_ids)
         elif surface == "generated":
             summary = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "kind": "generated-cargo-mutants",
                 "status": "PASS",
                 "problems": [],
                 "counts": {"caught": 1, "missed": 0, "unviable": 0, "timeout": 0, "equivalent": 0},
                 "denominator": 1,
+                "quality": {"numerator": 1, "denominator": 1, "excluded": {"unviable": 0}},
+                "limitations": [],
                 "outcomes": {
                     "caught": ["m1"],
                     "missed": [],
@@ -426,6 +428,38 @@ def test_generated_outcomes_cannot_be_omitted_behind_counts() -> None:
     verdict = receipt.evaluate(r, CLEAN)
     assert verdict["status"] == "NOT_QUALIFIED"
     assert any("generated mutation outcomes" in reason for reason in verdict["reasons"])
+
+
+def test_generated_unviable_is_visible_but_not_a_quality_failure() -> None:
+    r = qualified_receipt()
+    record = producer_record(r, "generated")
+    summary = record["summary"]["payload"]
+    envelope = record["envelope"]["payload"]
+    result = envelope["result"]
+    summary["counts"]["unviable"] = 1
+    summary["denominator"] = 2
+    summary["quality"] = {
+        "numerator": 1,
+        "denominator": 1,
+        "excluded": {"unviable": 1},
+    }
+    summary["limitations"] = ["unviable"]
+    summary["outcomes"]["unviable"] = ["m2"]
+    summary["planned_mutants"] = ["m1", "m2"]
+    result["selected_count"] = result["executed_count"] = 2
+    assert producer_validation._generated_problems(summary, result, envelope) == []
+
+
+@pytest.mark.parametrize("field", ["quality", "limitations"])
+def test_generated_unviable_accounting_cannot_be_omitted(field: str) -> None:
+    r = qualified_receipt()
+    record = producer_record(r, "generated")
+    summary = record["summary"]["payload"]
+    del summary[field]
+    problems = producer_validation._generated_problems(
+        summary, record["envelope"]["payload"]["result"], record["envelope"]["payload"]
+    )
+    assert any(field in problem for problem in problems)
 
 
 def test_generated_structured_raw_binds_plan_baseline_and_category_ids(tmp_path: Path) -> None:

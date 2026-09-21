@@ -174,7 +174,12 @@ jobs:
       # The PR action gets no token and cannot comment or push. It can only
       # compare the checked-out output with public gh-pages history.
       - name: Compare against history (read-only)
+        id: wall_clock_trend
         if: steps.gh_pages.outputs.exists == 'true'
+        # A 150% alert still returns failure so the diagnostic/profile path is
+        # explicit, but GitHub-hosted wall-clock is an observational signal.
+        # The deterministic IAI job is the regression gate (ADR 9000 / P2).
+        continue-on-error: true
         uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           name: taskmesh wall-clock
@@ -197,7 +202,7 @@ jobs:
       # evidence always covers whichever one regressed — not just one of them
       # (ADR 9000 / P8).
       - name: Flamegraph + perf counters on regression
-        if: failure()
+        if: steps.wall_clock_trend.outcome == 'failure'
         run: |
           sudo apt-get update && sudo apt-get install -y linux-tools-common linux-tools-generic
           sudo sysctl -w kernel.perf_event_paranoid=1 || true
@@ -208,7 +213,7 @@ jobs:
               cargo bench -p taskmesh-bench --bench "$b" -- --bench 2> "perf-stat-$b.txt" || true
           done
       - name: Upload regression profile
-        if: failure()
+        if: steps.wall_clock_trend.outcome == 'failure'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: regression-profile
@@ -240,6 +245,11 @@ jobs:
           python3 tools/bench/validate_bencher_output.py bench-output.txt \
             --expect admit_release --expect governance_tax
       - name: Publish trusted-main data point
+        id: wall_clock_trend
+        # Preserve/publish the alert and mark this step as failed for visibility,
+        # without making one noisy hosted-runner sample a qualification gate.
+        # IAI comparison is the authoritative regression verdict.
+        continue-on-error: true
         uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           name: taskmesh wall-clock

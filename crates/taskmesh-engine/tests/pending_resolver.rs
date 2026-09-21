@@ -73,10 +73,10 @@ fn admitted(g: &Governor, spec: &TaskSpec) -> u64 {
     }
 }
 
-fn assert_cycle(decision: AdmissionDecision, expected: HeldCapacity) {
+fn assert_cycle(decision: &AdmissionDecision, expected: HeldCapacity) {
     assert_eq!(
         decision,
-        AdmissionDecision::Rejected(AdmissionVerdict::NestedWaitCycle {
+        &AdmissionDecision::Rejected(AdmissionVerdict::NestedWaitCycle {
             held_by_root: expected,
         })
     );
@@ -135,7 +135,7 @@ fn descendant_immediate_parent_capacity_is_detected_for_every_dimension() {
         };
         let parent = admitted(&g, &parent_spec);
         let before = g.snapshot();
-        assert_cycle(g.admit(&child_spec), expected);
+        assert_cycle(&g.admit(&child_spec), expected);
         assert_eq!(g.snapshot(), before, "{case}: rejection is state-neutral");
         assert_eq!(g.release(parent), ReleaseOutcome::Released);
     }
@@ -155,7 +155,7 @@ fn a_parent_owned_blocker_is_not_hidden_by_an_earlier_stranger_blocker() {
     let child = grandchild(TaskSpec::blocking(class("child")));
 
     assert_cycle(
-        g.admit(&child),
+        &g.admit(&child),
         HeldCapacity::CapabilityPool {
             pool: "blocking".to_owned(),
         },
@@ -327,7 +327,7 @@ fn parent_lookup_survives_root_release_and_is_exact_across_other_roots() {
         .awaited_child_of("root-a", "shared-parent", TaskStage::new("parent-stage"))
         .operation("awaited");
     assert_cycle(
-        g.admit(&awaited),
+        &g.admit(&awaited),
         HeldCapacity::CapabilityPool {
             pool: "blocking".to_owned(),
         },

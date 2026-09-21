@@ -80,14 +80,14 @@ impl SubmitOptions {
 /// uncontended immediate admit succeeds, while the first queued observation
 /// expires without parking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RelativeAcquisitionBudget {
+pub enum RelativeAcquisitionBudget {
     Unbounded,
     TryOnce,
     At(std::time::Instant),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AcquisitionRejection {
+pub enum AcquisitionRejection {
     Cancelled,
     AbsoluteDeadline,
     RelativeTimeout,
@@ -99,7 +99,7 @@ pub(crate) enum AcquisitionRejection {
 /// fixed precedence is cancel, absolute completion deadline, then relative
 /// acquisition timeout; equality is expired for both clocks.
 #[derive(Debug, Clone)]
-pub(crate) struct AcquisitionArbiter {
+pub struct AcquisitionArbiter {
     cancel: Option<CancellationToken>,
     absolute_deadline: Option<std::time::Instant>,
     relative: RelativeAcquisitionBudget,
@@ -165,15 +165,15 @@ impl AcquisitionArbiter {
             return Some(AcquisitionRejection::AbsoluteDeadline);
         }
         match self.relative {
-            RelativeAcquisitionBudget::Unbounded => None,
             RelativeAcquisitionBudget::TryOnce if queued => {
                 Some(AcquisitionRejection::RelativeTimeout)
             }
-            RelativeAcquisitionBudget::TryOnce => None,
             RelativeAcquisitionBudget::At(deadline) if now >= deadline => {
                 Some(AcquisitionRejection::RelativeTimeout)
             }
-            RelativeAcquisitionBudget::At(_) => None,
+            RelativeAcquisitionBudget::Unbounded
+            | RelativeAcquisitionBudget::TryOnce
+            | RelativeAcquisitionBudget::At(_) => None,
         }
     }
 

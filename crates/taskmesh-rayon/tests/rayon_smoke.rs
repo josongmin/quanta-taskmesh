@@ -77,9 +77,8 @@ fn the_adapter_declares_what_it_can_honestly_promise() {
 
 #[test]
 fn impossible_construction_is_typed_and_never_clamped() {
-    let zero_workers = match RayonCpuExecutor::try_new(0) {
-        Err(error) => error,
-        Ok(_) => panic!("zero workers must be rejected"),
+    let Err(zero_workers) = RayonCpuExecutor::try_new(0) else {
+        panic!("zero workers must be rejected")
     };
     assert!(matches!(zero_workers, RayonBuildError::ZeroWorkers));
     assert_eq!(

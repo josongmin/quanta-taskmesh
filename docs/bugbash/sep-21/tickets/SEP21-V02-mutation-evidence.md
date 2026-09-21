@@ -168,3 +168,63 @@ uv run pytest -q tools/verification/tests tools/qualification/tests/test_receipt
 just mutants-critical --require-clean
 # generated runner의 exact command는 ticket 구현 시 manifest에 고정
 ```
+
+## Hosted CI 재감사와 oracle 정합화 (2026-09-21)
+
+- Hosted `main@1378383b63728eedd2a38d5e7f7d87c828d2f0d0`, run
+  `35543694307`의 curated raw artifact는 105개 중 `KILLED=71`,
+  `CONTROL_GREEN=1`, `UNRELATED_FAILURE_SET=25`, `BLOCKED_BASELINE=4`,
+  `SURVIVED=4`였다. 이것은 full curated `FAIL`이며 과거 focused PASS로 대체할 수 없다.
+- 25개 `UNRELATED_FAILURE_SET`는 모두 unmutated command baseline이 PASS였고,
+  지정된 primary test도 실패했다. Raw per-test panic과 source operator를 대조해
+  같은 변이 때문에 추가로 실패한 41개 test name을 각 inventory entry의
+  `expect_cofailures`에 명시했다. 추가 실패를 무조건 허용하지 않았고
+  `primary_plus_declared_cofailures_exact` 분류는 유지했다. 원인별 검토 범위:
+  - Fairness/continuation: `wfq-scale-loses-precision`,
+    `drr-walks-the-ring-visit-by-visit`, `drr-cursor-serves-the-wrong-class`,
+    `capability-blocked-head-holds-back-every-newcomer`,
+    `cross-class-newcomer-takes-the-continuation-gap`,
+    `queued-behind-shed-by-overflow-policy`, `promotion-pending-is-sticky`.
+    추가 test들은 같은 WFQ/DRR 연산 또는 같은 promotion-gap 판정을 직접 assert한다.
+  - Ticket/memory/snapshot: `dead-ticket-survives-unwind`,
+    `stage-release-skips-the-lease-touch`, `estimated-reconcile-restores-reservation`,
+    `conservation-oracle-accepts-everything`. 추가 test들은 terminal retention,
+    lease touch, residual reservation, snapshot conservation의 같은 source branch를 읽는다.
+  - Bench oracle: `mmpp-draws-at-the-old-rate`, `reversed-trace-accepted`,
+    `open-loop-histogram-double-corrected`, `contention-ops-rounded-to-thread-multiple`.
+    추가 test들은 각각 동일 MMPP rate, trace time, histogram population,
+    exact operation-count 계산을 assert한다.
+  - Host/drain: `stack-request-charged-to-the-declared-hint`,
+    `close-admission-never-refuses`, `drain-does-not-close-the-engine`,
+    `drain-counts-queues-not-custody`, `drain-gives-up-before-its-budget`.
+    추가 test들은 같은 physical capability resolve, admission-closed state,
+    drain custody/deadline outcome을 assert한다.
+  - Lease/nested wait: `lease-token-plain-release-ignores-the-lease`,
+    `lease-token-nonce-not-checked`, `lease-token-minted-on-every-advance`,
+    `nested-wait-cycle-is-queued-anyway`,
+    `nested-wait-ignores-the-stranger-holding-a-slot`. 추가 test들은 동일 nonce/lease
+    state 또는 root-vs-stranger blocker 분류를 assert한다.
+- `BLOCKED_BASELINE` 중 gate inventory 3개는 isolated source에 `.git` index가 없어
+  `git ls-files -z`가 128로 실패했다. Snapshot은 원본의 tracked path set만 local
+  index로 재구성하고 non-ignored untracked source는 여전히 untracked로 둔다.
+  나머지 하나(`long-pytest-header-loses-its-failure-reason`)는 inventory가
+  삭제된 pytest test를 지목했다. 두 underscore의 긴 failure header와 assertion
+  reason을 직접 검증하는 named test를 복원했다.
+- 기존 survivor 네 개는 fixture drift나 확률 의존이었다: NUL class는 C01에서
+  거부되어 thread-label mutant가 더는 panic을 만들지 않았고 실제 worker label
+  정규화 assertion으로 교체했다. H03이 inline executor를 설치 시 거부하므로
+  run-deadline anchor는 accepted-but-not-started 비차단 CPU executor의 worker-start
+  budget oracle로 교체했다. 이전 ID `run-deadline-judged-from-the-timer-only`는
+  H03 이후 의미가 맞지 않아 retired; 새 ID는 `run-deadline-starts-before-worker`다.
+  Historical receipts의 이전 ID는 변경하지 않는다. Abandon mutant는 난수 differential sequence 대신
+  64-grant continuation gap의 re-entrant waker에서 동기 postcondition을 잡는다.
+  Nested-wait의 기존 `by_parent > 0` 제거는 positive pool blocker에서
+  `in_use == 0 == by_parent`가 불가능해 등가였으므로 parent+stranger가 함께
+  점유한 pool을 단독 root cycle로 오판하는 `>=` 변이로 교체했다.
+- 변경 중 한 focused 시도는 3개 `KILLED`/1개 `WRONG_REASON`였지만
+  `source_unchanged=false`라 비권위 diagnostic이다. 이후 source-bound focused
+  receipt `target/sep21/v02/curated-focused-final/receipt.mutations.json`은
+  5/5 exact `KILLED`, baseline 5/5 PASS, problems 0, source before/snapshot/after
+  `b4fcdc9c830a9ad5fcd83e4ff17d7af73d713ef0abf37bd0e6dd5b75ef048488`이다.
+  이는 선택한 5개만 증명한다. 25개 cofailure 정합화 후의 full 105 curated와
+  full generated workspace sweep은 아직 `NOT_RUN`이며 release qualification이 아니다.

@@ -19,8 +19,8 @@ use taskmesh_contract::{
     TaskSpec, TaskStage,
 };
 use taskmesh_engine::{
-    AdmissionDecision, ClaimOutcome, Governor, PermitId, ReleaseOutcome, StageReleaseOutcome,
-    Ticket,
+    AdmissionDecision, ClaimOutcome, Governor, PermitId, ReconcileOutcome, ReleaseOutcome,
+    StageReleaseOutcome, Ticket,
 };
 
 // ---- shared invariant helpers ---------------------------------------------
@@ -130,7 +130,13 @@ fn fuzz_conservation_and_caps_under_adversarial_churn() {
                 4 => {
                     if !held.is_empty() {
                         let p = held[rng.gen_range(0..held.len())];
-                        g.reconcile_memory(p, rng.gen_range(0..2_048));
+                        assert!(
+                            matches!(
+                                g.reconcile_memory(p, rng.gen_range(0..2_048)),
+                                ReconcileOutcome::Applied { .. }
+                            ),
+                            "held permit {p} must accept a fresh memory reading"
+                        );
                     }
                 }
                 5 => {
@@ -316,7 +322,7 @@ fn recursion_guard_rejects_reentry_to_an_active_root_stage() {
     // (R, "blocking") — the declared lineage point, independent of its substrate.
     let child = |op: &'static str| {
         TaskSpec::cpu(worker.clone())
-            .child_of("R", TaskStage::new("blocking"))
+            .child_of("R", "R", TaskStage::new("blocking"))
             .operation(op)
     };
     let c1 = match g.admit(&child("c1")) {
@@ -498,7 +504,10 @@ fn leak_sweep_is_precise_and_idempotent() {
     // Touch the third at t=50 so it survives a 100ms staleness window at t=101.
     fx.clock.set(50);
     assert!(
-        g.reconcile_memory(ids[2], 0),
+        matches!(
+            g.reconcile_memory(ids[2], 0),
+            ReconcileOutcome::Applied { .. }
+        ),
         "touch must update last_touched"
     );
 
@@ -596,9 +605,10 @@ fn lifecycle_ops_are_idempotent_and_safe() {
     // Unknown handles are all safe.
     assert_eq!(g.claim(999_999), ClaimOutcome::Invalid);
     g.abandon(999_999); // unknown ticket: no-op
-    assert!(
-        !g.reconcile_memory(999_999, 100),
-        "reconcile unknown → false"
+    assert_eq!(
+        g.reconcile_memory(999_999, 100),
+        ReconcileOutcome::UnknownPermit,
+        "reconcile unknown → typed rejection"
     );
     assert_eq!(
         g.release_stage_memory(999_999, 5),

@@ -304,6 +304,8 @@ task에 남는다. 중앙 kernel에는 metadata와 handle만 둔다 — 중앙�
 강제하는 재작성이 되어서는 안 된다.
 
 **개정 (마무리 검증 B2) — 선언된 cycle은 typed로 거절한다.** "감지하지 않는다"는 유지하되,
+아래는 0.2.0 당시 계약이다. SEP-21 후보의 3인자 builder와 exact parent identity는
+문서 끝의 "SEP-21 후속 계약"을 따른다.
 caller가 **선언한** 것은 판정한다. `TaskSpec::awaited_child_of(root, parent_stage)`는
 `TaskScope::Child { parent_awaits: true, .. }`로 "parent의 실행이 이 child의 결과를 기다린다"를
 선언한다(`child_of`는 lineage만; `parent_awaits: false`, serde default라 옛 payload도 파싱된다).
@@ -568,3 +570,26 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
 - 이 ADR은 **local** 검증 상태를 기술한다. hosted CI, Linux instruction-count
   qualification, 배포/activation은 여기서 주장하지 않는다. consumer MSRV는 local
   1.81 toolchain에서 default+rayon PASS다.
+
+## SEP-21 후속 계약 (D12/D05/D02 보완, release 미승인)
+
+이 절은 위 0.2.0 당시 결정을 소급 변경하지 않는다. SEP-21 후보 소스의 후속 계약이며,
+버전/호환성 승인은 `tools/release/adjudication.json`과 release receipt에 남는다.
+
+- D12: `TaskScope::Child`는 exact `parent_operation_id`를 필수로 보관한다.
+  `child_of`/`awaited_child_of`는 root, immediate parent operation, parent stage의
+  3인자를 받는다. 구 child wire에 parent operation이 없으면 추정하지 않고 거부한다.
+  awaited-child가 실제 parent permit 때문에 전부 막히는지 모든 blocker를 보고 판단하며,
+  queue 중 새 cycle이 생기면 promotion에서 terminalize한다. sibling/stranger의 capacity는
+  별도 해제 가능하므로 cycle로 오판하지 않는다.
+- D05: semantic class policy와 physical worker governance를 분리한다. executor가
+  nonblocking submit, actual worker count, physical domain을 선언하지 못하면 build가
+  거부한다. `physical.shared_blocking`/`physical.cpu`/`physical.dedicated`의 유한한
+  limit과 occupancy는 engine의 atomic permit transition에 속한다. 별도 host queue나
+  engine-specific worker pool을 추가하지 않는다.
+- D02: implicit `reconcile_memory`도 `ReconcileOutcome`을 반환한다. sequence가
+  `u64::MAX`에 도달하면 `EpochExhausted`이며 해당 permit의 측정 갱신은 불가하다.
+  held memory와 activity time은 그대로이고, capacity는 permit release로 반환된다.
+- H02 acquisition: cancel → absolute deadline → relative timeout을 하나의 handoff
+  arbiter가 immediate/queued 양쪽에 적용한다. 상대 ZERO는 try-once일 뿐 만료된
+  CompleteBy를 무시하지 않는다. cancel/drop/timeout 응답과 worker custody는 별개다.

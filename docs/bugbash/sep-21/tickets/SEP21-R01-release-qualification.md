@@ -1,6 +1,6 @@
 # SEP21-R01 — Release compatibility and exact-source qualification
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED_UNQUALIFIED
 - 우선순위: P1 final release blocker
 - 포함 finding: TM21-013
 - 선행: C01, E01, E02, E03, E04, H01, H02, H03, V01, V02, V03
@@ -98,3 +98,53 @@ just proof
 just semver-release
 uv run python tools/qualification/receipt.py validate release-receipt.json
 ```
+
+## Release implementation evidence (2026-09-21, no release verdict)
+
+- Baseline candidate is immutable commit
+  `39bee682d7daa1efaf1c10993ba6221fd0a90871` (`release: 0.2.0`);
+  `git tag --list` and `git ls-remote --tags origin` returned no release tag.
+  Current manifest remains `0.2.0`; no successor version is selected or approved.
+- `tools/release/semver.py` checks clean source, full baseline SHA, pinned
+  cargo-semver-checks 0.50.0, default-feature/minor audit command and four
+  public crates separately. Exit 0 is CLEAN, deny-level exit 100 is FINDINGS
+  for explicit raw-linked human adjudication, and 101/timeout is TOOL_FAILURE.
+  It preserves raw stdout/stderr digests and exact
+  source before/after. Source-bound four-crate execution remains NOT_RUN until
+  the final candidate is clean/frozen.
+- `tools/release/release-required.json` is independent of ordinary
+  `tools/gates/required.json`; `semver-release` is a release-tier inventory
+  recipe, not silently added to ordinary `just proof`. Tracked
+  `tools/release/adjudication.json` remains a non-approving PENDING template;
+  final-SHA-bound reviewer input must be supplied to the manual release workflow
+  and stored as an ignored, digest-checked artifact. The template covers
+  facade re-exports, source API, return type, serde/wire, and behavior.
+- `tools/release/receipt.py` revalidates the hosted ordinary receipt and its
+  sidecars, all ordinary required gates, generated quality status (REPORTED
+  alone is insufficient), four semver raw outputs, ticket/finding graph,
+  exact 23-finding non-vacuous regression/negative witness raw digests and
+  source/test-byte identity,
+  coverage line/region/function/instantiation/branch/MCDC collection state,
+  Linux IAI raw artifact digests, exact source and separate downstream states.
+  A historical `cc5b256...` receipt and missing final evidence remain
+  `NOT_QUALIFIED`; a local dry collection produced a durable negative receipt
+  under `target/release/`.
+- Release workflow is manual, main-only, read-only, full-SHA action-pinned,
+  runs the 23-witness producer, imports one exact-source qualification artifact
+  by run ID, and always
+  uploads the release decision artifact. It does not publish, merge, deploy or
+  activate anything.
+- Current exact `1378383` `taskmesh-rayon` generated subset: 10 planned,
+  5 caught, 0 missed, 5 unviable, 0 timeout/equivalent. Semantic FAIL.
+  One unviable replacement uses `Default::default()` for an executor without
+  `Default`; do not reclassify it as caught/equivalent. Full workspace sweep
+  remains NOT_RUN and the ordinary generated PASS policy remains unchanged.
+- R01-A01 is represented but version/reviewer pending; A02 pending human
+  adjudication; A03 full hosted matrix NOT_RUN; A04 full-validator negative
+  fixtures are owner-local only; A05 preserved as explicit non-release
+  downstream states. A06 maps all 23 findings to existing exact test names,
+  with raw/source-bound producer and negative validator fixtures, but the
+  23-witness producer has not run on the final frozen source. V01/V02 remain
+  IMPLEMENTED_UNQUALIFIED; raw regression closure is not final.
+
+No R01 `QUALIFIED` or `HOSTED_QUALIFIED` claim is made here.

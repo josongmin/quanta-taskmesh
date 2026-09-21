@@ -27,7 +27,7 @@ use taskmesh_contract::{
     ClassPolicy, FairnessPolicy, ManualClock, OverflowPolicy, ResourceBudget, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
-    AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome,
+    AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome, Ticket,
 };
 
 fn admit_on(governor: &Governor, spec: &TaskSpec, pool: &str) -> AdmissionDecision {
@@ -544,6 +544,110 @@ fn drr_order_is_exact_across_the_promotion_budget_boundary() {
 struct SubmittingWaker {
     governor: Arc<Governor>,
     outcome: std::sync::Mutex<Option<(AdmissionDecision, Option<taskmesh_engine::CapacityBlock>)>>,
+}
+
+/// Observe the synchronous postcondition of abandoning a queued head while
+/// the outer promotion pass is paused in a host callback. Once this callback
+/// returns, that outer pass can promote the follower and hide a missing
+/// promotion in `abandon` itself.
+struct AbandoningHeadWaker {
+    governor: Arc<Governor>,
+    tickets: std::sync::Mutex<Option<(Ticket, Ticket)>>,
+    follower_before_return: std::sync::Mutex<Option<ClaimOutcome>>,
+}
+
+impl taskmesh_contract::PermitWaker for AbandoningHeadWaker {
+    fn wake(&self) {
+        let Some((head, follower)) = self.tickets.lock().expect("lock").take() else {
+            return;
+        };
+        self.governor.abandon(head);
+        *self.follower_before_return.lock().expect("lock") =
+            Some(self.governor.ticket_status(follower));
+    }
+}
+
+#[test]
+fn abandoning_a_queued_head_promotes_its_runnable_follower_before_returning() {
+    // A single release makes more than one pass of requests runnable. The
+    // first pass grants 64 and invokes the first waiter's waker with the state
+    // mutex unlocked. The waker abandons the next queued head and observes its
+    // runnable follower before the outer continuation can resume.
+    let total = taskmesh_engine::PROMOTION_BUDGET + 2;
+    let units = u32::try_from(total + 1).expect("small");
+    let mut map = BTreeMap::new();
+    map.insert(
+        TaskClass::new("c"),
+        ClassPolicy::new()
+            .max_inflight(1_000)
+            .max_queue_depth(1_000)
+            .cpu_units(1)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth)
+            .fairness(FairnessPolicy::Fifo),
+    );
+    map.insert(
+        TaskClass::new("holder"),
+        ClassPolicy::new().max_inflight(1).cpu_units(units),
+    );
+    let g = Arc::new(
+        Governor::new(
+            PolicySet::new(ResourceBudget::new().cpu_units(units), map),
+            Arc::new(ManualClock::new(0)),
+        )
+        .expect("valid policy"),
+    );
+    let holder = admit_one(&g, "holder", "holder");
+    let waker = Arc::new(AbandoningHeadWaker {
+        governor: Arc::clone(&g),
+        tickets: std::sync::Mutex::new(None),
+        follower_before_return: std::sync::Mutex::new(None),
+    });
+    let port: Arc<dyn taskmesh_contract::PermitWaker> = waker.clone();
+    let AdmissionDecision::Queued { ticket: first } = g.admit_waitable(&spec("c", "q0"), port)
+    else {
+        panic!("the first request queues behind the holder");
+    };
+    let mut tickets = vec![first];
+    for i in 1..total {
+        tickets.push(queue_one(&g, "c", &format!("q{i}")));
+    }
+    *waker.tickets.lock().expect("lock") = Some((
+        tickets[taskmesh_engine::PROMOTION_BUDGET],
+        tickets[taskmesh_engine::PROMOTION_BUDGET + 1],
+    ));
+
+    let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
+    let releasing = Arc::clone(&g);
+    std::thread::spawn(move || {
+        let _ = done_tx.send(releasing.release(holder));
+    });
+    assert_eq!(
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("release and re-entrant abandon must not deadlock"),
+        ReleaseOutcome::Released
+    );
+    assert!(
+        matches!(
+            waker.follower_before_return.lock().expect("lock").as_ref(),
+            Some(ClaimOutcome::Ready(_))
+        ),
+        "abandon must promote the runnable follower before returning from the waker"
+    );
+    assert!(matches!(
+        g.ticket_status(tickets[taskmesh_engine::PROMOTION_BUDGET]),
+        ClaimOutcome::Invalid
+    ));
+    for (index, ticket) in tickets.into_iter().enumerate() {
+        if index == taskmesh_engine::PROMOTION_BUDGET {
+            continue;
+        }
+        let ClaimOutcome::Ready(permit) = g.claim(ticket) else {
+            panic!("remaining ticket {index} must have been promoted");
+        };
+        assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    }
+    assert_eq!(g.snapshot().conservation_violation(), None);
 }
 
 impl taskmesh_contract::PermitWaker for SubmittingWaker {

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "baseline_sha": "39bee682d7daa1efaf1c10993ba6221fd0a90871",
+  "source_sha": null,
+  "reviewer": null,
+  "decision": "PENDING",
+  "all_tool_findings_reviewed": false,
+  "semver_outputs": [],
+  "items": [
+    {"id": "C01-provenance-rust", "surface": "rust-api", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-C01-task-plan-contract.md", "changelog_anchor": null},
+    {"id": "C01-provenance-wire", "surface": "serde-wire", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-C01-task-plan-contract.md", "changelog_anchor": null},
+    {"id": "C01-child-builder", "surface": "rust-api", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-C01-task-plan-contract.md", "changelog_anchor": null},
+    {"id": "C01-child-wire", "surface": "serde-wire", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-C01-task-plan-contract.md", "changelog_anchor": null},
+    {"id": "E01-capability-handle", "surface": "rust-api", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-E01-capability-authority.md", "changelog_anchor": null},
+    {"id": "E03-memory-return", "surface": "rust-api", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-E03-memory-epoch.md", "changelog_anchor": null},
+    {"id": "E04-nested-cycle", "surface": "behavior", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-E04-pending-resolver.md", "changelog_anchor": null},
+    {"id": "H01-stack-preflight", "surface": "behavior", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-H01-validated-dispatch-plan.md", "changelog_anchor": null},
+    {"id": "H02-acquisition-precedence", "surface": "behavior", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-H02-acquisition-arbiter.md", "changelog_anchor": null},
+    {"id": "H03-physical-domains", "surface": "behavior", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-H03-executor-domain.md", "changelog_anchor": null},
+    {"id": "H03-executor-contract", "surface": "rust-api", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-H03-executor-domain.md", "changelog_anchor": null},
+    {"id": "H03-rayon-constructor", "surface": "rust-api", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-H03-executor-domain.md", "changelog_anchor": null},
+    {"id": "facade-reexports", "surface": "facade", "decision": "PENDING", "evidence": "crates/taskmesh/src/lib.rs", "changelog_anchor": null}
+  ]
+}

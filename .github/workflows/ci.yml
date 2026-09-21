@@ -276,6 +276,8 @@ jobs:
             target/iai/baseline-manifest.json
             target/iai/comparison-manifest.json
             target/iai/benchmark-output.log
+            target/coverage/summary.json
+            target/coverage/lcov.info
 
   loom:
     name: concurrency model-check (loom)

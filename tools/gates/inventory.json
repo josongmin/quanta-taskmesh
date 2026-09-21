@@ -4,6 +4,16 @@
   "qualification_budget_seconds": 18000,
   "gates": [
     {
+      "id": "semver-release",
+      "recipe": "semver-release",
+      "tier": "release",
+      "runs_in": ["local", "ci"],
+      "platforms": ["any"],
+      "prerequisites": ["cargo-semver-checks 0.50.0", "immutable baseline commit"],
+      "workflow": "release.yml",
+      "note": "Release-only four-crate compatibility audit. Its PASS is not a release verdict; the release receipt additionally requires the ordinary hosted receipt and manual facade/wire/behavior adjudication."
+    },
+    {
       "id": "fmt-check",
       "recipe": "fmt-check",
       "tier": "fast",

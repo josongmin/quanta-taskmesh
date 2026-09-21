@@ -179,10 +179,7 @@ impl<'de> Deserialize<'de> for ValidatedTaskPlan {
     }
 }
 
-pub(crate) fn validate_identifier(
-    field: TaskIdentifierField,
-    value: &str,
-) -> Result<(), TaskPlanError> {
+pub fn validate_identifier(field: TaskIdentifierField, value: &str) -> Result<(), TaskPlanError> {
     let violation = if value.is_empty() {
         Some(IdentifierViolation::Empty)
     } else if value.trim() != value {
@@ -211,7 +208,7 @@ fn is_identifier_character(character: char) -> bool {
     character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':' | '/')
 }
 
-pub(crate) fn validate_task_spec(spec: &TaskSpec) -> Result<(), TaskPlanError> {
+pub fn validate_task_spec(spec: &TaskSpec) -> Result<(), TaskPlanError> {
     validate_identifier(TaskIdentifierField::Class, spec.class.as_str())?;
     validate_identifier(TaskIdentifierField::Operation, &spec.operation)?;
     validate_identifier(

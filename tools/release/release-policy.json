@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "baseline_sha": "39bee682d7daa1efaf1c10993ba6221fd0a90871",
+  "baseline_version": "0.2.0",
+  "candidate_version": null,
+  "release_type": "minor",
+  "semver_tool": "cargo-semver-checks 0.50.0",
+  "features": ["--default-features"],
+  "public_crates": [
+    "taskmesh-contract",
+    "taskmesh-engine",
+    "taskmesh",
+    "taskmesh-rayon"
+  ],
+  "version_decision": "PENDING",
+  "version_reviewer": null,
+  "generated_policy": "ordinary-quality-PASS-required; REPORTED alone is insufficient"
+}

@@ -243,9 +243,7 @@ def test_planned_mutants_and_successful_baseline_have_explicit_identity(tmp_path
     assert gm.parse_outcomes(raw)["caught"] == ["m2", "m1"]
     planned, baseline_sha256 = gm.planned_baseline_identity(raw)
     assert planned == ["m1", "m2"]
-    assert baseline_sha256 == gm.canonical_digest(
-        {"scenario": "Baseline", "summary": "Success"}
-    )
+    assert baseline_sha256 == gm.canonical_digest({"scenario": "Baseline", "summary": "Success"})
 
 
 def test_parallel_generated_jobs_are_rejected_before_campaign_creation() -> None:

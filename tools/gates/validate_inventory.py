@@ -57,7 +57,7 @@ REQUIRED = Path(__file__).resolve().parent / "required.json"
 WORKFLOWS = REPO / ".github" / "workflows"
 JUSTFILE = REPO / "Justfile"
 
-TIERS = {"fast", "matrix", "proof"}
+TIERS = {"fast", "matrix", "proof", "release"}
 PLATFORMS = {"any", "linux", "macos"}
 # A `just <recipe>` token anywhere in a run script: at the start, after a
 # newline, or after a shell separator (`&&`, `||`, `;`, `|`, `(`), and followed

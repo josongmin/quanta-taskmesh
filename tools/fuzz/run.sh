@@ -38,6 +38,15 @@ if ! cargo +nightly fuzz --version >/dev/null 2>&1; then
   not_run "cargo-fuzz not installed (cargo install cargo-fuzz)" no-cargo-fuzz
 fi
 
+# A prebuilt cargo-fuzz binary may target musl while the compiler hosts GNU.
+# cargo-fuzz otherwise derives the target from its own executable, which makes
+# sanitizer builds fail before any fuzz input is executed on that CI setup.
+host_target="$(rustc +nightly -vV | sed -n 's/^host: //p')"
+if [ -z "${host_target}" ]; then
+  echo "fuzz: nightly rustc did not report a host target" >&2
+  exit 1
+fi
+
 seconds="${FUZZ_SECONDS:-30}"
 case "${seconds}" in
   ''|*[!0-9]*) echo "fuzz: FUZZ_SECONDS must be a whole number of seconds, got '${seconds}'" >&2; exit 1 ;;
@@ -90,7 +99,7 @@ for target in ${targets}; do
   # `-max_total_time` bounds the campaign; a crash exits non-zero and
   # is retained as a raw artifact before semantic validation.
   set +e
-  TASKMESH_FUZZ_WITNESS=1 cargo +nightly fuzz run "${target}" "${seed_dir}/${target}" -- -max_total_time="${seconds}" 2>&1 | tee "${log}" >&2
+  TASKMESH_FUZZ_WITNESS=1 cargo +nightly fuzz run --target "${host_target}" "${target}" "${seed_dir}/${target}" -- -max_total_time="${seconds}" 2>&1 | tee "${log}" >&2
   target_exit="${PIPESTATUS[0]}"
   set -e
   if [ "${target_exit}" -ne 0 ]; then

@@ -49,6 +49,7 @@ impl std::fmt::Debug for Builder {
             .field("resources", &self.resources)
             .field("classes", &self.classes)
             .field("substrates", &self.substrates)
+            .field("capability_limits", &self.capability_limits)
             .field(
                 "cpu_executor",
                 &self.cpu_executor.as_ref().map(|cpu| cpu.capabilities()),

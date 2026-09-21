@@ -352,7 +352,7 @@ impl PolicySet {
                 .cloned()
                 .unwrap_or_else(|| CapabilityId {
                     name: CapabilityName::from(pool.as_str()),
-                    authority: self.capability_authority.clone(),
+                    authority: std::sync::Arc::clone(&self.capability_authority),
                 });
             let capacity = NonZeroU32::new(limit).map_or(
                 CapabilityCapacity::ExplicitUnbounded,
@@ -384,7 +384,7 @@ impl PolicySet {
         self.capabilities
             .keys()
             .find(|id| id.as_str() == pool)
-            .map(|id| id.name.clone())
+            .map(|id| std::sync::Arc::clone(&id.name))
     }
 
     /// Resolve a raw name before admission. Unknown and empty names never
@@ -480,7 +480,7 @@ fn builtin_capability_records(
         };
         let id = CapabilityId {
             name: CapabilityName::from(pool),
-            authority: authority.clone(),
+            authority: std::sync::Arc::clone(authority),
         };
         capabilities.entry(id.clone()).or_insert(CapabilityRecord {
             id,

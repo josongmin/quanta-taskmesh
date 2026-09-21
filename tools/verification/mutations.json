@@ -25,6 +25,7 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_fairness_reference",
       "expect_failing_test": "weighted_share_survives_uniform_rescaling_of_every_weight",
+      "expect_cofailures": ["extreme_weights_still_produce_a_non_zero_increment"],
       "expect_message": "absolute magnitude of the weights"
     },
     {
@@ -61,6 +62,11 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_lifecycle",
       "expect_failing_test": "a_swept_promotion_hands_the_waiter_a_terminal_outcome_not_a_dead_permit",
+      "expect_cofailures": [
+        "observing_a_terminal_record_releases_its_retention_slot",
+        "terminal_records_stay_bounded_under_repeated_churn",
+        "terminal_retention_holds_exactly_the_bound_and_evicts_the_oldest_first"
+      ],
       "expect_message": "right: Terminal(Reclaimed)",
       "profile": "release",
       "note": "Run in release: in a debug build the engine's own structural invariant (`assert_consistent`: every Granted ticket maps to a live permit) fires before the named test can observe anything, which would credit the invariant, not the test. Defence in depth also means a single edit cannot hand the waiter a dead permit id any more — `claim` re-checks the permit and answers Terminal(Released) — so what the test detects is the lost *reason* (Released instead of Reclaimed): the first layer's job."
@@ -100,6 +106,7 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_memory_epochs",
       "expect_failing_test": "stage_activity_keeps_a_lease_alive_through_the_sweep",
+      "expect_cofailures": ["a_zero_unit_stage_release_still_counts_as_activity"],
       "expect_message": "recent stage activity is activity"
     },
     {
@@ -124,7 +131,7 @@
       "package": "taskmesh",
       "test_target": "hardening_executor_protocol",
       "expect_failing_test": "an_awkward_class_never_panics_a_requested_stack_submission",
-      "expect_message": "null bytes"
+      "expect_message": "taskmesh.large_stack:a_b_c"
     },
     {
       "id": "acquisition-budget-ignored-on-immediate-admit",
@@ -148,19 +155,20 @@
       "package": "taskmesh",
       "test_target": "hardening_dispatch_resolution",
       "expect_failing_test": "a_stack_request_consumes_the_large_stack_capability_whatever_the_hint_says",
+      "expect_cofailures": ["the_requested_stack_async_path_shares_the_same_capability"],
       "expect_message": "a stack request must occupy the large-stack pool"
     },
     {
-      "id": "run-deadline-judged-from-the-timer-only",
+      "id": "run-deadline-starts-before-worker",
       "finding": "TM16-022",
-      "rationale": "An inline executor finishes the job before spawn returns, so a completion past the budget must be judged by the worker's own timestamps, not only by a racing timer.",
+      "rationale": "A nonblocking executor can accept a job before its worker begins. Its relative run budget must wait for the worker's start timestamp; anchoring expiry when the host begins awaiting the accepted job charges queue time as execution.",
       "file": "crates/taskmesh/src/runtime.rs",
-      "find": "                let expired = run_budget.is_some_and(|budget| {\n                    outcome\n                        .started_at\n                        .checked_add(budget)\n                        .is_some_and(|expires_at| outcome.completed_at >= expires_at)\n                });",
-      "replace": "                let expired = run_budget.is_some_and(|_budget| false);",
+      "find": "    let expiry = async {\n        match run_budget {\n            None => std::future::pending::<()>().await,\n            Some(budget) => match started_rx.await {",
+      "replace": "    let submitted_at = std::time::Instant::now();\n    let expiry = async {\n        match run_budget {\n            None => std::future::pending::<()>().await,\n            Some(budget) => match async { let _ = started_rx; Ok::<_, tokio::sync::oneshot::error::RecvError>(submitted_at) }.await {",
       "package": "taskmesh",
       "test_target": "hardening_deadline_custody",
-      "expect_failing_test": "an_inline_executor_cannot_report_a_late_result_as_success",
-      "expect_message": "did not meet it"
+      "expect_failing_test": "an_accepted_cpu_job_gets_its_full_run_budget_when_the_worker_starts",
+      "expect_message": "an accepted but unstarted job must not spend its run budget"
     },
     {
       "id": "capability-not-checked-at-admission",
@@ -197,6 +205,7 @@
       "package": "taskmesh-bench",
       "test_target": "lib",
       "expect_failing_test": "workload::tests::fast_equal_dwell_switching_converges_to_the_stationary_rate",
+      "expect_cofailures": ["workload::tests::asymmetric_dwells_weight_the_rate_by_occupancy"],
       "expect_message": "vs stationary"
     },
     {
@@ -209,6 +218,7 @@
       "package": "taskmesh-bench",
       "test_target": "lib",
       "expect_failing_test": "workload::tests::invalid_event_times_are_rejected_at_the_direct_api_too",
+      "expect_cofailures": ["workload::tests::invalid_event_times_are_rejected_by_the_parser_with_the_line"],
       "expect_message": "NonMonotonicSendTime"
     },
     {
@@ -221,6 +231,7 @@
       "package": "taskmesh-bench",
       "test_target": "lib",
       "expect_failing_test": "loadgen::tests::open_loop_waits_are_recorded_exactly_once",
+      "expect_cofailures": ["loadgen::tests::histogram_population_equals_started_requests_under_overload"],
       "expect_message": "right: Raw",
       "note": "The mode assertion precedes the population assertion in the test; either is the intended detection."
     },
@@ -234,6 +245,7 @@
       "package": "taskmesh-bench",
       "test_target": "lib",
       "expect_failing_test": "loadgen::tests::ops_are_distributed_exactly",
+      "expect_cofailures": ["loadgen::tests::a_contention_run_completes_exactly_the_requested_count"],
       "expect_message": "t="
     },
     {
@@ -258,6 +270,7 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_memory_epochs",
       "expect_failing_test": "estimated_reconcile_does_not_restore_released_stage_units",
+      "expect_cofailures": ["hybrid_floor_follows_the_remaining_reservation_not_the_original"],
       "expect_message": "reconcile must not re-reserve returned units"
     },
     {
@@ -294,6 +307,7 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_fairness_reference",
       "expect_failing_test": "drr_examines_each_runnable_class_once_per_selection",
+      "expect_cofailures": ["a_head_costing_many_quanta_is_served_without_walking_every_round"],
       "expect_message": "the bound is O(runnable classes), not O(cost/quantum)",
       "note": "Costs in the named test are finite (10_000 quanta) so this mutant terminates and is killed by the count, not by a timeout. The u32::MAX shape is covered by the bounded-wait test in the same file."
     },
@@ -530,6 +544,10 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_fairness_reference",
       "expect_failing_test": "a_head_blocked_on_another_capability_pool_does_not_hold_back_a_newcomer",
+      "expect_cofailures": [
+        "an_earlier_cross_pool_follower_runs_before_a_later_same_pool_newcomer",
+        "the_capability_exception_holds_inside_the_continuation_gap_too"
+      ],
       "expect_message": "must not wait for a capability-blocked head"
     },
     {
@@ -557,6 +575,7 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_fairness_reference",
       "expect_failing_test": "a_newcomer_of_another_class_also_waits_for_the_pending_continuation",
+      "expect_cofailures": ["a_reject_class_that_queues_on_memory_waits_for_the_pending_continuation_too"],
       "expect_message": "a queueable newcomer must wait for the pending pass"
     },
     {
@@ -569,6 +588,7 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_fairness_reference",
       "expect_failing_test": "a_reject_class_that_queues_on_memory_joins_its_queue_behind_a_runnable_head",
+      "expect_cofailures": ["a_reject_class_that_queues_on_memory_waits_for_the_pending_continuation_too"],
       "expect_message": "the class has a queue, so the newcomer joins it"
     },
     {
@@ -613,6 +633,7 @@
         "RUSTFLAGS": "--cfg shuttle"
       },
       "expect_failing_test": "randomized_gap_arrivals_queue_behind_runnable_heads",
+      "expect_cofailures": ["randomized_only_unqueueable_work_overtakes_in_the_gap"],
       "expect_message": "no continuation is owed after the drain: direct admit expected"
     },
     {
@@ -705,6 +726,7 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_fairness_reference",
       "expect_failing_test": "drr_selection_matches_the_reference_for_heterogeneous_costs",
+      "expect_cofailures": ["residual_credit_kept_through_a_capacity_block_is_spent_on_the_first_visit_back"],
       "expect_message": "heterogeneous-cost DRR order must equal the reference walk"
     },
     {
@@ -770,6 +792,7 @@
       "package": "taskmesh-contract",
       "test_target": "snapshot_oracle",
       "expect_failing_test": "a_capability_pool_cannot_exceed_its_limit",
+      "expect_cofailures": ["a_snapshot_reports_the_violating_class_by_name"],
       "expect_message": "an over-occupied pool must be reported"
     },
     {
@@ -811,18 +834,14 @@
     {
       "id": "abandoning-a-queued-ticket-never-promotes",
       "finding": "R3B-P3-5",
-      "rationale": "Abandoning a queued ticket changes the queue shape (a blocked head may leave a runnable one behind it); skipping the promotion pass strands that work. Only the differential model observes it: every other test abandons tails or heads with nothing runnable behind them.",
+      "rationale": "Abandoning a queued head during the bounded promotion continuation gap must promote a runnable follower before returning. The first waiter's re-entrant waker observes that synchronous postcondition before the outer promotion pass can resume and hide a missing abandon-local pass.",
       "file": "crates/taskmesh-engine/src/engine/governor.rs",
       "find": "                    fairness::on_queue_changed(&mut state, &class);\n                    let pass = self.promote(&mut state, now);\n                    effects.absorb(pass);",
       "replace": "                    fairness::on_queue_changed(&mut state, &class);",
       "package": "taskmesh-engine",
-      "test_target": "differential_model",
-      "expect_failing_test": "engine_agrees_with_the_reference_model",
-      "expect_message": "step ",
-      "note": "The differential test labels every disagreement `step N: <what>`; the shrunk counterexample converges to the same minimal case (`class a inflight`) but its step number is seed-dependent, so the message pins only the label shape. 2,048 cases (the test's own default is 1,024) leave the probability of not generating an 'abandon a blocked head with runnable work behind it' sequence negligible: at 256 cases the mutant survived roughly one run in three.",
-      "env": {
-        "PROPTEST_CASES": "2048"
-      }
+      "test_target": "hardening_fairness_reference",
+      "expect_failing_test": "abandoning_a_queued_head_promotes_its_runnable_follower_before_returning",
+      "expect_message": "abandon must promote the runnable follower before returning from the waker"
     },
     {
       "id": "self-reporting-gate-passes-on-exit-zero-alone",
@@ -1012,6 +1031,10 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_close_admission",
       "expect_failing_test": "a_closed_governor_refuses_before_the_class_is_looked_up_and_charges_nothing",
+      "expect_cofailures": [
+        "a_fresh_governor_is_open_and_closing_is_one_way",
+        "work_held_at_close_still_promotes_claims_and_releases_to_zero"
+      ],
       "expect_message": "a closed governor must refuse with RuntimeUnavailable"
     },
     {
@@ -1059,6 +1082,13 @@
       "package": "taskmesh",
       "test_target": "hardening_drain",
       "expect_failing_test": "every_submission_path_is_refused_before_admission_once_draining",
+      "expect_cofailures": [
+        "a_held_blocking_worker_makes_drain_report_not_drained_and_stay_charged",
+        "abandoning_an_unclaimed_promotion_is_a_custody_return_the_drain_hears",
+        "an_idle_runtime_drains_at_once_and_stays_draining",
+        "no_submission_is_admitted_after_is_draining_became_observable",
+        "queued_and_inflight_work_finish_before_drain_reports_ok"
+      ],
       "expect_message": "must be refused with RuntimeUnavailable once draining"
     },
     {
@@ -1098,6 +1128,11 @@
       "package": "taskmesh",
       "test_target": "hardening_drain",
       "expect_failing_test": "a_held_blocking_worker_makes_drain_report_not_drained_and_stay_charged",
+      "expect_cofailures": [
+        "a_waiting_drain_yields_its_thread_instead_of_spinning",
+        "abandoning_an_unclaimed_promotion_is_a_custody_return_the_drain_hears",
+        "not_drained_lists_each_class_with_its_own_inflight_and_queued_counts"
+      ],
       "expect_message": "a held worker must make drain report NotDrained"
     },
     {
@@ -1111,6 +1146,12 @@
       "package": "taskmesh",
       "test_target": "hardening_drain",
       "expect_failing_test": "a_held_blocking_worker_makes_drain_report_not_drained_and_stay_charged",
+      "expect_cofailures": [
+        "a_waiting_drain_yields_its_thread_instead_of_spinning",
+        "abandoning_an_unclaimed_promotion_is_a_custody_return_the_drain_hears",
+        "no_submission_is_admitted_after_is_draining_became_observable",
+        "queued_and_inflight_work_finish_before_drain_reports_ok"
+      ],
       "expect_message": "the drain gave up after"
     },
     {
@@ -1137,6 +1178,7 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_lease_token",
       "expect_failing_test": "a_plain_release_cannot_end_a_dispatched_permit",
+      "expect_cofailures": ["the_sweep_leaves_a_leased_permit_to_its_lease"],
       "expect_message": "a plain release must not end a dispatched permit"
     },
     {
@@ -1150,6 +1192,7 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_lease_token",
       "expect_failing_test": "a_forged_token_is_refused_and_changes_nothing",
+      "expect_cofailures": ["a_token_from_another_governor_is_not_this_permits_lease"],
       "expect_message": "a token whose nonce is not the permit's lease must not release it"
     },
     {
@@ -1163,6 +1206,7 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_lease_token",
       "expect_failing_test": "only_the_first_advance_mints_the_lease",
+      "expect_cofailures": ["a_plain_release_cannot_end_a_dispatched_permit"],
       "expect_message": "only the first advance mints a lease; a later one must not reissue it"
     },
     {
@@ -1202,6 +1246,12 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_nested_wait",
       "expect_failing_test": "an_awaited_child_blocked_only_by_its_own_root_is_refused_not_queued",
+      "expect_cofailures": [
+        "a_capability_pool_held_only_by_the_root_is_a_cycle_across_classes",
+        "a_cpu_budget_held_only_by_the_root_is_a_cycle",
+        "a_memory_budget_held_only_by_the_root_is_a_cycle_whether_the_class_queues_or_sheds",
+        "a_shedding_class_reports_the_cycle_rather_than_a_retry_hint"
+      ],
       "expect_message": "a declared cycle must be refused as NestedWaitCycle, not queued or shed"
     },
     {
@@ -1241,6 +1291,7 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_nested_wait",
       "expect_failing_test": "capacity_shared_with_a_stranger_is_a_wait_not_a_cycle",
+      "expect_cofailures": ["capacity_shared_with_a_sibling_is_a_wait_not_a_cycle"],
       "expect_message": "a wait that can end must queue"
     },
     {
@@ -1341,11 +1392,11 @@
       "package": "taskmesh-engine",
       "test_target": "hardening_nested_wait",
       "id": "nested-wait-counts-the-root-toward-a-pool-it-does-not-hold",
-      "rationale": "Found by the objective delta sweep: counting every root permit toward the pool (not only those occupying it) turns 'a stranger fills the pool' into a cycle whenever the root runs anywhere else.",
+      "rationale": "A root holding one slot of a full two-slot pool cannot by itself cause an awaited-child cycle; a stranger owns the other slot and can release. Treating any root-held portion as the whole blocker rejects a wait that can end.",
       "find": "        if by_parent > 0 && state.capability_in_use(id) == by_parent {",
-      "replace": "        if state.capability_in_use(id) == by_parent {",
-      "expect_failing_test": "a_root_that_holds_none_of_the_pool_is_not_what_the_child_waits_for",
-      "expect_message": "child behind a stranger's pool slot: a wait that can end must queue"
+      "replace": "        if by_parent > 0 && state.capability_in_use(id) >= by_parent {",
+      "expect_failing_test": "a_pool_cpu_or_memory_budget_shared_with_a_stranger_is_a_wait_not_a_cycle",
+      "expect_message": "pool shared with a stranger: a wait that can end must queue"
     }
   ]
 }

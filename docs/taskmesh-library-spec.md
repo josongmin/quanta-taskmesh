@@ -17,8 +17,10 @@ but `serde`.
 ## Contract Highlights
 
 1. `TaskSpec`
-   - root operation id, stage descriptors (with `fan_out` + reduce policy)
-   - product-neutral source/reason
+   - root operation id, exact immediate parent operation id for every child,
+     stage descriptors (with `fan_out` + reduce policy)
+   - product-neutral bounded `PlanSource` string/reason; legacy product strings round-trip
+     during the 0.2 migration window, but the former `Copy` exhaustive enum is gone
 2. `ClassPolicy`
    - fairness, memory mode/release/overcommit, overflow, retry-after, checkpoint
 3. `AdmissionVerdict`
@@ -82,6 +84,10 @@ budget expired is unwound, not started. `Duration::ZERO` keeps its
    activity (the sweep's staleness clock restarts at the claim). `release`
    returns `ReleaseOutcome` (`#[must_use]`): `UnknownPermit` is a double release
    or a reclaimed lease, never a silent no-op
+4c.1. memory reporters use `MeasurementSequence::checked_next`; implicit
+   `reconcile_memory` and explicit `reconcile_memory_at` both return typed
+   `ReconcileOutcome`. `EpochExhausted` at `u64::MAX` cannot be retried for that
+   permit, does not change held memory/activity, and still requires permit release
 4d. in-class FIFO across the promotion budget: a pass grants at most
    `PROMOTION_BUDGET`, checks the budget *before* selecting (so no class is
    charged for a dispatch that is not made), and a newcomer that fits while an
@@ -94,18 +100,25 @@ budget expired is unwound, not started. `Duration::ZERO` keeps its
    `WorkerPanicked` / `WorkerUnavailable` (never started) / `JobAbandoned`; a
    lease the leak sweep reclaimed before dispatch → `LeaseReclaimed`
 4g. `CpuExecutor::capabilities()` is load-bearing: `Builder::build` refuses an
-   adapter whose `declared_workers` is below the resolved `cpu` gate
-   (`TopologyError::ExecutorDeclaresFewerWorkers`); `TokioRuntime::executor_capabilities()`
-   exposes the declaration (Rayon: real thread count, exclusive unless
-   `with_pool`; Tokio blocking pool: workers unknown, shared)
+   adapter whose declaration is blocking/legacy, whose physical domain or worker
+   count is unknown, or whose declared count differs from the actual executor.
+   `TokioRuntime::executor_capabilities()` exposes the installed declaration.
+   `physical.shared_blocking`, `physical.cpu`, and `physical.dedicated` are
+   finite engine-governed domains; CPU fallback, blocking and maintenance work
+   sharing one executor consume the same physical bound. Rayon `try_new` and
+   `try_from_topology` return typed `RayonBuildError`; deprecated constructors
+   retain the old panic behavior only for migration
 4e. concurrency proofs run the production `Governor`: under `--cfg loom
    --features loom` / `--cfg shuttle --features shuttle` the engine's `sync`
    seam swaps its mutex and atomics for the checker's, and
    `tests/loom_governance.rs` (exhaustive) / `tests/shuttle_governance.rs`
    (randomized) drive `admit`/`claim`/`abandon`/`release`/`reap_leaks`/
    `reconcile_memory` directly
-5. composite root attribution + recursive-admission guard (keyed on the child's
-   authoritative declared `parent_stage`, not its substrate)
+5. composite root attribution + exact immediate-parent operation identity;
+   duplicate active `(root, operation)` rejects before state change. Declared
+   awaited-child cycles are checked against all current blockers at intake and
+   again during promotion; independently releasable sibling/stranger capacity
+   remains reversible. Undeclared waits cannot be inferred from a closure
 6. deterministic reduce enforcement for fan-out stages (rejected at admission)
 7. snapshot + substrate inventory SSOT (built-ins seeded at `PolicySet::new`, so
    every governor — direct or host-built — has an authoritative inventory)

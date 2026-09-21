@@ -115,6 +115,9 @@ def create_isolated_campaign(repo: Path, *, parent: Path | None = None) -> Isola
     repo = repo.resolve()
     head = git_head(repo)
     paths = git_source_paths(repo)
+    tracked = subprocess.run(
+        ["git", "ls-files", "--cached", "-z"], cwd=repo, capture_output=True, check=True
+    ).stdout
     before = tree_digest(repo, paths)
     dirty = git_dirty(repo)
     campaign_id = uuid.uuid4().hex
@@ -136,6 +139,23 @@ def create_isolated_campaign(repo: Path, *, parent: Path | None = None) -> Isola
                 shutil.copy2(original, snapshot_path, follow_symlinks=False)
             else:
                 raise RuntimeError(f"git-visible source path is missing or unsupported: {relative}")
+        # The snapshot includes non-ignored untracked source too, but gates
+        # must still distinguish it from committed files. Recreate only git's
+        # tracked-file index locally; copying sources without an index makes
+        # inventory tests fail before a mutation reaches its intended oracle.
+        subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+        subprocess.run(
+            ["git", "add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"],
+            cwd=source,
+            input=tracked,
+            capture_output=True,
+            check=True,
+        )
+        snapshot_tracked = subprocess.run(
+            ["git", "ls-files", "--cached", "-z"], cwd=source, capture_output=True, check=True
+        ).stdout
+        if snapshot_tracked != tracked:
+            raise RuntimeError("isolated snapshot tracked-file index differs from source")
         target.mkdir()
         current_paths = git_source_paths(repo)
         after_copy = tree_digest(repo, current_paths)

@@ -217,6 +217,20 @@ pub enum TerminalReason {
     },
 }
 
+impl From<TerminalReason> for taskmesh_contract::TerminalReason {
+    fn from(reason: TerminalReason) -> Self {
+        match reason {
+            TerminalReason::Reclaimed => Self::Reclaimed,
+            TerminalReason::Released => Self::Released,
+            TerminalReason::Abandoned => Self::Abandoned,
+            TerminalReason::ClaimDeliveryFailed => Self::ClaimDeliveryFailed,
+            TerminalReason::IrreversibleWaitCycle { held_by_parent } => {
+                Self::IrreversibleWaitCycle { held_by_parent }
+            }
+        }
+    }
+}
+
 /// Lifecycle position of a ticket. Exactly one variant holds at any time.
 #[derive(Debug, Clone)]
 pub enum TicketState {

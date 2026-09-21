@@ -1,0 +1,76 @@
+name: release-qualification
+
+# Explicit main-only release decision. A PR or ordinary CI success does not
+# authorize a version or a release. The source SHA of a downloaded ordinary
+# receipt is checked against this checkout by tools/release/receipt.py.
+on:
+  workflow_dispatch:
+    inputs:
+      qualification_run_id:
+        description: Exact CI run ID that uploaded qualification-receipt
+        required: true
+        type: string
+      adjudication_json:
+        description: Reviewer-supplied final-SHA-bound JSON; empty keeps release NOT_QUALIFIED
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
+      - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+      - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
+        with:
+          tool: cargo-semver-checks@0.50.0
+      - name: Four-crate semver audit
+        run: just semver-release
+      - name: Execute exact 23-finding regression witnesses
+        if: always()
+        run: python3 tools/release/finding_proof.py --out target/release/finding-proof
+        continue-on-error: true
+      - name: Import exact-source CI qualification artifact
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUALIFICATION_RUN_ID: ${{ inputs.qualification_run_id }}
+        run: gh run download "${QUALIFICATION_RUN_ID}" --name qualification-receipt --dir .
+        continue-on-error: true
+      - name: Materialize reviewer-supplied adjudication
+        if: inputs.adjudication_json != ''
+        env:
+          REVIEW_JSON: ${{ inputs.adjudication_json }}
+        run: |
+          mkdir -p target/release/input
+          printf '%s' "$REVIEW_JSON" > target/release/input/adjudication.json
+      - name: Collect release decision even after missing upstream evidence
+        if: always()
+        run: python3 tools/release/receipt.py collect --ordinary receipt.json --semver target/release/semver/semver-manifest.json --adjudication target/release/input/adjudication.json --out target/release/release-receipt.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: release-qualification-receipt
+          path: |
+            target/release
+            receipt.json
+            receipt.gates.json
+            receipt.producers.json
+            receipt.mutations.json
+            receipt.generated-mutations.json
+            target/sep21/v02/curated
+            target/sep21/v02/generated
+            target/sep21/v03/fuzz/local
+            target/modelcheck
+            target/iai
+            target/coverage

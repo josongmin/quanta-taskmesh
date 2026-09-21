@@ -20,6 +20,32 @@ use taskmesh_engine::{
     AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome, TerminalReason,
 };
 
+#[test]
+fn engine_terminal_reasons_preserve_the_public_contract_reason() {
+    use taskmesh_contract::{HeldCapacity, TerminalReason as ContractTerminalReason};
+
+    let cases = [
+        (TerminalReason::Reclaimed, ContractTerminalReason::Reclaimed),
+        (TerminalReason::Released, ContractTerminalReason::Released),
+        (TerminalReason::Abandoned, ContractTerminalReason::Abandoned),
+        (
+            TerminalReason::ClaimDeliveryFailed,
+            ContractTerminalReason::ClaimDeliveryFailed,
+        ),
+        (
+            TerminalReason::IrreversibleWaitCycle {
+                held_by_parent: HeldCapacity::CpuBudget,
+            },
+            ContractTerminalReason::IrreversibleWaitCycle {
+                held_by_parent: HeldCapacity::CpuBudget,
+            },
+        ),
+    ];
+    for (engine, contract) in cases {
+        assert_eq!(ContractTerminalReason::from(engine), contract);
+    }
+}
+
 fn gov(policy: ClassPolicy) -> (Governor, Arc<ManualClock>, TaskClass) {
     let class = TaskClass::new("c");
     let mut classes = BTreeMap::new();

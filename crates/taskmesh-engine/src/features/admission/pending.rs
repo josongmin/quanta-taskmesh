@@ -110,7 +110,8 @@ pub fn blockers_for(
     blockers
 }
 
-pub(crate) struct AssessmentRequest<'a> {
+#[derive(Clone, Copy)]
+pub struct AssessmentRequest<'a> {
     pub spec: &'a TaskSpec,
     pub class: &'a TaskClass,
     pub max_inflight: u32,
@@ -119,7 +120,7 @@ pub(crate) struct AssessmentRequest<'a> {
     pub queued_behind: bool,
 }
 
-pub(crate) fn assess(
+pub fn assess(
     state: &GovernedState,
     policies: &PolicySet,
     request: AssessmentRequest<'_>,
@@ -161,6 +162,7 @@ pub fn assess_pending(
     )
 }
 
+#[derive(Clone, Copy)]
 struct ScopeAssessment<'a> {
     root_operation_id: &'a str,
     scope: &'a TaskScope,

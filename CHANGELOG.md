@@ -15,6 +15,79 @@ entries cite the decision (`D..`) or audit finding (`TM16-..`) they implement.
 The public surface a downstream consumer depends on is the `taskmesh` crate
 (everyday SDK) and `taskmesh::ext` (direct engine embedding, custom adapters).
 
+## Unreleased — SEP-21 candidate (NOT_QUALIFIED)
+
+The workspace manifest still says `0.2.0`; this section is not a 0.2.0
+release or a selected successor version. The immutable compatibility baseline
+is the 0.2.0 release commit `39bee682d7daa1efaf1c10993ba6221fd0a90871`
+(no tag). Version, human API/wire/behavior adjudication, full generated mutation
+quality, and hosted exact-source release receipt remain pending. See
+`tools/release/release-policy.json` and `docs/release-checklist.md`.
+
+### Breaking changes and migration
+
+- **Composite lineage (C01/E04).** The two-argument
+  `child_of(root, parent_stage)` / `awaited_child_of(root, parent_stage)`
+  builders are replaced with `(root, immediate_parent_operation, parent_stage)`.
+  Before: `.awaited_child_of("root", TaskStage::new("stage"))`.
+  After: `.awaited_child_of("root", "parent-operation", TaskStage::new("stage"))`.
+  The child `TaskScope` JSON now requires `parent_operation_id`; old child
+  payloads without it reject instead of guessing. Duplicate active
+  `(root, operation)` and duplicate/conflicting stage descriptors reject
+  before admission. A declared wait cycle is assessed against all blockers
+  and re-assessed at promotion; unrelated siblings/strangers remain reversible.
+- **Provenance API/wire (C01).** The `Copy` product enum `PlanSource` is now an
+  opaque bounded, non-`Copy` value: use `PlanSource::new("consumer.key")?`
+  or `PlanSource::INTERNAL`, not exhaustive product-variant matches. Legacy
+  strings still deserialize and serialize unchanged during the 0.2 migration
+  window; invalid/empty/oversize strings reject. This is a Rust source break,
+  not a blanket wire break for valid legacy strings.
+- **Capability authority (E01/H03).** Raw unknown/empty capability names no
+  longer default to ungated admission. Resolve registry-issued handles under
+  the same policy before admission; a foreign/unknown handle rejects without
+  state change. Host dispatch freezes all physical and semantic capability
+  requirements in one plan. `physical.shared_blocking`, `physical.cpu`, and
+  `physical.dedicated` have finite limits; mixed blocking/CPU fallback work
+  sharing an executor consumes one physical bound. Custom executors must
+  declare nonblocking submit, physical domain and exact worker count.
+- **Memory result (E03).** Before:
+  `if governor.reconcile_memory(permit, bytes) { /* applied */ }`.
+  After: `match governor.reconcile_memory(permit, bytes) {
+  ReconcileOutcome::Applied { .. } => {},
+  ReconcileOutcome::EpochExhausted { .. } => { /* release permit; no retry */ },
+  _ => {} }`. Explicit `reconcile_memory_at` remains typed. `MeasurementSequence`
+  increments checked; an exhausted permit does not change held memory or
+  activity time and must still be released. Consumers matching
+  `ReconcileOutcome` should handle exhaustion distinctly from stale samples.
+- **Dispatch/admission behavior (H01/H02).** Invalid requested stack size now
+  fails preflight before worker creation or engine admission; a valid size
+  followed by OS spawn failure remains a distinct typed outcome. Immediate
+  and queued acquisition use one handoff arbiter. Cancel wins a tie, then
+  absolute deadline, then relative timeout; equality is expired. Relative
+  `Duration::ZERO` is try-once but cannot suppress an expired absolute
+  CompleteBy. A rejected handoff returns the unstarted permit exactly once.
+- **Rayon constructors (H03).** `RayonCpuExecutor::new(n)` and
+  `from_topology(&topology)` remain deprecated panic wrappers. Move fail-closed
+  callers to `try_new(n)?` / `try_from_topology(&topology)?`; they return typed
+  `RayonBuildError::{ZeroWorkers, InvalidTopology, Pool}`. No second engine
+  worker pool is introduced.
+
+### Verification status
+
+- Product tickets C01, E01–E04, H01–H03 have owner-local tests. V01 shared
+  receipt integration and V02 mutation producer are implemented but not
+  hosted/full-denominator qualified. V03 producer has local semantic fuzz and
+  model evidence; hosted replay remains separate.
+- The exact `1378383` local `taskmesh-rayon` generated subset had 10 planned:
+  5 caught, 0 missed, 5 unviable, 0 timeout/equivalent. This is **FAIL** under
+  the current generated quality rule, not a workspace score. One unviable
+  `try_new -> Ok(Default::default())` replacement cannot compile because the
+  executor intentionally has no `Default`. Full workspace generated results
+  remain NOT_RUN for this candidate.
+- Coverage is descriptive, not a correctness threshold. Line/region/function/
+  instantiation percentages and collected state are preserved separately;
+  branch/MCDC count zero is `NOT_COLLECTED`, not 0% coverage.
+
 ## [0.2.0] - 2026-09-18
 
 ### Added
@@ -404,7 +477,10 @@ loop {
         ClaimOutcome::Ready(permit) => break Ok(permit),
         ClaimOutcome::Pending => waker.notified().await,
         ClaimOutcome::Terminal(reason) => {
-            break Err(GovernorError::TicketClaimTerminated { ticket, reason })
+            break Err(GovernorError::TicketClaimTerminated {
+                ticket,
+                reason: reason.into(),
+            })
         }
         ClaimOutcome::Invalid => break Err(GovernorError::InvalidTicketClaim { ticket }),
     }

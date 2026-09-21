@@ -173,6 +173,15 @@ modelcheck:
 coverage-report:
     bash tools/coverage/report.sh
 
+# Release-only compatibility audit against the immutable 0.2.0 release commit.
+# This is not in ordinary `proof`: a current-source hosted receipt and explicit
+# API/wire/behavior adjudication are separate inputs to the release decision.
+semver-release:
+    python3 tools/release/semver.py --out target/release/semver
+
+release-receipt:
+    python3 tools/release/receipt.py collect --out target/release/release-receipt.json
+
 # Full proof surface: every gate in tools/gates/required.json — `gate`, the
 # feature `matrix`, and the heavy rails — so a green `proof` locally is the
 # same set of checks CI requires. tools/gates/validate_inventory.py verifies

@@ -151,6 +151,27 @@ def test_pytest_failure_reason_is_scoped_to_the_expected_test() -> None:
     )
 
 
+def test_a_long_pytest_failure_header_keeps_its_assertion_reason() -> None:
+    name = "test_a_long_pytest_failure_header_keeps_its_assertion_reason"
+    reason = "a long pytest header lost its assertion reason"
+    mutation = {
+        **MUT,
+        "runner": "pytest",
+        "test_target": f"x.py::{name}",
+        "expect_failing_test": name,
+        "expect_message": reason,
+    }
+    # Pytest shortens a long test's failure header to two underscores. The
+    # summary intentionally omits the assertion reason, so only the scoped
+    # header block can establish that this mutation was actually killed.
+    output = (
+        f"__ {name} __\nE AssertionError: {reason}\n"
+        "=========================== short test summary info ============================\n"
+        f"FAILED x.py::{name} - AssertionError\n1 failed in 0.1s\n"
+    )
+    assert rm.evaluate(mutation, process(output, exit_code=1))[0] == "KILLED", reason
+
+
 def test_cargo_failure_reason_supports_module_qualified_test_names() -> None:
     mutation = {
         **MUT,
@@ -256,6 +277,7 @@ def test_snapshot_copies_only_git_visible_paths_and_preserves_symlink(tmp_path: 
     (tmp_path / "ignored.txt").write_text("not-bound", encoding="utf-8")
     (tmp_path / "ignored-dir").mkdir()
     (tmp_path / "ignored-dir/secret").write_text("not-bound", encoding="utf-8")
+    (tmp_path / "visible-untracked.rs").write_text("untracked", encoding="utf-8")
 
     campaign = rm.create_isolated_campaign(tmp_path)
     try:
@@ -264,6 +286,21 @@ def test_snapshot_copies_only_git_visible_paths_and_preserves_symlink(tmp_path: 
         assert (campaign.source / "link.rs").is_symlink()
         assert os.readlink(campaign.source / "link.rs") == "src.rs"
         assert sorted(campaign.source_paths) == campaign_module.git_source_paths(tmp_path)
+        snapshot_tracked = subprocess.run(
+            ["git", "ls-files", "--cached", "-z"],
+            cwd=campaign.source,
+            capture_output=True,
+            check=True,
+        ).stdout
+        original_tracked = subprocess.run(
+            ["git", "ls-files", "--cached", "-z"],
+            cwd=tmp_path,
+            capture_output=True,
+            check=True,
+        ).stdout
+        assert snapshot_tracked == original_tracked
+        assert (campaign.source / "visible-untracked.rs").is_file()
+        assert b"visible-untracked.rs" not in snapshot_tracked
     finally:
         campaign.cleanup()
 

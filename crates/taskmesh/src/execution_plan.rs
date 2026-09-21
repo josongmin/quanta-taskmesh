@@ -187,7 +187,9 @@ impl ValidatedDispatchPlan {
                 ));
             }
             (DispatchKind::BlockingPool, Some(_)) => {
-                unreachable!("a blocking-family stack request resolves to a dedicated thread")
+                return Err(GovernorError::PolicyViolation(
+                    "requested stack size cannot use pooled blocking dispatch".into(),
+                ));
             }
             (_, None) => None,
         };

@@ -2,8 +2,10 @@
 
 ## Proof gate (must be green)
 
-The gate set is `tools/gates/inventory.json`; the required subset is
-`tools/gates/required.json`. Run them through `just` — the same recipes CI runs:
+The ordinary gate set is `tools/gates/inventory.json`; the ordinary required subset is
+`tools/gates/required.json`. Release-only requirements are independently pinned in
+`tools/release/release-required.json`. An ordinary `QUALIFIED` receipt is a necessary
+input, not a release verdict. Run the registered recipes through `just`:
 
 - [ ] `just gate` — fmt-check, strict clippy (3 passes), test, deny, semgrep
       (real integration tests enrolled), architecture checker, py-lint, py-test,
@@ -12,7 +14,12 @@ The gate set is `tools/gates/inventory.json`; the required subset is
 - [ ] `just mutants-critical` — curated single-edit inventory의 non-control 104개가
       KILLED이고 control 1개가 CONTROL_GREEN인지 확인한다. 이것은 cargo-mutants
       전체 생성 sweep의 score가 아니다.
+- [ ] `just mutants-generated` — full current-source cargo-mutants workspace sweep.
+      planned/executed/categorized IDs가 완전히 일치하고 baseline이 green이어야 한다.
+      missed/unviable/timeout/equivalent 중 하나라도 있으면 현재 ordinary quality gate는
+      FAIL이다. `REPORTED`는 denominator disclosure일 뿐 quality PASS가 아니다.
 - [ ] `just loom` / `just shuttle`
+- [ ] `just modelcheck` — bounded Loom/Shuttle run identity와 독립 clean-process replay.
 - [ ] `just tsan` — `status=CLEAN` (ThreadSanitizer over the production engine and
       host concurrency tests; needs nightly + rust-src, otherwise NOT_RUN which is
       not a pass)
@@ -36,10 +43,8 @@ The gate set is `tools/gates/inventory.json`; the required subset is
       re-derives the source identity (digest, HEAD, dirtiness) and the receipt's
       internal consistency; it does not re-run gates. The receipt of record is
       the one `collect` produced on that checkout — never a file handed over
-      for `validate` alone. The machine-readable `generated_mutation_sweep` must
-      say `NOT_RUN` and `included_in_qualification: false`; a curated mutation
-      PASS never implies a generated cargo-mutants score. The generated sweep
-      remains a separate campaign.
+      for `validate` alone. `mutants-critical` and `mutants-generated` are separate
+      required denominators. A curated PASS never implies a generated score.
 - [ ] hell-gate e2e: `crates/taskmesh/tests/e2e_proof.rs`, `e2e_scenarios.rs`
 
 ## Invariant proofs
@@ -64,7 +69,7 @@ The gate set is `tools/gates/inventory.json`; the required subset is
   after each step and quiescence at the end; the policy / topology / builder
   front doors; the JSON wire formats. `just fuzz-check` keeps the targets
   compiling on stable. NOT_RUN without nightly + cargo-fuzz; only
-  `taskmesh-fuzz status=CLEAN` is PASS.
+  `taskmesh-fuzz status=PASS` with all target-specific semantic witnesses is PASS.
 - Mutation gate: 105 curated entries — 104 single-edit fault probes
   (90 cargo incl. 3 shuttle-model targets and 1 differential-model target, 15 pytest
   against the Python tooling and the bench workflow scripts), each killed by its named regression for its named
@@ -98,7 +103,8 @@ The gate set is `tools/gates/inventory.json`; the required subset is
 
 ## API & docs sync
 
-- [ ] Public type names unchanged: `TaskSpec`, `TaskClass`, `TaskStage`,
+- [ ] Public type names and signatures diffed/adjudicated against the immutable baseline:
+      `TaskSpec`, `TaskClass`, `TaskStage`,
       `SubstrateHint`, `AdmissionVerdict`, `GovernorError`, `RunError`,
       `Snapshot`, `SubstrateRecord`, `Runtime`.
 - [ ] Zero placeholder public types.
@@ -123,14 +129,18 @@ The gate set is `tools/gates/inventory.json`; the required subset is
 
 ## Semver gate
 
-- [ ] `cargo semver-checks check-release -p <crate> --baseline-rev <last release>`
-      for each library crate (`taskmesh-contract`, `taskmesh-engine`, `taskmesh`,
-      `taskmesh-rayon`), with `--default-features` (the consumer surface; the
-      baseline may lack newer optional features). Pass
-      `--release-type minor` while the major is `0` so every *major*-level
-      finding is listed instead of being waived by the 0.x bump. Every finding
-      must map to a CHANGELOG entry; the raw output is kept with the release
-      notes.
+- [ ] Version decision: `tools/release/release-policy.json` names immutable
+      `39bee682d7daa1efaf1c10993ba6221fd0a90871` (the 0.2.0 release commit;
+      there is no tag) as baseline but leaves `candidate_version` and reviewer
+      `PENDING`. Do not infer a version from a green test or silently reuse 0.2.0.
+- [ ] `just semver-release` runs pinned `cargo-semver-checks 0.50.0` separately for
+      `taskmesh-contract`, `taskmesh-engine`, `taskmesh`, and `taskmesh-rayon`,
+      `--default-features --release-type minor --baseline-rev <full SHA>`. It
+      requires a clean candidate and records exact command/exit/tool/source and
+      crate-specific stdout/stderr digests in `target/release/semver/`.
+      Exit `0` means CLEAN, `100` means deny-level findings requiring human
+      mapping, and `101`/timeout/tool errors fail. Completed four-crate audits
+      are REPORTED, not automatically release-compatible.
 - [ ] Reconcile the tool's blind spots by hand: `cargo-semver-checks` does not
       compare types, so a changed return type, a widened field (`u32 → u128`),
       a serde representation change, or a behavioural change (a verdict that
@@ -139,6 +149,31 @@ The gate set is `tools/gates/inventory.json`; the required subset is
       the contract tests (`crates/*/tests/hardening_*.rs`) for behaviour. The
       `taskmesh` facade is all re-exports, which the tool does not follow — a
       clean facade report says nothing about the surface consumers use.
+      Use tracked `tools/release/adjudication.json` only as a non-approving
+      template. Submit a reviewer-owned copy as the manual release workflow's
+      `adjudication_json` input; the workflow stores it under ignored
+      `target/release/input/adjudication.json`. Bind every item to the final
+      candidate SHA,
+      with explicit decision, reviewer and CHANGELOG anchor for every accepted break.
+      The reviewer must bind each crate's stdout/stderr digest, attest all tool
+      findings were reviewed, and map each exit-100 finding via an exact raw
+      locator to an approved break item. Omitted findings are a human review
+      failure; this raw-text tool has no complete machine finding list.
+- [ ] Download the hosted `qualification-receipt` artifact from an exact-source CI
+      run and execute `python3 tools/release/receipt.py collect`. The independent
+      release receipt revalidates the ordinary 26-gate receipt, four-crate semver
+      raw outputs, all 23 finding/ticket links, coverage and Linux IAI raw
+      digests. Missing/NOT_RUN/SKIPPED/TIMEOUT, dirty or stale source, unapproved
+      version or behavior break yield `NOT_QUALIFIED`. The `release.yml` workflow
+      is manual and main-only; no PR check auto-approves a release.
+- [ ] The manual release job also runs `tools/release/finding_proof.py` from the
+      clean final source. Its tracked 23-finding spec names an actual negative
+      or regression test for each finding; each selected test must execute
+      exactly once and pass. The receipt checks complete stdout/stderr digests,
+      test-source bytes, ordinary required gate linkage and before/after source
+      identity. This is machine execution evidence, not a human approval or a
+      substitute for the ordinary hosted receipt. Missing final-source output
+      keeps A06 `NOT_QUALIFIED`.
 - [ ] `just consumer-msrv` PASS after the fixture in `tools/consumer-msrv`
       has been extended to exercise every migrated shape named in the
       CHANGELOG (it *runs* and fails loudly on a wrong outcome).

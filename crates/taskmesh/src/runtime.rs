@@ -42,7 +42,6 @@ use taskmesh_contract::{
 };
 use taskmesh_engine::{
     AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId, ReleaseOutcome,
-    TerminalReason as EngineTerminalReason,
 };
 use tokio::sync::oneshot;
 use tokio::time::Instant;
@@ -222,7 +221,7 @@ impl TokioRuntime {
                     )),
                     ClaimOutcome::Terminal(reason) => Err(GovernorError::TicketClaimTerminated {
                         ticket,
-                        reason: terminal_reason(reason),
+                        reason: reason.into(),
                     }),
                     ClaimOutcome::Invalid => Err(GovernorError::InvalidTicketClaim { ticket }),
                 };
@@ -235,7 +234,7 @@ impl TokioRuntime {
                 ClaimOutcome::Terminal(reason) => {
                     return Err(GovernorError::TicketClaimTerminated {
                         ticket,
-                        reason: terminal_reason(reason),
+                        reason: reason.into(),
                     });
                 }
                 ClaimOutcome::Invalid => return Err(GovernorError::InvalidTicketClaim { ticket }),
@@ -795,20 +794,6 @@ fn plan_supports_absolute_deadline(plan: &ValidatedDispatchPlan) -> bool {
         DispatchKind::BlockingPool
         | DispatchKind::CpuExecutor
         | DispatchKind::DedicatedStackThread => false,
-    }
-}
-
-fn terminal_reason(reason: EngineTerminalReason) -> taskmesh_contract::TerminalReason {
-    match reason {
-        EngineTerminalReason::Reclaimed => taskmesh_contract::TerminalReason::Reclaimed,
-        EngineTerminalReason::Released => taskmesh_contract::TerminalReason::Released,
-        EngineTerminalReason::Abandoned => taskmesh_contract::TerminalReason::Abandoned,
-        EngineTerminalReason::ClaimDeliveryFailed => {
-            taskmesh_contract::TerminalReason::ClaimDeliveryFailed
-        }
-        EngineTerminalReason::IrreversibleWaitCycle { held_by_parent } => {
-            taskmesh_contract::TerminalReason::IrreversibleWaitCycle { held_by_parent }
-        }
     }
 }
 

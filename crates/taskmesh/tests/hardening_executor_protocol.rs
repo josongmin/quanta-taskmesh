@@ -60,6 +60,23 @@ fn awkward_classes() -> Vec<(&'static str, TaskClass)> {
     ]
 }
 
+fn assert_requested_stack_label(what: &str, name: &str) {
+    const PREFIX: &str = "taskmesh.large_stack:";
+    assert!(
+        name.starts_with(PREFIX),
+        "{what}: unexpected worker label {name:?}"
+    );
+    assert!(
+        name.len() <= 48,
+        "{what}: worker label is not bounded: {name:?}"
+    );
+    match what {
+        "path-like" => assert_eq!(name, "taskmesh.large_stack:a_b_c"),
+        "maximum length" => assert_eq!(name.len(), 48),
+        _ => panic!("unknown awkward class case {what}"),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_awkward_class_never_panics_a_requested_stack_submission() {
     for (what, class) in awkward_classes() {
@@ -67,44 +84,52 @@ async fn an_awkward_class_never_panics_a_requested_stack_submission() {
         let ran = Arc::new(AtomicUsize::new(0));
         let job_ran = Arc::clone(&ran);
 
-        let result: Result<i32, RunError<()>> = rt
+        let result: Result<(i32, String), RunError<()>> = rt
             .run_blocking(
                 TaskSpec::blocking(class.clone())
                     .operation("stack-worker")
                     .stack_size_bytes(STACK),
                 move || {
                     job_ran.fetch_add(1, Ordering::SeqCst);
-                    Ok(9)
+                    Ok((
+                        9,
+                        std::thread::current()
+                            .name()
+                            .expect("dedicated worker is named")
+                            .to_owned(),
+                    ))
                 },
             )
             .await;
-        assert_eq!(
-            result.as_ref().ok(),
-            Some(&9),
-            "{what}: an accepted class must not break worker construction ({result:?})"
-        );
+        let (value, name) = result.expect("accepted class must not break worker construction");
+        assert_eq!(value, 9, "{what}");
+        assert_requested_stack_label(what, &name);
         assert_eq!(ran.load(Ordering::SeqCst), 1, "{what}: ran exactly once");
         assert_drains(&rt, &class, what).await;
 
         // The async large-stack entry point builds a label the same way.
         let async_ran = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&async_ran);
-        let result: Result<i32, RunError<()>> = rt
+        let result: Result<(i32, String), RunError<()>> = rt
             .run_async_with_requested_stack(
                 TaskSpec::base(class.clone(), SubstrateHint::LargeStackCapability)
                     .operation("async-stack-worker")
                     .stack_size_bytes(STACK),
                 move || async move {
                     counter.fetch_add(1, Ordering::SeqCst);
-                    Ok(10)
+                    Ok((
+                        10,
+                        std::thread::current()
+                            .name()
+                            .expect("dedicated worker is named")
+                            .to_owned(),
+                    ))
                 },
             )
             .await;
-        assert_eq!(
-            result.as_ref().ok(),
-            Some(&10),
-            "{what}: async large-stack path ({result:?})"
-        );
+        let (value, name) = result.expect("async large-stack path must run");
+        assert_eq!(value, 10, "{what}");
+        assert_requested_stack_label(what, &name);
         assert_eq!(async_ran.load(Ordering::SeqCst), 1, "{what}");
         assert_drains(&rt, &class, what).await;
     }

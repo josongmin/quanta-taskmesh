@@ -29,7 +29,7 @@ The commit is a source checkpoint, not implementation or qualification proof.
 | host | H01,H03,H02 | `sep21_host` | LOCALLY_VERIFIED | `HOST_PACKET_READY` accepted at `ba643a1` |
 | mutation | V02 | `sep21_v02` | IMPLEMENTED_UNQUALIFIED | producer checkpoint `df08a59`; full generated sweep remains NOT_RUN |
 | concurrency | V03 | `sep21_v03` | LOCALLY_VERIFIED | producer checkpoint `3969063`; hosted exact-source replay remains NOT_RUN |
-| release | R01 | unassigned | PLANNED | waits for all closures |
+| release | R01 | `sep21_release_r01` | IMPLEMENTING_UNQUALIFIED | release-only implementation; final source and version decision remain open |
 
 ## Checkpoints
 
@@ -43,6 +43,7 @@ The commit is a source checkpoint, not implementation or qualification proof.
 | CP5 V02 mutation producer | `df08a59` | producer tests 55/55 PASS, final focused curated 6/6 KILLED; generated `taskmesh-rayon` subset 4 caught, 1 missed, 5 unviable; full curated and full workspace generated NOT_RUN | pushed to `origin/main`; V02 remains IMPLEMENTED_UNQUALIFIED |
 | CP6 V03 fuzz/model producer | `3969063` | producer tests 18/18 PASS; short local fuzz admission 6,371, policy 6, wire 23,245 runs with semantic checkpoints; model evidence 12/12, Loom 1,611 permutations, Shuttle 60,000 schedules and separate replay generation/verification PASS | pushed to `origin/main`; hosted exact-source run NOT_RUN |
 | CP7 V01 integration and proof stability | `9db7903` (tree `85af6fdbd0044a65fa21461c5c5444a709453829`) | V01 prescribed 256/256, focused receipt/inventory 194/194, producer Python 74/74, full `just py-test` 469/469, 105/105 curated anchors, final focused 1/1 KILLED with before/snapshot/after digest `84cd8cb8c66a1d6c30f8e8c95b5f3b846ccfdf05e8d44805db55950eff31622e`; engine full suite and clippy PASS; H03 default/rayon 2/2 and 200/200 flaky-test repetitions; `just bench-gate` 8.0 PASS; ruff, fmt, inventory 26/26/26, structure and diff checks PASS. This is dirty-overlay local evidence, not a clean hosted receipt. | pushed to `origin/main`; V01 remains IMPLEMENTED_UNQUALIFIED; full curated/generated, Linux IAI and hosted qualification NOT_RUN |
+| CP8 hosted qualification attempt | `1378383` (tree `d081997f`) | GitHub Actions run `35543694307` concluded failure and its qualification job returned `NOT_QUALIFIED`. Passing producer jobs included coverage, MSRV, Loom, Shuttle, model replay and TSan. Failed jobs included fast gate (Rust 1.98 Clippy), bench matrix (stale bench API), fuzz (cargo-fuzz selected musl target), generated mutation (bench baseline did not compile), and curated mutation (4 SURVIVED, 25 UNRELATED_FAILURE_SET, 4 BLOCKED_BASELINE among 105). The generated 0-count result is not a mutation-quality score. | pushed to `origin/main`; hosted qualification FAILED, not closure |
 
 The earlier H01-only detached checkpoint (focused 21/21, default/rayon 154/154) is superseded by
 the integrated CP4 host transaction. H01, H03 and H02 are not treated as independently mergeable
@@ -62,6 +63,14 @@ unexecuted items and dependency signals. A commit or push alone is not closure.
   without exceptions in 748 mutations, duplicate model/fuzz/raw-artifact rows, and missing hosted
   prerequisite/provenance bindings. No clean hosted qualification receipt exists yet; CP7's focused
   curated result is one mutant, not a full inventory score.
+- CP8 failures are being repaired against the producer/semantic oracle, not waived. Rust 1.98
+  exposed a private-module visibility/doc lint; `taskmesh-bench` retained the old two-argument
+  `child_of` API and boolean `reconcile_memory` assumptions. The generated-mutation raw baseline
+  log records those bench compile errors. The fuzz job installed a musl `cargo-fuzz` executable
+  on a GNU host and selected musl for ASan; the runner now explicitly passes the nightly compiler
+  host target. A one-second local smoke executed all three targets but its evidence correctly
+  rejected concurrent source edits (`paths_digest`); it is not a PASS. The curated campaign has
+  stale targets and exact-failure sets under active review; no full curated PASS is claimed.
 - The committed pre-SEP-21 allocation baseline was 3 allocations/admit→release. The integrated
   source initially measured 16; borrowed validation plus an exact-operation permit index reduced
   it to 8. Three current-source 200,000-op probe runs each measured 8.000 with self-check 1000/1000

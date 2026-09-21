@@ -37,14 +37,19 @@ let out = runtime
 고급 규칙:
 
 1. `.stage(...)`는 adapter/runtime owner용; `.reduce_stage(...)`는 fan-out + 결정적 reduce용
-2. `child_of(...)`는 composite permit attribution용 (root에 귀속); parent가 결과를 기다리면
-   `awaited_child_of(...)`로 선언한다 — 자기 root의 permit만이 전부 쥔 capacity를 기다리게 될 child는
-   queue 대신 `AdmissionVerdict::NestedWaitCycle { held_by_root: HeldCapacity }`로 admission 전에
-   거절된다 (D12; 미선언 wait는 추론하지 않는다)
+2. `child_of(root_operation_id, parent_operation_id, parent_stage)`는 정확한 immediate parent와
+   root attribution을 선언한다. parent가 결과를 기다리면 같은 3개 인자의
+   `awaited_child_of(...)`를 사용한다. 직접 parent가 전부 쥔 capacity의 cycle은
+   `AdmissionVerdict::NestedWaitCycle { held_by_root: HeldCapacity }`로 admission 전에 거절된다.
+   stranger/sibling blocker는 false cycle이 아니며, queued request는 promotion 때 재판정된다.
+   기존 2인자 child builder는 source incompatible이다. legacy child JSON에
+   `parent_operation_id`가 없으면 모호하므로 decode를 거부한다.
 3. unknown class는 `AdmissionVerdict::UnknownClass`로 reject
-4. CPU executor 교체: `Builder::cpu_executor(Arc::new(taskmesh::ext::RayonCpuExecutor::from_topology(&topo)))`
-   (`features = ["rayon"]`; 직접 `taskmesh-rayon` 의존 불필요). adapter가 `declared_workers`를 topology의
-   `cpu` gate보다 작게 선언하면 `build()`가 `ExecutorDeclaresFewerWorkers`로 거절한다.
+4. CPU executor 교체: `Builder::cpu_executor(Arc::new(taskmesh::ext::RayonCpuExecutor::try_from_topology(&topo)?))`
+   (`features = ["rayon"]`; 직접 `taskmesh-rayon` 의존 불필요). `try_new`/`try_from_topology`는
+   zero workers, invalid topology, pool construction 실패를 typed `RayonBuildError`로 반환한다.
+   구 `new`/`from_topology`는 deprecated panic 경로다. adapter의 worker count·physical domain·
+   nonblocking submit 선언이 실제 executor와 다르면 `Builder::build()`가 typed reject한다.
 5. cancel/timeout: `run_*_with(spec, SubmitOptions::unbounded().with_cancel(token).with_acquire_timeout(d).with_deadline(d), ...)`
    - pre-submit cancel는 모든 클래스에서 honored.
    - **mid-run 협조 취소**는 `cancellation_policy`가 `Cooperative`/`CooperativeWithDeadline`인 클래스에서
@@ -65,7 +70,10 @@ let out = runtime
    - `acquire_timeout`은 admission lock 대기를 포함한 **모든** 획득 대기를 하나의 checked budget으로
      bound한다. 만료 후 즉시 승인된 permit은 unwind되고 `PermitAcquireTimedOut`이 반환된다.
      capability pool 때문에 큐에 들어갔다 만료된 요청은 `SubstratePoolTimedOut`으로 원인을 구분해 보고한다.
-     `Duration::ZERO`는 "대기하지 말고 시도"다.
+     `Duration::ZERO`는 상대 acquire budget의 "대기하지 말고 시도"다. 이미 만료된 absolute
+     CompleteBy는 ZERO로 가려지지 않는다. 경합 시 우선순위는 cancel → absolute deadline
+     → relative timeout이며 equality는 expired다. permit handoff 직전에 같은 arbiter를 재검사하고
+     거절된 permit은 work closure 생성 없이 반환한다.
    - `RunFor`는 worker 자신의 시작 시각 기준이다(inline executor 포함). 완료 시각이 budget을 넘긴 결과는
      `Ok`가 아니라 `DeadlineExceeded`다. `run_blocking`의 `RunFor`는 caller 대기만 제한하며 시작된 동기
      작업을 중단하지 않는다.
@@ -75,12 +83,16 @@ let out = runtime
      시에는 결과와 함께 custody가 이동하므로 caller가 값을 관측하는 시점에 용량은 이미 반환되어 있다.
    - 큐에서 대기하던 요청이 claim 전에 끝나면(leak sweep 회수 등) `GovernorError::TicketClaimTerminated
      { ticket, reason }`로 사유가 보존된다. 알 수 없는 ticket은 `InvalidTicketClaim`이며 둘 다 대기가 아니다.
-6. substrate hint는 run path와 일치해야 한다(불일치 → `SubstrateMismatch`). topology slot은 실제 동시성
+6. substrate hint는 run path와 일치해야 한다(불일치 → `SubstrateMismatch`). requested-stack 크기는
+   모든 sync/async 경로에서 admission 전에 단일 validator로 판정된다. topology slot은 실제 동시성
    상한(`0`=무제한)이며 capability 점유는 class inflight·resource budget과 **같은** admission 결정이다:
    admission 앞에 별도 대기 큐가 없으므로, 풀이 가득 차면 비-queueing 클래스는 즉시 `SubstrateSaturated`로
    shed되고 queueing 클래스는 자기 `max_queue_depth` 안에서 기다린다. `stack_size_bytes`가 있는
    blocking-family 제출은 hint와 무관하게 `large_stack` pool을 소비한다. topology는 `Builder::build`에서
    검증되며(inverted worker window·과대 slot count → `GovernorError::InvalidTopology`) panic하지 않는다.
+   SEP-21 host는 `physical.shared_blocking`/`physical.cpu`/`physical.dedicated`에 유한한
+   physical domain limit을 설치한다. CPU fallback·blocking·maintenance의 실제 실행도 공유
+   domain 상한을 넘지 않으며, snapshot occupancy는 같은 engine admission authority에서 나온다.
 7. spec 형태가 구조적으로 깨지면(0-stage, stage별 class 불일치, reduce 누락 fan-out) 입장 자체가 `MalformedTask`로 reject.
 8. 불가능한 budget·mixed-tier fairness·잘못된 memory scaling 등은 `Builder::build`에서 fail-closed로 reject (런타임 admit로 미룸 없음).
 9. `run_async_with_requested_stack[_with]`는 `SubstrateHint::LargeStackCapability`와
@@ -105,8 +117,10 @@ let out = runtime
    phase gauge(`dispatch_reserved`/`accepted`/`running`/`cleanup_pending`)는 `inflight`를 정확히 분할하고,
    `admitted_total == inflight + terminated_total`이다 (`Snapshot::conservation_violation`).
 4. `Governor::claim`은 `ClaimOutcome`, `release`는 `ReleaseOutcome::{Released, UnknownPermit, HeldByLease { phase }}`
-   (`#[must_use]`), `release_stage_memory`는 `StageReleaseOutcome`, `reconcile_memory_at`은
-   `ReconcileOutcome`을 반환한다. 거부·stale·unknown은 값으로 보고되며 0이나 `None`이나 `()`로 접히지
+   (`#[must_use]`), `release_stage_memory`는 `StageReleaseOutcome`, implicit `reconcile_memory`와
+   explicit `reconcile_memory_at` 모두 `ReconcileOutcome`을 반환한다. `MeasurementSequence`가
+   `u64::MAX`에 닿으면 `EpochExhausted`이고 해당 permit에서는 재시도 불가다. permit release는 여전히
+   필요하다. 거부·stale·unknown은 값으로 보고되며 0이나 `None`이나 `()`로 접히지
    않는다. `claim`은 lease 활동으로 간주되어 leak sweep의 staleness 시계를 다시 시작한다.
    `advance_phase`는 `AdvanceOutcome`을 반환한다: `DispatchReserved`를 벗어나는 첫 전진이
    `Leased(LeaseToken)`으로 custody를 넘기고, 그 뒤 dispatch된 permit은 `release_leased(token)`으로만

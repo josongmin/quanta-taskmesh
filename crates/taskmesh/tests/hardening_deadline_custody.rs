@@ -3,10 +3,8 @@
 //! * **TM16-002** — a `RunFor` budget on the blocking path was accepted and then
 //!   ignored: the class advertised `CooperativeWithDeadline`, the option was
 //!   taken, and a 60ms job under a 5ms budget returned `Ok`.
-//! * **TM16-022** — the relative budget was armed *after* `CpuExecutor::spawn`
-//!   returned. An adapter that runs work inline returns after the job is done,
-//!   so the timer started when the job had already overrun, and a late result
-//!   was reported as success.
+//! * **TM16-022** — a relative run budget belongs to worker execution, not to
+//!   time spent accepted in a nonblocking executor before its worker starts.
 //! * **TM16-032** — the acquisition budget covered the asynchronous queue wait
 //!   but not the synchronous wait on the admission mutex. An `Admitted` that
 //!   arrived after the budget expired started the caller's work anyway.
@@ -177,6 +175,96 @@ async fn a_blocking_job_inside_its_budget_still_succeeds() {
 }
 
 // ---- TM16-022: the budget is anchored to the worker, not to `spawn` ---------
+
+/// A bounded, nonblocking test executor that owns exactly one accepted job.
+/// The test chooses when its worker begins; it does not expose an unbounded
+/// competing queue or execute the job inline during `spawn`.
+struct HeldCpuExecutor {
+    job: std::sync::Mutex<Option<Box<dyn FnOnce() + Send + 'static>>>,
+}
+
+impl CpuExecutor for HeldCpuExecutor {
+    fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
+        let mut slot = self.job.lock().expect("held executor lock");
+        assert!(
+            slot.replace(work).is_none(),
+            "the test executor has one slot"
+        );
+    }
+
+    fn capabilities(&self) -> ExecutorCapabilities {
+        ExecutorCapabilities::legacy()
+            .nonblocking_submit(true)
+            .declared_workers(1)
+            .physical_domain(PHYSICAL_CPU)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_accepted_cpu_job_gets_its_full_run_budget_when_the_worker_starts() {
+    let executor = Arc::new(HeldCpuExecutor {
+        job: std::sync::Mutex::new(None),
+    });
+    let rt = Builder::new()
+        .topology(TopologyConfig::new().cpu_fixed(1))
+        .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
+        .class_policy(
+            TaskClass::new("c"),
+            ClassPolicy::new()
+                .max_inflight(1)
+                .cpu_units(1)
+                .cancellation_policy(CancellationPolicy::CooperativeWithDeadline),
+        )
+        .cpu_executor(executor.clone())
+        .build()
+        .expect("one-worker executor is valid");
+
+    let submission_rt = rt.clone();
+    let mut submission = tokio::spawn(async move {
+        submission_rt
+            .run_cpu_with(
+                TaskSpec::cpu(TaskClass::new("c")).operation("held-before-start"),
+                SubmitOptions::unbounded().with_deadline(Duration::from_millis(250)),
+                || Ok::<i32, ()>(17),
+            )
+            .await
+    });
+    bounded("accepted CPU job", async {
+        loop {
+            if executor.job.lock().expect("held executor lock").is_some() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert_eq!(
+        rt.snapshot().classes[&TaskClass::new("c")].inflight,
+        1,
+        "the executor owns accepted custody before the worker starts"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), &mut submission)
+            .await
+            .is_err(),
+        "an accepted but unstarted job must not spend its run budget"
+    );
+
+    let job = executor
+        .job
+        .lock()
+        .expect("held executor lock")
+        .take()
+        .expect("accepted job remains held");
+    let worker = std::thread::spawn(job);
+    let value = bounded("CPU worker completion", submission)
+        .await
+        .expect("submission task joins")
+        .expect("job finishes within its worker-start budget");
+    assert_eq!(value, 17);
+    worker.join().expect("worker finishes");
+    assert_drains(&rt, "accepted CPU job").await;
+}
 
 /// A `CpuExecutor` that runs work inline: `spawn` returns only after the job is
 /// finished. H03 makes this an install-time protocol violation: allowing it

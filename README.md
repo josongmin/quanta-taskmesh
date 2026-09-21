@@ -109,16 +109,20 @@ feature 플래그:
    - shared CPU executor 어댑터를 켠다. `run_cpu` 경로의 실제 CPU 풀 구현.
    - 끄면 CPU 작업도 blocking 풀로 폴백한다.
 
-**버전 / 호환성.** 네 crate는 하나의 workspace 버전을 공유하며 현재 `0.2.0`이다.
+**버전 / 호환성.** 네 crate는 하나의 workspace 버전을 공유하며 현재 manifest는 `0.2.0`이다.
+SEP-21 변경은 아직 release version/호환성 승인이 없는 미출시 후보이며,
+`0.2.0` 배포 증거로 취급하지 않는다.
 `0.x`에서는 minor bump(`0.1 → 0.2`)에 breaking change가 포함될 수 있고, 그 전부는
 [CHANGELOG.md](CHANGELOG.md)의 *Breaking changes and migration* 절에 before/after 코드와
 함께 열거된다 (`Governor::claim → ClaimOutcome`, `Governor::release → ReleaseOutcome`,
 `Snapshot` wire schema 2, `DeadlineUnsupported`, `SubstrateSaturated`,
 `ExecutorCapabilities` 등). 각 변경의 계약과 근거는
 [ADR 0003](docs/adr/0003-sep-16-hardening-contracts.md)(D01–D17)에 있다. 소비자가 의존하는
-public surface는 `taskmesh` (+ `taskmesh::ext`)이며, 릴리스마다
-`cargo semver-checks check-release --baseline-rev <직전 릴리스>`와 MSRV(1.81) 소비자 fixture
-(`just consumer-msrv`, [tools/consumer-msrv](tools/consumer-msrv/src/main.rs))로 검증한다 —
+public surface는 `taskmesh` (+ `taskmesh::ext`)이며, release 후보마다 immutable baseline SHA에
+대한 4-crate `just semver-release`, 수동 API/wire/behavior 판정, MSRV(1.81) 소비자 fixture
+(`just consumer-msrv`, [tools/consumer-msrv](tools/consumer-msrv/src/main.rs))로 검증한다.
+ordinary CI `QUALIFIED`는 별도의 release receipt가 아니며, release version과 human adjudication은
+현재 `PENDING`이다 —
 [docs/release-checklist.md](docs/release-checklist.md) 참조.
 
 ### 2. 런타임 구성
@@ -211,7 +215,7 @@ let out = runtime.run_local(spec, async { Ok::<_, MyError>(do_local().await) }).
 use taskmesh::TaskStage;
 
 let child = TaskSpec::cpu(TaskClass::new("retrieval"))
-    .child_of("fetch:doc:42", TaskStage::new("rank"))
+    .child_of("fetch:doc:42", "fetch:doc:42", TaskStage::new("rank"))
     .operation("rank:shard:3");
 ```
 
@@ -380,7 +384,8 @@ use taskmesh::ext::{Governor, Provenance};
 let gov: &Governor = runtime.governor();
 let report = gov.reap_leaks();                       // LeakDetecting 클래스의 stale·미시작 permit 회수
 // report.retained_active: stale이지만 실행 중이라 회수하지 않은 permit 수 (stale ≠ dead)
-// gov.reconcile_memory(permit_id, measured_bytes);  // measured/hybrid 메모리 정산
+// gov.reconcile_memory(permit_id, measured_bytes) -> ReconcileOutcome
+// EpochExhausted면 같은 permit에서 재시도하지 않고 release해야 한다.
 // gov.release_stage_memory(permit_id, units) -> StageReleaseOutcome (OnTaskCompletion 클래스는 PolicyForbids)
 // gov.claim(ticket) -> ClaimOutcome::{Ready, Pending, Terminal(reason), Invalid}
 
@@ -401,13 +406,14 @@ use taskmesh::ext::RayonCpuExecutor;
 let topo = taskmesh::TopologyConfig::new().cpu_auto().reserve_cores(1);
 let runtime = taskmesh::Builder::new()
     .topology(topo.clone())
-    .cpu_executor(Arc::new(RayonCpuExecutor::from_topology(&topo)))
+    .cpu_executor(Arc::new(RayonCpuExecutor::try_from_topology(&topo)?))
     .class_policy(taskmesh::TaskClass::new("rank"), taskmesh::ClassPolicy::new().cpu_units(1))
     .build()?;
 ```
 
-주의: `RayonCpuExecutor::with_pool(pool)`은 그 pool의 실제 thread 수를 선언하므로, topology가
-resolve한 `cpu` gate보다 좁은 pool은 `build()`에서 `ExecutorDeclaresFewerWorkers`로 거절된다.
+주의: `RayonCpuExecutor::with_pool(pool)`은 그 pool의 실제 thread 수와 shared ownership을
+선언한다. executor가 physical domain, nonblocking submit, actual worker count를 명확히
+선언하지 못하거나 topology와 불일치하면 `build()`에서 typed reject된다.
 직접 `Governor`를 구동하는 embedder는 `advance_phase(permit, Running)`/`CleanupPending`을
 자기가 선언해야 한다: leak sweep(`DEFAULT_LEAK_STALE_MS` = 60 000 ms)은 `DispatchReserved`인
 permit만 회수하므로, 전진시키지 않은 permit은 실행 중에도 회수 대상이다. `DispatchReserved`를
@@ -488,15 +494,14 @@ lease를 돌려준다 — 그 뒤로는 `release_leased(token)`만 permit을 끝
    작을 수 없다(`TopologyError::ExecutorDeclaresFewerWorkers`) — gate와 pool은 한 답에서 나온다.
    `runtime.executor_capabilities()`가 adapter의 선언(worker 수·exclusive 여부·non-blocking submit)을
    노출한다.
-8. **child→root 귀속:** `child_of(root, parent_stage)`는 root를 유지하고 `parent_stage`가
-   재귀 가드·attribution의 권위적 lineage 키다 (substrate가 아님). 같은 `(root, parent_stage)`
-   재진입은 `RecursiveAdmission`. `operation(name)`은 root를 재설정하지 않는다.
-   **선언된 nested wait (D12):** parent가 child의 결과를 기다린다면 `awaited_child_of(root, parent_stage)`로
-   선언한다. 그 child가 기다릴 capacity(class inflight·capability pool·cpu/memory budget)를 자기 root의
-   permit만이 전부 쥐고 있으면 — 놓아줄 유일한 주체가 기다리는 parent라면 — queue 대신 admission 전에
-   `AdmissionVerdict::NestedWaitCycle { held_by_root }`로 거절된다(계상 없음, retry hint 없음). 선언하지
-   않은 child(`child_of`)는 추론 없이 지금처럼 queue된다; stranger나 sibling이 slot을 쥐면 대기이지
-   cycle이 아니다.
+8. **child→root 귀속:** `child_of(root, immediate_parent_operation, parent_stage)`는 root와
+   직접 parent identity를 함께 보존한다. `operation(name)`은 root를 재설정하지 않는다.
+   동일 root의 중복 active operation은 typed reject되며, parent lookup은 문자열 stage scan이 아닌
+   exact operation identity를 사용한다. **선언된 nested wait (SEP-21 E04):** parent가 child를 기다리면
+   `awaited_child_of(root, immediate_parent_operation, parent_stage)`로 선언한다. 직접 parent permit이
+   필요한 capacity를 전부 보유한 irreversible blocker라면 `NestedWaitCycle`로 즉시 거절한다.
+   sibling·stranger가 해제할 수 있는 blocker는 정상 bounded queue이며, 기다리는 동안 새 cycle이
+   형성되면 promotion 때 terminalize한다. 미선언 wait는 추론하지 않는다.
 9. `checkpoint_policy`는 host가 hook point에서 inspect하는 **메타데이터**다(엔진 강제 아님).
 
 문서:

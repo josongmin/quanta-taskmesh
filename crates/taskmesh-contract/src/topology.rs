@@ -206,9 +206,10 @@ pub enum PhysicalDomainMode {
     Fixed(usize),
 }
 
-/// Stable, product-neutral identifiers for the worker domains the Tokio host
-/// can dispatch into. They are capability-pool names as well: one engine
-/// transition atomically charges a physical domain and any semantic role pool.
+/// Stable, product-neutral identifiers for the worker domains of the Tokio host.
+///
+/// These are capability-pool names too: one engine transition atomically
+/// charges a physical domain and any semantic role pool.
 pub const PHYSICAL_SHARED_BLOCKING: &str = "physical.shared_blocking";
 pub const PHYSICAL_CPU: &str = "physical.cpu";
 pub const PHYSICAL_DEDICATED: &str = "physical.dedicated";

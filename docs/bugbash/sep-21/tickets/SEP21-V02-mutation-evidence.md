@@ -192,6 +192,12 @@ just mutants-critical --require-clean
   `source_unchanged=true`, `limitations=["unviable"]`, semantic PASS다. Receipt SHA-256은
   `c75c398d3eb7da6462d079f9c865a5e4aa2af61a27540fbcea74906211e8abfc`다. 이 package subset은
   producer semantics 검증일 뿐 full workspace qualification이 아니다.
+- CP13 hosted curated campaign은 105개 중 103 KILLED, 1 CONTROL_GREEN,
+  1 `UNRELATED_FAILURE_SET`이었다. 유일한 drift인 `lease-return-does-not-wake-the-drain`은
+  같은 custody-return notification을 검증하는 두 테스트를 정확히 실패시켰다. Baseline 8/8은
+  PASS였다. Inventory에 그 exact cofailure를 추가한 focused rerun은 두 expected/observed ID가
+  완전히 일치하고 exit 101, selected/executed 1/1, problems 0으로 KILLED였다. 이는 allow-all이
+  아니라 raw hosted failure set에 대한 최소 oracle 보정이다.
 
 - Hosted `main@1378383b63728eedd2a38d5e7f7d87c828d2f0d0`, run
   `35543694307`의 curated raw artifact는 105개 중 `KILLED=71`,

@@ -62,19 +62,6 @@ async fn wait_until_queue_depth(rt: &TokioRuntime, expected: usize) {
     .unwrap_or_else(|_| panic!("queue depth never reached {expected}"));
 }
 
-async fn wait_until_inflight(rt: &TokioRuntime, expected: usize) {
-    tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            if rt.snapshot().classes[&TaskClass::new("c")].inflight == expected as u32 {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("inflight count never reached {expected}"));
-}
-
 #[tokio::test]
 async fn cancel_before_submit_is_governor_rejection() {
     let rt = single_slot_runtime();
@@ -193,9 +180,14 @@ async fn cancel_while_waiting_for_substrate_rejects_without_waiting_for_capacity
         }
     });
 
-    // Two class permits are now live while the single blocking thread is held:
-    // the waiter has passed governor admission and is waiting on the substrate.
-    wait_until_inflight(&rt, 2).await;
+    // The waiter is queued at the governor while class capacity remains: the
+    // binding limit is the occupied blocking capability, not the class.
+    wait_until_queue_depth(&rt, 1).await;
+    assert_eq!(
+        rt.snapshot().classes[&TaskClass::new("c")].inflight,
+        1,
+        "class still has a free permit; only the blocking capability is held"
+    );
     token.cancel();
     let error = tokio::time::timeout(Duration::from_millis(100), waiter)
         .await
@@ -211,6 +203,10 @@ async fn cancel_while_waiting_for_substrate_rejects_without_waiting_for_capacity
 
     release_tx.send(()).expect("holder must still be running");
     holder.await.unwrap().expect("holder must complete");
+    let drained = rt.snapshot();
+    assert_eq!(drained.classes[&TaskClass::new("c")].inflight, 0);
+    assert_eq!(drained.classes[&TaskClass::new("c")].queued, 0);
+    assert_eq!(drained.capabilities["blocking"].in_use, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

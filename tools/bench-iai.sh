@@ -109,6 +109,7 @@ fi
 export IAI_CALLGRIND_REGRESSION="${REGRESSION}"
 
 baseline_dir="target/iai"
+[[ ! -L "${baseline_dir}" ]] || fail "baseline directory ${baseline_dir} is a symlink"
 status="BASELINE_CREATED"
 expected_comparison="no"
 if [[ -d "${baseline_dir}" ]]; then

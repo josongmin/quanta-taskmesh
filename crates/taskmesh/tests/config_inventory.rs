@@ -1,7 +1,6 @@
-//! Regression: `TokioRuntime::config()` is a faithful, serializable description
-//! of the built runtime — it carries the resolved substrate inventory (built-ins
-//! plus deployment additions), not a reduced view that only the governor
-//! snapshot can reconstruct.
+//! Regression: `TokioRuntime::config()` preserves the portable declaration and
+//! carries the resolved substrate inventory (built-ins plus deployment
+//! additions). Machine-resolved limits remain owned by the governor snapshot.
 
 use taskmesh::ext::*;
 use taskmesh::*;
@@ -64,6 +63,28 @@ fn the_auto_cpu_gate_is_the_detected_parallelism() {
         usize::try_from(gate).expect("a u32 gate fits usize"),
         detected,
         "the cpu gate under cpu_auto must equal the detected parallelism"
+    );
+    assert_eq!(rt.config().topology.cpu.mode, CpuMode::Auto);
+}
+
+#[test]
+fn custom_limits_have_one_resolved_runtime_authority() {
+    let rt = Builder::new()
+        .resources(ResourceBudget::new().cpu_units(8).memory_units(8))
+        .class_policy(TaskClass::new("c"), ClassPolicy::new().cpu_units(1))
+        .substrate(SubstrateRecord::new(
+            "external-gpu",
+            SubstrateKind::CompetingExecution,
+            Some("external-gpu"),
+        ))
+        .capability_limit("external-gpu", 7)
+        .build()
+        .expect("a governed external pool builds");
+
+    assert_eq!(
+        rt.governor().snapshot().capabilities["external-gpu"].limit,
+        7,
+        "resolved limits are runtime state owned by the governor snapshot"
     );
     assert_eq!(rt.config().topology.cpu.mode, CpuMode::Auto);
 }

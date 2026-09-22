@@ -108,7 +108,10 @@ impl TokioRuntime {
         }
     }
 
-    /// The validated configuration this runtime was built from.
+    /// The validated portable declaration this runtime was built from.
+    ///
+    /// Machine-resolved capability limits live in [`Governor::snapshot`], and
+    /// installed CPU pool facts live in [`Self::executor_capabilities`].
     pub fn config(&self) -> &RuntimeConfig {
         &self.config
     }

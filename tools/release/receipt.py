@@ -490,8 +490,7 @@ def release_attestation(source: dict, local_qualified: bool = False) -> dict:
             "not_github_actions": os.environ.get("GITHUB_ACTIONS") != "true",
             "workspace_matches": Path.cwd().resolve() == REPO.resolve(),
             "source_clean": source.get("dirty") is False,
-            "action_is_local": action.get("context") == "local"
-            and action.get("event") == "local",
+            "action_is_local": action.get("context") == "local" and action.get("event") == "local",
             "action_source_matches": action.get("source_sha") == source.get("head"),
         }
         return {
@@ -502,9 +501,7 @@ def release_attestation(source: dict, local_qualified: bool = False) -> dict:
             "eligible": all(checks.values()),
         }
     return {
-        "kind": "github-actions-release"
-        if all(hosted_checks.values())
-        else "local-or-invalid",
+        "kind": "github-actions-release" if all(hosted_checks.values()) else "local-or-invalid",
         "actor": os.environ.get("GITHUB_ACTOR"),
         "action": action,
         "checks": hosted_checks,
@@ -634,7 +631,7 @@ def evaluate(value: object, *, root: Path = REPO, current: dict | None = None) -
         ):
             reasons.append("ordinary receipt is not the exact release source")
         path = root / value["ordinary_receipt"]["path"]
-        code, _ = ordinary.validate(path, True)
+        code, _ = ordinary.validate(path, True, current=current, artifact_root=root)
         if code != 0:
             reasons.append("ordinary exact-source receipt is NOT_QUALIFIED")
         gates = ordinary_receipt.get("gates")
@@ -708,12 +705,13 @@ def evaluate(value: object, *, root: Path = REPO, current: dict | None = None) -
         reasons.append("release raw artifact set incomplete")
         raw = {}
         expected_raw = expected_raw if isinstance(expected_raw, dict) else {}
+    raw_payloads: dict[str, object | None] = {}
     for name, path in expected_raw.items():
         if not isinstance(raw.get(name), dict) or raw[name].get("path") != path:
             reasons.append(f"release raw artifact {name} path mismatch")
             continue
-        check_identity(root, raw[name], name, reasons)
-    coverage = read_json(root / expected_raw.get("coverage_summary", "__missing__"))
+        raw_payloads[name] = check_identity(root, raw[name], name, reasons)
+    coverage = raw_payloads.get("coverage_summary")
     metric_reasons: list[str] = []
     expected_metrics = metric_report(coverage, metric_reasons)
     reasons.extend(metric_reasons)
@@ -771,12 +769,11 @@ def collect(
         "finding_spec": "tools/release/finding-proof-spec.json",
         "plan": "docs/bugbash/sep-21/tickets/plan.json",
     }
+    policy = read_json(POLICY)
     value: dict = {
         "schema_version": 1,
         "source": source,
-        "baseline_sha": read_json(POLICY).get("baseline_sha")
-        if isinstance(read_json(POLICY), dict)
-        else None,
+        "baseline_sha": policy.get("baseline_sha") if isinstance(policy, dict) else None,
         "candidate_sha": source["head"],
         "release_type": "minor",
     }
@@ -790,9 +787,12 @@ def collect(
         REPO, "target/release/finding-proof/finding-proof-manifest.json"
     )
     required = read_json(REQUIRED)
-    raw_paths = required.get("required_raw_artifacts", {}) if isinstance(required, dict) else {}
+    raw_paths = required.get("required_raw_artifacts") if isinstance(required, dict) else None
+    if not isinstance(raw_paths, dict):
+        raw_paths = {}
     value["raw_artifacts"] = {name: identity(REPO, path) for name, path in raw_paths.items()}
-    coverage = read_json(REPO / raw_paths.get("coverage_summary", "__missing__"))
+    coverage_path = safe_artifact(REPO, raw_paths.get("coverage_summary"))
+    coverage = read_json(coverage_path) if coverage_path is not None else None
     metric_reasons: list[str] = []
     value["coverage"] = metric_report(coverage, metric_reasons)
     value["coverage_scope"] = {

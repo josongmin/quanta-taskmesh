@@ -306,6 +306,40 @@ def test_missing_release_evidence_is_never_qualified() -> None:
     assert any("semver" in reason for reason in verdict["reasons"])
 
 
+def test_required_raw_coverage_path_cannot_read_outside_root(tmp_path: Path, monkeypatch) -> None:
+    required_path = tmp_path / "tools/release/release-required.json"
+    required_path.parent.mkdir(parents=True)
+    required_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "required_raw_artifacts": {"coverage_summary": "../outside.json"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.json"
+    outside.write_text('{"private": "must not read"}', encoding="utf-8")
+    original_read = receipt.read_json
+
+    def confined_read(path: Path) -> object | None:
+        assert path != outside
+        return original_read(path)
+
+    monkeypatch.setattr(receipt, "read_json", confined_read)
+    verdict = receipt.evaluate(
+        {
+            "schema_version": 1,
+            "source": {"dirty": False},
+            "required": receipt.identity(tmp_path, "tools/release/release-required.json"),
+            "raw_artifacts": {"coverage_summary": {"path": "../outside.json"}},
+        },
+        root=tmp_path,
+    )
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any("coverage_summary" in reason for reason in verdict["reasons"])
+
+
 @pytest.mark.parametrize("bad", [None, [], 0, "PASS", {"verdict": {"status": "QUALIFIED"}}])
 def test_malformed_release_receipt_never_qualifies(bad: object) -> None:
     assert receipt.evaluate(bad, current=None)["status"] == "NOT_QUALIFIED"

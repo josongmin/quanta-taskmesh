@@ -185,11 +185,33 @@ def _utc_timestamp(value: object, name: str, problems: list[str]) -> datetime | 
 def _verify_file_identity(
     *, root: Path, path: str, expected_sha256: object, name: str, problems: list[str]
 ) -> None:
-    disk = root / path
-    if not disk.is_file():
-        problems.append(f"{name} {path!r} is missing")
-    elif hashlib.sha256(disk.read_bytes()).hexdigest() != expected_sha256:
+    disk = _confined_regular_file(root=root, path=path, name=name, problems=problems)
+    if disk is not None and hashlib.sha256(disk.read_bytes()).hexdigest() != expected_sha256:
         problems.append(f"{name} {path!r} digest mismatch")
+
+
+def _confined_regular_file(*, root: Path, path: str, name: str, problems: list[str]) -> Path | None:
+    """Resolve an evidence path without following links outside its artifact root."""
+    if not _safe_relative(path):
+        return None
+    disk = root / path
+    if disk.is_symlink():
+        problems.append(f"{name} {path!r} must not be a symlink")
+        return None
+    try:
+        resolved_root = root.resolve(strict=True)
+        resolved = disk.resolve(strict=True)
+        resolved.relative_to(resolved_root)
+    except FileNotFoundError:
+        problems.append(f"{name} {path!r} is missing")
+        return None
+    except ValueError:
+        problems.append(f"{name} {path!r} escapes artifact root")
+        return None
+    if not resolved.is_file():
+        problems.append(f"{name} {path!r} is not a regular file")
+        return None
+    return resolved
 
 
 def envelope_problems(
@@ -401,11 +423,11 @@ def envelope_problems(
                 raw_count += 1
             elif item.get("role") not in {"summary", "replay", "diagnostic"}:
                 problems.append(f"artifacts[{index}].role is unknown")
-            if artifact_root is not None and isinstance(path, str) and path:
-                disk = artifact_root / path
-                if not disk.is_file():
-                    problems.append(f"artifact {path!r} is missing")
-                else:
+            if artifact_root is not None and _safe_relative(path):
+                disk = _confined_regular_file(
+                    root=artifact_root, path=path, name="artifact", problems=problems
+                )
+                if disk is not None:
                     data = disk.read_bytes()
                     if len(data) != item.get("size"):
                         problems.append(f"artifact {path!r} size mismatch")

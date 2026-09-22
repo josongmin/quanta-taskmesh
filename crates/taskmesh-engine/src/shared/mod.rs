@@ -1,7 +1,6 @@
 //! Cross-slice kernel: identifiers, the resolved policy set, and the value types
 //! every feature shares. No feature logic lives here.
 
-use std::borrow::Cow;
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -203,7 +202,7 @@ pub type Seq = u64;
 /// carried no behavior — admission never read it — so it was a misleading
 /// input; same-key dedupe remains out of scope for the startup set.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RequestKey(Cow<'static, str>);
+pub struct RequestKey(String);
 
 #[cfg(feature = "test-util")]
 static REQUEST_KEY_DERIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -214,7 +213,7 @@ impl RequestKey {
     pub fn from_root(root_operation_id: &str) -> Self {
         #[cfg(feature = "test-util")]
         REQUEST_KEY_DERIVE_COUNT.fetch_add(1, Ordering::Relaxed);
-        Self(Cow::Owned(root_operation_id.to_owned()))
+        Self(root_operation_id.to_owned())
     }
 
     /// The key as text (the root operation id it was derived from). Read-only:

@@ -42,7 +42,7 @@ PM parse/validate/render-plan/apply를 분리해 lint가 실제 쓰일 파일을
   생성되므로 소스/템플릿을 제거하고 `targets.yaml`을 빈 집합으로 **명시**했다. `AGENTS.md`는 사용자
   소유이며 PM target이 아니다. 실제 target overwrite는 수행하지 않았다.
 
-Regression: `tools/pm/tests/test_render_plan.py` (21) + 기존 8.
+Historical regression at implementation time: `tools/pm/tests/test_render_plan.py` (21) + 기존 8.
 
 2026-09-23 정리: 위 regression은 구현 당시 증거다. 실제 owner가 0인 상태가 지속되어 PM 코드와
 vacuous `pm-lint` gate를 제거했다. 생성 대상이 생기면 그 대상과 함께 다시 설계한다.

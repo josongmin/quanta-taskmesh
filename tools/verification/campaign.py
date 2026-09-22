@@ -22,24 +22,57 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from tools.qualification.evidence import (  # noqa: E402
+    canonical_bytes,  # noqa: F401 - compatibility re-export for callers
+    canonical_digest,  # noqa: F401 - compatibility re-export for callers
     git_source_paths,
     runtime_action,
     source_tree_digest,
 )
 
+AMBIENT_BUILD_ENV_KEYS = {
+    "CARGO_BUILD_TARGET",
+    "CARGO_ENCODED_RUSTFLAGS",
+    "RUSTC",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "RUSTDOCFLAGS",
+    "RUSTFLAGS",
+    "RUSTUP_TOOLCHAIN",
+}
+AMBIENT_BUILD_ENV_PREFIXES = ("CARGO_PROFILE_", "CARGO_TARGET_")
+CAMPAIGN_ISOLATION_ENV_KEYS = {"CARGO_BUILD_TARGET_DIR", "CARGO_TARGET_DIR"}
+
+
+def sanitized_campaign_environment(parent: dict[str, str]) -> dict[str, str]:
+    """Return a stable inherited environment or reject undeclared build semantics.
+
+    Campaign-owned overrides are applied by the caller after this check and are
+    recorded in the evidence envelope. Inherited process settings that can
+    change compiled code are rejected because they are otherwise absent from
+    the command identity and make two different executions look identical.
+    """
+    forbidden = sorted(
+        key
+        for key in parent
+        if key not in CAMPAIGN_ISOLATION_ENV_KEYS
+        and (
+            key in AMBIENT_BUILD_ENV_KEYS
+            or any(key.startswith(prefix) for prefix in AMBIENT_BUILD_ENV_PREFIXES)
+        )
+    )
+    if forbidden:
+        raise ValueError(
+            "mutation campaign refuses unrecorded build-affecting environment: "
+            + ", ".join(forbidden)
+        )
+    environment = parent.copy()
+    for key in CAMPAIGN_ISOLATION_ENV_KEYS:
+        environment.pop(key, None)
+    return environment
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def canonical_bytes(value: object) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
-    ).encode("utf-8")
-
-
-def canonical_digest(value: object) -> str:
-    return hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
 def sha256_file(path: Path) -> str:
@@ -222,11 +255,17 @@ def execute(
         stdout, stderr = process.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
         timed_out = True
-        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass  # The process group exited between timeout and termination.
         try:
             stdout, stderr = process.communicate(timeout=5)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # Preserve timeout evidence even if the group just exited.
             stdout, stderr = process.communicate()
     returncode = process.returncode
     return ProcessResult(

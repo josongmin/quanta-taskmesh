@@ -97,6 +97,31 @@ def test_artifact_size_and_digest_are_verified_from_disk(tmp_path: Path) -> None
     assert any("digest mismatch" in problem for problem in problems)
 
 
+@pytest.mark.parametrize("path", ["/tmp/outside.log", "../outside.log"])
+def test_unsafe_artifact_path_is_rejected_without_dereference(tmp_path: Path, path: str) -> None:
+    envelope = materialized_envelope(tmp_path)
+    envelope["artifacts"][0]["path"] = path
+    problems = evidence.envelope_problems(envelope, artifact_root=tmp_path)
+    assert any("safe relative path" in problem for problem in problems)
+
+
+@pytest.mark.parametrize("field", ["config", "workflow", "artifact"])
+def test_evidence_files_cannot_escape_through_symlinks(tmp_path: Path, field: str) -> None:
+    envelope = materialized_envelope(tmp_path)
+    outside = tmp_path.parent / f"outside-{field}.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    link = tmp_path / f"escape-{field}"
+    link.symlink_to(outside)
+    if field == "config":
+        envelope["configs"][0]["path"] = link.name
+    elif field == "workflow":
+        envelope["action"]["workflow"] = link.name
+    else:
+        envelope["artifacts"][0]["path"] = link.name
+    problems = evidence.envelope_problems(envelope, artifact_root=tmp_path)
+    assert any("must not be a symlink" in problem for problem in problems)
+
+
 @pytest.mark.parametrize(("selected", "executed"), [(0, 0), (2, 1), (1, 2)])
 def test_pass_requires_positive_selected_executed_parity(selected: int, executed: int) -> None:
     envelope = load("v02-mutation-valid.json")

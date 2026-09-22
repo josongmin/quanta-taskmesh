@@ -18,7 +18,7 @@ doctest = false
 # Every example is written against the facade with the `rayon` feature on, so
 # the RayonCpuExecutor example compiles too.
 taskmesh = { path = "../../crates/taskmesh", features = ["rayon"] }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [dev-dependencies]
 # The CHANGELOG's topology migration example deserializes a `TopologyConfig`

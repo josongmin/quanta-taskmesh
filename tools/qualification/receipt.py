@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import platform
 import subprocess
@@ -56,6 +57,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from tools.qualification.evidence import (  # noqa: E402
+    canonical_digest,  # noqa: F401 - compatibility re-export for callers
     git_source_paths,
     runtime_action,
     source_tree_digest,
@@ -70,7 +72,7 @@ from tools.qualification.producer_evidence import (  # noqa: E402
 
 REQUIRED = REPO / "tools" / "gates" / "required.json"
 INVENTORY = REPO / "tools" / "gates" / "inventory.json"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 GATE_SCHEMA_VERSION = 2
 MUTATION_GATE_ID = "mutants-critical"
 ATTESTATION_CHECK_NAMES = {
@@ -97,6 +99,7 @@ REQUIRED_RECEIPT_KEYS = (
     "generated_at",
     "finished_at",
     "environment",
+    "gate_runner",
     "source",
     "source_after",
     "attestation",
@@ -156,9 +159,7 @@ def environment() -> dict:
     }
 
 
-def collection_attestation(
-    source: dict, hosted_ci: bool, local_qualified: bool = False
-) -> dict:
+def collection_attestation(source: dict, hosted_ci: bool, local_qualified: bool = False) -> dict:
     if hosted_ci and local_qualified:
         raise ValueError("hosted and local qualification modes are mutually exclusive")
     expected_jobs = {spec["hosted_job"] for spec in registrations(INVENTORY)}
@@ -280,9 +281,67 @@ def summarize_gate_results(results: list[dict]) -> dict:
     }
 
 
-def canonical_digest(payload: dict) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(encoded).hexdigest()
+def gate_runner_problems(
+    value: object,
+    gate_results: list[dict],
+    producer_specs: list[dict],
+    *,
+    hosted_attested: bool,
+) -> list[str]:
+    """Validate the gate-runner process separately from its JSON sidecar."""
+    if not isinstance(value, dict):
+        return ["gate runner process evidence is missing or malformed"]
+    problems: list[str] = []
+    exit_code = value.get("exit_code")
+    started_at = value.get("started_at")
+    duration_s = value.get("duration_s")
+    skipped = value.get("skipped_gate_ids")
+    raw_required = value.get("raw_required")
+    if type(exit_code) is not int:
+        problems.append("gate runner exit_code must be an integer")
+    if not isinstance(started_at, str) or not started_at:
+        problems.append("gate runner started_at is missing")
+    if not (
+        (type(duration_s) is int and duration_s >= 0)
+        or (type(duration_s) is float and math.isfinite(duration_s) and duration_s >= 0)
+    ):
+        problems.append("gate runner duration_s must be non-negative")
+    if not isinstance(skipped, list) or any(not isinstance(gate_id, str) for gate_id in skipped):
+        problems.append("gate runner skipped_gate_ids are malformed")
+        skipped = []
+    elif skipped != sorted(set(skipped)):
+        problems.append("gate runner skipped_gate_ids are duplicated or unsorted")
+    raw_results = [result for result in gate_results if result.get("id") not in set(skipped)]
+    recomputed_raw = summarize_gate_results(raw_results)
+    if raw_required != recomputed_raw:
+        problems.append("gate runner raw required summary differs from pre-import results")
+
+    expected_imports = sorted(spec["gate_id"] for spec in producer_specs)
+    imported = sorted(
+        result["id"]
+        for result in gate_results
+        if result.get("imported_producer") is True and isinstance(result.get("id"), str)
+    )
+    if skipped:
+        if not hosted_attested:
+            problems.append("only hosted qualification may import skipped producer gates")
+        if skipped != expected_imports or imported != expected_imports:
+            problems.append("gate runner producer import set differs from inventory")
+        if exit_code != 1:
+            problems.append("hosted producer-import gate runner must exit 1 before enrichment")
+        if isinstance(raw_required, dict) and (
+            raw_required.get("required_not_run") != expected_imports
+            or raw_required.get("required_not_passed") != []
+        ):
+            problems.append("hosted gate runner non-pass is not limited to imported producers")
+    else:
+        if imported:
+            problems.append("direct gate runner receipt cannot contain imported producer gates")
+        if exit_code != 0:
+            problems.append("direct gate runner did not exit cleanly")
+        if isinstance(raw_required, dict) and raw_required.get("qualified") is not True:
+            problems.append("direct gate runner raw required set is not qualified")
+    return problems
 
 
 def finalize_gate_receipt(gates: dict) -> dict:
@@ -324,9 +383,9 @@ def collect(
     # No explicit tier means the canonical required set. Selecting every gate
     # in fast/matrix/proof also picked optional focused-debug gates (notably
     # standalone loom/shuttle) and duplicated the modelcheck producer.
-    gate_args = ["--required"] if tiers is None else [
-        *sum([["--tier", tier] for tier in tiers], [])
-    ]
+    gate_args = (
+        ["--required"] if tiers is None else [*sum([["--tier", tier] for tier in tiers], [])]
+    )
     gate_args += ["--deadline-seconds", str(deadline_seconds)]
     if hosted_ci or local_qualified:
         gate_args.append("--require-clean-source")
@@ -347,6 +406,10 @@ def collect(
     if not isinstance(results, list):
         results = []
         gate_receipt["results"] = results
+    raw_required = summarize_gate_results(results)
+    skipped_gate_ids = (
+        sorted(spec["gate_id"] for spec in producer_specs) if consume_producers else []
+    )
     enrich_gate_results(results, producer_records, derive_missing=consume_producers)
     finalize_gate_receipt(gate_receipt)
     # The sidecar is an authoritative summary of the same result set embedded
@@ -388,8 +451,7 @@ def collect(
 
     limitations = []
     if not (
-        attestation["hosted_qualification_eligible"]
-        or attestation["local_qualification_eligible"]
+        attestation["hosted_qualification_eligible"] or attestation["local_qualification_eligible"]
     ):
         limitations.append(
             "Evidence-only collection: pass --local-qualified from a clean local Linux checkout "
@@ -414,6 +476,13 @@ def collect(
         },
         "attestation": attestation,
         "environment": env,
+        "gate_runner": {
+            "exit_code": gate_run.exit_code,
+            "started_at": gate_run.started_at,
+            "duration_s": gate_run.duration_s,
+            "skipped_gate_ids": skipped_gate_ids,
+            "raw_required": raw_required,
+        },
         "gates": gate_receipt,
         "mutations": mutation_receipt,
         "generated_mutation_sweep": generated_receipt,
@@ -457,12 +526,14 @@ def evaluate(receipt: object, current: dict | None, *, artifact_root: Path | Non
     if not isinstance(attestation, dict):
         reasons.append("receipt attestation is not an object")
         attestation = {}
-    hosted_attested = attestation.get("kind") == "github-actions" and attestation.get(
-        "hosted_qualification_eligible"
-    ) is True
-    local_attested = attestation.get("kind") == "local" and attestation.get(
-        "local_qualification_eligible"
-    ) is True
+    hosted_attested = (
+        attestation.get("kind") == "github-actions"
+        and attestation.get("hosted_qualification_eligible") is True
+    )
+    local_attested = (
+        attestation.get("kind") == "local"
+        and attestation.get("local_qualification_eligible") is True
+    )
     if not hosted_attested and not local_attested:
         reasons.append(
             "receipt lacks an eligible hosted or explicit local qualification attestation"
@@ -580,6 +651,14 @@ def evaluate(receipt: object, current: dict | None, *, artifact_root: Path | Non
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         reasons.append(f"producer inventory cannot be loaded: {exc}")
     else:
+        reasons.extend(
+            gate_runner_problems(
+                receipt.get("gate_runner"),
+                valid_gate_results,
+                producer_specs,
+                hosted_attested=hosted_attested,
+            )
+        )
         try:
             reasons.extend(
                 producer_records_problems(
@@ -622,15 +701,26 @@ def evaluate(receipt: object, current: dict | None, *, artifact_root: Path | Non
     return {"status": status, "reasons": reasons}
 
 
-def validate(path: Path, check_tree: bool) -> tuple[int, list[str]]:
+def validate(
+    path: Path,
+    check_tree: bool,
+    *,
+    current: dict | None = None,
+    artifact_root: Path | None = None,
+) -> tuple[int, list[str]]:
     """Exit code plus the reasons, so a caller (or test) can see *why*."""
     try:
         receipt = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         print(f"FAIL: cannot read receipt: {exc}", file=sys.stderr)
         return 1, [f"cannot read receipt: {exc}"]
-    current = source_identity() if check_tree else None
-    verdict = evaluate(receipt, current)
+    if not check_tree:
+        current = None
+    elif current is None:
+        current = source_identity()
+    verdict = evaluate(
+        receipt, current, artifact_root=REPO if artifact_root is None else artifact_root
+    )
     sidecar_reasons: list[str] = []
     if isinstance(receipt, dict):
         for suffix, field in (
@@ -647,36 +737,6 @@ def validate(path: Path, check_tree: bool) -> tuple[int, list[str]]:
             else:
                 if payload != receipt.get(field):
                     sidecar_reasons.append(f"{field} sidecar differs from embedded {field}")
-        try:
-            producer_specs = registrations(INVENTORY)
-        except (OSError, json.JSONDecodeError, ValueError) as exc:
-            sidecar_reasons.append(f"producer inventory cannot be loaded: {exc}")
-        else:
-            gate_receipt = receipt.get("gates")
-            gate_results = gate_receipt.get("results", []) if isinstance(gate_receipt, dict) else []
-            if not isinstance(gate_results, list):
-                gate_results = []
-            gates = {
-                result.get("id"): result
-                for result in gate_results
-                if isinstance(result, dict) and isinstance(result.get("id"), str)
-            }
-            source = receipt.get("source") if isinstance(receipt.get("source"), dict) else {}
-            attestation = receipt.get("attestation")
-            action = attestation.get("action") if isinstance(attestation, dict) else None
-            try:
-                sidecar_reasons.extend(
-                    producer_records_problems(
-                        receipt.get("producers"),
-                        producer_specs,
-                        gates,
-                        source,
-                        action,
-                        root=REPO,
-                    )
-                )
-            except Exception as exc:  # malformed sidecars are negative evidence
-                sidecar_reasons.append(f"producer sidecar is malformed: {type(exc).__name__}")
     if sidecar_reasons:
         verdict = {
             "status": "NOT_QUALIFIED",
@@ -716,8 +776,7 @@ def main(argv: list[str] | None = None) -> int:
         "--local-qualified",
         action="store_true",
         help=(
-            "request full qualification from a clean local checkout "
-            "(all required gates must pass)"
+            "request full qualification from a clean local checkout (all required gates must pass)"
         ),
     )
     c.add_argument(

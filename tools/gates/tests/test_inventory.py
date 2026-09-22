@@ -15,6 +15,8 @@ import sys
 from functools import cache
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[3]
 VALIDATOR = REPO / "tools" / "gates" / "validate_inventory.py"
 
@@ -213,9 +215,7 @@ def test_committed_workflows_are_manual_only() -> None:
 
 def test_automatic_hosted_triggers_are_rejected(tmp_path: Path) -> None:
     path = tmp_path / "ci.yml"
-    assert vi.workflow_trigger_problems(
-        path, {"on": {"workflow_dispatch": None}, "jobs": {}}
-    ) == []
+    assert vi.workflow_trigger_problems(path, {"on": {"workflow_dispatch": None}, "jobs": {}}) == []
 
     for trigger in ("push", "pull_request", "schedule"):
         problems = vi.workflow_trigger_problems(
@@ -232,9 +232,7 @@ def test_trigger_guard_handles_pyyaml_boolean_on_key(tmp_path: Path) -> None:
 
 
 def test_yaml_extension_cannot_bypass_hosted_trigger_guard(tmp_path: Path) -> None:
-    (tmp_path / "bypass.yaml").write_text(
-        "on:\n  push:\njobs: {}\n", encoding="utf-8"
-    )
+    (tmp_path / "bypass.yaml").write_text("on:\n  push:\njobs: {}\n", encoding="utf-8")
     problems = vi.all_workflow_trigger_problems(tmp_path)
     assert any("bypass.yaml" in problem and "push" in problem for problem in problems), problems
 
@@ -480,9 +478,7 @@ def test_runner_fail_fast_keeps_the_full_selected_denominator() -> None:
     assert results[1]["status"] == "NOT_RUN"
     assert results[1]["blocked_by"] == "first"
     assert results[2]["status"] == "SKIPPED_PLATFORM"
-    not_run, not_passed = module.summarize_required(
-        {"first", "second", "linux-only"}, results
-    )
+    not_run, not_passed = module.summarize_required({"first", "second", "linux-only"}, results)
     assert not_run == ["second"]
     assert not_passed == ["first", "linux-only", "second"]
 
@@ -510,6 +506,25 @@ def test_runner_keep_going_executes_later_gates() -> None:
     results = module.run_selected_gates(selected, "macos", None, True, run_all)
     assert calls == ["first", "second"]
     assert [result["status"] for result in results] == ["FAIL", "PASS"]
+
+
+def test_exhausted_global_deadline_has_one_fail_and_explicit_not_run_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    selected = [
+        {"id": "first", "recipe": "first", "platforms": ["any"]},
+        {"id": "second", "recipe": "second", "platforms": ["any"]},
+    ]
+    monkeypatch.setattr(module.time, "monotonic", lambda: 10.0)
+
+    results = module.run_selected_gates(selected, "macos", 9.0, True)
+
+    assert [result["status"] for result in results] == ["FAIL", "NOT_RUN"]
+    assert results[1]["blocked_by"] == "first"
 
 
 def test_dirty_source_preflight_starts_no_gate() -> None:
@@ -565,8 +580,8 @@ def test_platform_scope_requires_every_applicable_gate_and_keeps_exclusions() ->
     scoped, excluded = module.platform_scope_qualification(
         required,
         [
-            {"id": "fmt-check", "status": "PASS"},
-            {"id": "bench-iai", "status": "SKIPPED_PLATFORM"},
+            {"id": "fmt-check", "status": "PASS", "exit_code": 0},
+            {"id": "bench-iai", "status": "SKIPPED_PLATFORM", "exit_code": None},
         ],
         platform_conditional,
         "macos",
@@ -577,8 +592,8 @@ def test_platform_scope_requires_every_applicable_gate_and_keeps_exclusions() ->
     scoped, _ = module.platform_scope_qualification(
         required,
         [
-            {"id": "fmt-check", "status": "PASS"},
-            {"id": "bench-iai", "status": "NOT_RUN"},
+            {"id": "fmt-check", "status": "PASS", "exit_code": 0},
+            {"id": "bench-iai", "status": "NOT_RUN", "exit_code": 2},
         ],
         platform_conditional,
         "macos",
@@ -609,15 +624,18 @@ def test_local_receipt_is_exact_source_bound() -> None:
             "excluded_required_gates": ["bench-iai"],
         },
         "results": [
-            {"id": "fmt-check", "status": "PASS"},
-            {"id": "bench-iai", "status": "SKIPPED_PLATFORM"},
+            {"id": "fmt-check", "status": "PASS", "exit_code": 0},
+            {"id": "bench-iai", "status": "SKIPPED_PLATFORM", "exit_code": None},
         ],
     }
     required = {"fmt-check", "bench-iai"}
     conditional = {"bench-iai": "linux"}
-    assert module.local_receipt_problems(
-        receipt, source, required, conditional, "macos", source["head"]
-    ) == []
+    assert (
+        module.local_receipt_problems(
+            receipt, source, required, conditional, "macos", source["head"]
+        )
+        == []
+    )
 
     drifted = {**source, "paths_digest": "d" * 64}
     problems = module.local_receipt_problems(
@@ -632,6 +650,34 @@ def test_local_receipt_is_exact_source_bound() -> None:
     assert any("must both be clean" in problem for problem in problems), problems
 
 
+@pytest.mark.parametrize("exit_code", [1, False, None, "0"])
+def test_local_receipt_pass_requires_exact_integer_zero(exit_code: object) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    result = {"id": "fmt-check", "status": "PASS", "exit_code": exit_code}
+
+    assert module.platform_scope_qualification({"fmt-check"}, [result], {}, "macos")[0] is False
+    assert module.result_record_problems([result]) == [
+        "local receipt gate fmt-check PASS requires integer exit_code 0"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("status", "exit_code"),
+    [("SKIPPED_PLATFORM", 0), ("NOT_RUN", 0), ("NOT_RUN", False), ("FAIL", 0), ("FAIL", True)],
+)
+def test_local_receipt_non_pass_exit_contract_is_fail_closed(
+    status: str, exit_code: object
+) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    assert module.result_record_problems([{"id": "gate", "status": status, "exit_code": exit_code}])
+
+
 def test_local_source_must_stay_clean_and_unchanged() -> None:
     run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
     assert run and run.loader
@@ -644,9 +690,7 @@ def test_local_source_must_stay_clean_and_unchanged() -> None:
         "dirty": False,
     }
     assert module.source_stability_problems(source, dict(source)) == []
-    problems = module.source_stability_problems(
-        source, {**source, "tree": "d" * 40, "dirty": True}
-    )
+    problems = module.source_stability_problems(source, {**source, "tree": "d" * 40, "dirty": True})
     assert any("dirty after" in problem for problem in problems)
     assert any("tree changed" in problem for problem in problems)
 
@@ -853,14 +897,36 @@ def test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps(monkeypa
 def test_generated_mutation_timeout_is_bounded_and_inventory_owned() -> None:
     inventory, *_ = real_inputs()
     generated = next(gate for gate in inventory["gates"] if gate["id"] == "mutants-generated")
-    assert generated["timeout_seconds"] == 21000
+    assert generated["timeout_seconds"] == inventory["qualification_budget_seconds"] == 18000
     assert problems_with(inventory=inventory) == []
 
     invalid = copy.deepcopy(inventory)
     next(gate for gate in invalid["gates"] if gate["id"] == "mutants-generated")[
         "timeout_seconds"
-    ] = 21601
-    assert any("timeout_seconds" in problem for problem in problems_with(inventory=invalid))
+    ] = 18001
+    assert any(
+        "timeout_seconds exceeds qualification_budget_seconds" in problem
+        for problem in problems_with(inventory=invalid)
+    )
+
+
+def test_doc_fixture_cannot_feature_unify_default_workspace_validation() -> None:
+    test_body = vi.recipe_body("test")
+    assert test_body.count("--workspace --exclude taskmesh-doc-examples") == 2
+    assert "cargo test --locked -p taskmesh-doc-examples" in test_body
+
+    clippy_body = vi.recipe_body("clippy")
+    assert clippy_body.count("--exclude taskmesh-doc-examples") == 2
+    assert "cargo clippy --locked -p taskmesh --features rayon" in clippy_body
+    assert "cargo clippy --locked -p taskmesh-doc-examples" in clippy_body
+
+    doctest_body = vi.recipe_body("doctest")
+    assert "--workspace --exclude taskmesh-doc-examples --doc" in doctest_body
+    assert "-p taskmesh --features rayon --doc" in doctest_body
+
+    rustdoc_body = vi.recipe_body("rustdoc")
+    assert "--workspace --exclude taskmesh-doc-examples" in rustdoc_body
+    assert "-p taskmesh --features rayon" in rustdoc_body
 
 
 def test_missing_gate_executable_is_fail_not_missing_receipt(monkeypatch) -> None:

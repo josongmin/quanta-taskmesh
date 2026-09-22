@@ -10,6 +10,3 @@ description = "Shared Rayon CPU executor adapter for the taskmesh CpuExecutor po
 [dependencies]
 taskmesh-contract = { workspace = true }
 rayon = { workspace = true }
-
-[dev-dependencies]
-tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }

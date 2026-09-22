@@ -142,6 +142,69 @@ def test_every_configured_fingerprint_input_changes_the_fingerprint(tmp_path: Pa
         assert run() == reference, f"{rel} restored"
 
 
+def test_baseline_artifact_paths_cannot_escape_the_store(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    outside = tmp_path / "outside.out"
+    outside.write_text("events: Ir\n", encoding="utf-8")
+    linked = store / "linked.out"
+    linked.symlink_to(outside)
+
+    assert iai_gate.confined_artifact(store, "../outside.out") is None
+    assert iai_gate.confined_artifact(store, str(outside)) is None
+    assert iai_gate.confined_artifact(store, "linked.out") is None
+    assert iai_gate.baseline_artifacts(store) == []
+
+
+def test_manifest_rejects_a_baseline_artifact_outside_the_store(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    outside = tmp_path / "outside.out"
+    outside.write_text("events: Ir\n", encoding="utf-8")
+    manifest = {
+        "schema_version": iai_gate.BASELINE_MANIFEST_VERSION,
+        "kind": "iai-callgrind-baseline",
+        "state": "BASELINE_READY",
+        "fingerprint": "f" * 64,
+        "runner": "0.14.2",
+        "valgrind": "valgrind-3.22",
+        "rustc": "rustc 1.95.0",
+        "config_sha256": iai_gate._sha256(iai_gate.CONFIG),
+        "artifacts": [
+            {
+                "path": "../outside.out",
+                "size": outside.stat().st_size,
+                "sha256": iai_gate._sha256(outside),
+            }
+        ],
+    }
+    (store / iai_gate.BASELINE_MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
+    problems = iai_gate.baseline_manifest_problems(
+        store,
+        fingerprint_value="f" * 64,
+        runner="0.14.2",
+        valgrind="valgrind-3.22",
+        rustc="rustc 1.95.0",
+    )
+    assert "baseline artifact '../outside.out' escapes the baseline store" in problems
+
+
+def test_symlinked_summary_is_not_comparison_evidence(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    (store / "fake").mkdir(parents=True)
+    outside = tmp_path / "summary.json"
+    outside.write_text(
+        json.dumps({"callgrind_summary": {"callgrind_run": {"total": {"summary": {}}}}}),
+        encoding="utf-8",
+    )
+    (store / "fake" / "summary.json").symlink_to(outside)
+    result = iai_gate.inspect_summaries(store)
+    assert result["selected_count"] == 1
+    assert result["executed_count"] == 0
+    assert result["comparison_count"] == 0
+    assert result["invalid_summaries"] == ["fake/summary.json"]
+
+
 # ---- the shell script ------------------------------------------------------
 
 
@@ -292,6 +355,17 @@ def test_non_linux_is_reported_and_refused(harness: Harness) -> None:
     assert proc.returncode == 1
     assert "requires Linux" in proc.stderr
     assert "status=UNSUPPORTED_PLATFORM" in proc.stdout
+
+
+def test_symlinked_baseline_directory_is_refused(harness: Harness, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (harness.root / "target").mkdir()
+    (harness.root / "target" / "iai").symlink_to(outside, target_is_directory=True)
+    proc = harness.run()
+    assert proc.returncode == 1
+    assert "baseline directory target/iai is a symlink" in proc.stderr
+    assert list(outside.iterdir()) == []
 
 
 def test_a_runner_whose_version_cannot_be_read_says_so_instead_of_dying_silently(

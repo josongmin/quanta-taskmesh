@@ -116,7 +116,10 @@ fn inflight_cap_is_never_exceeded_under_contention() {
                 let first_permit = match g.admit(&spec) {
                     AdmissionDecision::Admitted { permit_id } => {
                         let now = held.fetch_add(1, Ordering::SeqCst) + 1;
-                        assert!(now <= CAP as i64, "concurrent permits {now} exceeded cap {CAP}");
+                        assert!(
+                            now <= CAP as i64,
+                            "concurrent permits {now} exceeded cap {CAP}"
+                        );
                         Some(permit_id)
                     }
                     AdmissionDecision::Rejected(_) => {

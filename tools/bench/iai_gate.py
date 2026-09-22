@@ -123,6 +123,20 @@ def _artifact(path: Path, root: Path) -> dict[str, object]:
     }
 
 
+def confined_artifact(root: Path, relative: str) -> Path | None:
+    """Resolve a manifest artifact only when it stays inside the baseline store."""
+    try:
+        named = Path(relative)
+        if not relative or named.is_absolute() or ".." in named.parts:
+            return None
+        artifact = root / named
+        if artifact.is_symlink() or not artifact.resolve().is_relative_to(root.resolve()):
+            return None
+    except (OSError, ValueError):
+        return None
+    return artifact
+
+
 def baseline_artifacts(root: Path) -> list[dict[str, object]]:
     """Raw runner outputs that make a baseline real rather than stamp-only."""
     excluded = {BASELINE_MANIFEST, COMPARISON_MANIFEST, "benchmark-output.log"}
@@ -130,6 +144,8 @@ def baseline_artifacts(root: Path) -> list[dict[str, object]]:
         path
         for path in root.rglob("*")
         if path.is_file()
+        and not path.is_symlink()
+        and path.resolve().is_relative_to(root.resolve())
         and path.name not in excluded
         and path.suffix in {".out", ".log"}
         and path.stat().st_size > 0
@@ -141,7 +157,7 @@ def baseline_manifest_problems(
     root: Path, *, fingerprint_value: str, runner: str, valgrind: str, rustc: str
 ) -> list[str]:
     path = root / BASELINE_MANIFEST
-    if not path.is_file():
+    if path.is_symlink() or not path.is_file():
         return ["baseline manifest is missing"]
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -172,7 +188,10 @@ def baseline_manifest_problems(
         if not isinstance(item, dict) or not isinstance(item.get("path"), str):
             problems.append("baseline artifact entry is malformed")
             continue
-        artifact = root / item["path"]
+        artifact = confined_artifact(root, item["path"])
+        if artifact is None:
+            problems.append(f"baseline artifact {item['path']!r} escapes the baseline store")
+            continue
         if not artifact.is_file():
             problems.append(f"baseline artifact {item['path']!r} is missing")
             continue
@@ -207,13 +226,17 @@ def inspect_summaries(root: Path) -> dict[str, object]:
     invalid: list[str] = []
     compared = 0
     for path in paths:
+        relative = path.relative_to(root).as_posix()
+        if confined_artifact(root, relative) is None:
+            invalid.append(relative)
+            continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            invalid.append(path.relative_to(root).as_posix())
+            invalid.append(relative)
             continue
         if not isinstance(payload, dict) or not payload.get("callgrind_summary"):
-            invalid.append(path.relative_to(root).as_posix())
+            invalid.append(relative)
             continue
         if _summary_comparison_complete(payload):
             compared += 1
@@ -250,8 +273,9 @@ def finalize_run(
         problems.append("fresh-baseline run unexpectedly claims an old-vs-new comparison")
     status = "NOT_RUN" if problems else ("QUALIFIED" if expected_comparison else "BASELINE_CREATED")
     raw_log = root / "benchmark-output.log"
+    safe_raw_log = confined_artifact(root, "benchmark-output.log")
     artifacts = baseline_artifacts(root)
-    if not raw_log.is_file() or raw_log.stat().st_size == 0:
+    if safe_raw_log is None or not raw_log.is_file() or raw_log.stat().st_size == 0:
         problems.append("raw benchmark output is missing")
         status = "NOT_RUN"
     comparison = {
@@ -260,9 +284,13 @@ def finalize_run(
         "status": status,
         "fingerprint": fingerprint_value,
         **inspection,
-        "summary_artifacts": [_artifact(root / path, root) for path in inspection["summaries"]],
+        "summary_artifacts": [
+            _artifact(root / path, root)
+            for path in inspection["summaries"]
+            if confined_artifact(root, path) is not None and (root / path).is_file()
+        ],
         "raw_output": _artifact(raw_log, root)
-        if raw_log.is_file() and raw_log.stat().st_size
+        if safe_raw_log is not None and raw_log.is_file() and raw_log.stat().st_size
         else None,
         "problems": problems,
     }

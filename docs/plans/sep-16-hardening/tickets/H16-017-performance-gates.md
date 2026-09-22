@@ -25,7 +25,7 @@
 - [x] B는 metric/baseline schema와 gate 구현을 소유하고 C는 Justfile·workflow 패치를 적용한다. 공유 파일 병렬 수정을 금지한다.
   → 단일 작업자 — 직렬 적용
 - [x] shell pipeline 전체에 실패 전파를 적용하고 producer 실패·tee 실패·parser 실패를 구별한다. remote baseline의 명시적 not-found와 인증·network·format 실패를 구분한다.
-  → fixture: `tools/bench/tests/test_history_branch.py`(ls-remote 0/2/128), `test_validate_bencher_output.py`(partial capture)
+  → 당시 fixture로 검증했으나, workflow_dispatch 전용 전환 뒤 도달 불가능해진 trend 경로와 함께 제거
 - [x] allocation 수치와 MAX_ALLOCS_PER_OP threshold 모두 전체 문자열을 엄격히 parse하고 malformed/NaN/inf/negative를 거절한다. metric 중복/누락, 단위·required metrics·schema version도 검증한다.
 - [x] IAI threshold·comparison policy를 단일 config로 만들고 local/CI가 같은 config를 읽게 한다. benchmark id, harness/helper schema, config, lock digest, toolchain, target, runner, Valgrind compatibility fingerprint를 저장한다.
 - [x] 초기 baseline 생성은 BASELINE_CREATED / NOT_QUALIFIED로 기록한다. incompatible baseline을 자동 PASS나 silent reset으로 바꾸지 않는다.
@@ -47,6 +47,10 @@
 - `bench.yml`: `defaults.run.shell: bash` + `pipefail`; `ls-remote` exit 2(missing)만 skip, 그 외는 실패;
   bencher output validator; main bootstrap step; cache key에서 prefix restore-keys 제거.
 - `ci.yml`: `just` recipe만 호출(TM16-006).
+
+2026-09-23 정리: hosted workflow가 `workflow_dispatch` 전용으로 전환된 뒤 PR/push 조건의 wall-clock
+trend job은 도달 불가능해졌다. 해당 두 job과 전용 history/parser/test/mutation 2건을 제거했고,
+manual workflow에는 authoritative IAI job만 유지한다.
 
 Regression: `tools/bench/tests/test_allocation_gate.py` (35) — TM16-038 표의 모든 false-green row가
 nonzero.

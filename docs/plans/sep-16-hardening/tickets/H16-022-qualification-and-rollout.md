@@ -64,8 +64,8 @@
       count/status/evidence digest mismatch가 receipt 검증 실패 (`tools/qualification/tests`, 임시 git repo
       fixture로 hermetic). gate 결과 자체는 `collect`가 attest하며 그 경계를 `receipt.py` docstring과
       release-checklist에 명시했다.
-- [x] `H16-022-A03` curated mutation inventory 105건 = 104 defect probes + 1 CONTROL_GREEN
-      (cargo runner 90, pytest runner 15; generated cargo-mutants score와 별도). historical receipt는
+- [x] `H16-022-A03` curated mutation inventory 103건 = 102 defect probes + 1 CONTROL_GREEN
+      (cargo runner 90, pytest runner 13; generated cargo-mutants score와 별도). historical receipt는
       첫 100건이고 receipt/coverage/runner 무결성 probe 4건은 schema-v2 보완에서 추가했다.
 - [ ] `H16-022-A04` MSRV consumer receipt 존재(PASS); Linux IAI는 **명시적 blocker** (macOS). CI
       `qualification` job(ci.yml)이 clean ubuntu checkout에서 `receipt.py collect`를 실행하고 artifact로
@@ -86,7 +86,6 @@ git rev-parse HEAD
 git status --porcelain=v1 --untracked-files=all
 just gate
 just proof
-uv run python tools/pm/pm.py lint
 ```
 
 ## 호환성 / 실패 모드

@@ -37,7 +37,7 @@ jobs:
         with:
           tool: cargo-deny@0.19.7
       - name: Install semgrep
-        run: uv tool install semgrep
+        run: uv tool install "semgrep==$(cat tools/semgrep/version.txt)"
 
       # The canonical fast gate, exactly as `just gate` defines it. Each recipe
       # is invoked on its own line so a failure names the gate that failed.
@@ -146,9 +146,8 @@ jobs:
       - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
         with:
           tool: cargo-fuzz
-      # 60 s per target in CI (30 s locally): long enough for libFuzzer to
-      # reach the engine's branches from an empty corpus, short enough to run
-      # on every push. A crash uploads its reproducer.
+      # 60 s per target in a manually dispatched hosted run (30 s locally).
+      # A crash uploads its reproducer.
       - run: FUZZ_SECONDS=60 just fuzz
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
@@ -234,7 +233,7 @@ jobs:
         with:
           tool: cargo-deny@0.19.7,cargo-llvm-cov,cargo-fuzz,cargo-mutants
       - name: Install semgrep
-        run: uv tool install semgrep
+        run: uv tool install "semgrep==$(cat tools/semgrep/version.txt)"
       - name: Install valgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind
       - name: Install iai-callgrind-runner (version from tools/bench/perf-gate.json)

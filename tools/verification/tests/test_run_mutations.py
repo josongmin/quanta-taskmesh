@@ -26,6 +26,31 @@ _spec.loader.exec_module(rm)
 campaign_module = sys.modules["campaign"]
 
 
+def test_timeout_exit_race_preserves_process_truth(tmp_path: Path, monkeypatch) -> None:
+    class ExitingProcess:
+        pid = 12345
+        returncode = 0
+        calls = 0
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise subprocess.TimeoutExpired(["probe"], timeout)
+            return "finished", ""
+
+    process = ExitingProcess()
+    monkeypatch.setattr(campaign_module.subprocess, "Popen", lambda *_a, **_kw: process)
+
+    def already_exited(_pid: int, _sig: int) -> None:
+        raise ProcessLookupError
+
+    monkeypatch.setattr(campaign_module.os, "killpg", already_exited)
+    result = campaign_module.execute(["probe"], cwd=tmp_path, env={}, timeout_seconds=1)
+    assert result.timed_out is True
+    assert result.returncode == 0
+    assert result.stdout == "finished"
+
+
 MUT = {
     "id": "m",
     "finding": "F",
@@ -254,6 +279,24 @@ def test_runner_owned_environment_wins_defensively() -> None:
     assert recorded["RUST_BACKTRACE"] == "1"
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        "RUSTDOCFLAGS",
+        "RUSTC_WRAPPER",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS",
+    ],
+)
+def test_curated_campaign_rejects_unrecorded_build_environment(
+    key: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(key, "unexpected")
+    campaign = SimpleNamespace(target=Path("/isolated/target"))
+    with pytest.raises(ValueError, match=key):
+        rm.command_environment(MUT, campaign)
+
+
 def test_parent_symlink_escape_is_rejected(tmp_path: Path) -> None:
     source = tmp_path / "source"
     outside = tmp_path / "outside"
@@ -458,7 +501,7 @@ def test_current_inventory_has_one_control_and_explicit_exact_policy() -> None:
     inventory = json.loads(rm.INVENTORY.read_text(encoding="utf-8"))
     mutations = rm.load_inventory(rm.INVENTORY)
     assert inventory["failure_set_policy"] == "cargo_primary_exact_pytest_declared_cofailures_exact"
-    assert len(mutations) == 105
+    assert len(mutations) == 103
     assert sum(bool(mutation.get("expect_no_failure")) for mutation in mutations) == 1
 
 

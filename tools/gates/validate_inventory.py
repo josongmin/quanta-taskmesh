@@ -648,9 +648,16 @@ def validate(
     required_ids = required.get("required", [])
     if len(set(required_ids)) != len(required_ids):
         problems.append("required.json lists an id more than once")
+    qualification_budget = inventory.get("qualification_budget_seconds")
     for gate_id in required_ids:
         if gate_id not in by_id:
             problems.append(f"required gate {gate_id!r} is missing from the inventory")
+        elif (
+            type(qualification_budget) is int
+            and type(by_id[gate_id].get("timeout_seconds", 3600)) is int
+            and by_id[gate_id].get("timeout_seconds", 3600) > qualification_budget
+        ):
+            problems.append(f"{gate_id}: timeout_seconds exceeds qualification_budget_seconds")
     for gate_id in required.get("platform_conditional", {}):
         if gate_id not in required_ids:
             problems.append(f"platform_conditional names {gate_id!r}, which is not required")

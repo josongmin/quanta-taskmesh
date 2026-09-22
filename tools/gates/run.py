@@ -86,10 +86,14 @@ def platform_scope_qualification(
         result = by_id.get(gate_id)
         if result is None:
             return False, excluded
-        if result["status"] == "PASS":
+        if (
+            result.get("status") == "PASS"
+            and type(result.get("exit_code")) is int
+            and result["exit_code"] == 0
+        ):
             continue
         if (
-            result["status"] == "SKIPPED_PLATFORM"
+            result.get("status") == "SKIPPED_PLATFORM"
             and platform_conditional.get(gate_id)
             and platform_conditional[gate_id] != here
         ):
@@ -97,6 +101,36 @@ def platform_scope_qualification(
             continue
         return False, excluded
     return True, excluded
+
+
+def result_record_problems(results: list[dict]) -> list[str]:
+    """Validate the status/exit contract before trusting a saved receipt."""
+    problems: list[str] = []
+    for result in results:
+        gate_id = result.get("id", "<missing>")
+        status = result.get("status")
+        exit_code = result.get("exit_code")
+        if status == "PASS":
+            if type(exit_code) is not int or exit_code != 0:
+                problems.append(f"local receipt gate {gate_id} PASS requires integer exit_code 0")
+        elif status == "SKIPPED_PLATFORM":
+            if exit_code is not None:
+                problems.append(
+                    f"local receipt gate {gate_id} SKIPPED_PLATFORM requires null exit_code"
+                )
+        elif status == "NOT_RUN":
+            if exit_code is not None and (type(exit_code) is not int or exit_code != 2):
+                problems.append(
+                    f"local receipt gate {gate_id} NOT_RUN exit_code must be null or integer 2"
+                )
+        elif status == "FAIL":
+            if exit_code is not None and (type(exit_code) is not int or exit_code == 0):
+                problems.append(
+                    f"local receipt gate {gate_id} FAIL exit_code must be null or a nonzero integer"
+                )
+        else:
+            problems.append(f"local receipt gate {gate_id} has unknown status {status!r}")
+    return problems
 
 
 def local_receipt_problems(
@@ -146,6 +180,7 @@ def local_receipt_problems(
     ids = [result["id"] for result in valid_results]
     if len(valid_results) != len(results) or len(ids) != len(set(ids)):
         problems.append("local receipt result ids are malformed or duplicated")
+    problems.extend(result_record_problems(valid_results))
     recomputed, excluded = platform_scope_qualification(
         required, valid_results, platform_conditional, here
     )
@@ -363,8 +398,10 @@ def run_selected_gates(
                 }
                 results.append(result)
                 print(f"{gate['id']:<20} FAIL (qualification deadline exhausted)")
-                if not keep_going:
-                    blocked_by = gate["id"]
+                # A spent global budget cannot be bypassed by --keep-going.
+                # Record the first missed start as the verdict owner and keep
+                # every later applicable gate in the denominator as NOT_RUN.
+                blocked_by = gate["id"]
                 continue
             effective_gate = {
                 **gate,
@@ -381,9 +418,7 @@ def run_selected_gates(
     return results
 
 
-def source_preflight_blocker(
-    source: dict, *, require_clean_source: bool
-) -> str | None:
+def source_preflight_blocker(source: dict, *, require_clean_source: bool) -> str | None:
     """Return the qualification preflight blocker, if explicitly requested.
 
     Selecting the full or required denominator is also useful for diagnostic
@@ -558,8 +593,7 @@ def main(argv: list[str] | None = None) -> int:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source": source,
         "source_after": {
-            field: source_after.get(field)
-            for field in ("head", "tree", "paths_digest", "dirty")
+            field: source_after.get(field) for field in ("head", "tree", "paths_digest", "dirty")
         },
         "source_problems": source_problems,
         "qualified": qualified,

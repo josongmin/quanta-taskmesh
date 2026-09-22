@@ -32,7 +32,7 @@ Run the registered recipes through `just`:
       (real integration tests enrolled), architecture checker, py-lint, py-test,
       allocation gate, gates-inventory parity
 - [ ] `just test-rayon` / `just doctest` / `just rustdoc` / `just bench-smoke`
-- [ ] `just mutants-critical` — curated single-edit inventory의 non-control 104개가
+- [ ] `just mutants-critical` — curated single-edit inventory의 non-control 102개가
       KILLED이고 control 1개가 CONTROL_GREEN인지 확인한다. 이것은 cargo-mutants
       전체 생성 sweep의 score가 아니다. Non-control cargo mutation은 named primary
       oracle 하나만 `--exact --test-threads 1`로 실행하며 cargo cofailure 선언은 거부한다;
@@ -69,6 +69,10 @@ Run the registered recipes through `just`:
       the one `collect` produced on that checkout — never a file handed over
       for `validate` alone. `mutants-critical` and `mutants-generated` are separate
       required denominators. A curated PASS never implies a generated score.
+      Receipt schema 4 records the gate-runner process exit and its raw required
+      summary separately from the enriched gate rows: local qualification requires
+      exit 0, while hosted producer import may account only for its exact skipped
+      producer set. A PASS JSON sidecar cannot override a failed local process.
 - [ ] hell-gate e2e: `crates/taskmesh/tests/e2e_proof.rs`, `e2e_scenarios.rs`
 
 ## Invariant proofs
@@ -94,9 +98,9 @@ Run the registered recipes through `just`:
   front doors; the JSON wire formats. `just fuzz-check` keeps the targets
   compiling on stable. NOT_RUN without nightly + cargo-fuzz; only
   `taskmesh-fuzz status=PASS` with all target-specific semantic witnesses is PASS.
-- Mutation gate: 105 curated entries — 104 single-edit fault probes
-  (89 non-control cargo incl. 3 shuttle-model targets and 1 differential-model target, 15 pytest
-  against the Python tooling and the bench workflow scripts), each killed by its named regression for its named
+- Mutation gate: 103 curated entries — 102 single-edit fault probes
+  (89 non-control cargo incl. 3 shuttle-model targets and 1 differential-model target, 13 pytest
+  against the Python tooling), each killed by its named regression for its named
   reason found in that test's own output, plus one cargo behaviour-preserving control
   that must stay green. The historical schema-v1 receipt contains the first 100;
   five receipt/coverage/runner integrity probes were added with schema v2.

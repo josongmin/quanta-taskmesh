@@ -25,6 +25,7 @@ from campaign import (  # noqa: E402
     exact_tool_version,
     execute,
     prepare_output_dir,
+    sanitized_campaign_environment,
     sha256_file,
     utc_now,
     write_json,
@@ -144,6 +145,8 @@ def load_equivalents(path: Path | None, missed: list[str]) -> list[dict[str, str
     if path is None:
         return []
     data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("equivalence review must be an object")
     reviews = data.get("equivalents", [])
     if not isinstance(reviews, list):
         raise ValueError("equivalents must be a list")
@@ -333,10 +336,8 @@ def tool_identity(source: Path) -> list[dict[str, str]]:
 
 
 def execution_environment(parent: dict[str, str]) -> dict[str, str]:
-    """Preserve the runner environment without collapsing per-job build dirs."""
-    environment = parent.copy()
-    environment.pop("CARGO_TARGET_DIR", None)
-    return environment
+    """Preserve non-semantic state without collapsing per-job build dirs."""
+    return sanitized_campaign_environment(parent)
 
 
 def main(argv: list[str] | None = None) -> int:

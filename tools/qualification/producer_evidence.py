@@ -27,6 +27,28 @@ def _load(path: Path) -> object:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _registered_file(root: Path, declared: object) -> Path:
+    """Resolve an inventory-declared evidence file inside its repository root."""
+    if (
+        not isinstance(declared, str)
+        or not declared
+        or "\\" in declared
+        or any(part in {"", ".", ".."} for part in declared.split("/"))
+        or Path(declared).is_absolute()
+    ):
+        raise ValueError("producer evidence path must be repo-relative")
+    root_resolved = root.resolve(strict=True)
+    candidate = root / declared
+    resolved = candidate.resolve(strict=True)
+    try:
+        resolved.relative_to(root_resolved)
+    except ValueError as exc:
+        raise ValueError("producer evidence path escapes repository root") from exc
+    if candidate.is_symlink() or not resolved.is_file():
+        raise ValueError("producer evidence path must name a regular non-symlink file")
+    return candidate
+
+
 def registrations(inventory_path: Path) -> list[dict[str, Any]]:
     inventory = _load(inventory_path)
     if not isinstance(inventory, dict) or not isinstance(inventory.get("gates"), list):
@@ -79,9 +101,9 @@ def collect_records(root: Path, specs: list[dict[str, Any]]) -> list[dict[str, A
             "surface": spec.get("surface"),
         }
         try:
-            manifest_path = root / str(spec["manifest"])
-            summary_path = root / str(spec["summary"])
-            envelope_path = root / str(spec["envelope"])
+            manifest_path = _registered_file(root, spec["manifest"])
+            summary_path = _registered_file(root, spec["summary"])
+            envelope_path = _registered_file(root, spec["envelope"])
             manifest = _load(manifest_path)
             summary = _load(summary_path)
             envelope = _load(envelope_path)
@@ -124,22 +146,22 @@ def _identity_problems(
     if not isinstance(identity.get("size"), int) or identity.get("size", 0) <= 0:
         problems.append(f"{name} size is missing or non-positive")
     if root is not None:
-        path = root / expected_path
-        if not path.is_file():
-            problems.append(f"{name} {expected_path!r} is missing")
-        else:
+        try:
+            path = _registered_file(root, expected_path)
             data = path.read_bytes()
             if identity.get("size") != len(data):
                 problems.append(f"{name} size does not match sidecar")
             if identity.get("sha256") != hashlib.sha256(data).hexdigest():
                 problems.append(f"{name} digest does not match sidecar")
+        except (OSError, ValueError) as exc:
+            problems.append(f"{name} {expected_path!r} is missing or unsafe: {exc}")
     return problems
 
 
 def _embedded_sidecar_problems(*, root: Path, path: str, embedded: object, name: str) -> list[str]:
     try:
-        sidecar = _load(root / path)
-    except (OSError, json.JSONDecodeError) as exc:
+        sidecar = _load(_registered_file(root, path))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
         return [f"cannot parse {name} sidecar: {exc}"]
     if sidecar != embedded:
         return [f"{name} sidecar differs from embedded payload"]

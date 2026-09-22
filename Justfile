@@ -18,7 +18,11 @@ fmt-check:
     cargo fmt --all --check
 
 check:
-    cargo check --locked --workspace --all-targets
+    # Keep the rayon-enabled documentation fixture from feature-unifying the
+    # default taskmesh build. Validate each surface explicitly.
+    cargo check --locked --workspace --exclude taskmesh-doc-examples --all-targets
+    cargo check --locked -p taskmesh --features rayon --all-targets
+    cargo check --locked -p taskmesh-doc-examples --all-targets
 
 test:
     # nextest keeps Cargo's --workspace --lib --tests selection but schedules
@@ -28,10 +32,11 @@ test:
     # A clean bootstrap without cargo-nextest retains the identical Cargo
     # selection rather than silently skipping the test gate.
     if cargo nextest --version >/dev/null 2>&1; then \
-        CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo nextest run --locked --workspace --lib --tests --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
+        CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo nextest run --locked --workspace --exclude taskmesh-doc-examples --lib --tests --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
     else \
-        CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked --workspace --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
+        CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked --workspace --exclude taskmesh-doc-examples --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
     fi
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked -p taskmesh-doc-examples --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"
 
 # Laptop feedback excludes benchmark harness tests and the generated README/doc
 # fixture. Their correctness and buildability remain required by full `test`,
@@ -48,8 +53,10 @@ test-core:
 # Pass 3: the publish=false bench harness (statistical float code) gets baseline
 #         lint only — pedantic float/cast/flop lints are noise for stats code.
 clippy:
-    CLIPPY_CONF_DIR={{root}}/config cargo clippy --locked --workspace --exclude taskmesh-bench --tests --examples --benches -- {{clippy_strict}} {{clippy_allows}}
-    CLIPPY_CONF_DIR={{root}}/config cargo clippy --locked --workspace --exclude taskmesh-bench --lib --bins -- {{clippy_strict}} {{clippy_allows}} {{clippy_restrict}}
+    CLIPPY_CONF_DIR={{root}}/config cargo clippy --locked --workspace --exclude taskmesh-bench --exclude taskmesh-doc-examples --tests --examples --benches -- {{clippy_strict}} {{clippy_allows}}
+    CLIPPY_CONF_DIR={{root}}/config cargo clippy --locked --workspace --exclude taskmesh-bench --exclude taskmesh-doc-examples --lib --bins -- {{clippy_strict}} {{clippy_allows}} {{clippy_restrict}}
+    CLIPPY_CONF_DIR={{root}}/config cargo clippy --locked -p taskmesh --features rayon --lib --bins -- {{clippy_strict}} {{clippy_allows}} {{clippy_restrict}}
+    cargo clippy --locked -p taskmesh-doc-examples --all-targets -- -D warnings
     cargo clippy --locked -p taskmesh-bench --all-targets -- -D warnings
 
 clippy-core:
@@ -119,11 +126,13 @@ test-rayon:
     cargo test --locked -p taskmesh --features rayon --test hardening_executor_authority rayon_cpu_domain_is_separate_and_observable -- --exact
 
 doctest:
-    cargo test --locked --workspace --doc
+    cargo test --locked --workspace --exclude taskmesh-doc-examples --doc
+    cargo test --locked -p taskmesh --features rayon --doc
 
 # rustdoc must stay link-clean (private-intra-doc-link drift detector).
 rustdoc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace --exclude taskmesh-doc-examples
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps -p taskmesh --features rayon
 
 # Benches must keep compiling and smoke-running (no timing is recorded).
 bench-smoke:

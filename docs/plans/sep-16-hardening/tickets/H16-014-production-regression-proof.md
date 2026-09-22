@@ -36,8 +36,8 @@
 
 **상태: 구현 완료 (local).**
 
-- `tools/verification/run_mutations.py` + `mutations.json`: curated 단일 편집 inventory 105건
-  (104 defect + 1 behaviour-preserving control; cargo runner 90, pytest runner 15). cargo-mutants가 생성한
+- `tools/verification/run_mutations.py` + `mutations.json`: curated 단일 편집 inventory 103건
+  (102 defect + 1 behaviour-preserving control; cargo runner 90, pytest runner 13). cargo-mutants가 생성한
   전체 mutant의 score가 아니라 감사에서 고정한 fault inventory다.
   각 mutation은 **지정된 test가 지정된 사유로** FAIL해야 KILLED다. compile error·다른 test 실패·
   0 collected·timeout은 kill로 인정하지 않는다(`INVALID_*`/`WRONG_TEST`/`WRONG_REASON`). control은
@@ -53,7 +53,7 @@
   lost-wakeup freedom, claim-vs-reap 양방향, 무순서 reconcile)와 shuttle 6개(4개 × 10,000 schedule + D08 gap 모델 2개 × 5,000)가
   실제 `admit`/`claim`/`abandon`/`release`/`reap_leaks`/`reconcile_memory`를 호출한다.
   checker는 optional feature(`loom`/`shuttle`) 뒤에 있어 consumer lockfile을 바꾸지 않는다.
-- mutation inventory는 105건(control 1, `runner: pytest` 15)이며 모든 non-control entry에
+- mutation inventory는 103건(control 1, `runner: pytest` 13)이며 모든 non-control entry에
   `expect_message`가 강제된다. TM16-002/024/012의 hang-only test는 5초 상한과 release-on-drop으로
   bounded되어 각각 mutation으로 KILLED된다. TM16-010은 `profile: release`로 test의 assertion이
   detector임을 확인했다.

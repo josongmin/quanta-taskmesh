@@ -14,23 +14,6 @@ pub fn jain_fairness_index(shares: &[f64]) -> f64 {
     (sum * sum) / (shares.len() as f64 * sum_sq)
 }
 
-/// Goodput: admitted-and-completed requests per second (distinct from raw
-/// offered throughput).
-pub fn goodput(completed: usize, elapsed_secs: f64) -> f64 {
-    if elapsed_secs <= 0.0 {
-        return 0.0;
-    }
-    completed as f64 / elapsed_secs
-}
-
-/// Tail amplification: the p99/p50 latency ratio. Rises under overload.
-pub fn tail_amplification(p50: f64, p99: f64) -> f64 {
-    if p50 <= 0.0 {
-        return 1.0;
-    }
-    p99 / p50
-}
-
 /// Reject ratio under load: fraction of offered requests that were rejected
 /// (the fail-closed signal).
 pub fn reject_ratio(rejected: usize, offered: usize) -> f64 {
@@ -180,10 +163,8 @@ mod tests {
     }
 
     #[test]
-    fn goodput_and_reject_ratio() {
-        assert_eq!(goodput(100, 2.0), 50.0);
+    fn reject_ratio_reports_fraction() {
         assert_eq!(reject_ratio(25, 100), 0.25);
-        assert_eq!(tail_amplification(10.0, 50.0), 5.0);
     }
 
     #[test]

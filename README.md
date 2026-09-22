@@ -85,7 +85,7 @@ thread 상한을 사용한다.
 | 실행 가능한 명세 | admission/promotion 상태기계 ≡ ~150줄 reference model (매 op 뒤 verdict·gauge·ticket·ledger 동치) | `cargo test -p taskmesh-engine --test differential_model` (proptest, `just test`에 포함) |
 | 실제 메모리 시스템 | parking_lot·Tokio·OS thread 위의 data race | `just tsan` (nightly `-Zbuild-std -Zsanitizer=thread`) |
 | coverage-guided 탐색 | production `Governor`의 모든 public transition을 무작위 순서로 몰며 매 step 뒤 invariant(conservation·상한·budget·handle 일치)와 마지막 quiescence; policy/topology/builder front door; JSON wire format | `just fuzz` (nightly + cargo-fuzz, `fuzz/`; target은 `just fuzz-check`로 stable에서 항상 컴파일) |
-| 테스트가 실제로 실패할 수 있는가 | 고친 결함 하나를 다시 넣으면 named test가 named reason으로 죽는가 | `just mutants-critical` (curated single-edit inventory: 104 defect probes + 1 control; cargo-mutants score 아님) |
+| 테스트가 실제로 실패할 수 있는가 | 고친 결함 하나를 다시 넣으면 named test가 named reason으로 죽는가 | `just mutants-critical` (curated single-edit inventory: 102 defect probes + 1 control; cargo-mutants score 아님) |
 | 객관 지표 | 실행된 production code (threshold 아님) | `just coverage-report` (lines/regions/functions/instantiations; branch·MCDC 미수집 시 `NOT_COLLECTED`) |
 | 소비자 계약 | Rust 1.81에서 default·rayon 표면 컴파일 | `just consumer-msrv` |
 | 문서가 컴파일되는가 | 이 README·`docs/taskmesh-external-interface.md`·`CHANGELOG.md`의 모든 ```rust 블록이 *그대로* facade에 대해 type-check (build.rs가 추출; hidden line 없음; fence attribute `body`/`arms`/`builder`로 scaffold 선택, `rust,ignore`는 CHANGELOG의 `// 0.1.0` 인용에만 허용) | `cargo test -p taskmesh-doc-examples` (`just test`에 포함), `just doctest` (workspace rustdoc examples) |

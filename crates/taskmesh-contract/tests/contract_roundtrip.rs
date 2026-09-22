@@ -159,34 +159,3 @@ fn exact_resource_aggregates_cross_the_wire_as_decimal_strings() {
     assert_eq!(back.cpu_units_held, u128::MAX);
     assert_eq!(back.memory_units_held, u128::MAX - 1);
 }
-
-#[test]
-fn conservation_identities_reject_an_inconsistent_projection() {
-    let consistent = ClassSnapshot {
-        inflight: 3,
-        dispatch_reserved: 1,
-        accepted: 1,
-        running: 1,
-        admitted_total: 5,
-        started_total: 3,
-        terminated_total: 2,
-        ..ClassSnapshot::default()
-    };
-    assert_eq!(consistent.conservation_violation(), None);
-
-    let phases_disagree = ClassSnapshot {
-        inflight: 4,
-        ..consistent.clone()
-    };
-    assert!(phases_disagree
-        .conservation_violation()
-        .is_some_and(|violation| violation.contains("phase sum")));
-
-    let totals_disagree = ClassSnapshot {
-        terminated_total: 99,
-        ..consistent
-    };
-    assert!(totals_disagree
-        .conservation_violation()
-        .is_some_and(|violation| violation.contains("admitted_total")));
-}

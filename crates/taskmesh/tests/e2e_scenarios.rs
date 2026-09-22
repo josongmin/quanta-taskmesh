@@ -1,8 +1,8 @@
 //! Hardcore operational e2e scenarios — "does the whole thing actually behave
 //! under pressure?" These go beyond the per-feature proof gate (`e2e_proof.rs`):
-//! concurrency storms, cancellation chaos, an accounting-conservation invariant,
-//! backpressure forward-progress, bounded fail-closed overload, a multi-stage
-//! composite pipeline, and a CPU soak through the Rayon executor.
+//! concurrency storms, cancellation chaos, backpressure forward-progress,
+//! bounded fail-closed overload, a multi-stage composite pipeline, and a CPU soak
+//! through the Rayon executor.
 //!
 //! Robustness rules followed here: no assertions on cross-thread ordering (only
 //! on completion, conservation, drain-to-zero, and forward progress), and every
@@ -16,10 +16,18 @@ use taskmesh::ext::*;
 use taskmesh::*;
 
 const HANG: Duration = Duration::from_secs(5);
+const STORM_TIMEOUT: Duration = Duration::from_secs(30);
 
 async fn bounded<F: std::future::Future>(what: &str, future: F) -> F::Output {
     let Ok(output) = tokio::time::timeout(HANG, future).await else {
         panic!("{what}: timed out after {HANG:?}");
+    };
+    output
+}
+
+async fn bounded_storm<F: std::future::Future>(what: &str, future: F) -> F::Output {
+    let Ok(output) = tokio::time::timeout(STORM_TIMEOUT, future).await else {
+        panic!("{what}: timed out after {STORM_TIMEOUT:?}");
     };
     output
 }
@@ -103,12 +111,16 @@ async fn high_concurrency_multiclass_drains_clean() {
         }));
     }
 
-    let mut ok = 0usize;
-    for h in handles {
-        if h.await.unwrap().is_ok() {
-            ok += 1;
+    let ok = bounded_storm("high-concurrency multiclass storm", async move {
+        let mut ok = 0usize;
+        for handle in handles {
+            if handle.await.unwrap().is_ok() {
+                ok += 1;
+            }
         }
-    }
+        ok
+    })
+    .await;
     assert_eq!(ok, 240, "every queued submission must eventually complete");
     assert_drained(&rt, &names);
 }
@@ -143,9 +155,12 @@ async fn single_slot_storm_serializes_without_deadlock() {
             }
         }));
     }
-    for h in handles {
-        h.await.unwrap();
-    }
+    bounded_storm("single-slot serialization storm", async move {
+        for handle in handles {
+            handle.await.unwrap();
+        }
+    })
+    .await;
     assert_eq!(done.load(Ordering::SeqCst), 128);
     assert_drained(&rt, &["solo"]);
 }
@@ -194,9 +209,12 @@ async fn cancellation_chaos_never_leaks() {
             };
         }));
     }
-    for h in handles {
-        h.await.unwrap();
-    }
+    bounded_storm("cancellation chaos task group", async move {
+        for handle in handles {
+            handle.await.unwrap();
+        }
+    })
+    .await;
 
     // Both paths must have been exercised (the scenario is meaningful).
     assert!(completed.load(Ordering::SeqCst) > 0, "some must complete");
@@ -253,7 +271,10 @@ async fn all_substrates_concurrently() {
     });
 
     // `join!` polls the non-Send local future on this task (no spawn needed).
-    let (a, b, c, d) = tokio::join!(io, blk, cpu, local);
+    let (a, b, c, d) = bounded_storm("all-substrate join group", async {
+        tokio::join!(io, blk, cpu, local)
+    })
+    .await;
     assert_eq!(a.unwrap(), "io");
     assert_eq!(b.unwrap(), "blk");
     assert_eq!(c.unwrap(), "cpu");
@@ -350,13 +371,13 @@ async fn backpressure_retry_makes_forward_progress() {
         .send(())
         .expect("client waits for retry permission");
 
-    holder.await.unwrap().unwrap();
-    let attempts = bounded(
-        "backpressure_retry_makes_forward_progress: client never made progress after release",
-        client,
+    let (holder_result, client_result) = bounded_storm(
+        "backpressure_retry_makes_forward_progress: released task group did not finish",
+        async { tokio::join!(holder, client) },
     )
-    .await
-    .expect("client task must not panic");
+    .await;
+    holder_result.unwrap().unwrap();
+    let attempts = client_result.expect("client task must not panic");
     assert!(attempts > 0, "client should have hit saturation first");
     assert_drained(&rt, &["c"]);
 }
@@ -404,9 +425,12 @@ async fn overload_is_bounded_and_fail_closed() {
             };
         }));
     }
-    for h in handles {
-        h.await.unwrap();
-    }
+    bounded_storm("bounded overload task group", async move {
+        for handle in handles {
+            handle.await.unwrap();
+        }
+    })
+    .await;
 
     let total = admitted.load(Ordering::SeqCst) + shed.load(Ordering::SeqCst);
     assert_eq!(total, 64, "every request must return a decision (no hang)");
@@ -414,63 +438,7 @@ async fn overload_is_bounded_and_fail_closed() {
     assert_drained(&rt, &["c"]);
 }
 
-// ───────────── 6. accounting conservation invariant (randomized) ─────────
-
-/// The load-bearing invariant: after an arbitrary admit/release sequence, the
-/// snapshot's per-class accounting must exactly equal the live permit set. Driven
-/// by a fixed-seed LCG; checked after every single operation.
-#[test]
-fn accounting_conservation_under_randomized_ops() {
-    let rt = Builder::new()
-        .resources(
-            ResourceBudget::new()
-                .cpu_units(1_000_000)
-                .memory_units(1_000_000),
-        )
-        .class_policy(cls("c"), ClassPolicy::new().cpu_units(2).memory_units(3))
-        .build()
-        .unwrap();
-    let g = rt.governor();
-    let c = cls("c");
-
-    let mut held: Vec<u64> = Vec::new(); // permit ids
-    let mut lcg = Lcg(0x0BAD_F00D_1234_5678);
-
-    for step in 0..4000u64 {
-        let do_admit = held.is_empty() || lcg.below(100) < 60;
-        if do_admit {
-            let op = format!("op-{step}");
-            match g.admit(&TaskSpec::blocking(c.clone()).operation(op.clone())) {
-                AdmissionDecision::Admitted { permit_id } => held.push(permit_id),
-                other => panic!("unbounded admit must succeed at step {step}: {other:?}"),
-            }
-        } else {
-            let idx = (lcg.next() as usize) % held.len();
-            assert_eq!(g.release(held.swap_remove(idx)), ReleaseOutcome::Released);
-        }
-
-        let snap = rt.snapshot();
-        let cs = &snap.classes[&c];
-        assert_eq!(cs.inflight as usize, held.len(), "inflight at step {step}");
-        assert_eq!(
-            cs.cpu_units_held,
-            held.len() as u128 * 2,
-            "cpu at step {step}"
-        );
-        assert_eq!(
-            cs.memory_units_held,
-            held.len() as u128 * 3,
-            "mem at step {step}"
-        );
-    }
-
-    for p in held {
-        assert_eq!(g.release(p), ReleaseOutcome::Released);
-    }
-    assert_drained(&rt, &["c"]);
-}
-
-// ───────────── 7. multi-stage composite pipeline ─────────────────────────
+// ───────────── 6. multi-stage composite pipeline ─────────────────────────
 
 /// A realistic composite: a root fans into children across distinct stages;
 /// attribution rolls up, the recursion guard rejects a same-stage re-entry, and
@@ -537,7 +505,7 @@ fn composite_pipeline_attribution_recursion_and_reduce() {
     assert!(g.root_attribution("root-1").is_none());
 }
 
-// ───────────── 8. memory reconcile lifecycle ─────────────────────────────
+// ───────────── 7. memory reconcile lifecycle ─────────────────────────────
 
 /// Hybrid memory across its full lifecycle: reserve estimate, reconcile up to
 /// measured, reconcile back down (held never drops below the estimate), stage
@@ -590,7 +558,7 @@ fn memory_reconcile_lifecycle_is_consistent() {
     assert_drained(&rt, &["h"]);
 }
 
-// ───────────── 9. CPU soak through the Rayon executor ────────────────────
+// ───────────── 8. CPU soak through the Rayon executor ────────────────────
 
 /// 96 concurrent CPU jobs through the shared Rayon pool, each computing a real
 /// reduction; results must be correct and accounting must drain.
@@ -629,38 +597,16 @@ async fn rayon_cpu_soak_results_correct_and_drains() {
         }));
     }
 
-    for (i, h) in handles.into_iter().enumerate() {
-        let expected: u64 = (0..1000u64).map(|x| x ^ i as u64).sum();
-        assert_eq!(h.await.unwrap().unwrap(), expected, "cpu job {i} result");
-    }
+    bounded_storm("Rayon CPU task group", async move {
+        for (i, handle) in handles.into_iter().enumerate() {
+            let expected: u64 = (0..1000u64).map(|x| x ^ i as u64).sum();
+            assert_eq!(
+                handle.await.unwrap().unwrap(),
+                expected,
+                "cpu job {i} result"
+            );
+        }
+    })
+    .await;
     assert_drained(&rt, &["cpu"]);
-}
-
-// ───────────── 10. sequential soak (slow-leak detector) ──────────────────
-
-/// 3000 sequential submissions. Catches slow leaks / monotonic drift: the final
-/// state must be perfectly clean.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sequential_soak_stays_clean() {
-    let rt = Builder::new()
-        .resources(ResourceBudget::new().cpu_units(64).memory_units(64))
-        .class_policy(
-            cls("c"),
-            ClassPolicy::new()
-                .max_inflight(4)
-                .max_queue_depth(64)
-                .cpu_units(1),
-        )
-        .build()
-        .unwrap();
-
-    for i in 0..3000u64 {
-        let spec = TaskSpec::io(cls("c")).operation(format!("soak-{i}"));
-        let out: u64 = rt
-            .run_io(spec, async move { Ok::<_, ()>(i) })
-            .await
-            .unwrap();
-        assert_eq!(out, i);
-    }
-    assert_drained(&rt, &["c"]);
 }

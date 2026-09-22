@@ -844,30 +844,6 @@
       "expect_message": "a recipe script git does not track must be reported"
     },
     {
-      "id": "an-auth-failure-reads-as-no-history-branch",
-      "finding": "TM16-019",
-      "runner": "pytest",
-      "rationale": "bench.yml turned every non-zero `git ls-remote` into 'history branch missing' and skipped the trend compare — auth/transport failures (exit 128) included. Only exit 2 (ref not found) is 'missing'.",
-      "file": "tools/bench/history_branch.sh",
-      "find": "  2) echo \"exists=false\" ;;",
-      "replace": "  2|*) echo \"exists=false\" ;;",
-      "test_target": "tools/bench/tests/test_history_branch.py::test_an_infrastructure_failure_is_not_a_missing_branch",
-      "expect_failing_test": "test_an_infrastructure_failure_is_not_a_missing_branch",
-      "expect_message": "an infrastructure failure must not read as a missing branch"
-    },
-    {
-      "id": "a-partial-bench-capture-becomes-a-data-point",
-      "finding": "TM16-019",
-      "runner": "pytest",
-      "rationale": "`cargo bench | tee` can leave a capture with the first bench's lines and none for the second; without the expected-group check the trend store records a bogus point.",
-      "file": "tools/bench/validate_bencher_output.py",
-      "find": "    if missing:",
-      "replace": "    if missing and False:",
-      "test_target": "tools/bench/tests/test_validate_bencher_output.py::test_a_partial_capture_missing_an_expected_group_is_refused",
-      "expect_failing_test": "test_a_partial_capture_missing_an_expected_group_is_refused",
-      "expect_message": "a partial capture must not become a data point"
-    },
-    {
       "id": "wfq-weight-zero-accepted",
       "finding": "R3C-5",
       "runner": "cargo",

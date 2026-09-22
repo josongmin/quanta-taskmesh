@@ -202,8 +202,10 @@ impl Builder {
                 self.capability_limits,
             )?)?;
 
-        // The config captures the *resolved* substrate inventory, so `config()`
-        // is a faithful, serializable description of the built runtime.
+        // Keep the caller's portable topology declaration while recording the
+        // resolved substrate inventory. Machine-specific capacity belongs to
+        // the governor snapshot; duplicating it here would create a second
+        // runtime-state authority.
         let config = RuntimeConfig {
             topology: self.topology.clone(),
             resources: self.resources,

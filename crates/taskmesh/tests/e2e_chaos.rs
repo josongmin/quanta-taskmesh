@@ -15,6 +15,15 @@ use std::time::Duration;
 
 use taskmesh::*;
 
+const STORM_TIMEOUT: Duration = Duration::from_secs(30);
+
+async fn bounded_storm<F: std::future::Future>(what: &str, future: F) -> F::Output {
+    let Ok(output) = tokio::time::timeout(STORM_TIMEOUT, future).await else {
+        panic!("{what}: timed out after {STORM_TIMEOUT:?}");
+    };
+    output
+}
+
 fn cls(name: &str) -> TaskClass {
     TaskClass::new(name.to_string())
 }
@@ -83,9 +92,12 @@ async fn global_budget_cross_class_contention_makes_progress() {
             }
         }));
     }
-    for h in handles {
-        h.await.unwrap();
-    }
+    bounded_storm("global-budget contention task group", async move {
+        for handle in handles {
+            handle.await.unwrap();
+        }
+    })
+    .await;
     assert_eq!(
         done.load(Ordering::SeqCst),
         300,
@@ -243,24 +255,29 @@ async fn mixed_substrate_soak_with_concurrent_sweeper() {
             (name, i, outcome)
         }));
     }
-    for h in handles {
-        let (name, i, outcome) = h.await.unwrap();
-        let mut tallies = tallies.lock().expect("tally lock");
-        let tally = tallies.get_mut(name).expect("known substrate");
-        tally.attempted += 1;
-        match outcome {
-            Ok(value) => {
-                assert_eq!(value, i, "{name}-{i}: the closure's own value comes back");
-                tally.completed += 1;
+    let joined_tallies = Arc::clone(&tallies);
+    let joined_stop = Arc::clone(&stop);
+    let (sweeps, max_live_seen) = bounded_storm("mixed-substrate soak task group", async move {
+        for handle in handles {
+            let (name, i, outcome) = handle.await.unwrap();
+            let mut tallies = joined_tallies.lock().expect("tally lock");
+            let tally = tallies.get_mut(name).expect("known substrate");
+            tally.attempted += 1;
+            match outcome {
+                Ok(value) => {
+                    assert_eq!(value, i, "{name}-{i}: the closure's own value comes back");
+                    tally.completed += 1;
+                }
+                // This soak is sized so nothing is shed: every class queues within
+                // a depth larger than the whole storm. Any other verdict is a
+                // regression, and it is named, not discarded.
+                Err(error) => panic!("{name}-{i} did not complete: {error:?}"),
             }
-            // This soak is sized so nothing is shed: every class queues within
-            // a depth larger than the whole storm. Any other verdict is a
-            // regression, and it is named, not discarded.
-            Err(error) => panic!("{name}-{i} did not complete: {error:?}"),
         }
-    }
-    stop.store(true, Ordering::Relaxed);
-    let (sweeps, max_live_seen) = sweeper.await.unwrap();
+        joined_stop.store(true, Ordering::Relaxed);
+        sweeper.await.unwrap()
+    })
+    .await;
     assert!(sweeps > 0, "sweeper must have run concurrently");
     assert!(
         max_live_seen > 0,
@@ -351,9 +368,12 @@ async fn claim_timeout_abandon_race_storm() {
             returned.fetch_add(1, Ordering::SeqCst);
         }));
     }
-    for h in handles {
-        h.await.unwrap();
-    }
+    bounded_storm("claim-timeout-abandon race task group", async move {
+        for handle in handles {
+            handle.await.unwrap();
+        }
+    })
+    .await;
     assert_eq!(
         returned.load(Ordering::SeqCst),
         200,

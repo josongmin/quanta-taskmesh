@@ -897,11 +897,9 @@ impl Governor {
             .map(|r| r.provenance.clone())
     }
 
-    /// The (preserved) checkpoint policy for a class.
+    /// The checkpoint policy declared for a class.
     pub fn checkpoint_policy(&self, class: &TaskClass) -> Option<CheckpointPolicy> {
-        self.policy
-            .class(class)
-            .map(|p| composite::checkpoint_hooks(&p.checkpoint_policy))
+        self.policy.class(class).map(|p| p.checkpoint_policy)
     }
 
     // ---- inventory (T08) --------------------------------------------------

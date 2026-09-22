@@ -23,6 +23,7 @@ from campaign import (  # noqa: E402
     exact_tool_version,
     execute,
     prepare_output_dir,
+    sanitized_campaign_environment,
     sha256_file,
     utc_now,
     write_json,
@@ -248,7 +249,8 @@ def command_environment(
         "CARGO_TARGET_DIR": str(campaign.target),
         "PYTHONDONTWRITEBYTECODE": "1",
     }
-    return {**os.environ, **recorded}, recorded
+    inherited = sanitized_campaign_environment(dict(os.environ))
+    return {**inherited, **recorded}, recorded
 
 
 def command_identity(mutation: dict) -> str:

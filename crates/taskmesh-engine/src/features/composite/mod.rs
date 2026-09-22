@@ -6,7 +6,7 @@
 
 pub mod reduce;
 
-use taskmesh_contract::{CheckpointPolicy, TaskScope, TaskSpec, TaskStage};
+use taskmesh_contract::{TaskScope, TaskSpec, TaskStage};
 
 use crate::engine::state::GovernedState;
 
@@ -58,12 +58,4 @@ pub fn is_recursive(state: &GovernedState, spec: &TaskSpec) -> bool {
         .active_recursion
         .get(spec.root_operation_id.as_str())
         .is_some_and(|stages| stages.contains(parent_stage))
-}
-
-/// Checkpoint metadata is preserved verbatim from the class policy so hook points
-/// (before fan-out / every N / before allocation / before stage boundary /
-/// before reduce) can inspect it. This is contract metadata, enforced at the
-/// host, never mutated by the engine.
-pub fn checkpoint_hooks(policy: &CheckpointPolicy) -> CheckpointPolicy {
-    *policy
 }

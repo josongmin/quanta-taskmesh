@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 RULES = REPO / "tools" / "semgrep" / "rules"
+VERSION_FILE = REPO / "tools" / "semgrep" / "version.txt"
 ENROLLED_PATHS = (
     "crates/taskmesh/tests/e2e_chaos.rs",
     "crates/taskmesh/tests/hardening_deadline_custody.rs",
@@ -18,6 +20,20 @@ ENROLLED_PATHS = (
     "crates/taskmesh-bench/tests/inferno.rs",
     "crates/taskmesh-rayon/tests/rayon_smoke.rs",
 )
+REQUIRED_SEMGREP_VERSION = VERSION_FILE.read_text(encoding="utf-8").strip()
+if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", REQUIRED_SEMGREP_VERSION) is None:
+    raise ValueError("tools/semgrep/version.txt must contain a pinned Semgrep version")
+
+
+def semgrep_identity_problems(proc: subprocess.CompletedProcess[str]) -> list[str]:
+    """Require the reviewed parser version before trusting scan output."""
+    if proc.returncode != 0:
+        return [f"semgrep --version exited {proc.returncode}"]
+    reported = proc.stdout.strip().splitlines()
+    if not reported or reported[0] != REQUIRED_SEMGREP_VERSION:
+        actual = reported[0] if reported else "<empty>"
+        return [f"semgrep version mismatch: expected {REQUIRED_SEMGREP_VERSION}, got {actual}"]
+    return []
 
 
 def target_set_problems(scanned: set[str], root: Path = REPO) -> list[str]:
@@ -41,6 +57,18 @@ def target_set_problems(scanned: set[str], root: Path = REPO) -> list[str]:
 
 def main() -> int:
     try:
+        identity = subprocess.run(
+            ["semgrep", "--version"],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        identity_problems = semgrep_identity_problems(identity)
+        if identity_problems:
+            for problem in identity_problems:
+                print(f"semgrep gate: {problem}", file=sys.stderr)
+            return 1
         proc = subprocess.run(
             [
                 "semgrep",
@@ -80,11 +108,7 @@ def main() -> int:
     if not isinstance(raw_scanned, list):
         problems.append("semgrep JSON field 'paths.scanned' is not a list")
         raw_scanned = []
-    scanned = {
-        str(Path(path))
-        for path in raw_scanned
-        if isinstance(path, str)
-    }
+    scanned = {str(Path(path)) for path in raw_scanned if isinstance(path, str)}
     problems.extend(target_set_problems(scanned))
     if proc.returncode != 0:
         problems.append(f"semgrep exited {proc.returncode} with {len(results)} finding(s)")
@@ -105,7 +129,9 @@ def main() -> int:
         for problem in problems:
             print(f"  - {problem}", file=sys.stderr)
         return 1
-    print(f"semgrep gate: PASS ({len(scanned)} files, 0 findings)")
+    print(
+        f"semgrep gate: PASS (version {REQUIRED_SEMGREP_VERSION}, {len(scanned)} files, 0 findings)"
+    )
     return 0
 
 

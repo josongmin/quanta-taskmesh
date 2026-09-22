@@ -20,6 +20,31 @@ assert _checker_spec and _checker_spec.loader
 semgrep_check = importlib.util.module_from_spec(_checker_spec)
 _checker_spec.loader.exec_module(semgrep_check)
 
+
+def test_gate_rejects_an_unreviewed_semgrep_parser() -> None:
+    wrong = subprocess.CompletedProcess(["semgrep", "--version"], 0, "9.9.9\n", "")
+    assert semgrep_check.semgrep_identity_problems(wrong) == [
+        f"semgrep version mismatch: expected {semgrep_check.REQUIRED_SEMGREP_VERSION}, got 9.9.9"
+    ]
+
+
+def test_gate_accepts_the_reviewed_semgrep_parser() -> None:
+    current = subprocess.CompletedProcess(
+        ["semgrep", "--version"],
+        0,
+        f"{semgrep_check.REQUIRED_SEMGREP_VERSION}\n",
+        "upgrade notice\n",
+    )
+    assert semgrep_check.semgrep_identity_problems(current) == []
+
+
+def test_manual_ci_installs_the_same_pinned_semgrep() -> None:
+    workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    install = 'uv tool install "semgrep==$(cat tools/semgrep/version.txt)"'
+    assert workflow.count(install) == 2
+    assert "run: uv tool install semgrep\n" not in workflow
+
+
 # One fire/clean pair per rule, at the path the rule is written for. A rule
 # without a pair here is not considered enforced: the semgrep syntax could be
 # silently wrong (`$...` once made a rule match nothing) and nobody would know.
@@ -347,22 +372,6 @@ def _semgrep_json(args: list[str]) -> dict:
     if proc.returncode not in (0, 1):
         raise RuntimeError(f"semgrep failed ({proc.returncode}): {proc.stderr}")
     return json.loads(proc.stdout or "{}")
-
-
-def _run_semgrep(config: Path, target_dir: Path) -> set[str]:
-    # Use the repository's own ignore policy, not semgrep's defaults. A fixture
-    # placed in a `tests/` directory is otherwise skipped by the very default
-    # this rule pack had to override, and the rule would look enforced while
-    # never being reached.
-    shutil.copyfile(REPO / ".semgrepignore", target_dir / ".semgrepignore")
-    data = _semgrep_json(
-        ["--config", str(config), "--json", "--quiet", "--no-git-ignore", str(target_dir)]
-    )
-    ids = set()
-    for r in data.get("results", []):
-        rid = r.get("check_id", "")
-        ids.add(rid.split(".")[-1])
-    return ids
 
 
 # Skip only for local convenience when semgrep is absent. Under CI the suite must

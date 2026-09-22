@@ -12,7 +12,7 @@
 - 구현된 계약: [ADR 0003](../../../adr/0003-sep-16-hardening-contracts.md). 로컬 증거:
   `just gate` green(baseline에서는 clippy/semgrep/deny red), `cargo test --workspace` 461 green (contract 42 · engine 207 · host 151 · rayon 3 · bench 55 · doc-examples 3),
   loom 5 / shuttle 7 green **on the production `Governor`**, curated mutation inventory
-  104 defect probes + 1 CONTROL_GREEN(cargo runner 90·pytest runner 15; cargo-mutants score 아님),
+  102 defect probes + 1 CONTROL_GREEN(cargo runner 90·pytest runner 13; cargo-mutants score 아님),
   libFuzzer 3 target(`just fuzz`), consumer MSRV 1.81 PASS(default·rayon), allocation gate 3.0 allocs/op
   (threshold = 측정값).
 - 구현 직후 3-track 적대적 감사(engine/runtime · 증명 강도 · tooling/CI/docs)를 실행했고 P0 3건·P1 12건·
@@ -68,8 +68,8 @@
 - Linux에서 `just bench-iai`(instruction-count)를 실행해 QUALIFIED baseline을 만들어야 한다.
 - breaking 변경 3건(`claim`·`release_stage_memory` 반환 타입, snapshot schema v2)의 외부 소비자 영향은
   UNKNOWN이다 — in-repo 소비자만 inventory했다.
-- `tools/pm`은 target을 소유하지 않는다(AGENTS.md는 사용자 소유). 생성 agent 문서를 원하면 owner가
-  source를 작성하고 target을 추가한다.
+- PM subsystem은 owner target이 0이라 제거했다. 생성 agent 문서가 필요해지면 owner source와 target
+  계약을 먼저 정의한 뒤 새 gate로 재도입한다.
 - 실제 assignee, consumer repo/SHA, activation owner는 여전히 미지정이다.
 
 ## 계획 자체 검증

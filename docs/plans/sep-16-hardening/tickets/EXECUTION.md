@@ -25,7 +25,7 @@
 | manifests — Cargo.toml/Cargo.lock/toolchain | D | 다른 lane의 module/feature/dependency 요청은 D가 직렬 반영 |
 | bench — crates/taskmesh-bench | B | H16-015→016→017; 같은 bench 파일 병렬 수정 금지 |
 | ci/gate-tools — Justfile, .github, tools/arch, tools/semgrep, bench gate helpers | C | B가 H16-017 metric/parser spec·tests를 준비하고 C가 gate helper/workflow 적용. H16-018과 동시 적용 금지 |
-| pm — tools/pm | Q | 실제 생성 AGENTS 등 target은 별도 승인 전 write set에서 제외 |
+| pm (retired) | Q | owner target이 0인 subsystem 제거; 실제 생성 target이 생길 때 별도 승인 후 재설계 |
 | engine-tests/host-tests | 해당 production lease owner + V | model seam은 E/R; V는 독립 oracle/fixture. 동일 test module 충돌 시 단일 적용자 |
 | docs | Q, 계획/qualification은 I | source 계약 확정 후 H16-021 docs migration; shared docs/release-checklist는 Q→I 인계 |
 | qualification | I | immutable snapshot과 receipt 저장. CI 수정 필요 시 C에게 반환하고 새 SHA로 재검증 |
@@ -58,4 +58,3 @@
 ## 변경·승인 중단 조건
 
 public API breaking, PM 실제 target overwrite, 외부 consumer 수정, branch protection 변경, deploy/activation은 원래 문서 작성 요청의 범위가 아니다. 실행 시 필요한 권한을 별도로 확보한다. arbitrary external waitgraph detection, forced thread kill, 새 DAG scheduler 요구가 나오면 별도 RFC로 분리한다.
-

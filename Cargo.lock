@@ -1260,7 +1260,6 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 name = "taskmesh"
 version = "0.3.0"
 dependencies = [
- "serde_json",
  "taskmesh-contract",
  "taskmesh-engine",
  "taskmesh-rayon",
@@ -1320,7 +1319,6 @@ version = "0.3.0"
 dependencies = [
  "rayon",
  "taskmesh-contract",
- "tokio",
 ]
 
 [[package]]

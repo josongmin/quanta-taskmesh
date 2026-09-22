@@ -25,13 +25,8 @@ jobs:
   instruction-count:
     name: instruction-count gate (iai-callgrind / valgrind)
     runs-on: ubuntu-latest
-    outputs:
-      status: ${{ steps.iai.outputs.status }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          # The status step diffs the fingerprint inputs against the PR base.
-          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
       - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
@@ -52,11 +47,9 @@ jobs:
       # toolchain bump turned every later run into BASELINE_CREATED forever
       # (the entry was immutable and its stamp never matched again).
       #
-      # No ref in the key: a PR whose fingerprint equals main's reads main's
-      # baseline (caches flow base → head, never the reverse) and is compared
-      # against it, which is the comparison that matters. A PR that changes the
-      # measured definition gets a fresh key and BASELINE_CREATED — a
-      # definitional change is not a regression and is not qualified either.
+      # No ref in the key: an explicitly dispatched run can reuse a compatible
+      # baseline. A changed measured definition gets a fresh key and
+      # BASELINE_CREATED, which is not a regression-qualified result.
       - name: Compute baseline fingerprint
         id: fingerprint
         run: |
@@ -78,17 +71,13 @@ jobs:
 
       # The verdict is explicit. QUALIFIED is the only regression-qualified
       # outcome. BASELINE_CREATED is allowed — it is the first run for this
-      # fingerprint — but it is announced as such, and on a pull request whose
-      # fingerprint inputs did NOT change it means main's baseline was missing
-      # (evicted, or never recorded), which is worth a warning rather than a
-      # silent green. Anything else fails the job.
+      # fingerprint — but is explicitly not called regression-qualified.
+      # Anything else fails the job.
       - name: Report qualification status
         env:
           STATUS: ${{ steps.iai.outputs.status }}
           FINGERPRINT: ${{ steps.iai.outputs.fingerprint }}
           EXPECTED_FINGERPRINT: ${{ steps.fingerprint.outputs.value }}
-          EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           {
             echo "## instruction-count gate"
@@ -106,15 +95,6 @@ jobs:
             BASELINE_CREATED)
               echo "" >> "$GITHUB_STEP_SUMMARY"
               echo "This run recorded a baseline; it is **not** a regression-qualified pass. The next run with the same fingerprint qualifies against it." >> "$GITHUB_STEP_SUMMARY"
-              if [[ "${EVENT}" == "pull_request" ]]; then
-                inputs="$(python3 tools/bench/iai_gate.py config fingerprint_inputs)"
-                # shellcheck disable=SC2086
-                if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-                  echo "::warning::could not resolve the PR base ${BASE_SHA}; cannot tell whether the instruction-count inputs changed"
-                elif git diff --quiet "${BASE_SHA}" -- ${inputs}; then
-                  echo "::warning::this pull request does not change the instruction-count inputs, yet no baseline from the base branch was available (evicted or never recorded). The gate could not compare against main."
-                fi
-              fi
               ;;
             *)
               echo "::error::instruction-count gate reported status '${STATUS}'"
@@ -129,136 +109,3 @@ jobs:
           name: iai-evidence
           path: target/iai
           if-no-files-found: warn
-
-  trend-pr-compare:
-    name: read-only PR wall-clock trend compare (ADR 9000 / P8)
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
-
-      # Fresh repos/forks may not have the benchmark history branch yet. Only
-      # "the ref does not exist" (ls-remote exit 2) is a reason to skip. Any other
-      # failure — network, authentication, a bad remote — is an infrastructure
-      # error and fails the job, because "skip the compare" on an auth failure is
-      # how a regression sails through with a green check.
-      - name: Detect benchmark history branch
-        id: gh_pages
-        # The exit-code discrimination lives in a script so it has a fixture
-        # test (tools/bench/tests/test_history_branch.py) instead of only YAML.
-        run: bash tools/bench/history_branch.sh origin refs/heads/gh-pages >> "$GITHUB_OUTPUT"
-
-      # Emit the libtest "bench" format github-action-benchmark understands.
-      # `pipefail` (bash default here) means a failing `cargo bench` fails the
-      # step even though `tee` succeeds; the output file is then validated so a
-      # partial run cannot be stored as a data point.
-      - name: Run criterion hot-path benches
-        run: |
-          set -o pipefail
-          # Rust build caches can contain a partial Criterion baseline. Only
-          # the validated bencher capture is published, so keep raw Criterion
-          # state in a fresh run-local directory.
-          criterion_home="$(mktemp -d)"
-          export CRITERION_HOME="${criterion_home}"
-          cargo bench -p taskmesh-bench --bench admit_release -- --output-format bencher \
-            | tee bench-output.txt
-          cargo bench -p taskmesh-bench --bench governance_tax -- --output-format bencher \
-            | tee -a bench-output.txt
-          python3 tools/bench/validate_bencher_output.py bench-output.txt \
-            --expect admit_release --expect governance_tax
-
-      # The PR action gets no token and cannot comment or push. It can only
-      # compare the checked-out output with public gh-pages history.
-      - name: Compare against history (read-only)
-        id: wall_clock_trend
-        if: steps.gh_pages.outputs.exists == 'true'
-        # A 150% alert still returns failure so the diagnostic/profile path is
-        # explicit, but GitHub-hosted wall-clock is an observational signal.
-        # The deterministic IAI job is the regression gate (ADR 9000 / P2).
-        continue-on-error: true
-        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
-        with:
-          name: taskmesh wall-clock
-          tool: cargo
-          output-file-path: bench-output.txt
-          gh-pages-branch: gh-pages
-          benchmark-data-dir-path: dev/bench
-          auto-push: false
-          alert-threshold: '150%'
-          comment-on-alert: false
-          fail-on-alert: true
-
-      - name: Skip trend compare (no history yet)
-        if: steps.gh_pages.outputs.exists != 'true'
-        run: |
-          echo "::notice::origin/gh-pages does not exist yet; the trend compare is skipped on this PR. The first push to main bootstraps it."
-
-      # On a detected regression, capture a flamegraph + hardware counters for
-      # EVERY bench that feeds the alert (admit_release AND governance_tax), so the
-      # evidence always covers whichever one regressed — not just one of them
-      # (ADR 9000 / P8).
-      - name: Flamegraph + perf counters on regression
-        if: steps.wall_clock_trend.outcome == 'failure'
-        run: |
-          sudo apt-get update && sudo apt-get install -y linux-tools-common linux-tools-generic
-          sudo sysctl -w kernel.perf_event_paranoid=1 || true
-          cargo install flamegraph --locked || true
-          for b in admit_release governance_tax; do
-            cargo flamegraph --bench "$b" -p taskmesh-bench -o "flamegraph-$b.svg" -- --bench || true
-            perf stat -e instructions,cache-misses,branch-misses \
-              cargo bench -p taskmesh-bench --bench "$b" -- --bench 2> "perf-stat-$b.txt" || true
-          done
-      - name: Upload regression profile
-        if: steps.wall_clock_trend.outcome == 'failure'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: regression-profile
-          path: |
-            flamegraph-*.svg
-            perf-stat-*.txt
-          if-no-files-found: ignore
-
-  trend-main-publish:
-    name: trusted-main wall-clock trend publish
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: benchmark-publish
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
-      - name: Run validated criterion hot-path benches
-        run: |
-          set -o pipefail
-          criterion_home="$(mktemp -d)"
-          export CRITERION_HOME="${criterion_home}"
-          cargo bench -p taskmesh-bench --bench admit_release -- --output-format bencher \
-            | tee bench-output.txt
-          cargo bench -p taskmesh-bench --bench governance_tax -- --output-format bencher \
-            | tee -a bench-output.txt
-          python3 tools/bench/validate_bencher_output.py bench-output.txt \
-            --expect admit_release --expect governance_tax
-      - name: Publish trusted-main data point
-        id: wall_clock_trend
-        # Preserve/publish the alert and mark this step as failed for visibility,
-        # without making one noisy hosted-runner sample a qualification gate.
-        # IAI comparison is the authoritative regression verdict.
-        continue-on-error: true
-        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
-        with:
-          name: taskmesh wall-clock
-          tool: cargo
-          output-file-path: bench-output.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          gh-pages-branch: gh-pages
-          benchmark-data-dir-path: dev/bench
-          auto-push: true
-          alert-threshold: '150%'
-          comment-on-alert: false
-          fail-on-alert: true

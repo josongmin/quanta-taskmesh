@@ -257,6 +257,18 @@ def _producer_records(source: dict, results: list[dict]) -> list[dict]:
     return records
 
 
+def hosted_gate_runner(results: list[dict]) -> dict:
+    producer_gate_ids = sorted(spec["gate_id"] for spec in receipt.registrations(receipt.INVENTORY))
+    raw_results = [result for result in results if result["id"] not in producer_gate_ids]
+    return {
+        "exit_code": 1,
+        "started_at": "2026-09-16T00:00:00Z",
+        "duration_s": 1.0,
+        "skipped_gate_ids": producer_gate_ids,
+        "raw_required": receipt.summarize_gate_results(raw_results),
+    }
+
+
 def qualified_receipt() -> dict:
     required = json.loads((REPO / "tools" / "gates" / "required.json").read_text())["required"]
     results = [{"id": gate, "status": "PASS", "exit_code": 0} for gate in required]
@@ -274,6 +286,7 @@ def qualified_receipt() -> dict:
         "generated_at": "2026-09-16T00:00:00+00:00",
         "finished_at": "2026-09-16T00:10:00+00:00",
         "environment": {"toolchain": "rustc 1.95.0"},
+        "gate_runner": hosted_gate_runner(results),
         "source": source,
         "source_after": {
             "head": source["head"],
@@ -318,6 +331,23 @@ def test_a_complete_clean_receipt_qualifies() -> None:
     assert receipt.evaluate(qualified_receipt(), CLEAN)["status"] == "QUALIFIED"
 
 
+def test_hosted_import_cannot_hide_an_unrelated_raw_gate_failure() -> None:
+    value = qualified_receipt()
+    value["gate_runner"]["raw_required"]["required_not_passed"] = ["fmt-check"]
+    verdict = receipt.evaluate(value, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any("gate runner" in reason for reason in verdict["reasons"])
+
+
+@pytest.mark.parametrize("duration", [float("nan"), float("inf"), -1, True])
+def test_gate_runner_duration_must_be_finite_nonnegative(duration: object) -> None:
+    value = qualified_receipt()
+    value["gate_runner"]["duration_s"] = duration
+    verdict = receipt.evaluate(value, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any("gate runner duration_s" in reason for reason in verdict["reasons"])
+
+
 def test_local_evidence_never_claims_hosted_qualification() -> None:
     r = qualified_receipt()
     r["attestation"] = receipt.collection_attestation(r["source"], hosted_ci=False)
@@ -327,7 +357,7 @@ def test_local_evidence_never_claims_hosted_qualification() -> None:
     assert any("explicit local qualification" in reason for reason in verdict["reasons"])
 
 
-def test_explicit_clean_local_full_receipt_qualifies() -> None:
+def local_qualified_receipt() -> dict:
     r = qualified_receipt()
     source = r["source"]
     action = receipt.runtime_action(
@@ -359,7 +389,30 @@ def test_explicit_clean_local_full_receipt_qualifies() -> None:
         next(result for result in r["gates"]["results"] if result["id"] == gate_id)[
             "evidence_digest"
         ] = record["envelope"]["payload_sha256"]
-    assert receipt.evaluate(r, CLEAN)["status"] == "QUALIFIED"
+    for result in r["gates"]["results"]:
+        result.pop("imported_producer", None)
+    r["gate_runner"] = {
+        "exit_code": 0,
+        "started_at": "2026-09-16T00:00:00Z",
+        "duration_s": 1.0,
+        "skipped_gate_ids": [],
+        "raw_required": receipt.summarize_gate_results(r["gates"]["results"]),
+    }
+    return r
+
+
+def test_explicit_clean_local_full_receipt_qualifies() -> None:
+    assert receipt.evaluate(local_qualified_receipt(), CLEAN)["status"] == "QUALIFIED"
+
+
+@pytest.mark.parametrize("exit_code", [1, None, False, "0"])
+def test_local_pass_sidecar_cannot_hide_runner_failure(exit_code: object) -> None:
+    value = local_qualified_receipt()
+    assert value["gates"]["qualified"] is True
+    value["gate_runner"]["exit_code"] = exit_code
+    verdict = receipt.evaluate(value, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any("gate runner" in reason for reason in verdict["reasons"])
 
 
 def test_generated_mutation_sweep_is_required_and_separate_from_curated() -> None:
@@ -654,6 +707,39 @@ def test_registered_output_cleanup_rejects_symlinked_target_root(tmp_path: Path)
             ],
         )
     assert summary.read_text(encoding="utf-8") == "do not delete"
+
+
+@pytest.mark.parametrize(
+    "declared", ["../outside.json", "/tmp/outside.json", "target/../outside.json"]
+)
+def test_producer_collection_rejects_inventory_path_escape(tmp_path: Path, declared: str) -> None:
+    records = producer_validation.collect_records(
+        tmp_path,
+        [
+            {
+                "registration": "test",
+                "gate_id": "test-gate",
+                "surface": "test",
+                "manifest": declared,
+                "summary": "target/summary.json",
+                "envelope": "target/envelope.json",
+            }
+        ],
+    )
+    assert "error" in records[0]
+    assert "repo-relative" in records[0]["error"]
+
+
+def test_producer_validation_rejects_symlinked_sidecar(tmp_path: Path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-producer-sidecar-outside.json"
+    outside.write_text('{"private": "do not read"}', encoding="utf-8")
+    (tmp_path / "target").mkdir()
+    (tmp_path / "target" / "summary.json").symlink_to(outside)
+    problems = producer_validation._embedded_sidecar_problems(
+        root=tmp_path, path="target/summary.json", embedded={}, name="summary"
+    )
+    assert any("escapes repository root" in problem for problem in problems)
+    assert all("do not read" not in problem for problem in problems)
 
 
 def test_registered_output_cleanup_only_unlinks_confined_files(tmp_path: Path) -> None:
@@ -1287,6 +1373,7 @@ def test_real_v02_artifacts_share_receipt_source_identity_and_reject_byte_drift(
             "generated_at": "2026-09-21T00:00:00Z",
             "finished_at": "2026-09-21T00:01:00Z",
             "environment": {},
+            "gate_runner": hosted_gate_runner(results),
             "source": source,
             "source_after": {
                 "head": identity["head"],
@@ -1491,7 +1578,7 @@ def test_collect_qualifies_on_a_clean_tree_with_receipts_written_at_the_root(
                 deepcopy(result) for result in results if result["id"] not in producer_gate_ids
             ]
         }
-        exit_code = 0
+        exit_code = 1  # skipped producer gates make the raw runner NOT_QUALIFIED
         receipt_path.write_text(json.dumps(payload))
         return receipt.JsonRun(payload, exit_code, "2026-09-16T00:00:00+00:00", 0.1)
 

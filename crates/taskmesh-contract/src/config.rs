@@ -9,12 +9,14 @@ use crate::resource::ResourceBudget;
 use crate::task::TaskClass;
 use crate::topology::{SubstrateRecord, TopologyConfig};
 
-/// The full, validated configuration a runtime is built from.
+/// The validated declaration a runtime was built from, plus its resolved
+/// substrate inventory.
 ///
-/// This is the authoritative, serializable description of a built runtime: it
-/// includes the resolved substrate inventory (built-ins plus any deployment
-/// additions), so inspecting or persisting a `RuntimeConfig` faithfully
-/// represents the runtime that was actually constructed — not a reduced view.
+/// Topology modes remain as declared (for example, `CpuMode::Auto` is not
+/// rewritten to a machine-specific fixed value). Enforced capability limits
+/// and the installed executor descriptor are runtime state exposed by the
+/// governor snapshot and the host runtime, respectively; they are deliberately
+/// not duplicated in this portable declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RuntimeConfig {
     pub topology: TopologyConfig,

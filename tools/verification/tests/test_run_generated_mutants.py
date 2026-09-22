@@ -157,12 +157,14 @@ def test_equivalent_requires_id_reachability_and_reviewer_and_stays_non_pass(
 @pytest.mark.parametrize(
     "payload",
     [
+        [],
+        "malformed",
         {"equivalents": [{"mutant_id": "m", "reviewer": "r"}]},
         {"equivalents": [{"mutant_id": "unknown", "reachability_evidence": "x", "reviewer": "r"}]},
     ],
 )
 def test_incomplete_or_detached_equivalent_review_is_rejected(
-    tmp_path: Path, payload: dict
+    tmp_path: Path, payload: object
 ) -> None:
     path = tmp_path / "equivalents.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -331,3 +333,11 @@ def test_parallel_jobs_never_inherit_one_absolute_cargo_target() -> None:
     parent = {"PATH": "/bin", "CARGO_TARGET_DIR": "/shared/target"}
     assert gm.execution_environment(parent) == {"PATH": "/bin"}
     assert parent["CARGO_TARGET_DIR"] == "/shared/target", "do not mutate the caller environment"
+
+
+@pytest.mark.parametrize(
+    "key", ["RUSTFLAGS", "RUSTUP_TOOLCHAIN", "CARGO_BUILD_TARGET", "CARGO_PROFILE_RELEASE_LTO"]
+)
+def test_generated_campaign_rejects_unrecorded_build_environment(key: str) -> None:
+    with pytest.raises(ValueError, match=key):
+        gm.execution_environment({"PATH": "/bin", key: "unexpected"})

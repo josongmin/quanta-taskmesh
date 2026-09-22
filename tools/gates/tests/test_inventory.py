@@ -436,6 +436,8 @@ def test_tracked_pre_push_hook_requires_exact_local_receipt() -> None:
     assert "--validate-receipt" in text
     assert "--expected-head" in text
     assert "target/verification/macos-gates.json" in text
+    assert "target/qualification/local-receipt.json" in text
+    assert "tools/qualification/receipt.py" in text
 
 
 def test_runner_refuses_to_qualify_when_required_gates_did_not_run() -> None:

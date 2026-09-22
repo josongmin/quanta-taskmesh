@@ -3,7 +3,8 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "${repo_root}"
-receipt="target/verification/macos-gates.json"
+platform_receipt="target/verification/macos-gates.json"
+full_receipt="target/qualification/local-receipt.json"
 zero="0000000000000000000000000000000000000000"
 
 checked=0
@@ -13,8 +14,17 @@ while read -r local_ref local_sha _remote_ref _remote_sha; do
       if [[ "${local_sha}" == "${zero}" ]]; then
         continue
       fi
+      if [[ "$(git rev-parse HEAD)" != "${local_sha}" ]]; then
+        echo "pre-push: branch update must point at the currently verified HEAD" >&2
+        exit 1
+      fi
+      if [[ -f "${full_receipt}" ]] && uv run python tools/qualification/receipt.py \
+        validate "${full_receipt}"; then
+        checked=1
+        continue
+      fi
       uv run python tools/gates/run.py \
-        --validate-receipt "${receipt}" \
+        --validate-receipt "${platform_receipt}" \
         --expected-head "${local_sha}"
       checked=1
       ;;

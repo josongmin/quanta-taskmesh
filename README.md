@@ -84,7 +84,7 @@ receipt로 실행하며 `target/verification/macos-gates.json`에 결과를 남�
 
 macOS 검증 권위는 clean checkout의 exact `HEAD`/tree/digest 전후가 같은
 `just verify-local` receipt다. `just install-hooks`는 이 receipt가 현재 push SHA와 일치하지 않으면
-branch push를 거부한다. 전체 cross-platform/release 자격은 local Linux에서
+branch push를 거부한다(`qualify-local` full receipt도 허용). 전체 cross-platform/release 자격은 local Linux에서
 `just qualify-local`, release 판정은 `just release-local`로 수행한다. GitHub workflow 세 개는
 호환성 기록으로만 남기고 repository 설정에서 비활성화한다. `docs/release-checklist.md` 참조.
 구현·증명·운영을 함께 재감사할 때는

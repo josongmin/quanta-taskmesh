@@ -64,9 +64,10 @@ async fn main() {
 
 ## 검증 표면 (proof surface)
 
-`just gate`(fast) → `just matrix`(feature/doc/bench-smoke/MSRV) → `just proof`(전체). `proof`는
-`tools/gates/required.json`과 정확히 같은 집합으로 expand되어야 하며 `just gates-inventory`가 이를
-강제한다. 증명은 세 층으로 겹친다:
+기본 검증 진입점은 `just verify-local`이다. 이는 `just proof`의 alias이며
+`just gate`(fast) → `just matrix`(feature/doc/bench-smoke/MSRV) → heavy rails 전체를 로컬에서
+실행한다. `proof`는 `tools/gates/required.json`과 정확히 같은 집합으로 expand되어야 하며
+`just gates-inventory`가 이를 강제한다. 증명은 세 층으로 겹친다:
 
 | 층 | 무엇을 | 무엇으로 |
 |---|---|---|
@@ -80,8 +81,10 @@ async fn main() {
 | 문서가 컴파일되는가 | 이 README·`docs/taskmesh-external-interface.md`·`CHANGELOG.md`의 모든 ```rust 블록이 *그대로* facade에 대해 type-check (build.rs가 추출; hidden line 없음; fence attribute `body`/`arms`/`builder`로 scaffold 선택, `rust,ignore`는 CHANGELOG의 `// 0.1.0` 인용에만 허용) | `cargo test -p taskmesh-doc-examples` (`just test`에 포함) |
 | 성능 | admit→release allocs/op(=현재 기준 8.0, 무여유), Linux instruction count | `just bench-gate`, `just bench-iai` |
 
-자격(QUALIFIED)은 `tools/qualification/receipt.py collect`가 **clean checkout**에서 만든 receipt에만
-붙는다(CI `qualification` job). local receipt는 증거일 뿐이다. `docs/release-checklist.md` 참조.
+ordinary 검증 권위는 clean checkout의 exact `HEAD`/tree에서 완료한 `just verify-local`이다.
+GitHub의 `ci.yml`과 `bench.yml`은 비용 방지를 위해 자동 트리거가 없고, 명시적으로 dispatch한
+재현 작업에만 사용한다. `tools/qualification/receipt.py`의 hosted `QUALIFIED`는 이 선택적 수동
+실행에만 해당하며 로컬 proof 완료를 대신하지 않는다. `docs/release-checklist.md` 참조.
 구현·증명·운영을 함께 재감사할 때는
 [Taskmesh SOTA Audit Checklist](docs/taskmesh-sota-audit-checklist.md)의 `M/R/D` 판정과
 증거 ledger를 사용한다.
@@ -122,7 +125,7 @@ publication으로 취급하지 않는다.
 public surface는 `taskmesh` (+ `taskmesh::ext`)이며, release 후보마다 immutable baseline SHA에
 대한 4-crate `just semver-release`, 수동 API/wire/behavior 판정, MSRV(1.81) 소비자 fixture
 (`just consumer-msrv`, [tools/consumer-msrv](tools/consumer-msrv/src/main.rs))로 검증한다.
-ordinary CI `QUALIFIED`는 별도의 release receipt가 아니며, 최종 SHA에 묶인 human
+선택적으로 수동 실행한 hosted `QUALIFIED`도 별도의 release receipt가 아니며, 최종 SHA에 묶인 human
 API/wire/behavior adjudication과 release receipt는 별도로 필요하다 —
 [docs/release-checklist.md](docs/release-checklist.md) 참조.
 

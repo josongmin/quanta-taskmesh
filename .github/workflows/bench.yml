@@ -1,15 +1,15 @@
 name: bench-gates
 
-# Benchmark regression gates (ADR 9000 / P2 + P8). Separate from `ci.yml` so the
-# heavier valgrind run does not block the fast proof matrix.
+# Manual reproduction only. Ordinary benchmark verification is part of local
+# `just verify-local`; push and pull-request events must not spend hosted runner
+# minutes. Separate from `ci.yml` so an explicitly dispatched valgrind run stays
+# isolated from the rest of the proof matrix.
 #
 # Every shell step runs under `bash` with `pipefail` (via `defaults.run.shell`),
 # so a benchmark that fails behind a `tee` fails the step (TM16-019).
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

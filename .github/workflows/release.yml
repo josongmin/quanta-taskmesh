@@ -1,8 +1,9 @@
 name: release-qualification
 
-# Explicit main-only release decision. A PR or ordinary CI success does not
-# authorize a version or a release. The source SHA of a downloaded ordinary
-# receipt is checked against this checkout by tools/release/receipt.py.
+# Explicit main-only, manual, paid-runner release decision. It is not an
+# ordinary verification path; local `just verify-local` is the default. The
+# source SHA of a deliberately selected receipt is checked against this
+# checkout by tools/release/receipt.py.
 on:
   workflow_dispatch:
     inputs:

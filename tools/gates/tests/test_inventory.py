@@ -205,6 +205,30 @@ def test_workflow_trust_allows_trusted_main_write_job(tmp_path: Path) -> None:
     assert vi.workflow_trust_problems(tmp_path / "bench.yml", document) == []
 
 
+def test_committed_workflows_are_manual_only() -> None:
+    assert vi.all_workflow_trigger_problems(vi.WORKFLOWS) == []
+
+
+def test_automatic_hosted_triggers_are_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "ci.yml"
+    assert vi.workflow_trigger_problems(
+        path, {"on": {"workflow_dispatch": None}, "jobs": {}}
+    ) == []
+
+    for trigger in ("push", "pull_request", "schedule"):
+        problems = vi.workflow_trigger_problems(
+            path, {"on": {"workflow_dispatch": None, trigger: None}, "jobs": {}}
+        )
+        assert any(trigger in problem for problem in problems), problems
+
+
+def test_trigger_guard_handles_pyyaml_boolean_on_key(tmp_path: Path) -> None:
+    path = tmp_path / "ci.yml"
+    document = vi.yaml.safe_load("on:\n  workflow_dispatch:\n")
+    assert True in document
+    assert vi.workflow_trigger_problems(path, document) == []
+
+
 def test_a_gate_step_that_cannot_fail_the_job_is_reported(tmp_path: Path) -> None:
     """Presence of `just <gate>` is not enforcement. Every way a step can run a
     gate and stay green regardless is a parity hole."""

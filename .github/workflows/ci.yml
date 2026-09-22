@@ -1,16 +1,12 @@
 name: ci
 
-# Every job runs the SAME recipes a developer runs locally (`just <recipe>`).
-# There is one definition of each gate — the Justfile — and this file only
-# decides which of them run where. A gate that exists only here, or only there,
-# is a gate the other side cannot see (TM16-006). tools/gates/inventory.json
-# lists every gate with its required-ness; tools/gates/validate_inventory.py
-# checks that this workflow, the Justfile, and the inventory agree.
+# Manual reproduction only. Ordinary verification runs locally through
+# `just verify-local`; push and pull-request events must not spend hosted
+# runner minutes. Every job still calls the same registered `just` recipes so
+# an explicitly dispatched run cannot drift from the local proof surface.
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

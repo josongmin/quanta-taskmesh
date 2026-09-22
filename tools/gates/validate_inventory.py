@@ -32,6 +32,9 @@ Fails closed on:
     makes every run NOT_RUN.
 - an action ref that is not a full commit SHA, a workflow default token that
   is not read-only, or a write-capable job reachable outside trusted main.
+- any hosted workflow trigger other than explicit `workflow_dispatch` (ordinary
+  verification is local-only and must not consume runner minutes on push, pull
+  request, or schedule).
 
 Workflow invocations are read from the parsed YAML: every `run:` script of
 every step, whatever its shape (`- run: just x`, a `|` block, `cd d && just x`,
@@ -453,6 +456,38 @@ def all_workflow_trust_problems(workflows_dir: Path) -> list[str]:
     return problems
 
 
+def workflow_trigger_problems(path: Path, document: object) -> list[str]:
+    """Reject every hosted trigger except an explicit manual dispatch.
+
+    PyYAML follows YAML 1.1 and may decode the plain key ``on`` as boolean
+    ``True``. Read both spellings so the guard validates the actual workflow
+    rather than a parser accident.
+    """
+    if not isinstance(document, dict):
+        return [f"{path.name}: workflow is not an object"]
+    triggers = document.get("on", document.get(True))
+    if isinstance(triggers, str):
+        names = {triggers}
+    elif isinstance(triggers, dict):
+        names = {str(name) for name in triggers}
+    else:
+        names = set()
+    if names != {"workflow_dispatch"}:
+        return [
+            f"{path.name}: hosted triggers must be exactly workflow_dispatch; "
+            f"found {sorted(names)!r}"
+        ]
+    return []
+
+
+def all_workflow_trigger_problems(workflows_dir: Path) -> list[str]:
+    problems: list[str] = []
+    for path in sorted(workflows_dir.glob("*.yml")):
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        problems.extend(workflow_trigger_problems(path, document))
+    return problems
+
+
 def validate(
     inventory: dict,
     required: dict,
@@ -669,6 +704,7 @@ def main() -> int:
         enforcement = [
             *workflow_enforcement_problems(WORKFLOWS, inventory_recipes),
             *all_workflow_trust_problems(WORKFLOWS),
+            *all_workflow_trigger_problems(WORKFLOWS),
             *producer_handoff_problems(inventory, WORKFLOWS / "ci.yml"),
         ]
         self_reports = {

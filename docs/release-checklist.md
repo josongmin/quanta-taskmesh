@@ -4,9 +4,12 @@
 
 The ordinary gate set is `tools/gates/inventory.json`; the ordinary required subset is
 `tools/gates/required.json`. Release-only requirements are independently pinned in
-`tools/release/release-required.json`. An ordinary `QUALIFIED` receipt is a necessary
-input, not a release verdict. Run the registered recipes through `just`:
+`tools/release/release-required.json`. Ordinary verification is local-first and runs
+from a clean exact-source checkout. GitHub workflows are manual fallbacks and must not
+be used for routine verification. Run the registered recipes through `just`:
 
+- [ ] `just verify-local` — canonical local entry point; expands through `just proof`
+      to every ordinary required gate.
 - [ ] `just gate` — fmt-check, strict clippy (3 passes), test, deny, semgrep
       (real integration tests enrolled), architecture checker, py-lint, py-test,
       pm-lint, allocation gate, gates-inventory parity
@@ -36,14 +39,14 @@ input, not a release verdict. Run the registered recipes through `just`:
 - [ ] `just bench-iai` on Linux — `status=QUALIFIED`. The first run for a given
       fingerprint (bench definition, deps, toolchain, valgrind, runner) records a
       baseline and reports `BASELINE_CREATED`; the *next* run with the same
-      fingerprint qualifies. CI keys its baseline cache on
-      `tools/bench-iai.sh fingerprint`, so a PR that does not change those inputs
-      is compared against main's baseline.
-- [ ] `uv run python tools/qualification/receipt.py collect --hosted-ci --out <receipt>`
-      in the isolated GitHub Actions qualification job (under `uv run`, so the
-      pytest-runner mutations have their environment), and `validate` reports
-      `QUALIFIED`. Local collection is exact-source evidence but cannot emit a
-      hosted qualification. `validate`
+      fingerprint qualifies. A deliberately dispatched hosted reproduction may
+      reuse its cache keyed by `tools/bench-iai.sh fingerprint`; ordinary local
+      runs use the local baseline store.
+- [ ] For a deliberately requested hosted/release attestation only:
+      `uv run python tools/qualification/receipt.py collect --hosted-ci --out <receipt>`
+      in the manually dispatched GitHub Actions qualification job. This is not
+      ordinary verification and consumes runner minutes. Local collection is
+      exact-source evidence but cannot emit a hosted `QUALIFIED`. `validate`
       re-derives the source identity (digest, HEAD, dirtiness) and the receipt's
       internal consistency; it does not re-run gates. The receipt of record is
       the one `collect` produced on that checkout — never a file handed over
@@ -164,13 +167,14 @@ input, not a release verdict. Run the registered recipes through `just`:
       findings were reviewed, and map each exit-100 finding via an exact raw
       locator to an approved break item. Omitted findings are a human review
       failure; this raw-text tool has no complete machine finding list.
-- [ ] Download the hosted `qualification-receipt` artifact from an exact-source CI
-      run and execute `python3 tools/release/receipt.py collect`. The independent
+- [ ] Only when intentionally running the paid manual release workflow, download the
+      hosted `qualification-receipt` artifact from an exact-source manual run and
+      execute `python3 tools/release/receipt.py collect`. The independent
       release receipt revalidates the ordinary 26-gate receipt, four-crate semver
       raw outputs, all 23 finding/ticket links, coverage and Linux IAI raw
       digests. Missing/NOT_RUN/SKIPPED/TIMEOUT, dirty or stale source, unapproved
       version or behavior break yield `NOT_QUALIFIED`. The `release.yml` workflow
-      is manual and main-only; no PR check auto-approves a release.
+      is manual and main-only; no push or PR starts verification or approves a release.
 - [ ] The manual release job also runs `tools/release/finding_proof.py` from the
       clean final source. Its tracked 23-finding spec names an actual negative
       or regression test for each finding; each selected test must execute

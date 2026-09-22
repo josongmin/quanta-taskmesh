@@ -52,9 +52,9 @@ py-test:
 pm-lint:
     uv run python tools/pm/pm.py lint
 
-# Gate inventory (H16-018): the Justfile, the CI workflows, and the required set
-# must agree. Deleting a gate from one place is reported, not silently honored.
-# Under `uv run`: the validator parses the workflows with PyYAML.
+# Gate inventory (H16-018): the Justfile, the manual fallback workflows, and the
+# required set must agree. The validator also rejects automatic hosted triggers,
+# so a push, pull request, or schedule cannot silently start spending minutes.
 gates-inventory:
     uv run python tools/gates/validate_inventory.py
 
@@ -128,20 +128,19 @@ loom:
 # Fast local front door: fmt, clippy, unit/integration tests, supply-chain,
 # semgrep, architecture, python, and the deterministic allocation gate. This is
 # the *fast* proof surface — it intentionally does NOT run the feature matrix
-# (`just matrix`) or the heavier rails CI enforces (bench-iai instruction-count,
-# loom + shuttle/model replay checks, both mutation campaigns, consumer MSRV).
-# Run `just proof`
-# to exercise those locally before relying on a green `gate`.
+# (`just matrix`) or the heavier local rails (bench-iai instruction-count, loom
+# + shuttle/model replay checks, both mutation campaigns, consumer MSRV). Run
+# `just verify-local` for the complete required set.
 gate: fmt-check clippy test deny semgrep test-architecture py-lint py-test pm-lint bench-gate gates-inventory fuzz-check
-    @echo "gate: fast local checks passed (CI additionally runs: matrix [test-rayon doctest rustdoc bench-smoke consumer-msrv], mutants-critical, mutants-generated, loom, shuttle, modelcheck, tsan, fuzz, bench-iai — see 'just proof')"
+    @echo "gate: fast local checks passed; run 'just verify-local' for the complete required set"
 
 # The libFuzzer targets (fuzz/) type-check and lint on stable, so they cannot
 # rot between nightly fuzzing campaigns (`just fuzz`).
 fuzz-check:
     bash tools/fuzz/check.sh
 
-# The CI proof-matrix job: feature-matrix drift, doctests, link-clean rustdoc,
-# bench compilation, and the consumer-MSRV build. Chained by `proof`.
+# Local proof matrix: feature-matrix drift, doctests, link-clean rustdoc, bench
+# compilation, and the consumer-MSRV build. Chained by `proof`.
 matrix: test-rayon doctest rustdoc bench-smoke consumer-msrv
     @echo "matrix: feature-matrix checks passed"
 
@@ -182,10 +181,13 @@ semver-release:
 release-receipt:
     python3 tools/release/receipt.py collect --out target/release/release-receipt.json
 
-# Full proof surface: every gate in tools/gates/required.json — `gate`, the
-# feature `matrix`, and the heavy rails — so a green `proof` locally is the
-# same set of checks CI requires. tools/gates/validate_inventory.py verifies
-# that this chain expands to exactly the required set; a gate added to CI
-# without being added here fails `gates-inventory`.
+# Full local proof surface: every gate in tools/gates/required.json — `gate`, the
+# feature `matrix`, and the heavy rails. tools/gates/validate_inventory.py
+# verifies that this chain expands to exactly the required set.
 proof: gate matrix mutants-critical mutants-generated loom shuttle modelcheck tsan fuzz coverage-report bench-iai
-    @echo "proof: full proof surface passed (matches CI required rails)"
+    @echo "proof: full local required proof surface passed"
+
+# Canonical verification entry point. Keep `proof` for compatibility with the
+# inventory expander; users and release operators should invoke this alias.
+verify-local: proof
+    @echo "verify-local: exact local proof completed"

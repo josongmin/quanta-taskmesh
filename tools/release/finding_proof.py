@@ -2,7 +2,8 @@
 """Run one non-vacuous, source-bound negative/regression witness per SEP-21 finding.
 
 This producer records execution, not human approval of witness adequacy. The
-ordinary hosted receipt remains authoritative for the full required gate set.
+ordinary exact-source qualification receipt remains authoritative for the full
+required gate set.
 """
 
 from __future__ import annotations
@@ -241,7 +242,9 @@ def produce(out: Path) -> int:
         "producer": "taskmesh-finding-proof-v1",
         "status": "PASS" if stable and all(row["status"] == "PASS" for row in rows) else "FAIL",
         "source": before,
-        "source_after": {"paths_digest": after["paths_digest"], "dirty": after["dirty"]},
+        "source_after": {
+            field: after[field] for field in ("head", "tree", "paths_digest", "dirty")
+        },
         "spec": raw_identity(REPO, SPEC),
         "plan": raw_identity(REPO, PLAN),
         "results": rows,

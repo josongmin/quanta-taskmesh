@@ -55,8 +55,9 @@ existing pool — distinct from a pool that does not exist at all.
 
 ## Structural no-go ratchet
 
-CI runs the same `just` recipes a developer runs (`tools/gates/inventory.json`
-lists them; `just gates-inventory` proves Justfile/CI/required-set parity), and
+Local verification runs the registered `just` recipes
+(`tools/gates/inventory.json` lists them; `just gates-inventory` proves
+Justfile/workflow/required-set parity), and
 `tools/arch/check_crate_boundaries.py` reads the real `cargo metadata` graph —
 every workspace member, every external edge, and feature optionality — rather
 than intersecting it with a hardcoded crate list first. These invariants hold:

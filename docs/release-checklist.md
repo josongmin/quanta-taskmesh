@@ -8,8 +8,11 @@ The ordinary gate set is `tools/gates/inventory.json`; the ordinary required sub
 from a clean exact-source checkout. GitHub workflows are manual fallbacks and must not
 be used for routine verification. Run the registered recipes through `just`:
 
-- [ ] `just verify-local` — canonical local entry point; expands through `just proof`
-      to every ordinary required gate.
+- [ ] `just verify-local` — canonical macOS entry point. It runs every applicable
+      ordinary required gate, records Linux-only exclusions, and binds the result
+      to a clean unchanged HEAD/tree/path digest.
+- [ ] `just qualify-local` on local Linux — every ordinary required gate must PASS;
+      platform skips and missing tools remain `NOT_QUALIFIED`.
 - [ ] `just gate` — fmt-check, strict clippy (3 passes), test, deny, semgrep
       (real integration tests enrolled), architecture checker, py-lint, py-test,
       pm-lint, allocation gate, gates-inventory parity
@@ -42,11 +45,9 @@ be used for routine verification. Run the registered recipes through `just`:
       fingerprint qualifies. A deliberately dispatched hosted reproduction may
       reuse its cache keyed by `tools/bench-iai.sh fingerprint`; ordinary local
       runs use the local baseline store.
-- [ ] For a deliberately requested hosted/release attestation only:
-      `uv run python tools/qualification/receipt.py collect --hosted-ci --out <receipt>`
-      in the manually dispatched GitHub Actions qualification job. This is not
-      ordinary verification and consumes runner minutes. Local collection is
-      exact-source evidence but cannot emit a hosted `QUALIFIED`. `validate`
+- [ ] `uv run python tools/qualification/receipt.py collect --local-qualified
+      --out target/qualification/local-receipt.json` from a clean local Linux
+      checkout, and `validate` reports `QUALIFIED`. `validate`
       re-derives the source identity (digest, HEAD, dirtiness) and the receipt's
       internal consistency; it does not re-run gates. The receipt of record is
       the one `collect` produced on that checkout — never a file handed over
@@ -158,30 +159,29 @@ be used for routine verification. Run the registered recipes through `just`:
       `taskmesh` facade is all re-exports, which the tool does not follow — a
       clean facade report says nothing about the surface consumers use.
       Use tracked `tools/release/adjudication.json` only as a non-approving
-      template. Submit a reviewer-owned copy as the manual release workflow's
-      `adjudication_json` input; the workflow stores it under ignored
-      `target/release/input/adjudication.json`. Bind every item to the final
+      template. Save a reviewer-owned copy as
+      `target/release/input/adjudication.json` before `just release-local`.
+      Bind every item to the final
       candidate SHA,
       with explicit decision, reviewer and CHANGELOG anchor for every accepted break.
       The reviewer must bind each crate's stdout/stderr digest, attest all tool
       findings were reviewed, and map each exit-100 finding via an exact raw
       locator to an approved break item. Omitted findings are a human review
       failure; this raw-text tool has no complete machine finding list.
-- [ ] Only when intentionally running the paid manual release workflow, download the
-      hosted `qualification-receipt` artifact from an exact-source manual run and
-      execute `python3 tools/release/receipt.py collect`. The independent
+- [ ] Run `just release-local` from the same exact clean source after supplying
+      `target/release/input/adjudication.json`. The independent
       release receipt revalidates the ordinary 26-gate receipt, four-crate semver
       raw outputs, all 23 finding/ticket links, coverage and Linux IAI raw
       digests. Missing/NOT_RUN/SKIPPED/TIMEOUT, dirty or stale source, unapproved
-      version or behavior break yield `NOT_QUALIFIED`. The `release.yml` workflow
-      is manual and main-only; no push or PR starts verification or approves a release.
-- [ ] The manual release job also runs `tools/release/finding_proof.py` from the
+      version or behavior break yield `NOT_QUALIFIED`. Hosted workflows are disabled;
+      no push, PR, schedule, or manual dispatch is part of the release authority.
+- [ ] The local release recipe also runs `tools/release/finding_proof.py` from the
       clean final source. Its tracked 23-finding spec names an actual negative
       or regression test for each finding; each selected test must execute
       exactly once and pass. The receipt checks complete stdout/stderr digests,
       test-source bytes, ordinary required gate linkage and before/after source
       identity. This is machine execution evidence, not a human approval or a
-      substitute for the ordinary hosted receipt. Missing final-source output
+      substitute for the ordinary exact-source receipt. Missing final-source output
       keeps A06 `NOT_QUALIFIED`.
 - [ ] `just consumer-msrv` PASS after the fixture in `tools/consumer-msrv`
       has been extended to exercise every migrated shape named in the

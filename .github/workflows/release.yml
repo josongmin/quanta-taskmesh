@@ -1,9 +1,8 @@
 name: release-qualification
 
-# Explicit main-only, manual, paid-runner release decision. It is not an
-# ordinary verification path; local `just verify-local` is the default. The
-# source SHA of a deliberately selected receipt is checked against this
-# checkout by tools/release/receipt.py.
+# Disabled hosted compatibility workflow. Local `just release-local` owns the
+# release decision. This definition remains manual-only and is disabled in the
+# repository settings so it cannot consume runner minutes.
 on:
   workflow_dispatch:
     inputs:

@@ -32,10 +32,9 @@ not re-run the gates, so a hand-written receipt that lies about a PASS is only
 caught where it also has to lie coherently about the tree. Gate results are
 therefore *attested by the collector*, and the qualification rule in
 `docs/release-checklist.md` is that the receipt of record is produced by
-`collect --hosted-ci` in the isolated GitHub Actions qualification job — never
-by `validate` on a file someone hands over. The collector verifies the Actions
-environment, workspace and exact `GITHUB_SHA`; a green `validate` is a necessary
-condition, not the evidence.
+`collect --local-qualified` from a clean local checkout where every required
+gate passes. Hosted collection remains a disabled compatibility path. A green
+`validate` is a necessary condition, not evidence that omitted gates ran.
 """
 
 from __future__ import annotations
@@ -84,6 +83,13 @@ ATTESTATION_CHECK_NAMES = {
     "job_is_qualification",
     "action_source_matches",
     "producer_jobs_success",
+}
+LOCAL_ATTESTATION_CHECK_NAMES = {
+    "not_github_actions",
+    "workspace_matches_repo",
+    "source_clean",
+    "action_is_local",
+    "action_source_matches",
 }
 # A receipt without these was not produced by `collect`; whatever it says about
 # gates, it is not the shape the collector attests.
@@ -150,7 +156,11 @@ def environment() -> dict:
     }
 
 
-def collection_attestation(source: dict, hosted_ci: bool) -> dict:
+def collection_attestation(
+    source: dict, hosted_ci: bool, local_qualified: bool = False
+) -> dict:
+    if hosted_ci and local_qualified:
+        raise ValueError("hosted and local qualification modes are mutually exclusive")
     expected_jobs = {spec["hosted_job"] for spec in registrations(INVENTORY)}
     try:
         needs = json.loads(os.environ.get("TASKMESH_PRODUCER_NEEDS_JSON", ""))
@@ -170,7 +180,7 @@ def collection_attestation(source: dict, hosted_ci: bool) -> dict:
         )
     except (OSError, RuntimeError, ValueError) as exc:
         action = {"error": str(exc)}
-    checks = {
+    hosted_checks = {
         "github_actions": os.environ.get("GITHUB_ACTIONS") == "true",
         "ci": os.environ.get("CI") == "true",
         "head_matches_github_sha": os.environ.get("GITHUB_SHA") == source.get("head"),
@@ -185,12 +195,21 @@ def collection_attestation(source: dict, hosted_ci: bool) -> dict:
         "producer_jobs_success": set(producer_jobs) == expected_jobs
         and all(result == "success" for result in producer_jobs.values()),
     }
-    eligible = hosted_ci and all(checks.values())
+    local_checks = {
+        "not_github_actions": os.environ.get("GITHUB_ACTIONS") != "true",
+        "workspace_matches_repo": Path.cwd().resolve() == REPO.resolve(),
+        "source_clean": not source.get("dirty", True),
+        "action_is_local": action.get("context") == "local" and action.get("event") == "local",
+        "action_source_matches": action.get("source_sha") == source.get("head"),
+    }
+    hosted_eligible = hosted_ci and all(hosted_checks.values())
+    local_eligible = local_qualified and all(local_checks.values())
     return {
         "kind": "github-actions" if hosted_ci else "local",
-        "hosted_qualification_eligible": eligible,
+        "hosted_qualification_eligible": hosted_eligible,
+        "local_qualification_eligible": local_eligible,
         "head": source.get("head"),
-        "checks": checks,
+        "checks": hosted_checks if hosted_ci else local_checks,
         "action": action,
         "producer_jobs": producer_jobs,
     }
@@ -274,12 +293,13 @@ def collect(
     skip_mutations: bool,
     hosted_ci: bool = False,
     consume_producers: bool = False,
+    local_qualified: bool = False,
 ) -> int:
     if consume_producers and not hosted_ci:
         raise ValueError("imported producer artifacts are accepted only in hosted CI")
     started = datetime.now(timezone.utc).isoformat()
     source = source_identity()
-    attestation = collection_attestation(source, hosted_ci)
+    attestation = collection_attestation(source, hosted_ci, local_qualified)
     source["isolated_checkout"] = attestation["hosted_qualification_eligible"]
     env = environment()
 
@@ -351,10 +371,13 @@ def collect(
     source_after = source_identity()
 
     limitations = []
-    if not attestation["hosted_qualification_eligible"]:
+    if not (
+        attestation["hosted_qualification_eligible"]
+        or attestation["local_qualification_eligible"]
+    ):
         limitations.append(
-            "Local collection: exact-source evidence only, never a hosted qualification. "
-            "The receipt of record must be collected by the GitHub Actions qualification job."
+            "Evidence-only collection: pass --local-qualified from a clean local Linux checkout "
+            "to request a full local qualification verdict."
         )
     if platform.system().lower() != "linux":
         limitations.append(
@@ -368,6 +391,8 @@ def collect(
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "source": source,
         "source_after": {
+            "head": source_after["head"],
+            "tree": source_after["tree"],
             "paths_digest": source_after["paths_digest"],
             "dirty": source_after["dirty"],
         },
@@ -416,29 +441,45 @@ def evaluate(receipt: object, current: dict | None, *, artifact_root: Path | Non
     if not isinstance(attestation, dict):
         reasons.append("receipt attestation is not an object")
         attestation = {}
-    if attestation.get("kind") != "github-actions" or not attestation.get(
+    hosted_attested = attestation.get("kind") == "github-actions" and attestation.get(
         "hosted_qualification_eligible"
-    ):
-        reasons.append("receipt was not collected by the hosted qualification job")
+    ) is True
+    local_attested = attestation.get("kind") == "local" and attestation.get(
+        "local_qualification_eligible"
+    ) is True
+    if not hosted_attested and not local_attested:
+        reasons.append(
+            "receipt lacks an eligible hosted or explicit local qualification attestation"
+        )
     checks = attestation.get("checks")
+    expected_checks = (
+        ATTESTATION_CHECK_NAMES
+        if hosted_attested
+        else LOCAL_ATTESTATION_CHECK_NAMES
+        if local_attested
+        else set()
+    )
     if (
         not isinstance(checks, dict)
-        or set(checks) != ATTESTATION_CHECK_NAMES
+        or set(checks) != expected_checks
         or not all(value is True for value in checks.values())
     ):
-        reasons.append("hosted qualification attestation checks are incomplete or failed")
+        reasons.append("qualification attestation checks are incomplete or failed")
     if attestation.get("head") != source.get("head"):
         reasons.append("attestation HEAD does not match receipt source HEAD")
     expected_producer_jobs = {spec["hosted_job"] for spec in registrations(INVENTORY)}
     producer_jobs = attestation.get("producer_jobs")
-    if (
-        not isinstance(producer_jobs, dict)
-        or set(producer_jobs) != expected_producer_jobs
-        or any(result != "success" for result in producer_jobs.values())
-    ):
-        reasons.append("producer prerequisite jobs were not all successful")
-    if source.get("isolated_checkout") is not True:
-        reasons.append("receipt source is not marked as an isolated hosted checkout")
+    if hosted_attested:
+        if (
+            not isinstance(producer_jobs, dict)
+            or set(producer_jobs) != expected_producer_jobs
+            or any(result != "success" for result in producer_jobs.values())
+        ):
+            reasons.append("producer prerequisite jobs were not all successful")
+        if source.get("isolated_checkout") is not True:
+            reasons.append("receipt source is not marked as an isolated hosted checkout")
+    elif local_attested and producer_jobs not in ({}, None):
+        reasons.append("local qualification cannot claim hosted producer job results")
     if current is not None:
         if source.get("paths_digest") != current.get("paths_digest"):
             reasons.append(
@@ -451,18 +492,21 @@ def evaluate(receipt: object, current: dict | None, *, artifact_root: Path | Non
         if current.get("dirty") and not source.get("dirty"):
             reasons.append("receipt claims a clean tree but the current working tree is dirty")
         if current.get("dirty"):
-            reasons.append("current working tree is dirty: cannot qualify an isolated source")
+            reasons.append("current working tree is dirty: cannot qualify exact local source")
     source_after = receipt.get("source_after", {})
     if not isinstance(source_after, dict):
         reasons.append("receipt source_after is not an object")
         source_after = {}
-    source_after_digest = source_after.get("paths_digest")
-    if not isinstance(source_after_digest, str) or not source_after_digest:
-        reasons.append("receipt source_after paths_digest is missing or empty")
-    elif source_after_digest != source_digest:
-        reasons.append("the working tree changed while the gates ran")
-    if source_after.get("dirty") != source.get("dirty"):
-        reasons.append("the working tree dirtiness changed while the gates ran")
+    for field in ("head", "tree", "paths_digest", "dirty"):
+        if field not in source_after:
+            reasons.append(f"receipt source_after {field} is missing")
+        elif field != "dirty" and (
+            not isinstance(source_after.get(field), str) or not source_after.get(field)
+        ):
+            reasons.append(f"receipt source_after {field} is missing or empty")
+        elif source_after.get(field) != source.get(field):
+            label = "dirtiness" if field == "dirty" else field
+            reasons.append(f"the working tree {label} changed while the gates ran")
     if source.get("dirty"):
         reasons.append(
             "working tree is dirty: local evidence only, not an isolated-source qualification"
@@ -653,6 +697,14 @@ def main(argv: list[str] | None = None) -> int:
         help="claim hosted qualification only when GitHub Actions identity checks pass",
     )
     c.add_argument(
+        "--local-qualified",
+        action="store_true",
+        help=(
+            "request full qualification from a clean local checkout "
+            "(all required gates must pass)"
+        ),
+    )
+    c.add_argument(
         "--consume-producers",
         action="store_true",
         help="consume producer artifacts downloaded from registered prerequisite CI jobs",
@@ -672,6 +724,7 @@ def main(argv: list[str] | None = None) -> int:
             args.skip_mutations,
             args.hosted_ci,
             args.consume_producers,
+            args.local_qualified,
         )
     code, _reasons_already_printed = validate(args.receipt, not args.no_tree_check)
     return code

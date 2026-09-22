@@ -173,13 +173,25 @@ coverage-report:
     bash tools/coverage/report.sh
 
 # Release-only compatibility audit against the immutable 0.2.0 release commit.
-# This is not in ordinary `proof`: a current-source hosted receipt and explicit
-# API/wire/behavior adjudication are separate inputs to the release decision.
+# This is not in ordinary `proof`: a current-source qualification receipt and
+# explicit API/wire/behavior adjudication are separate release inputs.
 semver-release:
     python3 tools/release/semver.py --out target/release/semver
 
-release-receipt:
-    python3 tools/release/receipt.py collect --out target/release/release-receipt.json
+qualify-local:
+    uv run python tools/qualification/receipt.py collect --local-qualified --out target/qualification/local-receipt.json
+
+validate-local-qualification:
+    uv run python tools/qualification/receipt.py validate target/qualification/local-receipt.json
+
+release-finding-proof:
+    python3 tools/release/finding_proof.py --out target/release/finding-proof
+
+release-receipt: validate-local-qualification semver-release release-finding-proof
+    python3 tools/release/receipt.py collect --local-qualified --ordinary target/qualification/local-receipt.json --semver target/release/semver/semver-manifest.json --adjudication target/release/input/adjudication.json --out target/release/release-receipt.json
+
+release-local: release-receipt
+    @echo "release-local: exact-source local release receipt completed"
 
 # Full local proof surface: every gate in tools/gates/required.json — `gate`, the
 # feature `matrix`, and the heavy rails. tools/gates/validate_inventory.py
@@ -187,7 +199,24 @@ release-receipt:
 proof: gate matrix mutants-critical mutants-generated loom shuttle modelcheck tsan fuzz coverage-report bench-iai
     @echo "proof: full local required proof surface passed"
 
-# Canonical verification entry point. Keep `proof` for compatibility with the
-# inventory expander; users and release operators should invoke this alias.
-verify-local: proof
-    @echo "verify-local: exact local proof completed"
+# macOS verification is receipt-backed: every required gate applicable to this
+# host must pass. Linux-only gates remain recorded as SKIPPED_PLATFORM and are
+# never promoted into the cross-platform `QUALIFIED` verdict.
+verify-macos:
+    uv run python tools/gates/run.py --required --allow-platform-skips --receipt target/verification/macos-gates.json
+
+# Canonical macOS verification entry point. Keep `proof` for the exact
+# cross-platform required-set expansion checked by gates-inventory.
+verify-local: verify-macos
+    @echo "verify-local: macOS receipt written to target/verification/macos-gates.json"
+
+# Install the tracked fail-closed push admission hook for this clone. The hook
+# accepts a branch update only when the saved local receipt matches the exact
+# clean commit being pushed. Git's explicit --no-verify remains the emergency
+# override and must be disclosed when used.
+install-hooks:
+    git config --local core.hooksPath .githooks
+    @echo "hooks: installed .githooks (pre-push requires current local receipt)"
+
+validate-local-receipt:
+    uv run python tools/gates/run.py --validate-receipt target/verification/macos-gates.json

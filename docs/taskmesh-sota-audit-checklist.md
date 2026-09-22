@@ -12,7 +12,7 @@ fairness, 자원 예산, 실행 substrate, cancellation/deadline, drain을 한 c
 | 등급 | 적용 시점 | 종료 조건 |
 |---|---|---|
 | `M` merge | 모든 production/tooling 변경 | 해당 변경과 reachable consumer에 관련된 `M` 항목이 모두 PASS |
-| `R` release | crate 버전·공개 API·정책·런타임 릴리스 | 모든 `M/R` 항목 PASS, clean exact-SHA hosted receipt `QUALIFIED` |
+| `R` release | crate 버전·공개 API·정책·런타임 릴리스 | 모든 `M/R` 항목 PASS, clean exact-SHA local receipt `QUALIFIED` |
 | `D` deep | 분기별 또는 scheduler/accounting/concurrency 대수술 | 모든 `M/R/D` 항목 판정, generated mutation·장시간 fuzz/load/soak 포함 |
 
 `R`과 `D`는 `M`을 포함한다. 적용되지 않는 항목은 빈칸으로 두지 말고 `N/A`와 근거를
@@ -44,7 +44,7 @@ fairness, 자원 예산, 실행 substrate, cancellation/deadline, drain을 한 c
 | `E1` | 정적 검사·compile·API diff | 구조/타입/feature 호환 |
 | `E2` | focused runtime test | 특정 경로의 관측 동작 |
 | `E3` | 독립 oracle, mutation, model checking, fuzz | 테스트가 결함을 실제로 구분함 |
-| `E4` | clean exact-SHA hosted qualification receipt | 저장소 릴리스 자격 |
+| `E4` | clean exact-SHA local qualification receipt | 저장소 릴리스 자격 |
 | `E5` | 외부 consumer/replay/deploy/activation | 실제 통합·운영 활성화 |
 
 낮은 단계는 높은 단계를 대체하지 않는다. 과거 receipt, dirty-tree 실행, focused test,
@@ -441,7 +441,7 @@ uv run python tools/qualification/receipt.py validate <receipt>
 ```
 
 `just proof`의 성공은 local proof다. 릴리스 자격은 clean hosted checkout에서
-`collect --hosted-ci`가 만든 exact-SHA receipt만 인정한다.
+clean local Linux에서 `collect --local-qualified`가 만든 exact-SHA receipt만 인정한다.
 
 ## 22. 문서·릴리스·외부 consumer·운영
 
@@ -497,7 +497,7 @@ uv run python tools/qualification/receipt.py validate <receipt>
 7. 가장 좁은 focused test로 후보 finding을 재현한다.
 8. 실제 결함에는 동일 단일 편집 mutation 또는 독립 model oracle을 요구한다.
 9. `CON/TST/PERF` heavy rail은 같은 호스트에서 직렬 실행한다.
-10. clean committed SHA에서 `CI-*` hosted qualification을 수집한다.
+10. clean committed SHA의 local Linux에서 full qualification을 수집한다.
 11. `OPS-*` consumer·rollout·activation을 repository qualification과 분리한다.
 
 ## 25. 감사 보고서 템플릿
@@ -516,7 +516,7 @@ uv run python tools/qualification/receipt.py validate <receipt>
 
 ## Verdict
 - repository implementation: PASS | FAIL | PARTIAL
-- hosted qualification: QUALIFIED | NOT_QUALIFIED | NOT_RUN
+- local exact-source qualification: QUALIFIED | NOT_QUALIFIED | NOT_RUN
 - external consumer/activation: VERIFIED | UNVERIFIED | BLOCKED_EXTERNAL
 
 ## Findings
@@ -550,6 +550,6 @@ uv run python tools/qualification/receipt.py validate <receipt>
 - coverage가 높아도 mutation survivor, weak oracle, zero test, unreachable adapter를 덮지 못한다.
 - curated mutation 100%는 등록된 fault만 증명하며 generated cargo-mutants score가 아니다.
 - Loom/Shuttle은 model seam 밖의 Tokio/OS memory behavior를 증명하지 않는다.
-- local proof는 hosted qualification이 아니고, hosted qualification은 consumer activation이 아니다.
+- platform-scoped local proof는 full local qualification이 아니고, qualification은 consumer activation이 아니다.
 - 문서에 공개된 non-goal은 `N/A` 근거가 될 수 있지만 reachable corruption/deadlock을 정당화하지 못한다.
 - 최종 `GO`에는 clean exact-SHA `QUALIFIED` receipt와 release 대상 feature/platform의 필수 rail이 필요하다.

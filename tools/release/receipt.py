@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed release decision over an exact-source hosted ordinary receipt.
+"""Fail-closed release decision over an exact-source ordinary receipt.
 
 The ordinary CI verdict is not weakened here. A generated mutation report must
 retain every planned identity. Compile-unviable mutations are explicit,
@@ -41,6 +41,13 @@ ADJUDICATION_IDS = {
     "H03-executor-contract",
     "H03-rayon-constructor",
     "facade-reexports",
+}
+LOCAL_RELEASE_CHECKS = {
+    "not_github_actions",
+    "workspace_matches",
+    "source_clean",
+    "action_is_local",
+    "action_source_matches",
 }
 
 if str(REPO) not in sys.path:
@@ -214,7 +221,9 @@ def finding_proof_problems(
         for key in ("head", "tree", "paths_digest", "dirty")
     ):
         reasons.append("finding proof source differs from release source")
-    if manifest.get("source_after") != {"paths_digest": source.get("paths_digest"), "dirty": False}:
+    if manifest.get("source_after") != {
+        field: source.get(field) for field in ("head", "tree", "paths_digest", "dirty")
+    }:
         reasons.append("finding proof source changed during execution")
     for field, path in (
         ("spec", "tools/release/finding-proof-spec.json"),
@@ -423,7 +432,9 @@ def semver_problems(root: Path, manifest: object, source: dict, policy: dict) ->
         ms.get(key) != source.get(key) for key in ("head", "tree", "paths_digest", "dirty")
     ):
         reasons.append("semver source is not the release source")
-    if manifest.get("source_after") != {"paths_digest": source.get("paths_digest"), "dirty": False}:
+    if manifest.get("source_after") != {
+        field: source.get(field) for field in ("head", "tree", "paths_digest", "dirty")
+    }:
         reasons.append("semver audit changed source or lacks stable-source proof")
     results = manifest.get("results")
     if not isinstance(results, list) or len(results) != 4:
@@ -451,7 +462,7 @@ def semver_problems(root: Path, manifest: object, source: dict, policy: dict) ->
     return reasons
 
 
-def release_attestation(source: dict) -> dict:
+def release_attestation(source: dict, local_qualified: bool = False) -> dict:
     try:
         action = runtime_action(
             root=REPO,
@@ -461,7 +472,7 @@ def release_attestation(source: dict) -> dict:
         )
     except (OSError, RuntimeError, ValueError) as exc:
         action = {"error": str(exc)}
-    checks = {
+    hosted_checks = {
         "github_actions": os.environ.get("GITHUB_ACTIONS") == "true",
         "workflow_dispatch": os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch",
         "main_ref": os.environ.get("GITHUB_REF") == "refs/heads/main",
@@ -474,12 +485,30 @@ def release_attestation(source: dict) -> dict:
         "action_source_matches": action.get("source_sha") == source.get("head"),
         "actor_present": bool(os.environ.get("GITHUB_ACTOR")),
     }
+    if local_qualified:
+        checks = {
+            "not_github_actions": os.environ.get("GITHUB_ACTIONS") != "true",
+            "workspace_matches": Path.cwd().resolve() == REPO.resolve(),
+            "source_clean": source.get("dirty") is False,
+            "action_is_local": action.get("context") == "local"
+            and action.get("event") == "local",
+            "action_source_matches": action.get("source_sha") == source.get("head"),
+        }
+        return {
+            "kind": "local-release",
+            "actor": None,
+            "action": action,
+            "checks": checks,
+            "eligible": all(checks.values()),
+        }
     return {
-        "kind": "github-actions-release" if all(checks.values()) else "local-or-invalid",
+        "kind": "github-actions-release"
+        if all(hosted_checks.values())
+        else "local-or-invalid",
         "actor": os.environ.get("GITHUB_ACTOR"),
         "action": action,
-        "checks": checks,
-        "eligible": all(checks.values()),
+        "checks": hosted_checks,
+        "eligible": all(hosted_checks.values()),
     }
 
 
@@ -565,20 +594,34 @@ def evaluate(value: object, *, root: Path = REPO, current: dict | None = None) -
         reasons.append("release candidate SHA mismatch")
     if value.get("release_type") != policy.get("release_type"):
         reasons.append("release type mismatch")
-    if value.get("source_after") != {"paths_digest": source.get("paths_digest"), "dirty": False}:
+    if value.get("source_after") != {
+        field: source.get(field) for field in ("head", "tree", "paths_digest", "dirty")
+    }:
         reasons.append("source changed during release collection")
     attestation = value.get("attestation")
+    hosted_release = (
+        isinstance(attestation, dict)
+        and attestation.get("kind") == "github-actions-release"
+        and isinstance(attestation.get("actor"), str)
+        and bool(attestation.get("actor"))
+    )
+    local_release = isinstance(attestation, dict) and attestation.get("kind") == "local-release"
+    expected_attestation_checks = (
+        set(release_attestation(source)["checks"])
+        if hosted_release
+        else LOCAL_RELEASE_CHECKS
+        if local_release
+        else set()
+    )
     if (
         not isinstance(attestation, dict)
-        or attestation.get("kind") != "github-actions-release"
+        or (not hosted_release and not local_release)
         or attestation.get("eligible") is not True
         or not isinstance(attestation.get("checks"), dict)
-        or set(attestation["checks"]) != set(release_attestation(source)["checks"])
+        or set(attestation["checks"]) != expected_attestation_checks
         or not all(v is True for v in attestation["checks"].values())
-        or not isinstance(attestation.get("actor"), str)
-        or not attestation["actor"]
     ):
-        reasons.append("hosted main workflow_dispatch release attestation missing or invalid")
+        reasons.append("eligible hosted or explicit local release attestation missing or invalid")
 
     ordinary_receipt = check_identity(
         root, value.get("ordinary_receipt"), "ordinary receipt", reasons
@@ -593,7 +636,7 @@ def evaluate(value: object, *, root: Path = REPO, current: dict | None = None) -
         path = root / value["ordinary_receipt"]["path"]
         code, _ = ordinary.validate(path, True)
         if code != 0:
-            reasons.append("ordinary hosted receipt is NOT_QUALIFIED")
+            reasons.append("ordinary exact-source receipt is NOT_QUALIFIED")
         gates = ordinary_receipt.get("gates")
         results = gates.get("results", []) if isinstance(gates, dict) else []
         if not isinstance(results, list):
@@ -619,7 +662,7 @@ def evaluate(value: object, *, root: Path = REPO, current: dict | None = None) -
                 "missed/timeout/equivalent or omit unviable identities"
             )
     else:
-        reasons.append("ordinary hosted qualification is NOT_RUN")
+        reasons.append("ordinary exact-source qualification is NOT_RUN")
 
     semver = check_identity(root, value.get("semver_manifest"), "semver manifest", reasons)
     reasons.extend(semver_problems(root, semver, source, policy))
@@ -640,7 +683,7 @@ def evaluate(value: object, *, root: Path = REPO, current: dict | None = None) -
             policy.get("baseline_sha"),
             semver,
             template,
-            attestation.get("actor") if isinstance(attestation, dict) else None,
+            attestation.get("actor") if hosted_release else None,
         )
     )
     plan = check_identity(root, value.get("plan"), "ticket plan", reasons)
@@ -713,7 +756,13 @@ def evaluate(value: object, *, root: Path = REPO, current: dict | None = None) -
     return computed
 
 
-def collect(out: Path, ordinary_path: Path, semver_path: Path, adjudication_path: Path) -> int:
+def collect(
+    out: Path,
+    ordinary_path: Path,
+    semver_path: Path,
+    adjudication_path: Path,
+    local_qualified: bool = False,
+) -> int:
     source = ordinary.source_identity()
     paths = {
         "policy": "tools/release/release-policy.json",
@@ -734,7 +783,7 @@ def collect(out: Path, ordinary_path: Path, semver_path: Path, adjudication_path
     for field, path in paths.items():
         value[field] = identity(REPO, path)
     value["adjudication"] = identity(REPO, str(adjudication_path))
-    value["attestation"] = release_attestation(source)
+    value["attestation"] = release_attestation(source, local_qualified)
     value["ordinary_receipt"] = identity(REPO, str(ordinary_path))
     value["semver_manifest"] = identity(REPO, str(semver_path))
     value["finding_manifest"] = identity(
@@ -761,7 +810,9 @@ def collect(out: Path, ordinary_path: Path, semver_path: Path, adjudication_path
         for name in ("review", "merge", "consumer_qualification", "deployment", "activation")
     }
     after = ordinary.source_identity()
-    value["source_after"] = {"paths_digest": after["paths_digest"], "dirty": after["dirty"]}
+    value["source_after"] = {
+        field: after[field] for field in ("head", "tree", "paths_digest", "dirty")
+    }
     verdict = evaluate(value, root=REPO, current=after)
     value["verdict"] = verdict
     if not out.is_absolute():
@@ -788,12 +839,23 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument(
         "--adjudication", type=Path, default=Path("target/release/input/adjudication.json")
     )
+    c.add_argument(
+        "--local-qualified",
+        action="store_true",
+        help="request an exact-source local release verdict instead of hosted attestation",
+    )
     v = sub.add_parser("validate")
     v.add_argument("receipt", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.action == "collect":
-            return collect(args.out, args.ordinary, args.semver, args.adjudication)
+            return collect(
+                args.out,
+                args.ordinary,
+                args.semver,
+                args.adjudication,
+                args.local_qualified,
+            )
         value = read_json(args.receipt)
         verdict = evaluate(value, current=ordinary.source_identity())
         print(f"release receipt: {args.receipt} {verdict['status']}")

@@ -169,7 +169,9 @@ def produce(out: Path) -> int:
             else "FAIL"
         ),
         "source": before,
-        "source_after": {"paths_digest": after["paths_digest"], "dirty": after["dirty"]},
+        "source_after": {
+            field: after[field] for field in ("head", "tree", "paths_digest", "dirty")
+        },
         "baseline_sha": baseline,
         "baseline_version": policy["baseline_version"],
         "policy_sha256": sha256(POLICY),

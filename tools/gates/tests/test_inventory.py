@@ -229,6 +229,14 @@ def test_trigger_guard_handles_pyyaml_boolean_on_key(tmp_path: Path) -> None:
     assert vi.workflow_trigger_problems(path, document) == []
 
 
+def test_yaml_extension_cannot_bypass_hosted_trigger_guard(tmp_path: Path) -> None:
+    (tmp_path / "bypass.yaml").write_text(
+        "on:\n  push:\njobs: {}\n", encoding="utf-8"
+    )
+    problems = vi.all_workflow_trigger_problems(tmp_path)
+    assert any("bypass.yaml" in problem and "push" in problem for problem in problems), problems
+
+
 def test_a_gate_step_that_cannot_fail_the_job_is_reported(tmp_path: Path) -> None:
     """Presence of `just <gate>` is not enforcement. Every way a step can run a
     gate and stay green regardless is a parity hole."""
@@ -421,6 +429,15 @@ def test_the_real_cli_passes() -> None:
     assert "gate inventory OK" in proc.stdout
 
 
+def test_tracked_pre_push_hook_requires_exact_local_receipt() -> None:
+    hook = REPO / ".githooks" / "pre-push"
+    text = hook.read_text(encoding="utf-8")
+    assert hook.stat().st_mode & 0o111
+    assert "--validate-receipt" in text
+    assert "--expected-head" in text
+    assert "target/verification/macos-gates.json" in text
+
+
 def test_runner_refuses_to_qualify_when_required_gates_did_not_run() -> None:
     """Running one gate must not produce a qualified receipt."""
     proc = subprocess.run(
@@ -433,6 +450,103 @@ def test_runner_refuses_to_qualify_when_required_gates_did_not_run() -> None:
     assert proc.returncode == 1
     assert "NOT_QUALIFIED" in proc.stderr
     assert "required gates not run" in proc.stderr
+
+
+def test_platform_scope_requires_every_applicable_gate_and_keeps_exclusions() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+
+    required = {"fmt-check", "bench-iai"}
+    platform_conditional = {"bench-iai": "linux"}
+    scoped, excluded = module.platform_scope_qualification(
+        required,
+        [
+            {"id": "fmt-check", "status": "PASS"},
+            {"id": "bench-iai", "status": "SKIPPED_PLATFORM"},
+        ],
+        platform_conditional,
+        "macos",
+    )
+    assert scoped is True
+    assert excluded == ["bench-iai"]
+
+    scoped, _ = module.platform_scope_qualification(
+        required,
+        [
+            {"id": "fmt-check", "status": "PASS"},
+            {"id": "bench-iai", "status": "NOT_RUN"},
+        ],
+        platform_conditional,
+        "macos",
+    )
+    assert scoped is False
+
+
+def test_local_receipt_is_exact_source_bound() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+
+    source = {
+        "head": "a" * 40,
+        "tree": "b" * 40,
+        "paths_digest": "c" * 64,
+        "dirty": False,
+    }
+    receipt = {
+        "schema_version": 2,
+        "platform": "macos",
+        "source": dict(source),
+        "source_after": dict(source),
+        "source_problems": [],
+        "platform_scope": {
+            "qualified": True,
+            "excluded_required_gates": ["bench-iai"],
+        },
+        "results": [
+            {"id": "fmt-check", "status": "PASS"},
+            {"id": "bench-iai", "status": "SKIPPED_PLATFORM"},
+        ],
+    }
+    required = {"fmt-check", "bench-iai"}
+    conditional = {"bench-iai": "linux"}
+    assert module.local_receipt_problems(
+        receipt, source, required, conditional, "macos", source["head"]
+    ) == []
+
+    drifted = {**source, "paths_digest": "d" * 64}
+    problems = module.local_receipt_problems(
+        receipt, drifted, required, conditional, "macos", source["head"]
+    )
+    assert any("paths_digest differs" in problem for problem in problems), problems
+
+    dirty = {**source, "dirty": True}
+    problems = module.local_receipt_problems(
+        receipt, dirty, required, conditional, "macos", source["head"]
+    )
+    assert any("must both be clean" in problem for problem in problems), problems
+
+
+def test_local_source_must_stay_clean_and_unchanged() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    source = {
+        "head": "a" * 40,
+        "tree": "b" * 40,
+        "paths_digest": "c" * 64,
+        "dirty": False,
+    }
+    assert module.source_stability_problems(source, dict(source)) == []
+    problems = module.source_stability_problems(
+        source, {**source, "tree": "d" * 40, "dirty": True}
+    )
+    assert any("dirty after" in problem for problem in problems)
+    assert any("tree changed" in problem for problem in problems)
 
 
 def test_a_skipped_gate_is_absent_from_the_receipt_and_never_passes(tmp_path: Path) -> None:

@@ -11,7 +11,7 @@
       "platforms": ["any"],
       "prerequisites": ["cargo-semver-checks 0.50.0", "immutable baseline commit"],
       "workflow": "release.yml",
-      "note": "Release-only four-crate compatibility audit. Its PASS is not a release verdict; the release receipt additionally requires the ordinary hosted receipt and manual facade/wire/behavior adjudication."
+      "note": "Release-only four-crate compatibility audit. Its PASS is not a release verdict; the release receipt additionally requires the ordinary exact-source local receipt and manual facade/wire/behavior adjudication."
     },
     {
       "id": "fmt-check",
@@ -424,7 +424,7 @@
         "rustup toolchain = declared rust-version"
       ],
       "workflow": "ci.yml",
-      "conditional": "reports NOT_RUN (exit 2) when the declared toolchain is not installed; CI installs it. The final `taskmesh-consumer-msrv status=PASS msrv=…` line is the verdict the receipt keeps",
+      "conditional": "reports NOT_RUN (exit 2) when the declared toolchain is not installed; local qualification requires it. The final `taskmesh-consumer-msrv status=PASS msrv=…` line is the verdict the receipt keeps",
       "status_line": {
         "marker": "taskmesh-consumer-msrv",
         "require": "status=PASS"
@@ -468,7 +468,7 @@
         "x86_64/aarch64 linux or macOS"
       ],
       "workflow": "ci.yml",
-      "conditional": "reports NOT_RUN (exit 2) when nightly+rust-src are missing or the target is unsupported; CI installs them. Only `taskmesh-tsan status=CLEAN` is PASS; the line (with the target triple) is kept in the receipt",
+      "conditional": "reports NOT_RUN (exit 2) when nightly+rust-src are missing or the target is unsupported; local qualification requires them. Only `taskmesh-tsan status=CLEAN` is PASS; the line (with the target triple) is kept in the receipt",
       "note": "ThreadSanitizer on the real memory system (engine concurrency/effect/lifecycle tests, host chaos/executor/deadline/cancel tests). Complements loom/shuttle, which model interleavings.",
       "status_line": {
         "marker": "taskmesh-tsan",
@@ -491,7 +491,7 @@
         "cargo-fuzz"
       ],
       "workflow": "ci.yml",
-      "conditional": "reports NOT_RUN (exit 2) when nightly or cargo-fuzz is missing; CI installs them. Only `taskmesh-fuzz status=PASS` with all semantic witnesses is PASS",
+      "conditional": "reports NOT_RUN (exit 2) when nightly or cargo-fuzz is missing; local qualification requires them. Only `taskmesh-fuzz status=PASS` with all semantic witnesses is PASS",
       "note": "libFuzzer over the production Governor (every public transition, invariants after each step, quiescence at the end), the policy/topology/builder front doors, and the JSON wire formats. Complements the proptest differential model: coverage-guided rather than blind. FUZZ_SECONDS (default 30) bounds each target.",
       "status_line": {
         "marker": "taskmesh-fuzz",
@@ -529,7 +529,7 @@
         "cargo-llvm-cov"
       ],
       "workflow": "ci.yml",
-      "conditional": "reports NOT_RUN (exit 2) when cargo-llvm-cov is missing; CI installs it. Only `taskmesh-coverage status=REPORTED …` is PASS; that line carries every available summary metric and explicitly marks uncollected branch/MCDC data",
+      "conditional": "reports NOT_RUN (exit 2) when cargo-llvm-cov is missing; local qualification requires it. Only `taskmesh-coverage status=REPORTED …` is PASS; that line carries every available summary metric and explicitly marks uncollected branch/MCDC data",
       "note": "A report, not a threshold: the repository makes no coverage-gate promise. PASS means the report was produced. Lines, regions, functions and instantiations are recorded; zero-count branch/MCDC data is reported as NOT_COLLECTED, never as 0% coverage.",
       "status_line": {
         "marker": "taskmesh-coverage",

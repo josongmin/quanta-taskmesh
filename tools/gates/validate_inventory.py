@@ -382,10 +382,15 @@ def unenforced_gate_steps(document: object, recipes_of_interest: set[str]) -> li
     return problems
 
 
+def workflow_paths(workflows_dir: Path) -> list[Path]:
+    """Every filename extension GitHub accepts for repository workflows."""
+    return sorted([*workflows_dir.glob("*.yml"), *workflows_dir.glob("*.yaml")])
+
+
 def workflow_invocations(workflows_dir: Path) -> dict[str, set[str]]:
     """recipe -> set of workflow file names that invoke it."""
     found: dict[str, set[str]] = {}
-    for path in sorted(workflows_dir.glob("*.yml")):
+    for path in workflow_paths(workflows_dir):
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         for script in run_scripts(document):
             for match in JUST_INVOCATION.finditer(script):
@@ -395,7 +400,7 @@ def workflow_invocations(workflows_dir: Path) -> dict[str, set[str]]:
 
 def workflow_enforcement_problems(workflows_dir: Path, recipes_of_interest: set[str]) -> list[str]:
     problems: list[str] = []
-    for path in sorted(workflows_dir.glob("*.yml")):
+    for path in workflow_paths(workflows_dir):
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         problems.extend(
             f"{path.name}: {p}" for p in unenforced_gate_steps(document, recipes_of_interest)
@@ -450,7 +455,7 @@ def workflow_trust_problems(path: Path, document: object) -> list[str]:
 
 def all_workflow_trust_problems(workflows_dir: Path) -> list[str]:
     problems: list[str] = []
-    for path in sorted(workflows_dir.glob("*.yml")):
+    for path in workflow_paths(workflows_dir):
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         problems.extend(workflow_trust_problems(path, document))
     return problems
@@ -482,7 +487,7 @@ def workflow_trigger_problems(path: Path, document: object) -> list[str]:
 
 def all_workflow_trigger_problems(workflows_dir: Path) -> list[str]:
     problems: list[str] = []
-    for path in sorted(workflows_dir.glob("*.yml")):
+    for path in workflow_paths(workflows_dir):
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         problems.extend(workflow_trigger_problems(path, document))
     return problems

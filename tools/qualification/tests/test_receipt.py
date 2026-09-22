@@ -275,7 +275,12 @@ def qualified_receipt() -> dict:
         "finished_at": "2026-09-16T00:10:00+00:00",
         "environment": {"toolchain": "rustc 1.95.0"},
         "source": source,
-        "source_after": {"paths_digest": source["paths_digest"], "dirty": False},
+        "source_after": {
+            "head": source["head"],
+            "tree": source["tree"],
+            "paths_digest": source["paths_digest"],
+            "dirty": False,
+        },
         "attestation": {
             "kind": "github-actions",
             "hosted_qualification_eligible": True,
@@ -319,7 +324,42 @@ def test_local_evidence_never_claims_hosted_qualification() -> None:
     r["source"]["isolated_checkout"] = False
     verdict = receipt.evaluate(r, CLEAN)
     assert verdict["status"] == "NOT_QUALIFIED"
-    assert any("hosted qualification job" in reason for reason in verdict["reasons"])
+    assert any("explicit local qualification" in reason for reason in verdict["reasons"])
+
+
+def test_explicit_clean_local_full_receipt_qualifies() -> None:
+    r = qualified_receipt()
+    source = r["source"]
+    action = receipt.runtime_action(
+        root=REPO,
+        source_head=source["head"],
+        local_workflow=".github/workflows/ci.yml",
+        local_job="local-qualification",
+    )
+    r["attestation"] = {
+        "kind": "local",
+        "hosted_qualification_eligible": False,
+        "local_qualification_eligible": True,
+        "head": source["head"],
+        "checks": {name: True for name in receipt.LOCAL_ATTESTATION_CHECK_NAMES},
+        "action": action,
+        "producer_jobs": {},
+    }
+    r["source"]["isolated_checkout"] = False
+    for record in r["producers"]:
+        record["envelope"]["payload"]["action"] = action
+        record["envelope"]["payload_sha256"] = receipt.canonical_digest(
+            record["envelope"]["payload"]
+        )
+        gate_id = next(
+            spec["gate_id"]
+            for spec in receipt.registrations(receipt.INVENTORY)
+            if spec["registration"] == record["registration"]
+        )
+        next(result for result in r["gates"]["results"] if result["id"] == gate_id)[
+            "evidence_digest"
+        ] = record["envelope"]["payload_sha256"]
+    assert receipt.evaluate(r, CLEAN)["status"] == "QUALIFIED"
 
 
 def test_generated_mutation_sweep_is_required_and_separate_from_curated() -> None:
@@ -1247,7 +1287,12 @@ def test_real_v02_artifacts_share_receipt_source_identity_and_reject_byte_drift(
             "finished_at": "2026-09-21T00:01:00Z",
             "environment": {},
             "source": source,
-            "source_after": {"paths_digest": identity["paths_digest"], "dirty": False},
+            "source_after": {
+                "head": identity["head"],
+                "tree": identity["tree"],
+                "paths_digest": identity["paths_digest"],
+                "dirty": False,
+            },
             "attestation": {
                 "kind": "github-actions",
                 "hosted_qualification_eligible": True,
@@ -1315,7 +1360,12 @@ def test_the_live_validator_rejects_a_forged_clean_receipt_on_a_dirty_tree(
     identity = receipt.source_identity(repo)
     forged = qualified_receipt()
     forged["source"] = {**identity, "dirty": False}
-    forged["source_after"] = {"paths_digest": identity["paths_digest"], "dirty": False}
+    forged["source_after"] = {
+        "head": identity["head"],
+        "tree": identity["tree"],
+        "paths_digest": identity["paths_digest"],
+        "dirty": False,
+    }
     path = tmp_path / "forged.json"
     path.write_text(json.dumps(forged))
     monkeypatch.setattr(receipt, "REPO", repo)

@@ -1,9 +1,9 @@
 name: bench-gates
 
-# Manual reproduction only. Ordinary benchmark verification is part of local
-# `just verify-local`; push and pull-request events must not spend hosted runner
-# minutes. Separate from `ci.yml` so an explicitly dispatched valgrind run stays
-# isolated from the rest of the proof matrix.
+# Disabled hosted compatibility workflow. Ordinary benchmark verification runs
+# through local `just verify-local` / `just qualify-local`; push, pull-request
+# and schedule events are forbidden. The repository workflow is disabled in
+# GitHub settings and retained only as reproducible historical infrastructure.
 #
 # Every shell step runs under `bash` with `pipefail` (via `defaults.run.shell`),
 # so a benchmark that fails behind a `tee` fails the step (TM16-019).

@@ -185,7 +185,7 @@ def semver_fixture(tmp_path: Path) -> tuple[dict, dict, dict]:
         "producer": "taskmesh-semver-release-v1",
         "status": "REPORTED",
         "source": source,
-        "source_after": {"paths_digest": source["paths_digest"], "dirty": False},
+        "source_after": dict(source),
         "baseline_sha": policy["baseline_sha"],
         "baseline_version": policy["baseline_version"],
         "policy_sha256": semver.sha256(tmp_path / "tools/release/release-policy.json"),
@@ -380,7 +380,7 @@ def finding_fixture(tmp_path: Path) -> tuple[dict, dict, dict, dict]:
         "producer": "taskmesh-finding-proof-v1",
         "status": "PASS",
         "source": source,
-        "source_after": {"paths_digest": source["paths_digest"], "dirty": False},
+        "source_after": dict(source),
         "spec": receipt.identity(tmp_path, "tools/release/finding-proof-spec.json"),
         "plan": receipt.identity(tmp_path, "docs/bugbash/sep-21/tickets/plan.json"),
         "results": rows,
@@ -435,7 +435,7 @@ def test_finding_manifest_binds_all_23_nonvacuous_raw_witnesses(tmp_path: Path) 
 @pytest.mark.parametrize(
     ("field", "replacement", "expected"),
     [
-        ("attestation", None, "hosted main workflow_dispatch"),
+        ("attestation", None, "release attestation"),
         ("semver_manifest", None, "semver manifest"),
         ("adjudication", None, "human adjudication"),
         ("finding_manifest", None, "finding proof manifest"),
@@ -505,7 +505,20 @@ def test_full_release_validator_rejects_pr_local_or_dirty_attestation(
     }
     verdict = receipt.evaluate(value, current=source)
     assert verdict["status"] == "NOT_QUALIFIED"
-    assert any("hosted main workflow_dispatch" in r for r in verdict["reasons"])
+    assert any("release attestation" in r for r in verdict["reasons"])
+
+
+def test_explicit_clean_local_release_attestation_is_eligible(monkeypatch) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.chdir(REPO)
+    source = {"head": "a" * 40, "tree": "b" * 40, "paths_digest": "c" * 64, "dirty": False}
+    attestation = receipt.release_attestation(source, local_qualified=True)
+    assert attestation["kind"] == "local-release"
+    assert attestation["eligible"] is True
+    assert set(attestation["checks"]) == receipt.LOCAL_RELEASE_CHECKS
+    value = {"schema_version": 1, "source": source, "attestation": attestation}
+    verdict = receipt.evaluate(value, current=source)
+    assert not any("release attestation" in reason for reason in verdict["reasons"])
 
 
 def test_full_release_validator_cannot_substitute_curated_for_generated(tmp_path: Path) -> None:

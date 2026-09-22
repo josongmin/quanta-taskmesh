@@ -23,6 +23,25 @@ fn single_slot_runtime() -> TokioRuntime {
         .unwrap()
 }
 
+fn substrate_contention_runtime() -> TokioRuntime {
+    Builder::new()
+        .topology(TopologyConfig::new().blocking_threads(1))
+        .resources(ResourceBudget::new().cpu_units(100).memory_units(100))
+        .class_policy(
+            TaskClass::new("c"),
+            ClassPolicy::new()
+                // Leave a second class permit available so the waiter passes
+                // governor admission and is blocked specifically by the one
+                // blocking capability.
+                .max_inflight(2)
+                .max_queue_depth(8)
+                .cpu_units(1)
+                .overflow_policy(OverflowPolicy::QueueWithinDepth),
+        )
+        .build()
+        .unwrap()
+}
+
 static NEXT_OPERATION: AtomicUsize = AtomicUsize::new(1);
 
 fn spec() -> TaskSpec {
@@ -31,13 +50,29 @@ fn spec() -> TaskSpec {
 }
 
 async fn wait_until_queue_depth(rt: &TokioRuntime, expected: usize) {
-    for _ in 0..50 {
-        if rt.snapshot().classes[&TaskClass::new("c")].queued == expected as u32 {
-            return;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if rt.snapshot().classes[&TaskClass::new("c")].queued == expected as u32 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    panic!("queue depth never reached {expected}");
+    })
+    .await
+    .unwrap_or_else(|_| panic!("queue depth never reached {expected}"));
+}
+
+async fn wait_until_inflight(rt: &TokioRuntime, expected: usize) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if rt.snapshot().classes[&TaskClass::new("c")].inflight == expected as u32 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("inflight count never reached {expected}"));
 }
 
 #[tokio::test]
@@ -125,7 +160,7 @@ async fn cancel_before_submit_beats_substrate_pool_contention() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancel_while_waiting_for_substrate_rejects_without_waiting_for_capacity_v1() {
-    let rt = single_slot_runtime();
+    let rt = substrate_contention_runtime();
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
 
@@ -158,7 +193,9 @@ async fn cancel_while_waiting_for_substrate_rejects_without_waiting_for_capacity
         }
     });
 
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    // Two class permits are now live while the single blocking thread is held:
+    // the waiter has passed governor admission and is waiting on the substrate.
+    wait_until_inflight(&rt, 2).await;
     token.cancel();
     let error = tokio::time::timeout(Duration::from_millis(100), waiter)
         .await

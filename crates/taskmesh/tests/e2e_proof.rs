@@ -33,13 +33,16 @@ fn spec(op: &str) -> TaskSpec {
 /// Poll the snapshot until `pred` holds for `class`, up to a generous budget.
 /// Replaces fixed sleeps so sequencing assertions are robust on slow runners.
 async fn wait_until(rt: &TokioRuntime, class: &str, pred: impl Fn(&ClassSnapshot) -> bool) {
-    for _ in 0..500 {
-        if pred(&rt.snapshot().classes[&TaskClass::new(class.to_string())]) {
-            return;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if pred(&rt.snapshot().classes[&TaskClass::new(class.to_string())]) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("condition for class {class} never reached (5s)");
+    })
+    .await
+    .unwrap_or_else(|_| panic!("condition for class {class} never reached within 2s"));
 }
 
 /// THE hell-gate: a second request must queue while the first holds the only

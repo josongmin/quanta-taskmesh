@@ -39,3 +39,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 hdrhistogram = "7"
 rand = "0.8"
 rand_distr = "0.4"
+
+# Integration-heavy test binaries spend more time linking full debug metadata
+# than executing. Level 1 keeps line tables/backtrace locations while reducing
+# macOS link time and target size. TSan restores full debug info in its isolated
+# target because sanitizer diagnostics are a separate proof surface.
+[profile.test]
+debug = 1

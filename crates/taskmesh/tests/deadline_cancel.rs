@@ -567,18 +567,27 @@ async fn run_local_honors_cooperative_cancel() {
     let opts = SubmitOptions::unbounded().with_cancel(token.clone());
     let spec = TaskSpec::local(TaskClass::new("c")).operation("op");
 
-    // run_local's future is !Send, so it stays on this task; a spawned timer
-    // fires the token concurrently.
+    // run_local's future is !Send, so it stays on this task. A spawned task
+    // waits for the local future's first poll before firing cancellation.
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let firer = {
         let token = token.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(40)).await;
+            bounded(
+                "run_local_honors_cooperative_cancel: local work was never polled",
+                started_rx,
+            )
+            .await
+            .expect("local work start sender survives");
             token.cancel();
         })
     };
     let err = rt
         .run_local_with(spec, opts, async {
             let _rc = std::rc::Rc::new(()); // !Send, proves the local path
+            started_tx
+                .send(())
+                .expect("cancellation task observes the local work poll");
             std::future::pending::<()>().await;
             Ok::<i32, ()>(1)
         })
@@ -595,11 +604,17 @@ async fn run_local_honors_cooperative_cancel() {
 /// `rx.await` would hang forever without cooperative cancel.
 struct StallExecutor {
     held: Mutex<Vec<Box<dyn FnOnce() + Send + 'static>>>,
+    accepted: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl CpuExecutor for StallExecutor {
     fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
         self.held.lock().unwrap().push(work);
+        if let Some(accepted) = self.accepted.lock().unwrap().take() {
+            accepted
+                .send(())
+                .expect("test observes stalled executor custody");
+        }
     }
 
     fn capabilities(&self) -> ExecutorCapabilities {
@@ -612,8 +627,10 @@ impl CpuExecutor for StallExecutor {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn run_cpu_escapes_stalled_executor_via_cancel() {
+    let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
     let executor = Arc::new(StallExecutor {
         held: Mutex::new(Vec::new()),
+        accepted: Mutex::new(Some(accepted_tx)),
     });
     let rt = Builder::new()
         .topology(TopologyConfig::new().cpu_fixed(1))
@@ -636,7 +653,12 @@ async fn run_cpu_escapes_stalled_executor_via_cancel() {
     let handle =
         tokio::spawn(async move { rt2.run_cpu_with(spec, opts, || Ok::<i32, ()>(1)).await });
 
-    tokio::time::sleep(Duration::from_millis(40)).await;
+    bounded(
+        "run_cpu_escapes_stalled_executor_via_cancel: executor never accepted work",
+        accepted_rx,
+    )
+    .await
+    .expect("stalled executor acceptance sender survives");
     token.cancel();
     let err = handle
         .await

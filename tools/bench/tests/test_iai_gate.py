@@ -28,6 +28,11 @@ import iai_gate  # noqa: E402
 
 RUNNER_VERSION = iai_gate.gate_config()["iai_callgrind_runner"]
 
+# This module validates the Linux-only IAI qualification producer, including
+# its shell/toolchain boundary. Full `py-test` retains it; the macOS daily
+# feedback loop excludes platform/release qualification tooling.
+pytestmark = pytest.mark.qualification
+
 
 # ---- helper unit tests -----------------------------------------------------
 

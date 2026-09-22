@@ -6,16 +6,31 @@ The ordinary gate set is `tools/gates/inventory.json`; the ordinary required sub
 `tools/gates/required.json`. Release-only requirements are independently pinned in
 `tools/release/release-required.json`. Ordinary verification is local-first and runs
 from a clean exact-source checkout. GitHub workflows are manual fallbacks and must not
-be used for routine verification. Run the registered recipes through `just`:
+be used for routine verification. `required.json` also owns the fail-fast execution
+order; an explicit receipt `--tier` is a diagnostic subset, not canonical qualification.
+Run the registered recipes through `just`:
 
-- [ ] `just verify-local` — canonical macOS entry point. It runs every applicable
-      ordinary required gate, records Linux-only exclusions, and binds the result
-      to a clean unchanged HEAD/tree/path digest.
+- [ ] `just verify-local` — purpose-scoped macOS feedback: core workspace tests
+      (benchmark harness and generated doc fixture excluded), production `lib/bin` Clippy, cheap Python
+      tests for the arch/gates policy owners, and the corresponding real
+      static-policy commands. Semgrep scans real source once; test/example/bench
+      Clippy and its synthetic rule-pack regression suite stay in the full gates.
+      It is not a qualification verdict and deliberately excludes dependency,
+      performance, feature/docs/MSRV, mutation, and other heavyweight rails.
+      Cargo build/test concurrency defaults to 4 on these local paths; override
+      with `TASKMESH_BUILD_JOBS` / `TASKMESH_TEST_JOBS` when the host permits.
+- [ ] `just verify-macos-full` — explicit macOS full receipt. It runs every
+      applicable ordinary required gate, records Linux-only exclusions, and binds
+      the result to a clean unchanged HEAD/tree/path digest. The runner stops
+      expensive later work after the first non-pass and records every blocked
+      applicable gate as `NOT_RUN` with `blocked_by`; use `--keep-going` only for
+      an intentional diagnostic sweep. Dirty-source qualification is rejected
+      before any gate command starts.
 - [ ] `just qualify-local` on local Linux — every ordinary required gate must PASS;
       platform skips and missing tools remain `NOT_QUALIFIED`.
 - [ ] `just gate` — fmt-check, strict clippy (3 passes), test, deny, semgrep
       (real integration tests enrolled), architecture checker, py-lint, py-test,
-      pm-lint, allocation gate, gates-inventory parity
+      allocation gate, gates-inventory parity
 - [ ] `just test-rayon` / `just doctest` / `just rustdoc` / `just bench-smoke`
 - [ ] `just mutants-critical` — curated single-edit inventory의 non-control 104개가
       KILLED이고 control 1개가 CONTROL_GREEN인지 확인한다. 이것은 cargo-mutants
@@ -28,8 +43,9 @@ be used for routine verification. Run the registered recipes through `just`:
       `unviable`은 명시적 비채점 한계이며 quality denominator에서 제외한다. 최소 한 개의
       caught가 있고 missed/timeout/equivalent가 모두 0이어야 PASS다. `REPORTED`는 denominator
       disclosure일 뿐 quality PASS가 아니다.
-- [ ] `just loom` / `just shuttle`
 - [ ] `just modelcheck` — bounded Loom/Shuttle run identity와 독립 clean-process replay.
+      Full proof에서는 이것이 Loom/Shuttle의 단일 owner다. `just loom`/`just shuttle`은
+      focused debugging용이며 modelcheck와 중복 실행하지 않는다.
 - [ ] `just tsan` — `status=CLEAN` (ThreadSanitizer over the production engine and
       host concurrency tests; needs nightly + rust-src, otherwise NOT_RUN which is
       not a pass)
@@ -170,7 +186,7 @@ be used for routine verification. Run the registered recipes through `just`:
       failure; this raw-text tool has no complete machine finding list.
 - [ ] Run `just release-local` from the same exact clean source after supplying
       `target/release/input/adjudication.json`. The independent
-      release receipt revalidates the ordinary 26-gate receipt, four-crate semver
+      release receipt revalidates the ordinary 23-gate receipt, four-crate semver
       raw outputs, all 23 finding/ticket links, coverage and Linux IAI raw
       digests. Missing/NOT_RUN/SKIPPED/TIMEOUT, dirty or stale source, unapproved
       version or behavior break yield `NOT_QUALIFIED`. Hosted workflows are disabled;

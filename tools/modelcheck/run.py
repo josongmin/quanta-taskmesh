@@ -296,6 +296,7 @@ def run_all(output_dir: Path) -> int:
             [
                 "cargo",
                 "test",
+                "--locked",
                 "-p",
                 "taskmesh-engine",
                 "--features",
@@ -313,6 +314,7 @@ def run_all(output_dir: Path) -> int:
             [
                 "cargo",
                 "test",
+                "--locked",
                 "-p",
                 "taskmesh-engine",
                 "--features",
@@ -330,6 +332,7 @@ def run_all(output_dir: Path) -> int:
             [
                 "cargo",
                 "test",
+                "--locked",
                 "-p",
                 "taskmesh-engine",
                 "--features",

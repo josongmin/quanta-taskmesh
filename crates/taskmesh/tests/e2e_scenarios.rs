@@ -15,6 +15,15 @@ use std::time::Duration;
 use taskmesh::ext::*;
 use taskmesh::*;
 
+const HANG: Duration = Duration::from_secs(5);
+
+async fn bounded<F: std::future::Future>(what: &str, future: F) -> F::Output {
+    let Ok(output) = tokio::time::timeout(HANG, future).await else {
+        panic!("{what}: timed out after {HANG:?}");
+    };
+    output
+}
+
 fn cls(name: &str) -> TaskClass {
     TaskClass::new(name.to_string())
 }
@@ -196,8 +205,8 @@ async fn cancellation_chaos_never_leaks() {
         "some must be cancelled"
     );
 
-    // Let any in-flight drops settle, then prove zero leak.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Each submission future has returned; its permit release is part of that
+    // completion contract. A delay here would hide a late-release regression.
     assert_drained(&rt, &["c"]);
 
     // Runtime is still fully usable after the chaos.
@@ -270,11 +279,15 @@ async fn backpressure_retry_makes_forward_progress() {
         .build()
         .unwrap();
 
-    // Holder occupies the only slot for ~120ms, then releases.
+    // Holder occupies the only slot until the test releases it.
     let (release, hold) = tokio::sync::oneshot::channel::<()>();
+    let (holder_started_tx, holder_started_rx) = tokio::sync::oneshot::channel::<()>();
     let rt_h = rt.clone();
     let holder = tokio::spawn(async move {
         rt_h.run_blocking(TaskSpec::blocking(cls("c")).operation("hold"), move || {
+            holder_started_tx
+                .send(())
+                .expect("test observes holder admission");
             // A signal or a dropped sender both release the holder: a test that fails
             // before signalling never hangs on its own fixture.
             let _released = hold.blocking_recv();
@@ -282,32 +295,68 @@ async fn backpressure_retry_makes_forward_progress() {
         })
         .await
     });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    bounded(
+        "backpressure_retry_makes_forward_progress: holder was never admitted",
+        holder_started_rx,
+    )
+    .await
+    .expect("holder start sender survives");
 
-    // Client retries on saturation; must succeed within a bounded number of tries.
+    // The first rejection proves saturation; only then release the holder and
+    // permit the client to retry. This has no scheduler-delay assumption.
+    let (saturated_tx, saturated_rx) = tokio::sync::oneshot::channel::<()>();
+    let (retry_tx, retry_rx) = tokio::sync::oneshot::channel::<()>();
     let rt_c = rt.clone();
     let client = tokio::spawn(async move {
-        for attempt in 0..1000u32 {
+        let mut saturated_tx = Some(saturated_tx);
+        let mut retry_rx = Some(retry_rx);
+        let mut attempt = 0u32;
+        loop {
             let spec = TaskSpec::blocking(cls("c")).operation(format!("try-{attempt}"));
             match rt_c.run_blocking(spec, move || Ok::<_, ()>(attempt)).await {
                 Ok(_) => return attempt,
                 Err(RunError::Governor(GovernorError::Rejected(
                     AdmissionVerdict::CpuSaturated { .. },
                 ))) => {
-                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    if let Some(saturated_tx) = saturated_tx.take() {
+                        saturated_tx
+                            .send(())
+                            .expect("test observes the first saturation");
+                        retry_rx
+                            .take()
+                            .expect("retry gate exists once")
+                            .await
+                            .expect("test permits retry after releasing holder");
+                    } else {
+                        tokio::task::yield_now().await;
+                    }
                 }
                 other => panic!("unexpected: {other:?}"),
             }
+            attempt = attempt
+                .checked_add(1)
+                .expect("attempt counter cannot overflow");
         }
-        panic!("client never made progress");
     });
 
-    // Release the holder so the client can get in.
-    tokio::time::sleep(Duration::from_millis(80)).await;
+    bounded(
+        "backpressure_retry_makes_forward_progress: client was never saturated",
+        saturated_rx,
+    )
+    .await
+    .expect("saturation signal sender survives");
     release.send(()).unwrap();
+    retry_tx
+        .send(())
+        .expect("client waits for retry permission");
 
     holder.await.unwrap().unwrap();
-    let attempts = client.await.unwrap();
+    let attempts = bounded(
+        "backpressure_retry_makes_forward_progress: client never made progress after release",
+        client,
+    )
+    .await
+    .expect("client task must not panic");
     assert!(attempts > 0, "client should have hit saturation first");
     assert_drained(&rt, &["c"]);
 }
@@ -362,7 +411,6 @@ async fn overload_is_bounded_and_fail_closed() {
     let total = admitted.load(Ordering::SeqCst) + shed.load(Ordering::SeqCst);
     assert_eq!(total, 64, "every request must return a decision (no hang)");
     assert!(shed.load(Ordering::SeqCst) > 0, "overload must shed load");
-    tokio::time::sleep(Duration::from_millis(60)).await;
     assert_drained(&rt, &["c"]);
 }
 

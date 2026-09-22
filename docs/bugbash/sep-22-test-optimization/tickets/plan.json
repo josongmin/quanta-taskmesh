@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "source": {
+    "branch": "main",
+    "head": "7023e945e1c9b3e7e7cca1b26f7af8467df6ab60",
+    "tree": "e49ed06e109525a9da243c47b9207919a74ed15e",
+    "tracked_dirty_count": 3,
+    "tracked_dirty_paths": ["Justfile", "README.md", "docs/release-checklist.md"],
+    "tracked_diff_sha256": "2f25b88924e887ccfa971ac65b2b0e770e5694ae920af556ab10efe857ecafcd",
+    "audit_output_prefix": "docs/bugbash/sep-22-test-optimization/"
+  },
+  "findings_source": "../README.md",
+  "tickets": [
+    {
+      "id": "SEP22-T01",
+      "finding": "TO-01",
+      "file": "SEP22-T01-capability-binding-oracle.md",
+      "status": "PLANNED",
+      "priority": "P0",
+      "lane": "runtime-cancel",
+      "depends_on": [],
+      "owned_paths": ["crates/taskmesh/tests/runtime_cancel_timeout.rs"]
+    },
+    {
+      "id": "SEP22-T02",
+      "finding": "TO-02",
+      "file": "SEP22-T02-cancellation-handshakes.md",
+      "status": "PLANNED",
+      "priority": "P1",
+      "lane": "cancellation-sequencing",
+      "depends_on": [],
+      "owned_paths": [
+        "crates/taskmesh/tests/cancellation_policy.rs",
+        "crates/taskmesh/tests/deadline_cancel.rs"
+      ]
+    },
+    {
+      "id": "SEP22-T03",
+      "finding": "TO-03",
+      "file": "SEP22-T03-backpressure-handshake.md",
+      "status": "PLANNED",
+      "priority": "P1",
+      "lane": "e2e-scenarios",
+      "depends_on": [],
+      "owned_paths": ["crates/taskmesh/tests/e2e_scenarios.rs"]
+    },
+    {
+      "id": "SEP22-T04",
+      "finding": "TO-04",
+      "file": "SEP22-T04-drain-completion-boundary.md",
+      "status": "PLANNED",
+      "priority": "P2",
+      "lane": "e2e-scenarios",
+      "depends_on": ["SEP22-T03"],
+      "owned_paths": [
+        "crates/taskmesh/tests/e2e_scenarios.rs",
+        "crates/taskmesh/tests/e2e_chaos.rs"
+      ]
+    },
+    {
+      "id": "SEP22-T05",
+      "finding": "TO-05",
+      "file": "SEP22-T05-python-floor.md",
+      "status": "PLANNED",
+      "priority": "P0",
+      "lane": "python-compat",
+      "depends_on": [],
+      "owned_paths": [
+        "pyproject.toml",
+        "uv.lock",
+        "tools/verification/run_generated_mutants.py",
+        "tools/verification/tests/test_run_generated_mutants.py"
+      ]
+    },
+    {
+      "id": "SEP22-T06",
+      "finding": "TO-06",
+      "file": "SEP22-T06-semgrep-scan-ssot.md",
+      "status": "PLANNED",
+      "priority": "P1",
+      "lane": "semgrep-proof",
+      "depends_on": [],
+      "owned_paths": ["tools/semgrep/tests/test_rules_fire.py"]
+    },
+    {
+      "id": "SEP22-T07",
+      "finding": "TO-07",
+      "file": "SEP22-T07-rayon-bounded-rendezvous.md",
+      "status": "PLANNED",
+      "priority": "P1",
+      "lane": "rayon-adapter-test",
+      "depends_on": [],
+      "owned_paths": ["crates/taskmesh-rayon/tests/rayon_smoke.rs"]
+    },
+    {
+      "id": "SEP22-T08",
+      "finding": "TO-08",
+      "file": "SEP22-T08-hellgate-structural-budget.md",
+      "status": "PLANNED",
+      "priority": "P1",
+      "lane": "bench-validity",
+      "depends_on": [],
+      "owned_paths": ["crates/taskmesh-bench/tests/hellgate.rs"]
+    }
+  ],
+  "lane_serialization": {
+    "e2e-scenarios": ["SEP22-T03", "SEP22-T04"]
+  },
+  "waves": [
+    ["SEP22-T01", "SEP22-T02", "SEP22-T03", "SEP22-T05", "SEP22-T06", "SEP22-T07", "SEP22-T08"],
+    ["SEP22-T04"]
+  ]
+}

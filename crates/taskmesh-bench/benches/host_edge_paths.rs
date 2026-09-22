@@ -189,7 +189,7 @@ fn host_edge_paths(c: &mut Criterion) {
             .await
     });
     large_stack_started_rx
-        .recv()
+        .recv_timeout(Duration::from_secs(2))
         .expect("large-stack holder must acquire its slot");
 
     let background_runtime = build_runtime(
@@ -215,7 +215,7 @@ fn host_edge_paths(c: &mut Criterion) {
             .await
     });
     background_started_rx
-        .recv()
+        .recv_timeout(Duration::from_secs(2))
         .expect("background holder must acquire its slot");
 
     let cpu_runtime = build_runtime(
@@ -240,7 +240,7 @@ fn host_edge_paths(c: &mut Criterion) {
             .await
     });
     cpu_started_rx
-        .recv()
+        .recv_timeout(Duration::from_secs(2))
         .expect("cpu holder must acquire its slot");
 
     let local_runtime = build_runtime(
@@ -271,7 +271,7 @@ fn host_edge_paths(c: &mut Criterion) {
         })
     });
     local_started_rx
-        .recv()
+        .recv_timeout(Duration::from_secs(2))
         .expect("local holder must acquire its slot");
 
     let mut gate_group = c.benchmark_group("host_substrate_saturated_shed");

@@ -360,9 +360,8 @@ async fn claim_timeout_abandon_race_storm() {
         "every submission returns (no hang)"
     );
 
-    // Give any timeout-driven abandons their final promote/release chain a beat,
-    // then prove nothing stranded.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Every submission future has returned; a permit must be released before
+    // that completion becomes observable.
     assert_drained(&rt, &["c"]);
 
     // Still usable.

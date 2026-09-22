@@ -21,6 +21,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
+# The workspace test profile uses line-table debug info for laptop link speed.
+# TSan is a diagnostic authority and keeps full symbols in its isolated target.
+export CARGO_PROFILE_TEST_DEBUG=2
+
 not_run() {
   echo "tsan: $1" >&2
   echo "taskmesh-tsan status=NOT_RUN reason=$2"
@@ -46,7 +50,7 @@ export TSAN_OPTIONS="halt_on_error=1"
 # Engine: the OS-thread stress and fuzz drivers and effect retirement (wakers
 # fired outside the lock). Single-threaded lifecycle tests are covered by the
 # model checkers; TSan adds nothing there and they are the slowest binaries.
-cargo +nightly test -Zbuild-std --target "${target}" -p taskmesh-engine \
+cargo +nightly test --locked -Zbuild-std --target "${target}" -p taskmesh-engine \
   --test concurrency_stress \
   --test concurrency_fuzz \
   --test hardening_effect_retirement
@@ -57,7 +61,7 @@ cargo +nightly test -Zbuild-std --target "${target}" -p taskmesh-engine \
 # the blocking pool, cancel-leak races, the drain's wake-ups racing
 # submitters and lease drops (D17), a parent submitting its own child from
 # inside a running job (D12), and the mixed soak.
-cargo +nightly test -Zbuild-std --target "${target}" -p taskmesh \
+cargo +nightly test --locked -Zbuild-std --target "${target}" -p taskmesh \
   --lib \
   --test runtime_cpu_executor \
   --test deadline_cancel \
@@ -72,6 +76,6 @@ cargo +nightly test -Zbuild-std --target "${target}" -p taskmesh \
   --test host_inferno
 
 # The only work-stealing adapter.
-cargo +nightly test -Zbuild-std --target "${target}" -p taskmesh-rayon
+cargo +nightly test --locked -Zbuild-std --target "${target}" -p taskmesh-rayon
 
 echo "taskmesh-tsan status=CLEAN target=${target}"

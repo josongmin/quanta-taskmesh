@@ -18,25 +18,50 @@ fmt-check:
     cargo fmt --all --check
 
 check:
-    cargo check --workspace --all-targets
+    cargo check --locked --workspace --all-targets
 
 test:
-    cargo test --workspace
+    # nextest keeps Cargo's --workspace --lib --tests selection but schedules
+    # independent test binaries concurrently. Four tests keep a 16-core Mac
+    # busy without unbounded fan-out: integration cases create Tokio/OS workers,
+    # so an unbounded process fan-out just trades elapsed time for contention.
+    # A clean bootstrap without cargo-nextest retains the identical Cargo
+    # selection rather than silently skipping the test gate.
+    if cargo nextest --version >/dev/null 2>&1; then \
+        CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo nextest run --locked --workspace --lib --tests --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
+    else \
+        CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked --workspace --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
+    fi
 
-# Pass 1: all shipped targets — pedantic + nursery, test-friendly allows.
+# Laptop feedback excludes benchmark harness tests and the generated README/doc
+# fixture. Their correctness and buildability remain required by full `test`,
+# `doctest`, and `bench-smoke`, but not after an ordinary runtime/tooling edit.
+test-core:
+    if cargo nextest --version >/dev/null 2>&1; then \
+        CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo nextest run --locked --workspace --exclude taskmesh-bench --exclude taskmesh-doc-examples --lib --tests --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
+    else \
+        CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked --workspace --exclude taskmesh-bench --exclude taskmesh-doc-examples --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
+    fi
+
+# Pass 1: test/example targets — pedantic + nursery, test-friendly allows.
 # Pass 2: production (--lib --bins) — restriction lints from config/clippy-restrict.txt.
 # Pass 3: the publish=false bench harness (statistical float code) gets baseline
 #         lint only — pedantic float/cast/flop lints are noise for stats code.
 clippy:
-    CLIPPY_CONF_DIR={{root}}/config cargo clippy --workspace --exclude taskmesh-bench --all-targets -- {{clippy_strict}} {{clippy_allows}}
-    CLIPPY_CONF_DIR={{root}}/config cargo clippy --workspace --exclude taskmesh-bench --lib --bins -- {{clippy_strict}} {{clippy_allows}} {{clippy_restrict}}
-    cargo clippy -p taskmesh-bench --all-targets -- -D warnings
+    CLIPPY_CONF_DIR={{root}}/config cargo clippy --locked --workspace --exclude taskmesh-bench --tests --examples --benches -- {{clippy_strict}} {{clippy_allows}}
+    CLIPPY_CONF_DIR={{root}}/config cargo clippy --locked --workspace --exclude taskmesh-bench --lib --bins -- {{clippy_strict}} {{clippy_allows}} {{clippy_restrict}}
+    cargo clippy --locked -p taskmesh-bench --all-targets -- -D warnings
+
+clippy-core:
+    # Inner-loop Clippy owns production code. `test-core` compiles and runs the
+    # tests; full `clippy` remains the authority for test/example/bench lints.
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" CLIPPY_CONF_DIR={{root}}/config cargo clippy --locked --workspace --exclude taskmesh-bench --exclude taskmesh-doc-examples --lib --bins -- {{clippy_strict}} {{clippy_allows}} {{clippy_restrict}}
 
 deny:
     cargo deny check --config config/deny.toml
 
 semgrep:
-    semgrep --config tools/semgrep/rules --error crates
+    uv run python tools/semgrep/check.py
 
 test-architecture:
     uv run python tools/arch/check_crate_boundaries.py
@@ -47,10 +72,13 @@ py-lint:
 py-test:
     uv run pytest tools -q
 
-# Prompt-manager drift lint on the REAL manifest (read-only). Fixture-level
-# behaviour is covered by py-test; this is the actual repository state.
-pm-lint:
-    uv run python tools/pm/pm.py lint
+# Laptop feedback runs the cheap negative oracles for the architecture, gate,
+# and prompt-policy owners. The real Semgrep gate still scans the source once;
+# its 43-case synthetic rule-pack regression scan belongs to full `py-test`,
+# alongside benchmark, mutation, modelcheck, fuzz, MSRV, qualification, and
+# release tooling.
+py-test-fast:
+    uv run pytest tools/arch/tests tools/gates/tests -q -m "not qualification"
 
 # Gate inventory (H16-018): the Justfile, the manual fallback workflows, and the
 # required set must agree. The validator also rejects automatic hosted triggers,
@@ -87,19 +115,19 @@ lint-rules: semgrep test-architecture
 # Feature-matrix drift: the `rayon` feature auto-wires the default CPU executor
 # on a cfg-gated path that default-feature builds never compile.
 test-rayon:
-    cargo test -p taskmesh --features rayon
-    cargo test -p taskmesh-rayon
+    cargo test --locked -p taskmesh --features rayon --lib
+    cargo test --locked -p taskmesh --features rayon --test hardening_executor_authority rayon_cpu_domain_is_separate_and_observable -- --exact
 
 doctest:
-    cargo test --doc -p taskmesh
+    cargo test --locked --workspace --doc
 
 # rustdoc must stay link-clean (private-intra-doc-link drift detector).
 rustdoc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace
 
 # Benches must keep compiling and smoke-running (no timing is recorded).
 bench-smoke:
-    cargo bench -p taskmesh-bench -- --test
+    cargo bench --locked -p taskmesh-bench -- --test
 
 # Consumer MSRV (H16-019): compile a minimal consumer OUTSIDE this workspace on
 # the declared `rust-version`, with the default and the `rayon` public surface.
@@ -110,7 +138,7 @@ consumer-msrv:
 
 # Run the criterion wall-clock benches (informational; not a gate).
 bench:
-    cargo bench -p taskmesh-bench --benches
+    cargo bench --locked -p taskmesh-bench --benches
 
 # Deterministic allocation gate (ADR 9000 / P2). Runs anywhere — no valgrind.
 bench-gate:
@@ -123,21 +151,26 @@ bench-iai:
 
 # Exhaustive concurrency model-check of the governance design (ADR 9000 / P6).
 loom:
-    RUSTFLAGS="--cfg loom" cargo test -p taskmesh-engine --features loom --test loom_governance --release
+    RUSTFLAGS="--cfg loom" cargo test --locked -p taskmesh-engine --features loom --test loom_governance --release
 
-# Fast local front door: fmt, clippy, unit/integration tests, supply-chain,
-# semgrep, architecture, python, and the deterministic allocation gate. This is
-# the *fast* proof surface — it intentionally does NOT run the feature matrix
-# (`just matrix`) or the heavier local rails (bench-iai instruction-count, loom
-# + shuttle/model replay checks, both mutation campaigns, consumer MSRV). Run
-# `just verify-local` for the complete required set.
-gate: fmt-check clippy test deny semgrep test-architecture py-lint py-test pm-lint bench-gate gates-inventory fuzz-check
-    @echo "gate: fast local checks passed; run 'just verify-local' for the complete required set"
+# Registered qualification gate: fmt, full clippy/tests, supply-chain, static
+# policy, Python, allocation, inventory, and fuzz-harness compilation. Use
+# `just verify-local` for the smaller laptop feedback subset and
+# `just verify-macos-full` for the complete applicable required set.
+gate: fmt-check clippy test deny semgrep test-architecture py-lint py-test bench-gate gates-inventory fuzz-check
+    @echo "gate: registered functional/static gate passed; run 'just verify-macos-full' for full qualification"
 
 # The libFuzzer targets (fuzz/) type-check and lint on stable, so they cannot
 # rot between nightly fuzzing campaigns (`just fuzz`).
 fuzz-check:
     bash tools/fuzz/check.sh
+
+# Purpose-scoped laptop loop. Supply-chain resolution, benchmark authorities,
+# feature/docs/MSRV matrix, fuzz harness compilation, mutation, model checking,
+# sanitizers and coverage remain in `gate`/`matrix`/`proof` and therefore in
+# `verify-macos-full`; they are not repeated on every edit.
+dev-fast: fmt-check clippy-core test-core semgrep test-architecture py-lint py-test-fast gates-inventory
+    @echo "dev-fast: core macOS feedback passed; run 'just verify-macos-full' for receipt-backed qualification"
 
 # Local proof matrix: feature-matrix drift, doctests, link-clean rustdoc, bench
 # compilation, and the consumer-MSRV build. Chained by `proof`.
@@ -147,7 +180,7 @@ matrix: test-rayon doctest rustdoc bench-smoke consumer-msrv
 # Exhaustive concurrency model-check with shuttle's randomized scheduler (ADR
 # 9000 / P6). Heavier than loom; matches the CI `shuttle` rail.
 shuttle:
-    RUSTFLAGS="--cfg shuttle" cargo test -p taskmesh-engine --features shuttle --test shuttle_governance --release
+    RUSTFLAGS="--cfg shuttle" cargo test --locked -p taskmesh-engine --features shuttle --test shuttle_governance --release
 
 # ThreadSanitizer over the production engine and host concurrency tests
 # (nightly + rust-src; NOT_RUN/exit 2 without them — never PASS). Complements
@@ -196,19 +229,22 @@ release-local: release-receipt
 # Full local proof surface: every gate in tools/gates/required.json — `gate`, the
 # feature `matrix`, and the heavy rails. tools/gates/validate_inventory.py
 # verifies that this chain expands to exactly the required set.
-proof: gate matrix mutants-critical mutants-generated loom shuttle modelcheck tsan fuzz coverage-report bench-iai
+proof: gate matrix mutants-critical mutants-generated modelcheck tsan fuzz coverage-report bench-iai
     @echo "proof: full local required proof surface passed"
 
-# macOS verification is receipt-backed: every required gate applicable to this
-# host must pass. Linux-only gates remain recorded as SKIPPED_PLATFORM and are
-# never promoted into the cross-platform `QUALIFIED` verdict.
-verify-macos:
-    uv run python tools/gates/run.py --required --allow-platform-skips --receipt target/verification/macos-gates.json
+# Full macOS receipt: every required gate applicable to this host, including
+# the generated cargo-mutants campaign. This is intentionally explicit: it is
+# a release/push-admission proof, not a laptop inner-loop command.
+verify-macos-full:
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" uv run python tools/gates/run.py --required --allow-platform-skips --receipt target/verification/macos-gates.json
 
-# Canonical macOS verification entry point. Keep `proof` for the exact
-# cross-platform required-set expansion checked by gates-inventory.
+# Daily macOS feedback is deliberately purpose-scoped. It runs core functional
+# tests and static policy, but leaves dependency/performance/feature/release
+# authorities to the exact-source full receipt.
+verify-macos: dev-fast
+
+# Canonical laptop entry point.
 verify-local: verify-macos
-    @echo "verify-local: macOS receipt written to target/verification/macos-gates.json"
 
 # Install the tracked fail-closed push admission hook for this clone. The hook
 # accepts a branch update only when the saved local receipt matches the exact

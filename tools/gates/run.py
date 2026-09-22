@@ -18,6 +18,7 @@ Usage:
     python3 tools/gates/run.py --id clippy --id test    # named gates
     python3 tools/gates/run.py --all --receipt r.json   # everything applicable
     python3 tools/gates/run.py --required --allow-platform-skips  # host scope
+    python3 tools/gates/run.py --required --keep-going  # diagnostic sweep
 """
 
 from __future__ import annotations
@@ -299,6 +300,117 @@ def run_gate(gate: dict) -> dict:
     return result
 
 
+def run_selected_gates(
+    selected: list[dict],
+    here: str,
+    deadline: float | None,
+    keep_going: bool,
+    runner=None,
+    preflight_blocker: str | None = None,
+) -> list[dict]:
+    """Run selected gates in order, stopping useful work after the first non-pass.
+
+    Fail-fast does not shrink the receipt denominator. Every later applicable
+    gate gets an explicit NOT_RUN result tied to the gate that fixed the final
+    verdict. Platform exclusions remain SKIPPED_PLATFORM because they are known
+    without executing a command. ``runner`` is injectable for control-flow tests.
+    """
+    if runner is None:
+        runner = run_gate
+    results: list[dict] = []
+    blocked_by = preflight_blocker
+    for gate in selected:
+        if not applicable(gate, here):
+            results.append(
+                {
+                    "id": gate["id"],
+                    "recipe": gate["recipe"],
+                    "status": "SKIPPED_PLATFORM",
+                    "exit_code": None,
+                    "platform": here,
+                }
+            )
+            print(f"{gate['id']:<20} SKIPPED_PLATFORM ({here} not in {gate.get('platforms')})")
+            continue
+        if blocked_by is not None:
+            results.append(
+                {
+                    "id": gate["id"],
+                    "recipe": gate["recipe"],
+                    "status": "NOT_RUN",
+                    "exit_code": None,
+                    "platform": here,
+                    "blocked_by": blocked_by,
+                    "output_tail": f"NOT RUN: blocked by earlier non-pass gate {blocked_by}",
+                }
+            )
+            print(f"{gate['id']:<20} NOT_RUN (blocked by {blocked_by})")
+            continue
+
+        effective_gate = gate
+        if deadline is not None:
+            remaining = int(deadline - time.monotonic())
+            if remaining <= 0:
+                result = {
+                    "id": gate["id"],
+                    "recipe": gate["recipe"],
+                    "status": "FAIL",
+                    "exit_code": None,
+                    "signal": None,
+                    "timed_out": True,
+                    "timeout_seconds": 0,
+                    "output_tail": "QUALIFICATION DEADLINE EXHAUSTED before gate start",
+                }
+                results.append(result)
+                print(f"{gate['id']:<20} FAIL (qualification deadline exhausted)")
+                if not keep_going:
+                    blocked_by = gate["id"]
+                continue
+            effective_gate = {
+                **gate,
+                "timeout_seconds": min(
+                    gate.get("timeout_seconds", GATE_TIMEOUT_SECONDS), remaining
+                ),
+            }
+        print(f"{gate['id']:<20} running …", flush=True)
+        result = runner(effective_gate)
+        results.append(result)
+        print(f"{gate['id']:<20} {result['status']} ({result['duration_s']}s)")
+        if result["status"] != "PASS" and not keep_going:
+            blocked_by = gate["id"]
+    return results
+
+
+def source_preflight_blocker(
+    source: dict, *, require_clean_source: bool
+) -> str | None:
+    """Return the qualification preflight blocker, if explicitly requested.
+
+    Selecting the full or required denominator is also useful for diagnostic
+    evidence on a dirty checkout. Cleanliness is an admission policy selected
+    by the qualification caller, not an implicit property of a selector.
+    """
+    if require_clean_source and source.get("dirty") is not False:
+        return "dirty-source-preflight"
+    return None
+
+
+def summarize_required(required: set[str], results: list[dict]) -> tuple[list[str], list[str]]:
+    """Return honest required NOT_RUN and non-PASS sets for a receipt."""
+    ran_ids = {result["id"] for result in results}
+    not_run = (required - ran_ids) | {
+        result["id"]
+        for result in results
+        if result["id"] in required and result["status"] == "NOT_RUN"
+    }
+    not_passed = {
+        result["id"]
+        for result in results
+        if result["id"] in required and result["status"] != "PASS"
+    }
+    return sorted(not_run), sorted(not_passed)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--id", action="append", default=[])
@@ -336,12 +448,23 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         help="bound the complete sequential run; the active process is terminated at the deadline",
     )
+    parser.add_argument(
+        "--keep-going",
+        action="store_true",
+        help="run later gates after a non-pass for diagnostic sweeps (default: fail fast)",
+    )
+    parser.add_argument(
+        "--require-clean-source",
+        action="store_true",
+        help="record gates as NOT_RUN without starting them when the source is dirty",
+    )
     args = parser.parse_args(argv)
     if args.deadline_seconds is not None and args.deadline_seconds <= 0:
         raise SystemExit("--deadline-seconds must be positive")
     inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
     required_document = json.loads(REQUIRED.read_text(encoding="utf-8"))
-    required = set(required_document["required"])
+    required_ids = required_document["required"]
+    required = set(required_ids)
     if args.validate_receipt is not None:
         try:
             value = json.loads(args.validate_receipt.read_text(encoding="utf-8"))
@@ -380,7 +503,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.all:
         selected = list(gates)
     elif args.required:
-        selected = [gate for gate in gates if gate["id"] in required]
+        # required.json owns both membership and execution order. Cheap/static
+        # blockers precede expensive proof producers so fail-fast saves work.
+        selected = [by_id[gate_id] for gate_id in required_ids]
     else:
         for tier in args.tier:
             selected.extend(g for g in gates if g["tier"] == tier)
@@ -399,57 +524,25 @@ def main(argv: list[str] | None = None) -> int:
     selected = [g for g in selected if g["id"] not in set(args.skip)]
 
     here = host_platform()
-    results = []
     deadline = (
         time.monotonic() + args.deadline_seconds if args.deadline_seconds is not None else None
     )
-    for gate in selected:
-        if not applicable(gate, here):
-            results.append(
-                {
-                    "id": gate["id"],
-                    "recipe": gate["recipe"],
-                    "status": "SKIPPED_PLATFORM",
-                    "exit_code": None,
-                    "platform": here,
-                }
-            )
-            print(f"{gate['id']:<20} SKIPPED_PLATFORM ({here} not in {gate.get('platforms')})")
-            continue
-        effective_gate = gate
-        if deadline is not None:
-            remaining = int(deadline - time.monotonic())
-            if remaining <= 0:
-                results.append(
-                    {
-                        "id": gate["id"],
-                        "recipe": gate["recipe"],
-                        "status": "FAIL",
-                        "exit_code": None,
-                        "signal": None,
-                        "timed_out": True,
-                        "timeout_seconds": 0,
-                        "output_tail": "QUALIFICATION DEADLINE EXHAUSTED before gate start",
-                    }
-                )
-                print(f"{gate['id']:<20} FAIL (qualification deadline exhausted)")
-                continue
-            effective_gate = {
-                **gate,
-                "timeout_seconds": min(
-                    gate.get("timeout_seconds", GATE_TIMEOUT_SECONDS), remaining
-                ),
-            }
-        print(f"{gate['id']:<20} running …", flush=True)
-        result = run_gate(effective_gate)
-        results.append(result)
-        print(f"{gate['id']:<20} {result['status']} ({result['duration_s']}s)")
-
-    ran_ids = {r["id"] for r in results}
-    missing_required = sorted(required - ran_ids)
-    not_passed_required = sorted(
-        r["id"] for r in results if r["id"] in required and r["status"] != "PASS"
+    preflight_blocker = source_preflight_blocker(
+        source, require_clean_source=args.require_clean_source
     )
+    if preflight_blocker is not None:
+        print(
+            "source-preflight     NOT_RUN (qualification requires a clean source)",
+            file=sys.stderr,
+        )
+    results = run_selected_gates(
+        selected,
+        here,
+        deadline,
+        args.keep_going,
+        preflight_blocker=preflight_blocker,
+    )
+    missing_required, not_passed_required = summarize_required(required, results)
     source_after = source_identity()
     source_problems = source_stability_problems(source, source_after)
     qualified = not missing_required and not not_passed_required and not source_problems

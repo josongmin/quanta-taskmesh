@@ -842,6 +842,7 @@ def test_a_not_run_msrv_gate_is_not_qualified() -> None:
     result = next(result for result in r["gates"]["results"] if result["id"] == "consumer-msrv")
     result["status"] = "NOT_RUN"
     r["gates"].update(receipt.summarize_gate_results(r["gates"]["results"]))
+    assert "consumer-msrv" in r["gates"]["required_not_run"]
     assert any("NOT_RUN" in x for x in receipt.evaluate(r, CLEAN)["reasons"])
 
 
@@ -1569,6 +1570,19 @@ def test_local_collection_cannot_import_hosted_producer_artifacts(repo: Path) ->
             hosted_ci=False,
             consume_producers=True,
         )
+
+
+def test_collect_cli_defaults_to_the_exact_required_set(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_collect(out, tiers, skip_mutations, hosted_ci, consume_producers, local_qualified):
+        captured.update(out=out, tiers=tiers, local_qualified=local_qualified)
+        return 0
+
+    monkeypatch.setattr(receipt, "collect", fake_collect)
+    out = tmp_path / "receipt.json"
+    assert receipt.main(["collect", "--local-qualified", "--out", str(out)]) == 0
+    assert captured == {"out": out, "tiers": None, "local_qualified": True}
 
 
 @pytest.mark.parametrize("mode", ["missing", "stale"])

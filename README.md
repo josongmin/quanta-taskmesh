@@ -64,29 +64,47 @@ async fn main() {
 
 ## 검증 표면 (proof surface)
 
-macOS 기본 검증 진입점은 `just verify-local`이다. 모든 macOS-applicable required gate를
-receipt로 실행하며 `target/verification/macos-gates.json`에 결과를 남긴다. Linux 전용
-`bench-iai`는 `SKIPPED_PLATFORM`으로 기록되고, 결과는 cross-platform `QUALIFIED`가 아닌
-`PLATFORM_QUALIFIED (macos)`이다. `just proof`는 cross-platform required set과 정확히 같은
-집합으로 expand되어야 하며 `just gates-inventory`가 이를 강제한다. 증명은 세 층으로 겹친다:
+macOS 기본 피드백 진입점은 `just verify-local`이다. core workspace(Rust benchmark harness와
+generated doc fixture 제외),
+production `lib/bin` Clippy, 저비용 architecture/gate owner tests와 실제 정적 정책만 실행한다.
+Semgrep은 실제 소스를 한 번 스캔하고, test/example/bench Clippy 및 43-case synthetic rule-pack
+회귀팩은 full proof에 남긴다. dependency/performance,
+feature/doc/MSRV matrix,
+curated/generated mutation, sanitizer/fuzzer, model exploration, coverage, Linux IAI는 exact-source
+`just verify-macos-full`에만 둔다. `just proof`는
+cross-platform required set과 정확히 같은 집합으로 expand되어야 하며 `just gates-inventory`가 이를
+강제한다. 증명은 세 층으로 겹친다:
+
+두 macOS 진입점의 Cargo compile concurrency는 기본 4이며 `TASKMESH_BUILD_JOBS`로, test
+concurrency는 `TASKMESH_TEST_JOBS`로 조정한다. nextest가 없을 때의 Cargo fallback도 같은 test
+thread 상한을 사용한다.
 
 | 층 | 무엇을 | 무엇으로 |
 |---|---|---|
-| 모델 검사 | production `Governor`의 모든 interleaving(작은 상태) / 무작위 schedule, D08 promotion-gap 규칙 포함 | `just loom` (5) / `just shuttle` (7) — engine `src/sync.rs` seam, replica 아님 |
+| 모델 검사 | production `Governor`의 모든 interleaving(작은 상태) / 무작위 schedule, D08 promotion-gap 규칙 포함 | `just modelcheck` (Loom 5 / Shuttle 7 + replay) — engine `src/sync.rs` seam, replica 아님. `just loom`/`just shuttle`은 focused debug용 |
 | 실행 가능한 명세 | admission/promotion 상태기계 ≡ ~150줄 reference model (매 op 뒤 verdict·gauge·ticket·ledger 동치) | `cargo test -p taskmesh-engine --test differential_model` (proptest, `just test`에 포함) |
 | 실제 메모리 시스템 | parking_lot·Tokio·OS thread 위의 data race | `just tsan` (nightly `-Zbuild-std -Zsanitizer=thread`) |
 | coverage-guided 탐색 | production `Governor`의 모든 public transition을 무작위 순서로 몰며 매 step 뒤 invariant(conservation·상한·budget·handle 일치)와 마지막 quiescence; policy/topology/builder front door; JSON wire format | `just fuzz` (nightly + cargo-fuzz, `fuzz/`; target은 `just fuzz-check`로 stable에서 항상 컴파일) |
 | 테스트가 실제로 실패할 수 있는가 | 고친 결함 하나를 다시 넣으면 named test가 named reason으로 죽는가 | `just mutants-critical` (curated single-edit inventory: 104 defect probes + 1 control; cargo-mutants score 아님) |
 | 객관 지표 | 실행된 production code (threshold 아님) | `just coverage-report` (lines/regions/functions/instantiations; branch·MCDC 미수집 시 `NOT_COLLECTED`) |
 | 소비자 계약 | Rust 1.81에서 default·rayon 표면 컴파일 | `just consumer-msrv` |
-| 문서가 컴파일되는가 | 이 README·`docs/taskmesh-external-interface.md`·`CHANGELOG.md`의 모든 ```rust 블록이 *그대로* facade에 대해 type-check (build.rs가 추출; hidden line 없음; fence attribute `body`/`arms`/`builder`로 scaffold 선택, `rust,ignore`는 CHANGELOG의 `// 0.1.0` 인용에만 허용) | `cargo test -p taskmesh-doc-examples` (`just test`에 포함) |
+| 문서가 컴파일되는가 | 이 README·`docs/taskmesh-external-interface.md`·`CHANGELOG.md`의 모든 ```rust 블록이 *그대로* facade에 대해 type-check (build.rs가 추출; hidden line 없음; fence attribute `body`/`arms`/`builder`로 scaffold 선택, `rust,ignore`는 CHANGELOG의 `// 0.1.0` 인용에만 허용) | `cargo test -p taskmesh-doc-examples` (`just test`에 포함), `just doctest` (workspace rustdoc examples) |
 | 성능 | admit→release allocs/op(=현재 기준 8.0, 무여유), Linux instruction count | `just bench-gate`, `just bench-iai` |
 
-macOS 검증 권위는 clean checkout의 exact `HEAD`/tree/digest 전후가 같은
-`just verify-local` receipt다. `just install-hooks`는 이 receipt가 현재 push SHA와 일치하지 않으면
-branch push를 거부한다(`qualify-local` full receipt도 허용). 전체 cross-platform/release 자격은 local Linux에서
-`just qualify-local`, release 판정은 `just release-local`로 수행한다. GitHub workflow 세 개는
+clean checkout의 exact `HEAD`/tree/digest 전후가 같은 macOS full receipt는
+`just verify-macos-full`이 `target/verification/macos-gates.json`에 남긴다. Linux 전용 `bench-iai`는
+`SKIPPED_PLATFORM`으로 기록되고 결과는 `PLATFORM_QUALIFIED (macos)`이다. `just install-hooks`는 이
+full receipt가 현재 push SHA와 일치하지 않으면 branch push를 거부한다(`qualify-local` full receipt도
+허용). 전체 cross-platform/release 자격은 local Linux에서 `just qualify-local`, release 판정은
+`just release-local`로 수행한다. GitHub workflow 세 개는
 호환성 기록으로만 남기고 repository 설정에서 비활성화한다. `docs/release-checklist.md` 참조.
+전체 gate runner는 첫 non-PASS에서 기본 fail-fast하며, 남은 applicable gate를
+`NOT_RUN`/`blocked_by`로 기록해 분모를 보존한다. 실패 뒤의 전체 진단이 필요한 경우에만
+`tools/gates/run.py ... --keep-going`을 사용한다.
+정식 collector의 기본 선택과 실행 순서는 `tools/gates/required.json` 단일 권위이며,
+cheap/static blocker 뒤에 고비용 proof producer를 배치한다. 명시적 `--tier`는 진단 subset이다.
+`--required`/`--all`과 정식 qualification collector는 dirty source를 실행 전에 거부하므로,
+자격 취득이 불가능한 상태에서 mutation/fuzz 등 고비용 작업을 시작하지 않는다.
 구현·증명·운영을 함께 재감사할 때는
 [Taskmesh SOTA Audit Checklist](docs/taskmesh-sota-audit-checklist.md)의 `M/R/D` 판정과
 증거 ledger를 사용한다.

@@ -45,9 +45,13 @@ async fn cooperative_class_cancels_mid_run() {
     let opts = SubmitOptions::unbounded().with_cancel(token.clone());
 
     // Long-running work that would never finish on its own.
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let rt2 = rt.clone();
     let handle = tokio::spawn(async move {
         rt2.run_io_with(io_spec(), opts, async {
+            started_tx
+                .send(())
+                .expect("test observes work admission before cancellation");
             // Never completes on its own — only cooperative cancel ends it.
             std::future::pending::<()>().await;
             Ok::<i32, ()>(1)
@@ -55,7 +59,12 @@ async fn cooperative_class_cancels_mid_run() {
         .await
     });
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    bounded(
+        "cooperative_class_cancels_mid_run: work was never admitted",
+        started_rx,
+    )
+    .await
+    .expect("work start signal sender survives");
     token.cancel(); // fire mid-run
 
     let err = bounded(
@@ -78,23 +87,41 @@ async fn pre_submit_only_ignores_mid_run_token() {
     let token = CancellationToken::new();
     let opts = SubmitOptions::unbounded().with_cancel(token.clone());
 
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
     let rt2 = rt.clone();
     let handle = tokio::spawn(async move {
         rt2.run_io_with(io_spec(), opts, async {
-            tokio::time::sleep(Duration::from_millis(80)).await;
+            started_tx
+                .send(())
+                .expect("test observes work admission before cancellation");
+            finish_rx
+                .await
+                .expect("test releases the pre-submit-only work");
             Ok::<i32, ()>(42)
         })
         .await
     });
 
     // Fire the token mid-run; a PreSubmitOnly class must ignore it and finish.
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    bounded(
+        "pre_submit_only_ignores_mid_run_token: work was never admitted",
+        started_rx,
+    )
+    .await
+    .expect("work start signal sender survives");
     token.cancel();
+    finish_tx
+        .send(())
+        .expect("work remains live after a pre-submit-only cancellation");
 
-    let out = handle
-        .await
-        .unwrap()
-        .expect("pre-submit-only ignores mid-run cancel");
+    let out = bounded(
+        "pre_submit_only_ignores_mid_run_token: work did not finish after release",
+        handle,
+    )
+    .await
+    .unwrap()
+    .expect("pre-submit-only ignores mid-run cancel");
     assert_eq!(out, 42);
 }
 

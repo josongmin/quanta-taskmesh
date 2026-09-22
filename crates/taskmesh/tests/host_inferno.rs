@@ -1,14 +1,15 @@
 //! Inferno · host (T07/T09): the real `TokioRuntime` execution paths under
 //! abuse. Panicking work, substrate-hint mismatch, cooperative vs pre-submit
-//! cancellation, queue-full, cancellation-safety of queued submissions, the
-//! topology substrate gate, and concurrent promotion — every one asserted to a
-//! typed outcome with no permit leaked.
+//! queue-full, cancellation-safety of queued submissions, the topology
+//! substrate gate, and concurrent promotion — every one asserted to a typed
+//! outcome with no permit leaked. Mid-run cancellation policy has a single
+//! stronger owner in `cancellation_policy.rs`.
 
 use std::time::Duration;
 
 use taskmesh::ext::*;
 use taskmesh::*;
-use tokio::time::{sleep, timeout};
+use tokio::time::timeout;
 
 fn blk(class: &str, op: &str) -> TaskSpec {
     TaskSpec::blocking(TaskClass::new(class.to_string())).operation(op.to_string())
@@ -149,74 +150,6 @@ async fn substrate_hint_mismatch_is_fail_closed() {
     );
 }
 
-// ---- cancellation policy gate ----------------------------------------------
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cooperative_class_cancels_mid_run() {
-    let rt = Builder::new()
-        .resources(ResourceBudget::new().cpu_units(100).memory_units(100))
-        .class_policy(
-            TaskClass::new("coop"),
-            ClassPolicy::new()
-                .max_inflight(4)
-                .cpu_units(1)
-                .cancellation_policy(CancellationPolicy::Cooperative),
-        )
-        .build()
-        .unwrap();
-
-    let token = CancellationToken::new();
-    let (rt2, tk) = (rt.clone(), token.clone());
-    let h = tokio::spawn(async move {
-        rt2.run_io_with(
-            TaskSpec::io(TaskClass::new("coop")).operation("long"),
-            SubmitOptions::unbounded().with_cancel(tk),
-            async {
-                sleep(Duration::from_secs(10)).await;
-                Ok::<i32, ()>(1)
-            },
-        )
-        .await
-    });
-    sleep(Duration::from_millis(30)).await;
-    token.cancel();
-
-    let err = h.await.unwrap().expect_err("cooperative cancel mid-run");
-    assert!(matches!(err, RunError::Governor(GovernorError::Cancelled)));
-    assert_eq!(
-        inflight(&rt, "coop"),
-        0,
-        "cancelled run must release its permit"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn pre_submit_only_class_ignores_mid_run_cancel() {
-    // Default policy is PreSubmitOnly: a token fired *after* admission is ignored.
-    let rt = rt_default();
-    let token = CancellationToken::new();
-    let (rt2, tk) = (rt.clone(), token.clone());
-    let h = tokio::spawn(async move {
-        rt2.run_io_with(
-            TaskSpec::io(TaskClass::new("c")).operation("x"),
-            SubmitOptions::unbounded().with_cancel(tk),
-            async {
-                sleep(Duration::from_millis(150)).await;
-                Ok::<i32, ()>(99)
-            },
-        )
-        .await
-    });
-    sleep(Duration::from_millis(20)).await;
-    token.cancel(); // mid-run — must be ignored by a PreSubmitOnly class
-
-    let out = h
-        .await
-        .unwrap()
-        .expect("PreSubmitOnly ignores mid-run cancel");
-    assert_eq!(out, 99);
-}
-
 // ---- bounded queue + cancellation-safety -----------------------------------
 
 #[tokio::test]
@@ -296,77 +229,6 @@ async fn concurrent_submissions_promote_and_all_complete() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn substrate_gate_caps_blocking_concurrency_and_times_out() {
-    // One blocking slot in the topology, and a class that does NOT queue.
-    //
-    // Capability occupancy and class capacity are one admission decision, so the
-    // class's own overflow policy governs both. `Reject` therefore rejects:
-    // there is no unbounded holding area in front of admission for the request
-    // to wait in, which is the whole point — a `Reject` class that silently
-    // parks behind a busy worker is not rejecting.
-    let rt = Builder::new()
-        .topology(TopologyConfig::new().blocking_threads(1))
-        .resources(ResourceBudget::new().cpu_units(100).memory_units(100))
-        .class_policy(
-            TaskClass::new("c"),
-            ClassPolicy::new().max_inflight(8).cpu_units(1),
-        )
-        .build()
-        .unwrap();
-
-    let (tx, rx) = std::sync::mpsc::channel::<()>();
-    let rt2 = rt.clone();
-    let holder = tokio::spawn(async move {
-        rt2.run_blocking(blk("c", "hold"), move || {
-            // A signal or a dropped sender both release the holder: a test that fails
-            // before signalling never hangs on its own fixture.
-            let _released = rx.recv();
-            Ok::<i32, ()>(0)
-        })
-        .await
-    });
-    sleep(Duration::from_millis(50)).await; // let the holder seize the slot
-
-    let started = std::time::Instant::now();
-    let r: Result<i32, RunError<()>> = rt
-        .run_blocking_with(
-            blk("c", "blocked"),
-            SubmitOptions::unbounded().with_acquire_timeout(Duration::from_secs(30)),
-            || Ok(1),
-        )
-        .await;
-    assert!(
-        matches!(
-            r,
-            Err(RunError::Governor(GovernorError::Rejected(
-                AdmissionVerdict::SubstrateSaturated { .. }
-            )))
-        ),
-        "a saturated capability pool sheds a non-queueing class, got {r:?}"
-    );
-    // The generous acquire budget is the control: the rejection is immediate
-    // because nothing waited, not because a timer expired.
-    assert!(
-        started.elapsed() < Duration::from_secs(5),
-        "rejection must not wait for the holder"
-    );
-    assert_eq!(
-        queued(&rt, "c"),
-        0,
-        "a shed request never enters the queue it was rejected from"
-    );
-
-    tx.send(())
-        .expect("the holder is still waiting for its release");
-    holder.await.unwrap().unwrap();
-    assert_eq!(
-        inflight(&rt, "c"),
-        0,
-        "no permit leaked through the gated path"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn queueing_class_waits_for_a_capability_slot_then_reports_the_pool_timeout() {
     // The queueing counterpart: the same saturated pool, but a class that opted
     // into waiting. It waits inside the *bounded* class queue, and the timeout
@@ -387,9 +249,11 @@ async fn queueing_class_waits_for_a_capability_slot_then_reports_the_pool_timeou
         .unwrap();
 
     let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let rt2 = rt.clone();
     let holder = tokio::spawn(async move {
         rt2.run_blocking(blk("c", "hold"), move || {
+            started_tx.send(()).expect("test observes holder start");
             // A signal or a dropped sender both release the holder: a test that fails
             // before signalling never hangs on its own fixture.
             let _released = rx.recv();
@@ -397,7 +261,10 @@ async fn queueing_class_waits_for_a_capability_slot_then_reports_the_pool_timeou
         })
         .await
     });
-    sleep(Duration::from_millis(50)).await;
+    timeout(Duration::from_secs(1), started_rx)
+        .await
+        .expect("holder starts within the test bound")
+        .expect("holder start sender survives");
 
     let r: Result<i32, RunError<()>> = rt
         .run_blocking_with(

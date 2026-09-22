@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -12,6 +13,12 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[3]
 RULES_DIR = REPO / "tools" / "semgrep" / "rules"
+CHECKER = REPO / "tools" / "semgrep" / "check.py"
+
+_checker_spec = importlib.util.spec_from_file_location("semgrep_check", CHECKER)
+assert _checker_spec and _checker_spec.loader
+semgrep_check = importlib.util.module_from_spec(_checker_spec)
+_checker_spec.loader.exec_module(semgrep_check)
 
 # One fire/clean pair per rule, at the path the rule is written for. A rule
 # without a pair here is not considered enforced: the semgrep syntax could be
@@ -358,18 +365,6 @@ def _run_semgrep(config: Path, target_dir: Path) -> set[str]:
     return ids
 
 
-# Real integration tests that MUST be inside the scanned target set. If the
-# scanner stops reaching these, the test-quality rules are decorative again.
-ENROLLED_PATHS = [
-    "crates/taskmesh/tests/e2e_chaos.rs",
-    "crates/taskmesh/tests/hardening_deadline_custody.rs",
-    "crates/taskmesh-engine/tests/hardening_fairness_reference.rs",
-    "crates/taskmesh-engine/tests/prop_invariants.rs",
-    "crates/taskmesh-bench/tests/inferno.rs",
-    "crates/taskmesh-rayon/tests/rayon_smoke.rs",
-]
-
-
 # Skip only for local convenience when semgrep is absent. Under CI the suite must
 # NOT silently skip — a broken runner that drops semgrep would otherwise go green
 # without verifying any rule. So in CI a missing binary is a hard failure.
@@ -456,33 +451,33 @@ def test_every_rule_has_a_fire_and_clean_fixture() -> None:
     assert not phantom, f"fixtures for rules that no longer exist: {phantom}"
 
 
-def test_real_integration_tests_are_inside_the_scanned_target_set() -> None:
-    """The front door must actually reach the tests the rules are written for.
-
-    Semgrep's built-in ignore list excludes `tests/` directories. With the
-    defaults in place this scan covered 50 files and skipped 52 paths, so every
-    real integration test was invisible to the test-quality rules while the rule
-    unit tests stayed green. This asserts the *target set*, not the findings:
-    a clean scan of files that were never opened is not a clean scan.
-    """
-    data = _semgrep_json(["--config", "tools/semgrep/rules", "--json", "--verbose", "crates"])
-    paths = data.get("paths", {})
-    scanned = {str(Path(p)) for p in paths.get("scanned", [])}
-    assert scanned, "semgrep reported no scanned paths at all"
-    missing = [p for p in ENROLLED_PATHS if p not in scanned]
-    assert not missing, (
-        f"these integration tests are not being scanned: {missing}\nscanned {len(scanned)} files"
-    )
-
-
-def test_the_scan_reaches_every_crate_test_directory() -> None:
-    """No crate may fall out of the scanned set unnoticed."""
-    data = _semgrep_json(["--config", "tools/semgrep/rules", "--json", "--verbose", "crates"])
-    scanned = {str(Path(p)) for p in data.get("paths", {}).get("scanned", [])}
+def test_scan_target_policy_accepts_the_current_enrollment_shape() -> None:
+    scanned = set(semgrep_check.ENROLLED_PATHS)
     for crate_tests in sorted((REPO / "crates").glob("*/tests")):
-        if not crate_tests.is_dir():
-            continue
-        expected = {str(f.relative_to(REPO)) for f in crate_tests.rglob("*.rs")}
-        if not expected:
-            continue
-        assert expected & scanned, f"no file under {crate_tests.relative_to(REPO)} was scanned"
+        first = next(crate_tests.rglob("*.rs"), None)
+        if first is not None:
+            scanned.add(str(first.relative_to(REPO)))
+    assert semgrep_check.target_set_problems(scanned) == []
+
+
+def test_scan_target_policy_rejects_empty_and_missing_enrollment() -> None:
+    assert semgrep_check.target_set_problems(set()) == ["semgrep reported no scanned paths"]
+    scanned = set(semgrep_check.ENROLLED_PATHS)
+    missing = semgrep_check.ENROLLED_PATHS[0]
+    scanned.remove(missing)
+    problems = semgrep_check.target_set_problems(scanned)
+    assert any(missing in problem for problem in problems), problems
+
+
+def test_scan_target_policy_rejects_an_unscanned_crate_test_tree(tmp_path: Path) -> None:
+    first = tmp_path / "crates" / "first" / "tests" / "covered.rs"
+    second = tmp_path / "crates" / "second" / "tests" / "missed.rs"
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+    first.write_text("#[test]\nfn covered() {}\n", encoding="utf-8")
+    second.write_text("#[test]\nfn missed() {}\n", encoding="utf-8")
+    scanned = {*semgrep_check.ENROLLED_PATHS, str(first.relative_to(tmp_path))}
+
+    problems = semgrep_check.target_set_problems(scanned, root=tmp_path)
+
+    assert problems == ["no Rust file under crates/second/tests was scanned"]

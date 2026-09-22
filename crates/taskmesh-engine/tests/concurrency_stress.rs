@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::thread;
 
 use taskmesh_contract::{ClassPolicy, ManualClock, ResourceBudget, TaskClass, TaskSpec};
@@ -96,16 +96,44 @@ fn inflight_cap_is_never_exceeded_under_contention() {
     );
     let held = Arc::new(AtomicI64::new(0));
     let rejected = Arc::new(AtomicI64::new(0));
+    let first_start = Arc::new(Barrier::new(16));
+    let first_attempt_done = Arc::new(Barrier::new(16));
 
     thread::scope(|scope| {
         for tid in 0..16 {
             let g = Arc::clone(&g);
             let held = Arc::clone(&held);
             let rejected = Arc::clone(&rejected);
+            let first_start = Arc::clone(&first_start);
+            let first_attempt_done = Arc::clone(&first_attempt_done);
             scope.spawn(move || {
                 let op: &'static str = Box::leak(format!("c{tid}").into_boxed_str());
                 let spec = TaskSpec::blocking(TaskClass::new("capped")).operation(op);
-                for _ in 0..1_000 {
+                // Force one fully overlapping wave. Admitted permits remain held
+                // until every thread has attempted admission, so a serial OS
+                // schedule cannot turn the rejection oracle into a flaky guess.
+                first_start.wait();
+                let first_permit = match g.admit(&spec) {
+                    AdmissionDecision::Admitted { permit_id } => {
+                        let now = held.fetch_add(1, Ordering::SeqCst) + 1;
+                        assert!(now <= CAP as i64, "concurrent permits {now} exceeded cap {CAP}");
+                        Some(permit_id)
+                    }
+                    AdmissionDecision::Rejected(_) => {
+                        rejected.fetch_add(1, Ordering::SeqCst);
+                        None
+                    }
+                    AdmissionDecision::Queued { .. } => {
+                        panic!("no queue configured; admit must admit or reject")
+                    }
+                };
+                first_attempt_done.wait();
+                if let Some(permit_id) = first_permit {
+                    held.fetch_sub(1, Ordering::SeqCst);
+                    assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
+                }
+
+                for _ in 1..1_000 {
                     match g.admit(&spec) {
                         AdmissionDecision::Admitted { permit_id } => {
                             // Incremented only while the permit is held; bounded by
@@ -131,10 +159,10 @@ fn inflight_cap_is_never_exceeded_under_contention() {
     });
 
     assert_eq!(held.load(Ordering::SeqCst), 0, "all permits released");
-    // Under 16 threads vs a cap of 4, contention must have produced rejections.
+    // The synchronized first wave admits at most CAP of the 16 attempts.
     assert!(
-        rejected.load(Ordering::SeqCst) > 0,
-        "expected some fail-closed rejections under contention"
+        rejected.load(Ordering::SeqCst) >= 16 - i64::from(CAP),
+        "the synchronized first wave must reject every attempt beyond the cap"
     );
     let snap = g.snapshot();
     assert_eq!(

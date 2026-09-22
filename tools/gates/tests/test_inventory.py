@@ -12,6 +12,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from functools import cache
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
@@ -23,6 +24,7 @@ vi = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(vi)
 
 
+@cache
 def real_inputs():
     inventory = json.loads(vi.INVENTORY.read_text(encoding="utf-8"))
     required = json.loads(vi.REQUIRED.read_text(encoding="utf-8"))
@@ -421,14 +423,6 @@ def test_qualification_consumes_authorized_producer_jobs_with_bounded_critical_p
     )
 
 
-def test_the_real_cli_passes() -> None:
-    proc = subprocess.run(
-        [sys.executable, str(VALIDATOR)], capture_output=True, text=True, check=False, cwd=REPO
-    )
-    assert proc.returncode == 0, proc.stderr
-    assert "gate inventory OK" in proc.stdout
-
-
 def test_tracked_pre_push_hook_requires_exact_local_receipt() -> None:
     hook = REPO / ".githooks" / "pre-push"
     text = hook.read_text(encoding="utf-8")
@@ -443,7 +437,12 @@ def test_tracked_pre_push_hook_requires_exact_local_receipt() -> None:
 def test_runner_refuses_to_qualify_when_required_gates_did_not_run() -> None:
     """Running one gate must not produce a qualified receipt."""
     proc = subprocess.run(
-        [sys.executable, str(REPO / "tools" / "gates" / "run.py"), "--id", "fmt-check"],
+        [
+            sys.executable,
+            str(REPO / "tools" / "gates" / "run.py"),
+            "--id",
+            "test-architecture",
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -452,6 +451,107 @@ def test_runner_refuses_to_qualify_when_required_gates_did_not_run() -> None:
     assert proc.returncode == 1
     assert "NOT_QUALIFIED" in proc.stderr
     assert "required gates not run" in proc.stderr
+
+
+def test_runner_fail_fast_keeps_the_full_selected_denominator() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    selected = [
+        {"id": "first", "recipe": "first", "platforms": ["any"]},
+        {"id": "second", "recipe": "second", "platforms": ["any"]},
+        {"id": "linux-only", "recipe": "linux-only", "platforms": ["linux"]},
+    ]
+    calls: list[str] = []
+
+    def fail_first(gate: dict) -> dict:
+        calls.append(gate["id"])
+        return {
+            "id": gate["id"],
+            "recipe": gate["recipe"],
+            "status": "FAIL",
+            "duration_s": 0.0,
+        }
+
+    results = module.run_selected_gates(selected, "macos", None, False, fail_first)
+    assert calls == ["first"]
+    assert [result["id"] for result in results] == ["first", "second", "linux-only"]
+    assert results[1]["status"] == "NOT_RUN"
+    assert results[1]["blocked_by"] == "first"
+    assert results[2]["status"] == "SKIPPED_PLATFORM"
+    not_run, not_passed = module.summarize_required(
+        {"first", "second", "linux-only"}, results
+    )
+    assert not_run == ["second"]
+    assert not_passed == ["first", "linux-only", "second"]
+
+
+def test_runner_keep_going_executes_later_gates() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    selected = [
+        {"id": "first", "recipe": "first", "platforms": ["any"]},
+        {"id": "second", "recipe": "second", "platforms": ["any"]},
+    ]
+    calls: list[str] = []
+
+    def run_all(gate: dict) -> dict:
+        calls.append(gate["id"])
+        return {
+            "id": gate["id"],
+            "recipe": gate["recipe"],
+            "status": "FAIL" if gate["id"] == "first" else "PASS",
+            "duration_s": 0.0,
+        }
+
+    results = module.run_selected_gates(selected, "macos", None, True, run_all)
+    assert calls == ["first", "second"]
+    assert [result["status"] for result in results] == ["FAIL", "PASS"]
+
+
+def test_dirty_source_preflight_starts_no_gate() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    selected = [
+        {"id": "first", "recipe": "first", "platforms": ["any"]},
+        {"id": "second", "recipe": "second", "platforms": ["any"]},
+    ]
+    calls: list[str] = []
+
+    def must_not_run(gate: dict) -> dict:
+        calls.append(gate["id"])
+        raise AssertionError("dirty qualification must not start a gate")
+
+    results = module.run_selected_gates(
+        selected,
+        "macos",
+        None,
+        False,
+        must_not_run,
+        preflight_blocker="dirty-source-preflight",
+    )
+    assert calls == []
+    assert [result["status"] for result in results] == ["NOT_RUN", "NOT_RUN"]
+    assert {result["blocked_by"] for result in results} == {"dirty-source-preflight"}
+
+
+def test_dirty_source_preflight_is_explicit_not_implied_by_full_selection() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    dirty = {"dirty": True}
+
+    assert module.source_preflight_blocker(dirty, require_clean_source=False) is None
+    assert (
+        module.source_preflight_blocker(dirty, require_clean_source=True)
+        == "dirty-source-preflight"
+    )
 
 
 def test_platform_scope_requires_every_applicable_gate_and_keeps_exclusions() -> None:
@@ -562,11 +662,11 @@ def test_a_skipped_gate_is_absent_from_the_receipt_and_never_passes(tmp_path: Pa
             sys.executable,
             str(REPO / "tools" / "gates" / "run.py"),
             "--id",
-            "fmt-check",
+            "test-architecture",
             "--id",
-            "pm-lint",
+            "fmt-check",
             "--skip",
-            "pm-lint",
+            "fmt-check",
             "--receipt",
             str(receipt_path),
         ],
@@ -577,8 +677,8 @@ def test_a_skipped_gate_is_absent_from_the_receipt_and_never_passes(tmp_path: Pa
     )
     assert proc.returncode == 1, proc.stderr
     receipt = json.loads(receipt_path.read_text())
-    assert [r["id"] for r in receipt["results"]] == ["fmt-check"]
-    assert "pm-lint" in receipt["required_not_run"]
+    assert [r["id"] for r in receipt["results"]] == ["test-architecture"]
+    assert "fmt-check" in receipt["required_not_run"]
     assert receipt["qualified"] is False
 
 

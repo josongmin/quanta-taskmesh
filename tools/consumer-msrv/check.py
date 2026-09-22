@@ -45,18 +45,6 @@ def declared_msrv(manifest: Path) -> str:
     return match.group(1)
 
 
-def toolchain_present(version: str) -> bool:
-    proc = subprocess.run(
-        ["rustup", "toolchain", "list"], capture_output=True, text=True, check=False
-    )
-    if proc.returncode != 0:
-        return False
-    return any(
-        line.startswith(f"{version}-") or line.startswith(f"{version}.")
-        for line in proc.stdout.splitlines()
-    ) or any(line.split("-", 1)[0] == version for line in proc.stdout.splitlines())
-
-
 def resolve_toolchain(version: str) -> str | None:
     """The installed toolchain name that satisfies `version` (exact or x.y.0)."""
     proc = subprocess.run(

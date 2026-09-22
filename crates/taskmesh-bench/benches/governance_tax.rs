@@ -139,6 +139,7 @@ fn governance_tax(c: &mut Criterion) {
     });
 
     let gated_runtime = build_blocking_gate_runtime();
+    let (holder_started_tx, holder_started_rx) = std::sync::mpsc::channel::<()>();
     let (release_holder, hold_holder) = std::sync::mpsc::channel::<()>();
     let holder_runtime = gated_runtime.clone();
     let holder = rt.spawn(async move {
@@ -146,13 +147,18 @@ fn governance_tax(c: &mut Criterion) {
             .run_blocking(
                 TaskSpec::blocking(TaskClass::new("retrieval")).operation("hold-gate"),
                 move || {
+                    holder_started_tx
+                        .send(())
+                        .expect("holder start receiver alive");
                     let _ = hold_holder.recv();
                     Ok::<(), Infallible>(())
                 },
             )
             .await
     });
-    rt.block_on(async { tokio::time::sleep(Duration::from_millis(50)).await });
+    holder_started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("holder must acquire the blocking slot");
 
     // A saturated capability pool sheds a non-queueing class at admission —
     // there is no gate queue to time out of, so this measures the immediate

@@ -311,7 +311,9 @@ def main() -> None:
             fail(f"{lane}: lane serialization must be a unique list")
         if set(sequence) != set(lane_tickets[lane]):
             fail(f"{lane}: lane serialization inventory mismatch")
-        for previous, current in zip(sequence[:-1], sequence[1:], strict=True):
+        # The two slices always have equal length by construction; plain zip
+        # is exact here (and keeps this validator runnable on Python 3.9).
+        for previous, current in zip(sequence[:-1], sequence[1:]):
             graph[current].append(previous)
 
     cycle = find_cycle(graph)

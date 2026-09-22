@@ -1,6 +1,6 @@
 # H16-020 — PM validated render plan·safe apply
 
-- 상태: IMPLEMENTED — 구현·local regression 완료 (2026-09-16); qualification은 H16-022
+- 상태: IMPLEMENTED 후 RETIRED — 실제 생성 target이 0임을 확인하고 2026-09-23 제거
 - 실행 우선순위: P2 (원본 bug severity 변경 아님)
 - 책임 역할: Q — PM/문서 owner (실제 assignee 미지정)
 - 선행 완료: [H16-001](H16-001-contracts-and-compatibility.md)
@@ -13,11 +13,8 @@ PM parse/validate/render-plan/apply를 분리해 lint가 실제 쓰일 파일을
 
 ## 변경 범위
 
-- 기존: [tools/pm/pm.py](../../../../tools/pm/pm.py)
-- 기존: [tools/pm/targets.yaml](../../../../tools/pm/targets.yaml)
-- 기존: [tools/pm/tests/test_pm.py](../../../../tools/pm/tests/test_pm.py)
-- 기존: [tools/pm/README.md](../../../../tools/pm/README.md)
-- 제안 경로: `tools/pm/tests/test_render_plan.py` — 향후 구현 시 생성/이름 확정; 현재 존재한다고 가정하지 않음
+- 2026-09-23 현재 생성 target이 하나도 없고 `AGENTS.md`는 사용자 소유다.
+- 미래 사용 가능성만 위해 renderer·fixture·Jinja2·필수 gate를 유지하지 않는다.
 
 ## 구현 액션
 
@@ -47,6 +44,9 @@ PM parse/validate/render-plan/apply를 분리해 lint가 실제 쓰일 파일을
 
 Regression: `tools/pm/tests/test_render_plan.py` (21) + 기존 8.
 
+2026-09-23 정리: 위 regression은 구현 당시 증거다. 실제 owner가 0인 상태가 지속되어 PM 코드와
+vacuous `pm-lint` gate를 제거했다. 생성 대상이 생기면 그 대상과 함께 다시 설계한다.
+
 ## 검증 / 완료 조건
 
 - [x] `H16-020-A01` duplicate key·nested path collision·unknown key negative가 실패
@@ -60,7 +60,6 @@ Regression: `tools/pm/tests/test_render_plan.py` (21) + 기존 8.
 아래는 현재 존재하는 진입점이며 구현 후 실행할 후보다. 이 계획 작성에서 실행한 결과가 아니다. 새 테스트/feature와 플랫폼별 정확한 command는 구현 receipt에 고정한다.
 
 ```sh
-uv run python tools/pm/pm.py lint
 just py-test
 just py-lint
 ```
@@ -75,4 +74,3 @@ just py-lint
 - [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-19.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
 - [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
 - [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
-

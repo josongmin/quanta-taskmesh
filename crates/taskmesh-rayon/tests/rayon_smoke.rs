@@ -1,6 +1,7 @@
 //! T09: the Rayon adapter compiles, runs work, and honors the topology clamp.
 
 use std::sync::mpsc;
+use std::time::Duration;
 
 use taskmesh_contract::{CpuExecutor, TopologyConfig, TopologyError, PHYSICAL_CPU};
 use taskmesh_rayon::{RayonBuildError, RayonCpuExecutor};
@@ -16,7 +17,11 @@ fn executor_runs_cpu_work() {
         // harness itself broke, so it is worth asserting rather than discarding.
         tx.send(6 * 7).expect("the test still holds the receiver");
     }));
-    assert_eq!(rx.recv().unwrap(), 42);
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(1))
+            .expect("Rayon executor accepted work but did not execute it within one second"),
+        42
+    );
 }
 
 #[test]

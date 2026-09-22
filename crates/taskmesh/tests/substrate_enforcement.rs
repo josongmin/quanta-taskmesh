@@ -94,11 +94,13 @@ async fn blocking_threads_caps_substrate_concurrency() {
 
     // Holder occupies the single blocking slot until released.
     let (release, hold) = tokio::sync::oneshot::channel::<()>();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
     let rt_h = rt.clone();
     let holder = tokio::spawn(async move {
         rt_h.run_blocking(
             TaskSpec::blocking(TaskClass::new("c")).operation("hold"),
             move || {
+                started_tx.send(()).expect("test observes holder start");
                 // A signal or a dropped sender both release the holder: a test that fails
                 // before signalling never hangs on its own fixture.
                 let _released = hold.blocking_recv();
@@ -107,7 +109,10 @@ async fn blocking_threads_caps_substrate_concurrency() {
         )
         .await
     });
-    tokio::time::sleep(Duration::from_millis(80)).await;
+    tokio::time::timeout(Duration::from_secs(1), started_rx)
+        .await
+        .expect("holder starts within the test bound")
+        .expect("holder start sender survives");
 
     // The second blocking submission cannot have a worker. The class here does
     // not queue (`OverflowPolicy::Reject`), and capability occupancy is decided

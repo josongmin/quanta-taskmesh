@@ -1,11 +1,11 @@
 [project]
 name = "taskmesh-tools"
 version = "0.1.0"
-description = "Managed Python repo-tooling for taskmesh (tools/pm, tools/arch, tools/semgrep)."
+description = "Managed Python verification tooling for taskmesh."
 requires-python = ">=3.9"
 
 [dependency-groups]
-dev = ["ruff>=0.6", "pytest>=8", "jinja2>=3", "pyyaml>=6"]
+dev = ["ruff>=0.6", "pytest>=8", "pyyaml>=6", "tomli>=2; python_version < '3.11'"]
 
 [tool.ruff]
 target-version = "py39"
@@ -17,4 +17,7 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tools"]
 addopts = "--import-mode=importlib"
-markers = ["slow: runs a real cargo producer (seconds, not milliseconds)"]
+markers = [
+    "slow: runs a real cargo producer (seconds, not milliseconds)",
+    "qualification: validates release or platform-specific qualification tooling",
+]

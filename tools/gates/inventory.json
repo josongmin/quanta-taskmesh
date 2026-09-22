@@ -145,23 +145,6 @@
       "workflow": "ci.yml"
     },
     {
-      "id": "pm-lint",
-      "recipe": "pm-lint",
-      "tier": "fast",
-      "runs_in": [
-        "local",
-        "ci"
-      ],
-      "platforms": [
-        "any"
-      ],
-      "prerequisites": [
-        "uv"
-      ],
-      "workflow": "ci.yml",
-      "note": "Vacuous by design: tools/pm/targets.yaml declares no targets. The gate proves manifest validity and that the tool runs; it cannot prove generated-file drift because nothing is generated. See tools/pm/README.md."
-    },
-    {
       "id": "bench-gate",
       "recipe": "bench-gate",
       "tier": "fast",

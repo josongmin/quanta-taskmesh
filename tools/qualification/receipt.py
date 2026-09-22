@@ -256,7 +256,16 @@ def required_gate_ids() -> list[str]:
 def summarize_gate_results(results: list[dict]) -> dict:
     required = set(required_gate_ids())
     ran = {result.get("id") for result in results if isinstance(result, dict)}
-    not_run = sorted(required - ran)
+    not_run = sorted(
+        (required - ran)
+        | {
+            result.get("id")
+            for result in results
+            if isinstance(result, dict)
+            and result.get("id") in required
+            and result.get("status") == "NOT_RUN"
+        }
+    )
     not_passed = sorted(
         result.get("id")
         for result in results
@@ -289,7 +298,7 @@ def finalize_gate_receipt(gates: dict) -> dict:
 
 def collect(
     out: Path,
-    tiers: list[str],
+    tiers: list[str] | None,
     skip_mutations: bool,
     hosted_ci: bool = False,
     consume_producers: bool = False,
@@ -312,8 +321,15 @@ def collect(
     deadline_seconds = inventory.get("qualification_budget_seconds")
     if type(deadline_seconds) is not int or deadline_seconds <= 0:
         raise ValueError("inventory qualification_budget_seconds must be a positive integer")
-    gate_args = [*sum([["--tier", t] for t in tiers], [])]
+    # No explicit tier means the canonical required set. Selecting every gate
+    # in fast/matrix/proof also picked optional focused-debug gates (notably
+    # standalone loom/shuttle) and duplicated the modelcheck producer.
+    gate_args = ["--required"] if tiers is None else [
+        *sum([["--tier", tier] for tier in tiers], [])
+    ]
     gate_args += ["--deadline-seconds", str(deadline_seconds)]
+    if hosted_ci or local_qualified:
+        gate_args.append("--require-clean-source")
     if consume_producers:
         for spec in producer_specs:
             gate_args += ["--skip", spec["gate_id"]]
@@ -688,7 +704,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument(
         "--tier",
         action="append",
-        help="collect only these tiers (repeatable); default: fast, matrix, proof",
+        help="diagnostic subset: collect these tiers (repeatable); default: required set",
     )
     c.add_argument("--skip-mutations", action="store_true")
     c.add_argument(
@@ -716,11 +732,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if args.command == "collect":
-        # `action="append"` onto a list default would *extend* the default, so
-        # `--tier fast` used to collect every tier plus `fast` again.
+        # None is semantically different from an explicit tier subset: the
+        # canonical path runs required.json exactly, including its cost order.
         return collect(
             args.out,
-            args.tier or ["fast", "matrix", "proof"],
+            args.tier,
             args.skip_mutations,
             args.hosted_ci,
             args.consume_producers,

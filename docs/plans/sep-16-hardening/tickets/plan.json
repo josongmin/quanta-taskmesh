@@ -1338,15 +1338,8 @@
       "locks": [
         "pm"
       ],
-      "existing_paths": [
-        "tools/pm/pm.py",
-        "tools/pm/targets.yaml",
-        "tools/pm/tests/test_pm.py",
-        "tools/pm/README.md"
-      ],
-      "proposed_paths": [
-        "tools/pm/tests/test_render_plan.py"
-      ],
+      "existing_paths": [],
+      "proposed_paths": [],
       "acceptance_ids": [
         "H16-020-A01",
         "H16-020-A02",

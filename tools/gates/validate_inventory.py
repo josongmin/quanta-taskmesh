@@ -50,6 +50,7 @@ import os
 import re
 import subprocess
 import sys
+from functools import cache
 from pathlib import Path
 
 import yaml
@@ -280,9 +281,11 @@ def recipe_scripts(recipe: str, text: str | None = None) -> list[str]:
     return SCRIPT_PATH.findall(recipe_body(recipe, text))
 
 
+@cache
 def tracked_files(root: Path = REPO) -> set[str]:
     """Paths git tracks, relative to the repository root. Ignored and
-    untracked files are absent by construction."""
+    untracked files are absent by construction. A validator process observes
+    one index snapshot, so repeated producer checks reuse the same query."""
     proc = subprocess.run(
         ["git", "ls-files", "-z"], capture_output=True, text=True, check=True, cwd=root
     )

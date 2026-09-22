@@ -133,7 +133,7 @@ export IAI_CALLGRIND_COLOR=never
 
 # Raw output is kept even when cargo fails. It has no baseline authority
 # without a verified baseline manifest, but remains available for diagnosis.
-if ! cargo bench -p taskmesh-bench --features iai --bench "${BENCH}" 2>&1 \
+if ! cargo bench --locked -p taskmesh-bench --features iai --bench "${BENCH}" 2>&1 \
   | tee "${baseline_dir}/benchmark-output.log"; then
   fail "benchmark ${BENCH} failed; no evidence manifest was accepted"
 fi

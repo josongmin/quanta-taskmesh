@@ -11,7 +11,10 @@ import shutil
 import sys
 from pathlib import Path
 
-import tomllib
+try:  # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:  # Python 3.9-3.10, supported by pyproject.toml
+    import tomli as tomllib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 

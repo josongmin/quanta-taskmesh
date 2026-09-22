@@ -137,7 +137,17 @@ def parse_metric_line(output: str, config: dict) -> dict:
     }
 
 
-PRODUCER = ["cargo", "run", "-q", "-p", "taskmesh-bench", "--example", "alloc_probe", "--release"]
+PRODUCER = [
+    "cargo",
+    "run",
+    "--locked",
+    "-q",
+    "-p",
+    "taskmesh-bench",
+    "--example",
+    "alloc_probe",
+    "--release",
+]
 
 
 def run_producer() -> str:

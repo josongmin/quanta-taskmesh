@@ -30,7 +30,6 @@ cargo test -p taskmesh-rayon
 cargo test --doc -p taskmesh
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
 cargo bench -p taskmesh-bench -- --test
-uv run python tools/pm/pm.py lint
 ```
 
 `just mutants-critical`(tools/verification/run_mutations.py, `runner: cargo|pytest`), inventory runner/parity checker(tools/gates), receipt validator(tools/qualification/receipt.py), external consumer fixture(tools/consumer-msrv)는 이 plan 안에서 구현되었다. `just cov-gate`는 없으며 coverage gate는 이 저장소의 약속이 아니다. 외부 activation verifier는 구현된 도구가 아니다.
@@ -53,7 +52,7 @@ uv run python tools/pm/pm.py lint
 | Linux IAI/performance | 호환 baseline, 실제 정상 control·>5% negative, env fingerprint | macOS 결과로 대체 불가; EXTERNAL_BLOCKED/UNVERIFIED |
 | static/CI | inventory required 집합, local/CI parity, scanner/Semgrep negative, actual test collection | required skip은 실패 |
 | dependency/MSRV | revision 고정 advisory graph, 실제 declared MSRV 외부 consumer default/Rayon, dev toolchain 별도 | UNKNOWN을 지원 완료로 승격 금지 |
-| PM | duplicate/path/template fixtures, 실제 lint의 nonmutation digest | 실제 target overwrite 권한과 분리 |
+| PM (retired 2026-09-23) | 실제 생성 target 0으로 renderer와 vacuous gate 제거 | 생성 대상이 생기면 owner와 함께 재설계 |
 | hosted/review/merge | exact SHA checks·required protection·승인·merge identity | 확인 안 됐으면 UNVERIFIED |
 | consumer/activation | consumer repo+SHA, version/inventory/config, deployment identity, runtime 관측 | library local green으로 대체 불가 |
 

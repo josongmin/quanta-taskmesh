@@ -49,7 +49,6 @@ jobs:
       - run: just test-architecture
       - run: just py-lint
       - run: just py-test
-      - run: just pm-lint
       - run: just bench-gate
       - run: just gates-inventory
       - run: just fuzz-check

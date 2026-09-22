@@ -20,7 +20,7 @@ and `#[tokio::test(...)] async fn` body under `crates/`. Each rule has a fire/cl
 `tests/test_rules_fire.py`; a rule without one is not considered enforced.
 
 ```bash
-semgrep --config tools/semgrep/rules --error crates
+uv run python tools/semgrep/check.py
 # or: just semgrep
 ```
 

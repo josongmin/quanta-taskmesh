@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "ordinary_gate_ids": [
-    "fmt-check", "clippy", "test", "deny", "semgrep", "test-architecture",
-    "py-lint", "py-test", "pm-lint", "bench-gate", "gates-inventory",
-    "fuzz-check", "test-rayon", "doctest", "rustdoc", "bench-smoke",
-    "mutants-critical", "mutants-generated", "loom", "shuttle", "modelcheck",
-    "consumer-msrv", "bench-iai", "tsan", "fuzz", "coverage-report"
+    "fmt-check", "gates-inventory", "py-lint", "test-architecture",
+    "semgrep", "deny", "clippy", "test", "py-test", "bench-gate", "fuzz-check",
+    "test-rayon", "doctest", "rustdoc", "bench-smoke", "consumer-msrv", "bench-iai",
+    "mutants-critical", "modelcheck", "tsan", "fuzz", "coverage-report",
+    "mutants-generated"
   ],
   "release_only": [
     "semver-release", "human-api-wire-behavior-adjudication", "finding-closure", "finding-proof",

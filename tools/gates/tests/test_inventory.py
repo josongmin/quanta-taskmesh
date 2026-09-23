@@ -20,6 +20,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tools.process_supervisor import SupervisedCommand, run_process_batch
+
 REPO = Path(__file__).resolve().parents[3]
 VALIDATOR = REPO / "tools" / "gates" / "validate_inventory.py"
 
@@ -572,6 +574,61 @@ def test_runner_runs_only_approved_parallel_group_concurrently_and_orders_receip
     results = module.run_selected_gates(selected, "macos", None, False, run_parallel)
     assert [result["id"] for result in results] == ["fmt-check", "py-lint"]
     assert [result["status"] for result in results] == ["PASS", "PASS"]
+
+
+def test_runner_parallel_group_uses_real_main_thread_supervision(tmp_path: Path) -> None:
+    """Fake runners cannot catch a worker thread installing signal handlers."""
+    (tmp_path / "Justfile").write_text(
+        "fmt-check:\n    @echo fmt-ok\n\npy-lint:\n    @echo lint-ok\n",
+        encoding="utf-8",
+    )
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    module.REPO = tmp_path
+    selected = [
+        {
+            "id": gate_id,
+            "recipe": gate_id,
+            "platforms": ["any"],
+            "parallel_group": "static-independent",
+        }
+        for gate_id in ("fmt-check", "py-lint")
+    ]
+
+    results = module.run_selected_gates(selected, "macos", None, False)
+
+    assert [result["id"] for result in results] == ["fmt-check", "py-lint"]
+    assert [result["status"] for result in results] == ["PASS", "PASS"]
+    assert "fmt-ok" in results[0]["output_tail"]
+    assert "lint-ok" in results[1]["output_tail"]
+
+
+def test_batch_supervisor_times_out_only_the_stalled_process(tmp_path: Path) -> None:
+    handlers_before = (signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM))
+    commands = [
+        SupervisedCommand(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            tmp_path,
+            {},
+            0.1,
+        ),
+        SupervisedCommand(
+            [sys.executable, "-c", "print('independent-pass')"],
+            tmp_path,
+            {},
+            2.0,
+        ),
+    ]
+
+    results = run_process_batch(commands)
+
+    assert results[0].process.timed_out
+    assert results[0].process.returncode != 0
+    assert results[1].process.returncode == 0
+    assert results[1].process.stdout.strip() == "independent-pass"
+    assert handlers_before == (signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM))
 
 
 def test_runner_never_parallelizes_an_unapproved_gate() -> None:

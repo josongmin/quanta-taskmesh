@@ -41,7 +41,11 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from tools.gates.parallel_policy import PARALLEL_GATE_LIMIT, PARALLEL_GROUP_MEMBERS  # noqa: E402
-from tools.process_supervisor import run_process  # noqa: E402
+from tools.process_supervisor import (  # noqa: E402
+    SupervisedCommand,
+    run_process,
+    run_process_batch,
+)
 from tools.qualification.receipt import source_identity  # noqa: E402
 
 
@@ -258,8 +262,69 @@ def run_gate(gate: dict) -> dict:
             "duration_s": round(time.monotonic() - started, 3),
             "output_tail": f"gate command could not start: {exc}",
         }
+    return gate_process_result(gate, proc, timed_out, started_at, time.monotonic() - started)
+
+
+def run_gate_batch(gates: list[dict]) -> list[dict]:
+    """Launch an approved wave under one main-thread process supervisor."""
+    if not 1 <= len(gates) <= PARALLEL_GATE_LIMIT:
+        raise ValueError("parallel gate batch exceeds the approved worker limit")
+    started_at = datetime.now(timezone.utc).isoformat()
+    commands = [
+        SupervisedCommand(
+            argv=["just", gate["recipe"]],
+            cwd=REPO,
+            env=os.environ.copy(),
+            timeout_seconds=gate.get("timeout_seconds", GATE_TIMEOUT_SECONDS),
+        )
+        for gate in gates
+    ]
+    try:
+        completed = run_process_batch(commands)
+    except OSError as exc:
+        return [
+            {
+                "id": gate["id"],
+                "recipe": gate["recipe"],
+                "status": "FAIL",
+                "exit_code": None,
+                "timed_out": False,
+                "output_tail": f"gate command could not start: {exc}",
+            }
+            for gate in gates
+        ]
+    results = []
+    for gate, batch_result in zip(gates, completed):
+        process = batch_result.process
+        proc = subprocess.CompletedProcess(
+            args=["just", gate["recipe"]],
+            returncode=process.returncode,
+            stdout=process.stdout,
+            stderr=process.stderr,
+        )
+        proc.interrupted_by_signal = process.interrupted_by_signal
+        results.append(
+            gate_process_result(
+                gate,
+                proc,
+                process.timed_out,
+                started_at,
+                batch_result.duration_s,
+            )
+        )
+    return results
+
+
+def gate_process_result(
+    gate: dict,
+    proc: subprocess.CompletedProcess,
+    timed_out: bool,
+    started_at: str,
+    duration: float,
+) -> dict:
+    """Apply the same fail-closed status contract to serial and batch processes."""
+    timeout_seconds = gate.get("timeout_seconds", GATE_TIMEOUT_SECONDS)
     if timed_out:
-        duration = time.monotonic() - started
         return {
             "id": gate["id"],
             "recipe": gate["recipe"],
@@ -276,7 +341,6 @@ def run_gate(gate: dict) -> dict:
             "output_tail": f"TIMEOUT after {timeout_seconds}s\n"
             + (proc.stdout + proc.stderr)[-1500:],
         }
-    duration = time.monotonic() - started
     if proc.returncode == 0 and not status_line_qualifies(gate, proc.stdout):
         # The recipe ran and exited 0 but its own machine-readable line says
         # it did not reach the qualifying state (e.g. bench-iai recorded a
@@ -298,7 +362,9 @@ def run_gate(gate: dict) -> dict:
         "recipe": gate["recipe"],
         "status": status,
         "exit_code": proc.returncode,
-        "signal": -proc.returncode if proc.returncode < 0 else None,
+        "signal": -proc.returncode
+        if proc.returncode is not None and proc.returncode < 0
+        else None,
         "timed_out": False,
         "interrupted_by_signal": getattr(proc, "interrupted_by_signal", None),
         "timeout_seconds": timeout_seconds,
@@ -437,21 +503,61 @@ def run_selected_gates(
                 for item in batch:
                     print(f"{item['id']:<20} running …", flush=True)
                 by_id: dict[str, dict] = {}
-                with ThreadPoolExecutor(max_workers=len(batch)) as pool:
-                    futures = {pool.submit(run_with_deadline, item): item for item in batch}
-                    for future in as_completed(futures):
-                        item = futures[future]
-                        try:
-                            by_id[item["id"]] = future.result()
-                        except Exception as exc:  # keep a broken worker in the receipt
-                            by_id[item["id"]] = {
-                                "id": item["id"],
-                                "recipe": item["recipe"],
-                                "status": "FAIL",
-                                "exit_code": None,
-                                "timed_out": False,
-                                "output_tail": f"gate runner raised {type(exc).__name__}: {exc}",
+                if runner is run_gate:
+                    remaining = int(deadline - time.monotonic()) if deadline is not None else None
+                    if remaining is not None and remaining <= 0:
+                        by_id[batch[0]["id"]] = run_with_deadline(batch[0])
+                        for item in batch[1:]:
+                            by_id[item["id"]] = record_unrun(item, batch[0]["id"])
+                    else:
+                        effective_batch = [
+                            {
+                                **item,
+                                "timeout_seconds": min(
+                                    item.get("timeout_seconds", GATE_TIMEOUT_SECONDS), remaining
+                                ),
                             }
+                            if remaining is not None
+                            else item
+                            for item in batch
+                        ]
+                        try:
+                            batch_results = run_gate_batch(effective_batch)
+                            by_id = {result["id"]: result for result in batch_results}
+                        except Exception as exc:
+                            by_id = {
+                                item["id"]: {
+                                    "id": item["id"],
+                                    "recipe": item["recipe"],
+                                    "status": "FAIL",
+                                    "exit_code": None,
+                                    "timed_out": False,
+                                    "output_tail": (
+                                        f"gate runner raised {type(exc).__name__}: {exc}"
+                                    ),
+                                }
+                                for item in batch
+                            }
+                else:
+                    # Injectable fake runners are thread-safe control-flow tests;
+                    # real subprocesses use the main-thread batch supervisor.
+                    with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+                        futures = {pool.submit(run_with_deadline, item): item for item in batch}
+                        for future in as_completed(futures):
+                            item = futures[future]
+                            try:
+                                by_id[item["id"]] = future.result()
+                            except Exception as exc:
+                                by_id[item["id"]] = {
+                                    "id": item["id"],
+                                    "recipe": item["recipe"],
+                                    "status": "FAIL",
+                                    "exit_code": None,
+                                    "timed_out": False,
+                                    "output_tail": (
+                                        f"gate runner raised {type(exc).__name__}: {exc}"
+                                    ),
+                                }
                 batch_results = [by_id[item["id"]] for item in batch]
                 deadline_blocker: str | None = None
                 for item, result in zip(batch, batch_results):

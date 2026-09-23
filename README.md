@@ -68,10 +68,10 @@ macOS 기본 피드백 진입점은 `just verify-local`이다. core workspace(Ru
 generated doc fixture 제외),
 production `lib/bin` Clippy, 저비용 architecture/gate owner tests와 실제 정적 정책만 실행한다.
 Semgrep은 실제 소스를 한 번 스캔하고, test/example/bench Clippy 및 43-case synthetic rule-pack
-회귀팩은 full proof에 남긴다. dependency/performance,
-feature/doc/MSRV matrix,
-curated/generated mutation, sanitizer/fuzzer, model exploration, coverage, Linux IAI는 exact-source
-`just verify-macos-full`에만 둔다. `just proof`는
+회귀팩은 CI 프로필에 남긴다. dependency checks와 feature/doc/MSRV matrix는
+`just verify-macos-ci`에 둔다. curated/generated mutation, sanitizer/fuzzer,
+model exploration, coverage, Linux IAI는 명시적 `nightly` 프로필
+(`just verify-macos-nightly`)에서만 실행한다. `just release`는 `ci`와 `nightly`를 합친
 cross-platform required set과 정확히 같은 집합으로 expand되어야 하며 `just gates-inventory`가 이를
 강제한다. 증명은 세 층으로 겹친다:
 
@@ -91,17 +91,18 @@ thread 상한을 사용한다.
 | 문서가 컴파일되는가 | 이 README·`docs/taskmesh-external-interface.md`·`CHANGELOG.md`의 모든 ```rust 블록이 *그대로* facade에 대해 type-check (build.rs가 추출; hidden line 없음; fence attribute `body`/`arms`/`builder`로 scaffold 선택, `rust,ignore`는 CHANGELOG의 `// 0.1.0` 인용에만 허용) | `cargo test -p taskmesh-doc-examples` (`just test`에 포함), `just doctest` (workspace rustdoc examples) |
 | 성능 | admit→release allocs/op(=현재 기준 8.0, 무여유), Linux instruction count | `just bench-gate`, `just bench-iai` |
 
-clean checkout의 exact `HEAD`/tree/digest 전후가 같은 macOS full receipt는
-`just verify-macos-full`이 `target/verification/macos-gates.json`에 남긴다. Linux 전용 `bench-iai`는
-`SKIPPED_PLATFORM`으로 기록되고 결과는 `PLATFORM_QUALIFIED (macos)`이다. `just install-hooks`는 이
-full receipt가 현재 push SHA와 일치하지 않으면 branch push를 거부한다(`qualify-local` full receipt도
-허용). 전체 cross-platform/release 자격은 local Linux에서 `just qualify-local`, release 판정은
+clean checkout의 exact `HEAD`/tree/digest 전후가 같은 macOS CI receipt는
+`just verify-macos-ci`가 `target/verification/macos-gates.json`에 남긴다. Linux 전용 `bench-iai`는
+nightly receipt에서 `SKIPPED_PLATFORM`으로 기록된다. `just install-hooks`는 이
+CI receipt가 현재 push SHA와 일치하지 않으면 branch push를 거부한다(`qualify-local` release receipt도
+허용). nightly는 별도 `just verify-macos-nightly`로 실행하며 일반 CI/push 증거에 필요하지 않다.
+전체 cross-platform/release 자격은 mutation을 포함한 local Linux `just qualify-local`, release 판정은
 `just release-local`로 수행한다. GitHub workflow 세 개는
 호환성 기록으로만 남기고 repository 설정에서 비활성화한다. `docs/release-checklist.md` 참조.
 전체 gate runner는 첫 non-PASS에서 기본 fail-fast하며, 남은 applicable gate를
 `NOT_RUN`/`blocked_by`로 기록해 분모를 보존한다. 실패 뒤의 전체 진단이 필요한 경우에만
 `tools/gates/run.py ... --keep-going`을 사용한다.
-정식 collector의 기본 선택과 실행 순서는 `tools/gates/required.json` 단일 권위이며,
+정식 release collector의 기본 선택과 실행 순서는 `tools/gates/required.json` 단일 권위이며,
 cheap/static blocker 뒤에 고비용 proof producer를 배치한다. 명시적 `--tier`는 진단 subset이다.
 `--required`/`--all`과 정식 qualification collector는 dirty source를 실행 전에 거부하므로,
 자격 취득이 불가능한 상태에서 mutation/fuzz 등 고비용 작업을 시작하지 않는다.

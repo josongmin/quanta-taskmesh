@@ -186,9 +186,9 @@ loom:
 # Registered qualification gate: fmt, full clippy/tests, supply-chain, static
 # policy, Python, allocation, inventory, and fuzz-harness compilation. Use
 # `just verify-local` for the smaller laptop feedback subset and
-# `just verify-macos-full` for the complete applicable required set.
+# `just verify-macos-ci` for the complete CI profile.
 gate: fmt-check clippy test deny semgrep test-architecture py-lint py-test bench-gate gates-inventory fuzz-check
-    @echo "gate: registered functional/static gate passed; run 'just verify-macos-full' for full qualification"
+    @echo "gate: registered functional/static gate passed; run 'just verify-macos-ci' for CI qualification"
 
 # The libFuzzer targets (fuzz/) type-check and lint on stable, so they cannot
 # rot between nightly fuzzing campaigns (`just fuzz`).
@@ -197,12 +197,14 @@ fuzz-check:
 
 # Purpose-scoped Rust product loop. Python tooling checks are separate in
 # `dev-python-fast`; unrelated Python lint/tests are not repeated for Rust edits.
-# Heavy authorities remain in `gate`/`matrix`/`proof` and `verify-macos-full`.
+# Heavy authorities remain in `ci`/`nightly`/`release-proof` profiles.
 dev-fast: fmt-check clippy-core test-core semgrep test-architecture gates-inventory
-    @echo "dev-fast: core macOS feedback passed; run 'just verify-macos-full' for receipt-backed qualification"
+    @echo "dev-fast: core macOS feedback passed; run 'just verify-macos-ci' for receipt-backed CI qualification"
+
+dev: dev-fast
 
 # Local proof matrix: feature-matrix drift, doctests, link-clean rustdoc, bench
-# compilation, and the consumer-MSRV build. Chained by `proof`.
+# compilation, and the consumer-MSRV build. Chained by `ci`.
 matrix: test-rayon doctest rustdoc bench-smoke consumer-msrv
     @echo "matrix: feature-matrix checks passed"
 
@@ -240,6 +242,7 @@ coverage-report:
 semver-release:
     python3 tools/release/semver.py --out target/release/semver
 
+# Final release collector runs both full and night; never use for routine full checks.
 qualify-local:
     uv run python tools/qualification/receipt.py collect --local-qualified --out target/qualification/local-receipt.json
 
@@ -255,25 +258,39 @@ release-receipt: validate-local-qualification semver-release release-finding-pro
 release-local: release-receipt
     @echo "release-local: exact-source local release receipt completed"
 
-# Full local proof surface: every gate in tools/gates/required.json — `gate`, the
-# feature `matrix`, and the heavy rails. tools/gates/validate_inventory.py
-# verifies that this chain expands to exactly the required set.
-proof: gate matrix mutants-critical mutants-generated modelcheck tsan fuzz coverage-report bench-iai
-    @echo "proof: full local required proof surface passed"
+# CI profile: functional, static, and contract matrix without long campaigns.
+ci: gate matrix
+    @echo "ci: functional, static, and matrix surface passed"
 
-# Full macOS receipt: every required gate applicable to this host, including
-# the generated cargo-mutants campaign. This is intentionally explicit: it is
-# a clean, frozen release/push candidate proof, not a laptop inner-loop command.
+# Explicit high-cost proof profile. No schedule is configured.
+nightly: mutants-critical modelcheck tsan fuzz coverage-report bench-iai mutants-generated
+    @echo "nightly: high-cost proof surface passed"
+
+# Release gate profile includes CI and nightly; required.json owns the union.
+release: ci nightly
+    @echo "release: ci and nightly required gate surfaces passed"
+
+# Compatibility entry point for existing release tooling.
+proof: release
+
+# CI macOS receipt without high-cost nightly campaigns. Release qualification
+# remains `release` or the nightly-inclusive required collector.
 # Independent low-cost static checks use the inventory's bounded four-worker
 # group; Cargo builds and resource-heavy proof producers remain serialized.
 # Dirty source is rejected before any gate starts.
-verify-macos-full:
-    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" uv run python tools/gates/run.py --required --require-clean-source --allow-platform-skips --receipt target/verification/macos-gates.json
+verify-macos-ci:
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" uv run python tools/gates/run.py --profile ci --require-clean-source --allow-platform-skips --receipt target/verification/macos-gates.json
+
+verify-macos-nightly:
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" uv run python tools/gates/run.py --profile nightly --require-clean-source --allow-platform-skips --receipt target/verification/macos-nightly-gates.json
+
+# Compatibility aliases. Prefer the profile names above in new instructions.
+verify-macos-full: verify-macos-ci
 
 # Daily macOS feedback is deliberately purpose-scoped. It runs core functional
 # tests and static policy, but leaves dependency/performance/feature/release
 # authorities to the exact-source full receipt.
-verify-macos: dev-fast
+verify-macos: dev
 
 # Canonical laptop entry point.
 verify-local: verify-macos

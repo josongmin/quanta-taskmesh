@@ -65,7 +65,7 @@ if str(REPO) not in sys.path:
 
 from tools.gates.parallel_policy import PARALLEL_GROUP_MEMBERS  # noqa: E402
 
-TIERS = {"fast", "matrix", "proof", "release"}
+TIERS = {"fast", "matrix", "nightly", "release"}
 PLATFORMS = {"any", "linux", "macos"}
 # A `just <recipe>` token anywhere in a run script: at the start, after a
 # newline, or after a shell separator (`&&`, `||`, `;`, `|`, `(`), and followed
@@ -511,6 +511,8 @@ def validate(
     enforcement_problems: list[str] | None = None,
     self_reports: dict[str, set[str]] | None = None,
     untracked_scripts: dict[str, list[str]] | None = None,
+    ci_leaves: set[str] | None = None,
+    nightly_leaves: set[str] | None = None,
 ) -> list[str]:
     problems: list[str] = list(enforcement_problems or [])
     gates = inventory.get("gates", [])
@@ -679,6 +681,19 @@ def validate(
             )
 
     required_ids = required.get("required", [])
+    nightly_ids = required.get("nightly_required")
+    if not isinstance(nightly_ids, list) or not nightly_ids or any(
+        not isinstance(gate_id, str) for gate_id in nightly_ids
+    ):
+        problems.append("nightly_required must be a nonempty list of gate ids")
+        nightly_ids = []
+    if len(set(nightly_ids)) != len(nightly_ids):
+        problems.append("nightly_required lists an id more than once")
+    if not set(nightly_ids) <= set(required_ids):
+        problems.append("nightly_required is not a subset of required")
+    declared_nightly = {gate["id"] for gate in gates if gate.get("tier") == "nightly"}
+    if set(nightly_ids) != declared_nightly:
+        problems.append("nightly_required differs from inventory nightly tier")
     if len(set(required_ids)) != len(required_ids):
         problems.append("required.json lists an id more than once")
     qualification_budget = inventory.get("qualification_budget_seconds")
@@ -731,10 +746,14 @@ def validate(
         extra = sorted(proof_leaves - required_set)
         if missing:
             problems.append(
-                f"`just proof` skips required gate(s) {missing}: a local proof is not the CI proof"
+                f"`just proof` skips required gate(s) {missing}: a local proof is not release proof"
             )
         if extra:
             problems.append(f"`just proof` runs {extra}, which required.json does not require")
+    if ci_leaves is not None and ci_leaves != set(required_ids) - set(nightly_ids):
+        problems.append("`just ci` must expand to required gates excluding nightly_required")
+    if nightly_leaves is not None and nightly_leaves != set(nightly_ids):
+        problems.append("`just nightly` must expand to exactly nightly_required")
 
     return problems
 
@@ -748,6 +767,8 @@ def main() -> int:
         gate_deps = gate_recipe_dependencies()
         matrix_deps = recipe_dependencies("matrix")
         proof_leaves = expand_recipe("proof")
+        ci_leaves = expand_recipe("ci")
+        nightly_leaves = expand_recipe("nightly")
         inventory_recipes = {g.get("recipe") for g in inventory.get("gates", []) if g.get("recipe")}
         enforcement = [
             *workflow_enforcement_problems(WORKFLOWS, inventory_recipes),
@@ -784,6 +805,8 @@ def main() -> int:
         enforcement,
         self_reports,
         untracked_scripts,
+        ci_leaves,
+        nightly_leaves,
     )
     if problems:
         print("gate inventory FAILED:", file=sys.stderr)

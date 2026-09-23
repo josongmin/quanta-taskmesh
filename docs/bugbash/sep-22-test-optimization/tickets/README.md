@@ -36,8 +36,8 @@ exact-source receipt. The baseline and waves below preserve the original campaig
 | W0 | T01, T02, T03, T05, T06, T07, T08 | Re-freeze HEAD and verify exclusive paths before editing. |
 | W1 | T04 | Starts only after T03 settles `e2e_scenarios.rs`. |
 | W2 | Integrator | Rebase/reconcile, run focused suites, then exact-source `just gate` and `just matrix`. |
-| W3 | macOS full receipt | Freeze a clean candidate, then run `just verify-macos-full` once. Its exact-source receipt closes the macOS applicable gate set only. |
-| W4 | Linux qualification | Provision the required Linux tools, create and compare an IAI baseline for the same fingerprint, then run `just qualify-local` on the same frozen candidate. Closure requires a validated `QUALIFIED` receipt with every ordinary required gate PASS. |
+| W3 | macOS CI receipt | Freeze a clean candidate, then run `just verify-macos-ci` once. Its exact-source receipt covers the CI profile only. |
+| W4 | Linux release qualification | After explicit authorization for the costly nightly profile, provision the required Linux tools, create and compare an IAI baseline for the same fingerprint, then run `just qualify-local` on the same frozen candidate. Closure requires a validated `QUALIFIED` receipt with every release required gate PASS. |
 
 ## Ownership and patch-on-patch prevention
 
@@ -94,15 +94,16 @@ cargo test --locked -p taskmesh-bench --test hellgate
 just gate
 just matrix
 just verify-local
-just verify-macos-full
+just verify-macos-ci
+# Explicit final release qualification only; includes mutation and other nightly gates.
 just qualify-local
 just validate-local-qualification
 ```
 
-`just verify-local` is the daily `dev-fast` feedback subset and does not emit a qualification
-receipt. `just verify-macos-full` runs the required host-applicable rails and writes the exact-source
-receipt; missing/NOT_RUN required rails keep the campaign open.
-On macOS, `bench-iai` is a platform skip. The W3 receipt therefore cannot close
+`just verify-local` is the daily `dev` feedback subset and does not emit a qualification
+receipt. `just verify-macos-ci` runs the host-applicable CI rails and writes the exact-source
+receipt; missing/NOT_RUN CI rails keep that profile open.
+`bench-iai` belongs to nightly and is not in W3. The W3 receipt therefore cannot close
 the Linux ordinary qualification or the external consumer check. W4 requires
 Linux `valgrind` and the configured `iai-callgrind-runner`, plus the other
 required toolchains and gate commands; a fresh IAI baseline is `BASELINE_CREATED`

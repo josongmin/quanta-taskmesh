@@ -405,9 +405,10 @@ preflight rejects this checkout before executing a gate. The local
 arm64, but lacks `valgrind`, `iai-callgrind-runner`, `uv`, `just`, and
 `cargo-nextest`; it cannot
 run `just qualify-local` as provisioned. macOS has the applicable toolchains,
-but `just verify-macos-full` includes the bounded full generated mutation
-sweep and must run once on a clean frozen candidate. A macOS receipt retains
-the Linux-only `bench-iai` platform skip and cannot itself be `QUALIFIED`.
+but the separate `just verify-macos-nightly` profile includes the bounded full
+generated mutation sweep and requires explicit authorization on a clean frozen
+candidate. A macOS nightly receipt records the Linux-only `bench-iai` platform
+skip; a CI receipt does not include that gate.
 
 The first isolated macOS full-gate attempt at candidate `8bc5535` stopped at
 `semgrep`: one debug `println!` left in `hellgate.rs:156`. Required later gates

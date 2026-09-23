@@ -47,7 +47,8 @@ admit/release counts and finite positive throughput, metrics verifies known USL 
 and empirical peak, and Criterion owns actual contention timing. The five other Hellgate
 tests retain distinct open-loop semantic oracles. See [T08](tickets/SEP22-T08-hellgate-structural-budget.md)
 for the explicit coverage loss and focused verification. Clean-source gate/matrix and the
-current-source `verify-macos-full` receipt remain separate qualification work.
+current-source `verify-macos-ci` receipt remain separate qualification work; nightly
+and release qualification require explicit authorization.
 
 ## Baseline measurements
 

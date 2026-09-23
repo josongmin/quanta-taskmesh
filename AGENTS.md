@@ -17,6 +17,17 @@ Rules:
 6. Parallel stages need explicit deterministic reduce policy.
 7. Inventory changes must be explicit and reviewable.
 
+Verification cost policy:
+
+- Do not run mutation campaigns during ordinary audits, owner-local checks, or daily verification.
+- Run `mutants-critical`, `mutants-generated`, or commands that include them (`nightly`,
+  `verify-macos-nightly`, `release`, `proof`, `qualify-local`,
+  `tools/gates/run.py --required`, `--all`, `--tier nightly`, or `--profile release`)
+  only when the current user request
+  explicitly authorizes mutation testing or final release qualification that includes it.
+- Use focused owner tests, `verify-local`, and `verify-macos-ci` for normal feedback. A partial mutation run is
+  never qualification evidence.
+
 Context routing:
 
 - For crate or dependency boundaries, read `docs/adr/0001-hexagonal-feature-sliced-architecture.md`.

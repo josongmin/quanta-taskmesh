@@ -260,7 +260,7 @@
     {
       "id": "mutants-critical",
       "recipe": "mutants-critical",
-      "tier": "proof",
+      "tier": "nightly",
       "runs_in": [
         "local",
         "ci"
@@ -296,7 +296,7 @@
     {
       "id": "mutants-generated",
       "recipe": "mutants-generated",
-      "tier": "proof",
+      "tier": "nightly",
       "runs_in": [
         "local",
         "ci"
@@ -334,7 +334,7 @@
     {
       "id": "modelcheck",
       "recipe": "modelcheck",
-      "tier": "proof",
+      "tier": "nightly",
       "runs_in": [
         "local",
         "ci"
@@ -395,7 +395,7 @@
     {
       "id": "bench-iai",
       "recipe": "bench-iai",
-      "tier": "proof",
+      "tier": "nightly",
       "runs_in": [
         "local",
         "ci"
@@ -417,7 +417,7 @@
     {
       "id": "tsan",
       "recipe": "tsan",
-      "tier": "proof",
+      "tier": "nightly",
       "runs_in": [
         "local",
         "ci"
@@ -440,7 +440,7 @@
     {
       "id": "fuzz",
       "recipe": "fuzz",
-      "tier": "proof",
+      "tier": "nightly",
       "runs_in": [
         "local",
         "ci"
@@ -479,7 +479,7 @@
     {
       "id": "coverage-report",
       "recipe": "coverage-report",
-      "tier": "proof",
+      "tier": "nightly",
       "runs_in": [
         "local",
         "ci"

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "The gates a source revision must pass to be qualified. Authored independently of inventory.json so that deleting a gate from the inventory does not delete the requirement — the validator reports the mismatch instead.",
+  "description": "Release qualification requires the ci and nightly profiles. nightly_required is the explicit high-cost subset omitted from ci. Authored independently of inventory.json so deleting an inventory gate cannot erase its requirement.",
   "required": [
     "fmt-check",
     "gates-inventory",
@@ -25,6 +25,10 @@
     "fuzz",
     "coverage-report",
     "mutants-generated"
+  ],
+  "nightly_required": [
+    "mutants-critical", "modelcheck", "tsan", "fuzz", "coverage-report",
+    "bench-iai", "mutants-generated"
   ],
   "required_producers": {
     "mutation-campaign-curated-v1": "mutants-critical",

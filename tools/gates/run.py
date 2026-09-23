@@ -16,6 +16,8 @@ that unambiguous verdict is NOT_RUN.
 
 Usage:
     python3 tools/gates/run.py --tier fast              # e.g. the fast gate
+    python3 tools/gates/run.py --profile ci              # bounded CI profile
+    python3 tools/gates/run.py --profile nightly         # explicit high-cost profile
     python3 tools/gates/run.py --id clippy --id test    # named gates
     python3 tools/gates/run.py --all --receipt r.json   # everything applicable
     python3 tools/gates/run.py --required --allow-platform-skips  # clean host scope
@@ -686,11 +688,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--id", action="append", default=[])
     parser.add_argument("--tier", action="append", default=[])
+    parser.add_argument(
+        "--profile", choices=("ci", "nightly", "release"),
+        help="run the exact ci, nightly, or release set from required.json",
+    )
     parser.add_argument("--all", action="store_true")
     parser.add_argument(
         "--required",
         action="store_true",
-        help="run exactly the ordinary required gate ids from required.json",
+        help="run the release required set, including the high-cost nightly profile",
     )
     parser.add_argument(
         "--allow-platform-skips",
@@ -744,17 +750,32 @@ def main(argv: list[str] | None = None) -> int:
     inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
     required_document = json.loads(REQUIRED.read_text(encoding="utf-8"))
     required_ids = required_document["required"]
-    required = set(required_ids)
+    nightly_ids = required_document["nightly_required"]
+    profile_ids = {
+        "release": required_ids,
+        "ci": [gate_id for gate_id in required_ids if gate_id not in nightly_ids],
+        "nightly": nightly_ids,
+    }
     if args.validate_receipt is not None:
         try:
             value = json.loads(args.validate_receipt.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             print(f"local receipt INVALID: {exc}", file=sys.stderr)
             return 1
+        saved_profile = value.get("profile", "release") if isinstance(value, dict) else None
+        if saved_profile not in profile_ids:
+            print(f"local receipt INVALID: unknown profile {saved_profile!r}", file=sys.stderr)
+            return 1
+        if args.expected_head is not None and saved_profile == "nightly":
+            print(
+                "local receipt INVALID: pushed HEAD requires ci or release profile",
+                file=sys.stderr,
+            )
+            return 1
         problems = local_receipt_problems(
             value,
             source_identity(),
-            required,
+            set(profile_ids[saved_profile]),
             required_document.get("platform_conditional", {}),
             host_platform(),
             args.expected_head,
@@ -766,14 +787,21 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(
             f"local receipt VALID: {args.validate_receipt} "
-            f"head={value['source']['head']} platform={value['platform']}"
+            f"head={value['source']['head']} platform={value['platform']} "
+            f"profile={saved_profile}"
         )
         return 0
     if args.expected_head is not None:
         raise SystemExit("--expected-head requires --validate-receipt")
-    selectors = int(args.all) + int(args.required) + int(bool(args.tier)) + int(bool(args.id))
+    selectors = (
+        int(args.all) + int(args.required) + int(bool(args.tier))
+        + int(bool(args.id)) + int(args.profile is not None)
+    )
     if selectors != 1:
-        raise SystemExit("select exactly one of --all, --required, --tier, or --id")
+        raise SystemExit("select exactly one of --all, --required, --profile, --tier, or --id")
+
+    profile = args.profile or "release"
+    required = set(profile_ids[profile])
 
     source = source_identity()
     gates = inventory["gates"]
@@ -786,6 +814,8 @@ def main(argv: list[str] | None = None) -> int:
         # required.json owns both membership and execution order. Cheap/static
         # blockers precede expensive proof producers so fail-fast saves work.
         selected = [by_id[gate_id] for gate_id in required_ids]
+    elif args.profile:
+        selected = [by_id[gate_id] for gate_id in profile_ids[args.profile]]
     else:
         for tier in args.tier:
             selected.extend(g for g in gates if g["tier"] == tier)
@@ -810,7 +840,7 @@ def main(argv: list[str] | None = None) -> int:
     preflight_blocker = source_preflight_blocker(
         source,
         require_clean_source=clean_source_required(
-            select_required=args.required,
+            select_required=args.required or args.profile is not None,
             select_all=args.all,
             explicit_requirement=args.require_clean_source,
             allow_dirty_source=args.allow_dirty_source,
@@ -853,6 +883,7 @@ def main(argv: list[str] | None = None) -> int:
 
     receipt = {
         "schema_version": 2,
+        "profile": profile,
         "platform": here,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source": source,
@@ -876,11 +907,16 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     if qualified:
-        print("gates: QUALIFIED — every required gate ran here and passed")
+        label = "QUALIFIED" if profile == "release" else f"{profile.upper()}_QUALIFIED"
+        print(f"gates: {label} — every {profile} required gate ran here and passed")
         return 0
     if args.allow_platform_skips and scoped_qualified:
+        label = (
+            "PLATFORM_QUALIFIED" if profile == "release"
+            else f"{profile.upper()}_PLATFORM_QUALIFIED"
+        )
         print(
-            f"gates: PLATFORM_QUALIFIED ({here}) — every applicable required gate passed; "
+            f"gates: {label} ({here}) — every applicable {profile} gate passed; "
             f"excluded platform gate(s): {excluded_platform_gates}"
         )
         return 0

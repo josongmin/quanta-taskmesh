@@ -870,9 +870,9 @@ def test_named_diagnostic_gate_can_run_dirty_without_an_override() -> None:
     )
 
 
-def test_macos_full_recipe_explicitly_rejects_dirty_source() -> None:
-    body = vi.recipe_body("verify-macos-full")
-    assert "--required" in body
+def test_macos_ci_recipe_explicitly_rejects_dirty_source() -> None:
+    body = vi.recipe_body("verify-macos-ci")
+    assert "--profile ci" in body
     assert "--require-clean-source" in body
     assert "--allow-dirty-source" not in body
 

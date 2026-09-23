@@ -3,7 +3,9 @@
 ## Proof gate (must be green)
 
 The ordinary gate set is `tools/gates/inventory.json`; the ordinary required subset is
-`tools/gates/required.json`. Release-only requirements are independently pinned in
+`tools/gates/required.json`. Its `nightly_required` subset contains the long proof gates;
+the CI profile excludes that subset, while the release profile still requires it.
+Release-only requirements are independently pinned in
 `tools/release/release-required.json`. Ordinary verification is local-first and runs
 from a clean exact-source checkout. GitHub workflows are manual fallbacks and must not
 be used for routine verification. `required.json` also owns the fail-fast execution
@@ -26,8 +28,8 @@ Run the registered recipes through `just`:
       performance, feature/docs/MSRV, mutation, and other heavyweight rails.
       Cargo build/test concurrency defaults to 4 on these local paths; override
       with `TASKMESH_BUILD_JOBS` / `TASKMESH_TEST_JOBS` when the host permits.
-- [ ] `just verify-macos-full` — explicit macOS full receipt. It runs every
-      applicable ordinary required gate, records Linux-only exclusions, and binds
+- [ ] `just verify-macos-ci` — explicit macOS CI receipt without nightly campaigns.
+      It runs every applicable non-nightly required gate and binds
       the result to a clean unchanged HEAD/tree/path digest. The runner stops
       expensive later work after the first non-pass and records every blocked
       applicable gate as `NOT_RUN` with `blocked_by`; use `--keep-going` only for
@@ -51,7 +53,12 @@ Run the registered recipes through `just`:
       a missing toolchain or other conditional prerequisite remains `NOT_RUN`.
       Saved `qualified`, `required_not_run`, and `required_not_passed` fields must match the
       re-derived gate results and source stability; edited summary fields invalidate the receipt.
-- [ ] `just qualify-local` on local Linux — every ordinary required gate must PASS;
+- [ ] `just verify-macos-nightly` — explicit high-cost proof profile. It runs curated and
+      generated mutation, modelcheck, TSan, fuzz, coverage, and IAI with a separate
+      `macos-nightly-gates.json` receipt.
+      Never use this as an ordinary CI or daily check. The name does not schedule it.
+- [ ] `just qualify-local` on local Linux — final release qualification runs both
+      CI and nightly gates; every release required gate must PASS;
       platform skips and missing tools remain `NOT_QUALIFIED`. Run it in an exclusive
       clean checkout with no concurrent writers: source digests before and after the
       run cannot detect an edit restored between those observations.

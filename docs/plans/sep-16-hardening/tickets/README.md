@@ -34,7 +34,8 @@
   실제 생성 target이 0임을 확인해 2026-09-23 제거했다.
 - `ci`, `bench-gates`, `release-qualification` GitHub workflow는 수동 비활성화되어 있다.
   현재 검증 경로는 [release checklist](../../../release-checklist.md)의 clean-source
-  `just verify-macos-full`과 Linux `just qualify-local`이다. Linux `bench-iai`는 같은
+  기능·정적·matrix `just verify-macos-ci`, 명시적 고비용 `just verify-macos-nightly`, Linux
+  release `just qualify-local`이다. Linux `bench-iai`는 같은
   fingerprint의 baseline 생성 뒤 별도 qualified run이 필요하다.
 - 2026-09-23 IAI owner-local 감사에서는 누락된 `Ir` 값, 일부 case만 실행된 비교,
   case별 raw `.out` 누락, symlink된 `target` 상위 경로를 재현하고 gate를 보강했다.

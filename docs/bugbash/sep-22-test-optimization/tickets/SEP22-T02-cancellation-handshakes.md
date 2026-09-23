@@ -146,3 +146,17 @@ worktree/target에서 수행하고 원상 복구한 source SHA를 확인한다. 
   `ab581b7ec56b8dd31bba12603cd64fd07fc979b13d95b209b64d351ad0a08508`.
   `just clippy` exit 0, `cargo test --locked -p taskmesh --test deadline_cancel` 15/15,
   `cargo fmt --all -- --check`와 `git diff --check` exit 0. 새 clean-source W3 receipt는 별도다.
+
+## 2026-09-23 PreSubmitOnly 오라클 보강
+
+- 이전 `pre_submit_only_ignores_mid_run_token`은 취소 직후 `finish_tx`를 보내어, 잘못된
+  cooperative-cancel 경로와 작업 완료가 경합할 수 있었다. 이제 작업 내부가 같은 token의 취소를
+  관찰했다는 oneshot을 보낸 뒤에만 완료를 허용한다. 단순 시간 지연이나 scheduler yield가 아니다.
+- `main@17d1c89`에서 `cargo test --locked -p taskmesh --test cancellation_policy` 3/3,
+  해당 test-target Clippy 및 전체 rustfmt check가 통과했다.
+- 격리된 `17d1c89` 체크아웃에서 `ExecutionPlan`의 `mid_run`을 의도적으로 `true`로 바꾸자
+  `pre_submit_only_ignores_mid_run_token`은 `RecvError`로 즉시 실패했다(exit 101, 0.02s).
+  변형을 원복한 동일 체크아웃에서 1/1 재통과했다. 이 negative는 잘못된 정책 경로를 실제로
+  구분한다. shared checkout의 production 소스는 변경하지 않았다.
+- 이후 main에 별도 gate/receipt 변경이 합쳐졌으므로, 이 focused proof를 현 HEAD의 전체
+  qualification으로 승격하지 않는다.

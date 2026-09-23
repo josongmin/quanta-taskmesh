@@ -106,3 +106,14 @@ sample은 폐기한다.
 - 50k baseline과 10k candidate의 동일 조건 측정 및 hosted Linux 20/20이 없다.
   호스트에서 여러 Cargo 작업이 동시에 실행되어 이번 duration은 성능 비교에 사용할 수 없다.
   50% 절감이나 두 host class 안정성은 아직 주장하지 않는다.
+
+## 2026-09-23 구조 오라클 보강
+
+- `[1,2,4]`의 USL normal-equation determinant는 고정값 36이다. 양의 throughput 세 점에서
+  `fit_usl(...).is_some()`은 timing noise를 실질적으로 판별하지 못하고, 기존 `fit.x1 > 0`
+  검사만으로는 비유한 `alpha`/`beta`도 통과할 수 있었다.
+- 현재 테스트는 baseline과 두 계수의 유한성, 반환된 peak가 실제 측정 샘플이며 그중 최대
+  throughput인지 확인한다. concurrency 세 점과 workload 10,000은 그대로 유지했다.
+- focused case 20/20, 전체 `hellgate` 6/6, 해당 test-target Clippy, rustfmt check가 통과했다.
+  이 반복은 기능 안정성 증거이지, 부하가 큰 호스트의 duration을 50k 대비 절감률로 해석한
+  증거가 아니다. 동일 조건의 50k/10k 비용 비교와 Linux 실행은 여전히 열려 있다.

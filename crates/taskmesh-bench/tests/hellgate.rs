@@ -158,7 +158,19 @@ fn usl_contention_sweep_is_structurally_sound() {
         samples.push((t as f64, tput));
     }
     let fit = fit_usl(&samples).expect("USL fit must be recoverable from 3 points");
-    assert!(fit.x1 > 0.0);
+    assert!(fit.x1.is_finite() && fit.x1 > 0.0);
+    assert!(
+        fit.alpha.is_finite() && fit.beta.is_finite(),
+        "USL coefficients must be finite: {fit:?}"
+    );
     let (peak_n, peak_tput) = argmax_throughput(&samples).expect("empirical peak");
-    assert!(peak_n >= 1.0 && peak_tput > 0.0);
+    assert!(
+        samples.contains(&(peak_n, peak_tput)),
+        "empirical peak must be one of the measured concurrency points"
+    );
+    assert_eq!(
+        peak_tput,
+        samples.iter().map(|&(_, tput)| tput).fold(0.0, f64::max),
+        "empirical peak must have the highest measured throughput"
+    );
 }

@@ -5,7 +5,7 @@
 //!   P1 conservation — every queued request is dispatched exactly once.
 //!   P2 within-class FIFO — a class's requests dispatch in arrival order,
 //!      regardless of the cross-class discipline.
-//!   P3 no permanent starvation — every class with queued work is served.
+//!   P3 no permanent starvation follows from P1 for every queued class.
 //!   P4 determinism — identical config ⇒ identical dispatch order.
 
 use rand::rngs::StdRng;
@@ -89,12 +89,7 @@ fn drain_indices(fx: &Fixture, names: &[String], queue: &[usize]) -> Vec<usize> 
     order
 }
 
-fn build(
-    rng_seed: u64,
-    nclasses: usize,
-    queue: &[usize],
-    disciplines_seed: u64,
-) -> (Fixture, Vec<String>) {
+fn build(nclasses: usize, disciplines_seed: u64) -> (Fixture, Vec<String>) {
     let mut prng = StdRng::seed_from_u64(disciplines_seed);
     let names: Vec<String> = (0..nclasses).map(|i| format!("cls{i}")).collect();
     let policies: Vec<ClassPolicy> = (0..nclasses).map(|_| rand_policy(&mut prng)).collect();
@@ -103,7 +98,6 @@ fn build(
         .zip(policies)
         .map(|(n, p)| (n.as_str(), p))
         .collect();
-    let _ = (rng_seed, queue);
     (fixture(classes, 1, 0), names)
 }
 
@@ -116,7 +110,7 @@ fn random_configs_satisfy_fairness_invariants() {
         let queue: Vec<usize> = (0..qlen).map(|_| rng.gen_range(0..nclasses)).collect();
         let disc_seed = rng.gen();
 
-        let (fx, names) = build(seed, nclasses, &queue, disc_seed);
+        let (fx, names) = build(nclasses, disc_seed);
         let order = drain_indices(&fx, &names, &queue);
 
         // P1 conservation: every request dispatched exactly once.
@@ -139,18 +133,8 @@ fn random_configs_satisfy_fairness_invariants() {
             );
         }
 
-        // P3 no permanent starvation: every class that queued work is served.
-        for c in 0..nclasses {
-            if queue.contains(&c) {
-                assert!(
-                    order.iter().any(|&i| queue[i] == c),
-                    "seed={seed}: class {c} was permanently starved"
-                );
-            }
-        }
-
         // P4 determinism: rebuild + rerun must reproduce the order byte-for-byte.
-        let (fx2, names2) = build(seed, nclasses, &queue, disc_seed);
+        let (fx2, names2) = build(nclasses, disc_seed);
         let order2 = drain_indices(&fx2, &names2, &queue);
         assert_eq!(
             order, order2,

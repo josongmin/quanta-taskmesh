@@ -1,5 +1,5 @@
-//! T06-adjacent: classification provenance (source + reason) must survive every
-//! admission path intact — direct admit, and especially queue → promote → claim,
+//! T06-adjacent: classification provenance (source + reason) must survive
+//! queue → promote → claim,
 //! where the engine rebuilds a permit from a `PendingRequest`. Regression guard
 //! for the provenance ledger: each promoted permit must carry *its own*
 //! provenance, never the filler's and never a neighbor's (no cross-contamination).
@@ -42,31 +42,6 @@ fn governor(max_inflight: u32, cpu_budget: u32) -> Governor {
 }
 
 #[test]
-fn direct_admit_preserves_provenance_and_clears_on_release() {
-    let g = governor(4, 0);
-    let spec = spec_with(
-        "x",
-        PlanSource::new("search-adapter").expect("valid source"),
-        ClassificationRationale::DerivedFromStageMap,
-    );
-    let permit = match g.admit(&spec) {
-        AdmissionDecision::Admitted { permit_id } => permit_id,
-        o => panic!("must admit, got {o:?}"),
-    };
-    assert_eq!(
-        g.permit_provenance(permit),
-        Some(Provenance::of(&spec)),
-        "admitted permit must carry the spec's provenance"
-    );
-    assert_eq!(g.release(permit), ReleaseOutcome::Released);
-    assert_eq!(
-        g.permit_provenance(permit),
-        None,
-        "released permit has no provenance"
-    );
-}
-
-#[test]
 fn promotion_preserves_each_requests_own_provenance() {
     // Single slot: the filler holds it while three distinctly-tagged requests
     // queue. Draining must hand each promoted permit *its own* provenance.
@@ -100,9 +75,11 @@ fn promotion_preserves_each_requests_own_provenance() {
     ];
     let mut queued: Vec<(u64, Provenance)> = Vec::new();
     for (op, source, reason) in tagged {
-        let spec = spec_with(op, source, reason);
+        let spec = spec_with(op, source.clone(), reason);
         match g.admit(&spec) {
-            AdmissionDecision::Queued { ticket } => queued.push((ticket, Provenance::of(&spec))),
+            AdmissionDecision::Queued { ticket } => {
+                queued.push((ticket, Provenance { source, reason }));
+            }
             o => panic!("{op} must queue, got {o:?}"),
         }
     }

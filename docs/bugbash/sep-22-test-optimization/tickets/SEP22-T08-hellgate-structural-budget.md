@@ -26,7 +26,7 @@ throughput이 finite positive인지, 세 점으로 USL fit이 가능한지, `arg
   `crates/taskmesh-bench/src/loadgen.rs:373-441`.
 - owner unit test는 1/2/4/8 worker의 정확한 완료 수, known-duration throughput 산술,
   최소 real-thread helper의 finite positive 결과를 검사한다:
-  `crates/taskmesh-bench/src/loadgen.rs:753-789`.
+  `crates/taskmesh-bench/src/loadgen.rs:738-774`.
 - metrics unit test는 알려진 USL 계수의 복원과 empirical peak를 독립적인 기대값으로
   검사한다: `crates/taskmesh-bench/src/metrics.rs:170-187,206-223`.
 - Criterion contention benchmark는 1/2/4/8 worker의 정확한 denominator로 실제

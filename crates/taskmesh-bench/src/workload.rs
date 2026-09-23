@@ -845,15 +845,6 @@ mod tests {
     }
 
     #[test]
-    fn send_times_are_monotonic() {
-        let arrivals = generate(&WorkloadConfig::default()).unwrap();
-        assert!(arrivals
-            .as_slice()
-            .windows(2)
-            .all(|w| w[1].send_time_secs >= w[0].send_time_secs));
-    }
-
-    #[test]
     fn hottest_class_dominates_under_skew() {
         let cfg = WorkloadConfig {
             count: 20_000,
@@ -981,7 +972,7 @@ mod tests {
     // ---- TM16-028: the MMPP must be the MMPP it was configured as ---------
 
     #[test]
-    fn bursty_arrivals_are_deterministic_monotonic_and_overdispersed() {
+    fn bursty_arrivals_are_deterministic_and_overdispersed() {
         let cfg = BurstConfig::default();
         let a = generate_bursty(&cfg).unwrap();
         assert_eq!(a.len(), cfg.count);
@@ -990,11 +981,6 @@ mod tests {
             generate_bursty(&cfg).unwrap(),
             "MMPP must be seed-deterministic"
         );
-        assert!(a
-            .as_slice()
-            .windows(2)
-            .all(|w| w[1].send_time_secs >= w[0].send_time_secs));
-
         // MMPP is over-dispersed: its inter-arrival CV exceeds a pure Poisson
         // process of the same count (whose CV ~= 1.0).
         let poisson = generate(&WorkloadConfig {

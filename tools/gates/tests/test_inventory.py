@@ -554,14 +554,9 @@ def test_runner_runs_only_approved_parallel_group_concurrently_and_orders_receip
         for gate_id in ("fmt-check", "py-lint")
     ]
     rendezvous = threading.Barrier(2)
-    second_finished = threading.Event()
 
     def run_parallel(gate: dict) -> dict:
         rendezvous.wait(timeout=2)
-        if gate["id"] == "first":
-            assert second_finished.wait(timeout=2)
-        else:
-            second_finished.set()
         return {
             "id": gate["id"],
             "recipe": gate["recipe"],

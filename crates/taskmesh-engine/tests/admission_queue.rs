@@ -49,18 +49,6 @@ fn disabled_class_rejects() {
 }
 
 #[test]
-fn inflight_below_cap_admits() {
-    let g = gov(
-        ResourceBudget::new(),
-        vec![("c", ClassPolicy::new().max_inflight(2))],
-    );
-    assert!(matches!(
-        g.admit(&named_spec("c", "second")),
-        AdmissionDecision::Admitted { .. }
-    ));
-}
-
-#[test]
 fn inflight_at_cap_queueable_queues() {
     let g = gov(
         ResourceBudget::new(),

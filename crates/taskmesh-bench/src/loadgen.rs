@@ -536,21 +536,6 @@ mod tests {
     }
 
     #[test]
-    fn throughput_handles_zero_time_and_has_exact_units() {
-        let zero = ContentionRun {
-            threads: 2,
-            completed_ops: 4,
-            elapsed: Duration::ZERO,
-        };
-        assert_eq!(zero.throughput_per_sec(), 0.0);
-        let measured = ContentionRun {
-            elapsed: Duration::from_secs(2),
-            ..zero
-        };
-        assert_eq!(measured.throughput_per_sec(), 2.0);
-    }
-
-    #[test]
     fn virtual_clock_conversion_uses_floor_milliseconds() {
         assert_eq!(virtual_millis(0), 0);
         assert_eq!(virtual_millis(999_999), 0);

@@ -1,5 +1,6 @@
-//! Audit [P2]: classification provenance (source/reason) must survive intake and
-//! stay auditable in runtime state — admitted directly and via the queue.
+//! Classification provenance (source/reason) must survive direct admission and
+//! stay auditable until release. Queue promotion is covered in
+//! `provenance_preservation.rs`.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -50,46 +51,4 @@ fn provenance_is_auditable_for_an_admitted_permit() {
     // Gone after release (no longer a live permit).
     assert_eq!(g.release(permit), ReleaseOutcome::Released);
     assert!(g.permit_provenance(permit).is_none());
-}
-
-#[test]
-fn provenance_survives_the_queue_promotion_path() {
-    let g = gov(vec![(
-        "c",
-        ClassPolicy::new()
-            .max_inflight(1)
-            .max_queue_depth(4)
-            .cpu_units(1)
-            .overflow_policy(OverflowPolicy::QueueWithinDepth),
-    )]);
-    let occupy = match g.admit(&spec_with(
-        "c",
-        "occ",
-        PlanSource::INTERNAL,
-        ClassificationRationale::ExplicitMapping,
-    )) {
-        AdmissionDecision::Admitted { permit_id } => permit_id,
-        o => panic!("{o:?}"),
-    };
-    // This one must queue, carrying its provenance into the pending record.
-    let queued_spec = spec_with(
-        "c",
-        "q",
-        PlanSource::new("indexing").expect("valid source"),
-        ClassificationRationale::DerivedFromStageMap,
-    );
-    let ticket = match g.admit(&queued_spec) {
-        AdmissionDecision::Queued { ticket } => ticket,
-        o => panic!("{o:?}"),
-    };
-
-    assert_eq!(g.release(occupy), ReleaseOutcome::Released); // promotes the queued request
-    let ClaimOutcome::Ready(permit) = g.claim(ticket) else {
-        panic!("expected promoted provenance ticket");
-    };
-    let prov = g
-        .permit_provenance(permit)
-        .expect("provenance preserved through promotion");
-    assert_eq!(prov.source.as_str(), "indexing");
-    assert_eq!(prov.reason, ClassificationRationale::DerivedFromStageMap);
 }

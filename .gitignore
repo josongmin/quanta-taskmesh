@@ -45,6 +45,9 @@ bench-results/
 # Optional local semgrep cache
 .semgrep/
 
+# Local Code Intelligence MCP index; generated files are not source inputs.
+/.ken/
+
 # Compiler crash dumps are never source.
 rustc-ice-*.txt
 

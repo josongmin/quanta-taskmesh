@@ -951,7 +951,10 @@ def test_push_receipt_requires_ci_or_release_profile(
 
     monkeypatch.setattr(module, "local_receipt_problems", fake_validate)
     path = tmp_path / "receipt.json"
-    path.write_text(json.dumps({"profile": profile, "source": source}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"profile": profile, "platform": module.host_platform(), "source": source}),
+        encoding="utf-8",
+    )
     assert module.main(["--validate-receipt", str(path), "--expected-head", head]) == expected_code
     required = real_inputs()[1]
     if profile == "nightly":

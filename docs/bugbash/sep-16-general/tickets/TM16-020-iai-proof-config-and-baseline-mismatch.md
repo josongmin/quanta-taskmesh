@@ -11,7 +11,7 @@ tools/bench-iai.sh:19; .github/workflows/bench.yml:25-29,49-62; Justfile:92-95
 
 ## Trigger / 관찰
 
-기본 환경의 just release/bench-iai를 실행하거나 benchmark/dependency hash가 바뀐 CI cache miss에서 restore prefix를 사용한다.
+기본 환경의 just proof/bench-iai를 실행하거나 benchmark/dependency hash가 바뀐 CI cache miss에서 restore prefix를 사용한다.
 
 CI만 IAI_CALLGRIND_REGRESSION=Ir=5.0을 설정한다. local script에는 threshold가 없고 bench code에도 RegressionConfig가 없다. cache key에 compatibility hash가 있지만 restore-keys는 hash를 제거하여 다른 bench/deps baseline을 가져올 수 있다.
 

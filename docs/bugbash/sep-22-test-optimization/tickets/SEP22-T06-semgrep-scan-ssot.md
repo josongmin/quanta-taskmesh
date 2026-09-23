@@ -1,6 +1,6 @@
 # SEP22-T06 Semgrep scan SSOT
 
-- 상태: IMPLEMENTED_UNQUALIFIED
+- 상태: LOCALLY_VERIFIED (전체 qualification은 W3)
 - finding: TO-06
 - priority: P1
 - write lane: `semgrep-proof`
@@ -90,3 +90,19 @@ Semgrep version, command arguments, source SHA, run별 duration을 함께 기록
   `just semgrep`: exit 0, pinned Semgrep 1.157.0, 133 files scanned, 0 findings.
 - 현재 source에는 공유해야 할 중복 real scan이 없어 추가 fixture를 만들지 않는다.
   변경 전후 동일 조건의 timing/call-count 비교와 W3 receipt는 없어 비용 절감 수치는 주장하지 않는다.
+
+## 2026-09-23 오너 로컬 gate 및 결손 도구 증거
+
+- `main@1d2bb2fedcbe45ed5809d5f87e4f66560f5c7d9b`에서 owner test SHA-256은
+  `0448d8fcb14d2ebabd624e699da47a1b5e495a460c914419b37e4cbea3c6bca7`,
+  canonical gate SHA-256은 `18498f2358a83c44ec75213bfbfac967c9054a45a02bb9f9bc9bf7ba528e2521`이다.
+- `uv run pytest tools/semgrep/tests/test_rules_fire.py -q`: 47/47 통과, process wall
+  4.71초. `just semgrep`: exit 0, Semgrep 1.157.0, 실제 source 133개 스캔·finding 0,
+  process wall 9.78초. Gate 명령은 `semgrep --config tools/semgrep/rules --error
+  --json --verbose crates`이며 version check 뒤 한 번 실행한다. 두 wall time은 동시
+  호스트 부하 때문에 비용 절감 비교에 사용하지 않는다.
+- `CI=1`, Semgrep 없는 `PATH`에서 동일 pytest module은 collection error(exit 2,
+  `semgrep is required in CI`)로 실패하고, `tools/semgrep/check.py`는 실행 실패를
+  기록하며 exit 1이다. 결손 도구가 skip/PASS로 승격되지 않는다.
+- A01–A04의 오너 로컬 계약은 충족했다. 동일 조건 before/after median·worst가 없으므로
+  절감률은 주장하지 않는다. W3 exact-source full receipt는 별도다.

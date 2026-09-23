@@ -4,6 +4,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,22 @@ def test_canonical_digest_is_order_independent_and_rejects_nan() -> None:
     )
     with pytest.raises(ValueError):
         evidence.canonical_digest({"bad": float("nan")})
+
+
+def test_source_tree_digest_frames_file_bytes_across_path_boundaries(tmp_path: Path) -> None:
+    first = tmp_path / "a"
+    second = tmp_path / "b"
+    first.write_bytes(b"X")
+    second.write_bytes(b"Y")
+    second_mode = f"{stat.S_IMODE(second.stat().st_mode):04o}".encode("ascii")
+    two_files = evidence.source_tree_digest(tmp_path, ["a", "b"])
+
+    # The old unframed encoding allowed the next path record to be swallowed
+    # into the preceding file's bytes while producing the same digest.
+    first.write_bytes(b"Xb\0file\0" + second_mode + b"\0Y")
+    second.unlink()
+    one_file = evidence.source_tree_digest(tmp_path, ["a"])
+    assert one_file != two_files
 
 
 def test_command_digest_is_recomputed_not_trusted() -> None:

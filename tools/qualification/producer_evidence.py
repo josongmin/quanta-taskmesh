@@ -9,9 +9,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.9-3.10
+    import tomli as tomllib
 
 from tools.qualification.evidence import canonical_digest, envelope_problems, file_identity
 
@@ -302,13 +308,26 @@ def _generated_problems(
         or any(character not in "0123456789abcdef" for character in baseline)
     ):
         problems.append("generated mutation baseline digest is missing or malformed")
-    process = summary.get("process")
-    if not isinstance(process, dict) or (
-        process.get("exit_code") != 0
-        or process.get("signal") is not None
-        or process.get("timed_out") is not False
+    excluded = summary.get("excluded_mutants")
+    if (
+        not isinstance(excluded, list)
+        or any(not isinstance(name, str) or not name for name in excluded)
+        or excluded != sorted(set(excluded))
+        or type(summary.get("excluded_count")) is not int
+        or summary["excluded_count"] != len(excluded)
     ):
-        problems.append("generated mutation process did not complete cleanly")
+        problems.append("generated mutation excluded mutant count/list is malformed")
+    for process_name in ("process", "discovery_process"):
+        process = summary.get(process_name)
+        if not isinstance(process, dict) or (
+            type(process.get("exit_code")) is not int
+            or process.get("exit_code") != 0
+            or process.get("signal") is not None
+            or process.get("timed_out") is not False
+            or "interrupted_by_signal" not in process
+            or process["interrupted_by_signal"] is not None
+        ):
+            problems.append(f"generated mutation {process_name} did not complete cleanly")
     if counts.get("caught", 0) <= 0:
         problems.append("generated mutation campaign has no scored caught mutant")
     if any(counts.get(name, 0) != 0 for name in ("missed", "timeout", "equivalent")):
@@ -401,7 +420,7 @@ def _generated_structured_raw_problems(
         if name.endswith(".json"):
             try:
                 documents[name] = json.loads(data)
-            except json.JSONDecodeError:
+            except (UnicodeError, json.JSONDecodeError):
                 problems.append(f"generated mutation structured raw {name} is malformed JSON")
         else:
             try:
@@ -410,6 +429,29 @@ def _generated_structured_raw_problems(
                 ]
             except UnicodeDecodeError:
                 problems.append(f"generated mutation structured raw {name} is not UTF-8")
+    unfiltered_path = raw_root / "unfiltered-mutants.json"
+    if unfiltered_path.is_symlink() or not unfiltered_path.is_file():
+        problems.append("generated mutation unfiltered listing is missing or unsafe")
+    else:
+        data = unfiltered_path.read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        raw_record = raw_by_path.get(unfiltered_path.name)
+        artifact_path = unfiltered_path.relative_to(root).as_posix()
+        artifact = artifact_by_path.get(artifact_path)
+        if not isinstance(raw_record, dict) or (
+            raw_record.get("sha256") != digest or raw_record.get("size") != len(data)
+        ):
+            problems.append("generated mutation unfiltered listing differs from summary identity")
+        if not isinstance(artifact, dict) or (
+            artifact.get("sha256") != digest
+            or artifact.get("size") != len(data)
+            or artifact.get("role") != "raw"
+        ):
+            problems.append("generated mutation unfiltered listing differs from envelope")
+        try:
+            documents["unfiltered-mutants.json"] = json.loads(data)
+        except (UnicodeError, json.JSONDecodeError):
+            problems.append("generated mutation unfiltered listing is malformed JSON")
     planned_rows = documents.get("mutants.json")
     if isinstance(planned_rows, list):
         planned = [item.get("name") for item in planned_rows if isinstance(item, dict)]
@@ -426,6 +468,66 @@ def _generated_structured_raw_problems(
             )
     elif "mutants.json" in documents:
         problems.append("generated mutation structured raw mutants.json is not a list")
+    unfiltered_rows = documents.get("unfiltered-mutants.json")
+    if isinstance(planned_rows, list) and isinstance(unfiltered_rows, list):
+        planned_names = [item.get("name") for item in planned_rows if isinstance(item, dict)]
+        unfiltered_names = [item.get("name") for item in unfiltered_rows if isinstance(item, dict)]
+        if (
+            len(planned_names) != len(planned_rows)
+            or len(unfiltered_names) != len(unfiltered_rows)
+            or not unfiltered_names
+            or any(not isinstance(name, str) or not name for name in unfiltered_names)
+            or len(unfiltered_names) != len(set(unfiltered_names))
+            or any(not isinstance(name, str) or not name for name in planned_names)
+        ):
+            problems.append("generated mutation unfiltered identities are malformed")
+        elif not set(planned_names) <= set(unfiltered_names):
+            problems.append(
+                "generated mutation planned identities are absent from unfiltered listing"
+            )
+        else:
+            excluded = sorted(set(unfiltered_names) - set(planned_names))
+            if summary.get("excluded_mutants") != excluded:
+                problems.append(
+                    "generated mutation excluded mutants differ from unfiltered listing"
+                )
+            config_path = root / ".cargo/mutants.toml"
+            try:
+                if config_path.is_symlink():
+                    raise ValueError("source exclusion policy is a symlink")
+                config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+                patterns = config.get("exclude_re")
+                if (
+                    not isinstance(patterns, list)
+                    or not patterns
+                    or any(not isinstance(pattern, str) or not pattern for pattern in patterns)
+                ):
+                    raise ValueError("exclude_re is missing, empty, or unsafe")
+                compiled = [re.compile(pattern) for pattern in patterns]
+            except (OSError, UnicodeError, ValueError, re.error) as exc:
+                problems.append(f"generated mutation source exclusion policy is invalid: {exc}")
+            else:
+                uncovered = [
+                    name
+                    for name in excluded
+                    if not any(pattern.search(name) for pattern in compiled)
+                ]
+                if uncovered:
+                    problems.append(
+                        "generated mutation excluded mutant is not covered by source policy"
+                    )
+                command = summary.get("command")
+                argv = command.get("argv") if isinstance(command, dict) else None
+                if (
+                    isinstance(argv, list)
+                    and "--package" not in argv
+                    and any(
+                        not any(pattern.search(name) for name in excluded) for pattern in compiled
+                    )
+                ):
+                    problems.append("generated mutation source exclusion policy has unused pattern")
+    elif "unfiltered-mutants.json" in documents and not isinstance(unfiltered_rows, list):
+        problems.append("generated mutation unfiltered listing is not a list")
     outcome_doc = documents.get("outcomes.json")
     rows = outcome_doc.get("outcomes") if isinstance(outcome_doc, dict) else None
     if isinstance(rows, list):

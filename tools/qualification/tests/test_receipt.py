@@ -6,8 +6,11 @@ import hashlib
 import importlib.util
 import json
 import subprocess
+import sys
+import time
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -92,7 +95,20 @@ def _producer_records(source: dict, results: list[dict]) -> list[dict]:
                 "planned_mutants": ["m1"],
                 "baseline_sha256": "b" * 64,
                 "command": {"argv": ["cargo", "mutants", "--workspace"]},
-                "process": {"exit_code": 0, "signal": None, "timed_out": False},
+                "process": {
+                    "exit_code": 0,
+                    "signal": None,
+                    "timed_out": False,
+                    "interrupted_by_signal": None,
+                },
+                "discovery_process": {
+                    "exit_code": 0,
+                    "signal": None,
+                    "timed_out": False,
+                    "interrupted_by_signal": None,
+                },
+                "excluded_mutants": [],
+                "excluded_count": 0,
                 "source_unchanged": True,
                 "campaign": {
                     "source_head": source["head"],
@@ -262,6 +278,8 @@ def hosted_gate_runner(results: list[dict]) -> dict:
     raw_results = [result for result in results if result["id"] not in producer_gate_ids]
     return {
         "exit_code": 1,
+        "timed_out": False,
+        "interrupted_by_signal": None,
         "started_at": "2026-09-16T00:00:00Z",
         "duration_s": 1.0,
         "skipped_gate_ids": producer_gate_ids,
@@ -269,9 +287,22 @@ def hosted_gate_runner(results: list[dict]) -> dict:
     }
 
 
+def passing_gate_results(required: list[str]) -> list[dict]:
+    results = [{"id": gate, "status": "PASS", "exit_code": 0} for gate in required]
+    inventory = json.loads((REPO / "tools" / "gates" / "inventory.json").read_text())
+    specs = {
+        gate["id"]: gate["status_line"] for gate in inventory["gates"] if "status_line" in gate
+    }
+    for result in results:
+        if result["id"] in specs:
+            spec = specs[result["id"]]
+            result["status_line"] = f"{spec['marker']} {spec['require']}"
+    return results
+
+
 def qualified_receipt() -> dict:
     required = json.loads((REPO / "tools" / "gates" / "required.json").read_text())["required"]
-    results = [{"id": gate, "status": "PASS", "exit_code": 0} for gate in required]
+    results = passing_gate_results(required)
     source = {
         "head": "0" * 40,
         "tree": "1" * 40,
@@ -393,6 +424,8 @@ def local_qualified_receipt() -> dict:
         result.pop("imported_producer", None)
     r["gate_runner"] = {
         "exit_code": 0,
+        "timed_out": False,
+        "interrupted_by_signal": None,
         "started_at": "2026-09-16T00:00:00Z",
         "duration_s": 1.0,
         "skipped_gate_ids": [],
@@ -413,6 +446,24 @@ def test_local_pass_sidecar_cannot_hide_runner_failure(exit_code: object) -> Non
     verdict = receipt.evaluate(value, CLEAN)
     assert verdict["status"] == "NOT_QUALIFIED"
     assert any("gate runner" in reason for reason in verdict["reasons"])
+
+
+def test_gate_runner_timeout_cannot_qualify_after_zero_exit() -> None:
+    value = local_qualified_receipt()
+    value["gate_runner"]["timed_out"] = True
+    value["gate_runner"]["exit_code"] = 0
+    verdict = receipt.evaluate(value, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any("gate runner" in reason and "timeout" in reason for reason in verdict["reasons"])
+
+
+@pytest.mark.parametrize("field", ["timed_out", "interrupted_by_signal"])
+def test_gate_runner_process_flags_are_required(field: str) -> None:
+    value = local_qualified_receipt()
+    del value["gate_runner"][field]
+    verdict = receipt.evaluate(value, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any("gate runner" in reason and field in reason for reason in verdict["reasons"])
 
 
 def test_generated_mutation_sweep_is_required_and_separate_from_curated() -> None:
@@ -543,6 +594,31 @@ def test_generated_unviable_is_visible_but_not_a_quality_failure() -> None:
     assert producer_validation._generated_problems(summary, result, envelope) == []
 
 
+@pytest.mark.parametrize("process_name", ["process", "discovery_process"])
+def test_generated_interrupted_process_cannot_qualify(process_name: str) -> None:
+    r = qualified_receipt()
+    record = producer_record(r, "generated")
+    summary = record["summary"]["payload"]
+    summary[process_name]["interrupted_by_signal"] = 15
+    envelope = record["envelope"]["payload"]
+
+    problems = producer_validation._generated_problems(summary, envelope["result"], envelope)
+
+    assert any(f"generated mutation {process_name} did not complete cleanly" in p for p in problems)
+
+
+def test_generated_exclusion_count_must_match_list() -> None:
+    r = qualified_receipt()
+    record = producer_record(r, "generated")
+    summary = record["summary"]["payload"]
+    summary["excluded_mutants"] = ["omitted-mutant"]
+    envelope = record["envelope"]["payload"]
+
+    problems = producer_validation._generated_problems(summary, envelope["result"], envelope)
+
+    assert any("excluded mutant count" in p for p in problems)
+
+
 @pytest.mark.parametrize("field", ["quality", "limitations"])
 def test_generated_unviable_accounting_cannot_be_omitted(field: str) -> None:
     r = qualified_receipt()
@@ -566,6 +642,11 @@ def test_generated_structured_raw_binds_plan_baseline_and_category_ids(tmp_path:
     output = (tmp_path / spec["summary"]).parent
     raw = output / "raw" / "mutants.out"
     raw.mkdir(parents=True)
+    config = tmp_path / ".cargo/mutants.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text('exclude_re = ["excluded"]\n', encoding="utf-8")
+    summary["excluded_mutants"] = ["m-excluded"]
+    summary["excluded_count"] = 1
     baseline = {"scenario": "Baseline", "summary": "Success"}
     summary["baseline_sha256"] = receipt.canonical_digest(baseline)
     documents = {
@@ -586,12 +667,14 @@ def test_generated_structured_raw_binds_plan_baseline_and_category_ids(tmp_path:
         ("timeout.txt", ""),
     ):
         (raw / name).write_text(value, encoding="utf-8")
+    unfiltered = output / "raw/unfiltered-mutants.json"
+    unfiltered.write_text(json.dumps([{"name": "m1"}, {"name": "m-excluded"}]), encoding="utf-8")
     summary["raw_artifacts"] = []
-    for path in sorted(raw.iterdir()):
+    for path in sorted([*raw.iterdir(), unfiltered]):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         summary["raw_artifacts"].append(
             {
-                "path": f"mutants.out/{path.name}",
+                "path": path.relative_to(output / "raw").as_posix(),
                 "sha256": digest,
                 "size": path.stat().st_size,
             }
@@ -609,6 +692,34 @@ def test_generated_structured_raw_binds_plan_baseline_and_category_ids(tmp_path:
         producer_validation._generated_structured_raw_problems(tmp_path, spec, summary, envelope)
         == []
     )
+    summary["excluded_mutants"] = ["m-other"]
+    assert any(
+        "excluded mutants differ from unfiltered" in problem
+        for problem in producer_validation._generated_structured_raw_problems(
+            tmp_path, spec, summary, envelope
+        )
+    )
+    summary["excluded_mutants"] = ["m-excluded"]
+    unfiltered.write_text(json.dumps([{"name": "m1"}, {"name": "unapproved"}]), encoding="utf-8")
+    digest = hashlib.sha256(unfiltered.read_bytes()).hexdigest()
+    raw_record = next(item for item in summary["raw_artifacts"] if item["path"] == unfiltered.name)
+    raw_record["sha256"] = digest
+    raw_record["size"] = unfiltered.stat().st_size
+    envelope_record = next(
+        item for item in envelope["artifacts"] if item["path"].endswith(unfiltered.name)
+    )
+    envelope_record["sha256"] = digest
+    envelope_record["size"] = unfiltered.stat().st_size
+    assert any(
+        "excluded mutant is not covered by source policy" in problem
+        for problem in producer_validation._generated_structured_raw_problems(
+            tmp_path, spec, summary, envelope
+        )
+    )
+    unfiltered.write_text(json.dumps([{"name": "m1"}, {"name": "m-excluded"}]), encoding="utf-8")
+    digest = hashlib.sha256(unfiltered.read_bytes()).hexdigest()
+    raw_record["sha256"] = envelope_record["sha256"] = digest
+    raw_record["size"] = envelope_record["size"] = unfiltered.stat().st_size
     original_raw = deepcopy(summary["raw_artifacts"])
     duplicate = deepcopy(original_raw[0])
     duplicate["sha256"] = "0" * 64
@@ -636,22 +747,78 @@ def test_generated_structured_raw_binds_plan_baseline_and_category_ids(tmp_path:
         tmp_path, spec, summary, envelope
     )
     assert any("not a list" in problem for problem in problems)
+    (raw / "mutants.json").write_bytes(b"\xff")
+    problems = producer_validation._generated_structured_raw_problems(
+        tmp_path, spec, summary, envelope
+    )
+    assert any("malformed JSON" in problem for problem in problems)
 
 
 def test_run_json_never_reuses_a_stale_sidecar(tmp_path: Path, monkeypatch) -> None:
     sidecar = tmp_path / "stale.json"
     sidecar.write_text('{"qualified": true}\n', encoding="utf-8")
     monkeypatch.setattr(
-        receipt.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args=args[0], returncode=1, stdout="", stderr="crashed"
+        receipt,
+        "run_process",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1,
+            stderr="crashed",
+            timed_out=False,
+            interrupted_by_signal=None,
         ),
     )
-    run = receipt.run_json(["broken-runner"], sidecar)
+    run = receipt.run_json(["broken-runner"], sidecar, timeout_seconds=1)
     assert run.exit_code == 1
     assert run.payload["error"] == "runner did not write its receipt"
     assert "qualified" not in run.payload
+
+
+def test_run_json_bounds_a_runner_that_exits_zero_after_timeout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sidecar = tmp_path / "runner.json"
+    child = (
+        "import json, signal, sys; "
+        "signal.signal(signal.SIGTERM, lambda *_: sys.exit(0)); "
+        "open(sys.argv[-1], 'w').write(json.dumps({'results': []})); "
+        "signal.pause()"
+    )
+    monkeypatch.setattr(receipt, "REPO", tmp_path)
+    started = time.monotonic()
+    run = receipt.run_json([sys.executable, "-c", child], sidecar, timeout_seconds=0.2)
+    assert time.monotonic() - started < 2
+    assert run.payload == {"results": []}
+    assert run.exit_code == 0
+    assert run.timed_out is True
+
+
+def test_run_json_preserves_completed_runner_output(tmp_path: Path, monkeypatch) -> None:
+    sidecar = tmp_path / "runner.json"
+    child = (
+        "import json, sys; "
+        "open(sys.argv[-1], 'w').write(json.dumps({'results': [{'id': 'done'}]})); "
+        "print('runner completed')"
+    )
+    monkeypatch.setattr(receipt, "REPO", tmp_path)
+    run = receipt.run_json([sys.executable, "-c", child], sidecar, timeout_seconds=2)
+    assert run.payload == {"results": [{"id": "done"}]}
+    assert run.exit_code == 0
+    assert run.timed_out is False
+    assert run.interrupted_by_signal is None
+
+
+def test_run_json_records_an_undecodable_sidecar_as_failed_evidence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sidecar = tmp_path / "runner.json"
+    child = "import sys; open(sys.argv[-1], 'wb').write(b'\\xff')"
+    monkeypatch.setattr(receipt, "REPO", tmp_path)
+
+    run = receipt.run_json([sys.executable, "-c", child], sidecar, timeout_seconds=2)
+
+    assert run.exit_code == 0
+    assert "runner wrote invalid" in run.payload["error"]
+    assert run.payload.get("results") is None
 
 
 @pytest.mark.parametrize(
@@ -765,6 +932,23 @@ def test_a_source_mismatch_is_not_qualified() -> None:
     verdict = receipt.evaluate(qualified_receipt(), {**CLEAN, "paths_digest": "different"})
     assert verdict["status"] == "NOT_QUALIFIED"
     assert any("source digest" in r for r in verdict["reasons"])
+
+
+def test_final_receipt_rejects_a_conflicting_pass_status_line() -> None:
+    value = qualified_receipt()
+    result = next(item for item in value["gates"]["results"] if item["id"] == "bench-iai")
+    result["status_line"] = "taskmesh-iai-gate status=BASELINE_CREATED status=QUALIFIED"
+    verdict = receipt.evaluate(value, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any("bench-iai" in reason and "status line" in reason for reason in verdict["reasons"])
+
+
+def test_imported_producer_pass_uses_its_envelope_instead_of_a_local_status_line() -> None:
+    value = qualified_receipt()
+    result = next(item for item in value["gates"]["results"] if item["id"] == "modelcheck")
+    assert result["imported_producer"] is True
+    result.pop("status_line")
+    assert receipt.evaluate(value, CLEAN)["status"] == "QUALIFIED"
 
 
 def test_a_receipt_missing_the_collectors_shape_is_not_qualified() -> None:
@@ -903,6 +1087,17 @@ def test_a_passing_required_gate_requires_integer_exit_code_zero(exit_code: obje
     verdict = receipt.evaluate(r, CLEAN)
     assert verdict["status"] == "NOT_QUALIFIED"
     assert any("PASS without integer exit_code 0" in reason for reason in verdict["reasons"])
+
+
+def test_a_passing_gate_cannot_report_interruption() -> None:
+    r = qualified_receipt()
+    result = next(
+        result for result in r["gates"]["results"] if result["id"] != receipt.MUTATION_GATE_ID
+    )
+    result["interrupted_by_signal"] = 15
+    verdict = receipt.evaluate(r, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any("interrupted" in reason for reason in verdict["reasons"])
 
 
 def test_an_optional_passing_gate_also_requires_integer_exit_code_zero() -> None:
@@ -1272,6 +1467,17 @@ def test_a_content_change_to_a_tracked_file_changes_the_digest(repo: Path) -> No
     assert receipt.source_identity(repo)["paths_digest"] != before
 
 
+def test_a_permission_mode_change_to_a_tracked_file_changes_the_digest(repo: Path) -> None:
+    source = repo / "src" / "lib.rs"
+    source.chmod(0o644)
+    before = receipt.source_identity(repo)
+    source.chmod(0o600)
+    after = receipt.source_identity(repo)
+    assert after["head"] == before["head"]
+    assert after["dirty"] is False, "Git tracks the execute bit, not read/write permission bits"
+    assert after["paths_digest"] != before["paths_digest"]
+
+
 def test_real_v02_artifacts_share_receipt_source_identity_and_reject_byte_drift(
     repo: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1306,7 +1512,7 @@ def test_real_v02_artifacts_share_receipt_source_identity_and_reject_byte_drift(
             "isolated_checkout": True,
         }
         required = json.loads((REPO / "tools" / "gates" / "required.json").read_text())["required"]
-        results = [{"id": gate, "status": "PASS", "exit_code": 0} for gate in required]
+        results = passing_gate_results(required)
         synthetic = _producer_records(source, results)
         by_surface = {record["surface"]: record for record in synthetic}
         for spec in v02_specs:
@@ -1544,7 +1750,7 @@ def test_collect_qualifies_on_a_clean_tree_with_receipts_written_at_the_root(
         ),
     )
 
-    results = [{"id": gate, "status": "PASS", "exit_code": 0} for gate in required]
+    results = passing_gate_results(required)
     producer_source = {
         "head": identity["head"],
         "paths_digest": identity["paths_digest"],
@@ -1571,7 +1777,9 @@ def test_collect_qualifies_on_a_clean_tree_with_receipts_written_at_the_root(
     calls: list[list[str]] = []
     producer_gate_ids = {spec["gate_id"] for spec in specs}
 
-    def fake_run_json(cmd: list[str], receipt_path: Path) -> receipt.JsonRun:
+    def fake_run_json(
+        cmd: list[str], receipt_path: Path, *, timeout_seconds: float
+    ) -> receipt.JsonRun:
         calls.append(cmd)
         payload = {
             "results": [
@@ -1633,7 +1841,9 @@ def test_collect_rejects_a_corrupt_raw_artifact_before_writing_qualified_receipt
     monkeypatch.setattr(
         receipt,
         "run_json",
-        lambda _cmd, sidecar: receipt.JsonRun({"results": []}, 0, "2026-09-21T00:00:00Z", 0.0),
+        lambda _cmd, sidecar, **_kwargs: receipt.JsonRun(
+            {"results": []}, 0, "2026-09-21T00:00:00Z", 0.0
+        ),
     )
 
     def artifact_check(*_args, **kwargs):
@@ -1882,7 +2092,9 @@ def test_collect_writes_not_qualified_for_malformed_producer_record(
     monkeypatch.setattr(
         receipt,
         "run_json",
-        lambda _cmd, _sidecar: receipt.JsonRun({"results": []}, 1, "2026-09-21T00:00:00Z", 0.0),
+        lambda _cmd, _sidecar, **_kwargs: receipt.JsonRun(
+            {"results": []}, 1, "2026-09-21T00:00:00Z", 0.0
+        ),
     )
     out = repo / "receipt.json"
     assert receipt.collect(out, ["fast"], skip_mutations=True) == 1
@@ -1896,7 +2108,9 @@ def test_skip_mutations_really_skips_the_mutation_runner(repo: Path, monkeypatch
     monkeypatch.setattr(receipt, "REPO", repo)
     calls: list[list[str]] = []
 
-    def fake_run_json(cmd: list[str], receipt_path: Path) -> receipt.JsonRun:
+    def fake_run_json(
+        cmd: list[str], receipt_path: Path, *, timeout_seconds: float
+    ) -> receipt.JsonRun:
         calls.append(cmd)
         payload = {"results": []}
         receipt_path.write_text(json.dumps(payload))

@@ -1,6 +1,6 @@
 # SEP22-T03 backpressure handshake
 
-- 상태: IMPLEMENTED_UNQUALIFIED
+- 상태: LOCALLY_VERIFIED (전체 qualification은 W3)
 - finding: TO-03
 - priority: P1
 - write lane: `e2e-scenarios`
@@ -133,6 +133,21 @@ target에서 수행한다. 이후 integrator가 `just gate`, `just matrix`, `jus
   즉시 실패(exit 101). `QueueWithinDepth`와 depth 1을 함께 적용한 exact test는 1/1 실행 후
   `first submission did not reject` 5초 timeout으로 실패(exit 101). 두 mutation 모두 원복했고
   `e2e_scenarios.rs` SHA-256은 위 owner hash와 같다. 원복 뒤 exact positive 1/1 통과했다.
-- This is local, non-hermetic proof. Valid before/after timing comparison and exact-source W3
-  qualification were not run; A04 remains open. 한 차례 full e2e 재실행은 test binary가
+- 이 시점의 local proof는 non-hermetic이다. 당시에는 before/after timing을 수집하지 않아
+  A04가 열려 있었다. exact-source W3 qualification도 아직 없다. 한 차례 full e2e 재실행은 test binary가
   본문 진입 전 macOS loader에서 장시간 대기해 중단했으므로 pass로 계상하지 않는다.
+
+## 2026-09-23 같은 소스의 retry-loop 대조
+
+- `main@1d2bb2fedcbe45ed5809d5f87e4f66560f5c7d9b`의 동일 production 소스에서
+  현재 test 함수와 commit `402cb9d`의 이전 retry-loop 함수만 바꿔 `cargo test --locked
+  -p taskmesh --test e2e_scenarios --no-run`의 `test` 프로필로 각각 빌드했다.
+  현재 owner SHA-256은 `2935d7a27320dff36f068cd7afe598fe55a235185bb54c9a079dc412f6e56974`,
+  대조 함수 삽입 소스는 `3be2906585d8af64b9e63f1c10d5a8d9f46a1106b81a95fbe1dbb832622ccd9b`다.
+- exact `backpressure_retry_makes_forward_progress` binary를 같은 macOS 15.6 arm64,
+  같은 target directory에서 교차 순서로 각 10회 실행했다. 현재 10/10, 이전 loop
+  10/10 통과했고, process wall median/worst는 현재 0.0076/0.2398초, 이전 loop
+  0.0070/0.2361초였다. 성공 경로의 유의한 비용 절감은 관찰되지 않았다. 후자의
+  worst 값은 두 변형 모두에 나타난 호스트 부하 영향으로 성능 주장의 근거가 아니다.
+- 앞 절의 class/policy intentional negatives와 결합해 A01–A04의 오너 로컬 계약을
+  충족했다. 임시 소스를 원래 SHA로 복원했고 W3 exact-source full receipt는 별도다.

@@ -156,6 +156,22 @@ def test_baseline_artifact_paths_cannot_escape_the_store(tmp_path: Path) -> None
     assert iai_gate.baseline_artifacts(store) == []
 
 
+def test_raw_output_cannot_alias_through_an_in_store_symlink_directory(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    real = store / "real"
+    real.mkdir(parents=True)
+    (real / "callgrind.out").write_text("events: Ir\n", encoding="utf-8")
+    (store / "alias").symlink_to(real, target_is_directory=True)
+
+    assert iai_gate.confined_artifact(store, "alias/callgrind.out") is None
+    assert (
+        iai_gate._raw_output_paths(
+            {"callgrind_summary": {"out_paths": ["alias/callgrind.out"]}}, store
+        )
+        is None
+    )
+
+
 def test_manifest_rejects_a_baseline_artifact_outside_the_store(tmp_path: Path) -> None:
     store = tmp_path / "store"
     store.mkdir()
@@ -203,6 +219,69 @@ def test_symlinked_summary_is_not_comparison_evidence(tmp_path: Path) -> None:
     assert result["executed_count"] == 0
     assert result["comparison_count"] == 0
     assert result["invalid_summaries"] == ["fake/summary.json"]
+
+
+@pytest.mark.parametrize(
+    "metrics",
+    [
+        {"Dr": {"metrics": {"Both": [101, 100]}}},
+        {"Ir": {"metrics": {"Both": [None, None]}}},
+        {"Ir": {"metrics": {"Both": ["101", "100"]}}},
+        {"Ir": {"metrics": {"Both": [0, 100]}}},
+    ],
+)
+def test_comparison_requires_real_instruction_counts_and_keeps_baseline_on_failure(
+    tmp_path: Path, metrics: dict[str, object]
+) -> None:
+    store = tmp_path / "store"
+    (store / "fake").mkdir(parents=True)
+    (store / "fake" / "summary.json").write_text(
+        json.dumps({"callgrind_summary": {"callgrind_run": {"total": {"summary": metrics}}}}),
+        encoding="utf-8",
+    )
+    (store / "fake" / "callgrind.fake.out").write_text("events: Ir\n", encoding="utf-8")
+    (store / "benchmark-output.log").write_text("benchmark finished\n", encoding="utf-8")
+    baseline = store / iai_gate.BASELINE_MANIFEST
+    baseline.write_text("existing baseline\n", encoding="utf-8")
+
+    status, problems = iai_gate.finalize_run(
+        store,
+        fingerprint_value="f" * 64,
+        runner="0.14.2",
+        valgrind="valgrind-3.22",
+        rustc="rustc 1.95.0",
+        expected_comparison=True,
+    )
+    assert status == "NOT_RUN"
+    assert "verified old-vs-new comparison is incomplete" in problems
+    assert baseline.read_text(encoding="utf-8") == "existing baseline\n"
+
+
+def test_first_run_without_raw_callgrind_output_cannot_create_a_baseline(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    (store / "fake").mkdir(parents=True)
+    (store / "fake" / "summary.json").write_text(
+        json.dumps(
+            {
+                "callgrind_summary": {
+                    "callgrind_run": {"total": {"summary": {"Ir": {"metrics": {"Left": 101}}}}}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (store / "benchmark-output.log").write_text("benchmark finished\n", encoding="utf-8")
+    status, problems = iai_gate.finalize_run(
+        store,
+        fingerprint_value="f" * 64,
+        runner="0.14.2",
+        valgrind="valgrind-3.22",
+        rustc="rustc 1.95.0",
+        expected_comparison=False,
+    )
+    assert status == "NOT_RUN"
+    assert "raw callgrind .out artifact is missing" in problems
+    assert not (store / iai_gate.BASELINE_MANIFEST).exists()
 
 
 # ---- the shell script ------------------------------------------------------
@@ -272,18 +351,61 @@ class Harness:
         self._comparison_complete = complete
         self._write_cargo()
 
+    def bench_case_count(self, count: int) -> None:
+        self._case_count = count
+        self._write_cargo()
+
+    def bench_raw_case_count(self, count: int) -> None:
+        self._raw_case_count = count
+        self._write_cargo()
+
+    def bench_share_raw_reference(self, share: bool) -> None:
+        self._share_raw_reference = share
+        self._write_cargo()
+
     def _write_cargo(self) -> None:
         listing = getattr(self, "_listing", "")
         ok = getattr(self, "_bench_ok", True)
         emits_summary = getattr(self, "_emits_summary", True)
         comparison_complete = getattr(self, "_comparison_complete", True)
         comparison_flag = 1 if comparison_complete else 0
-        summary_command = (
-            "  printf '"
-            '{"version":"3","callgrind_summary":{"callgrind_run":{"total":'
-            '{"summary":{"Ir":{"metrics":%s}},"regressions":[]}}}}'
-            '\\n\' "$metrics" >target/iai/fake/summary.json\n'
-        )
+        cases = iai_gate.gate_config()["expected_cases"]
+        case_commands = ""
+        for index, case in enumerate(cases[: getattr(self, "_case_count", len(cases))]):
+            module_path, case_id = case.split("#", 1)
+            function_name = module_path.rsplit("::", 1)[-1]
+            directory = f"target/iai/{function_name}.{case_id}"
+            raw_directory = (
+                "target/iai/admit_release.roundtrip"
+                if getattr(self, "_share_raw_reference", False)
+                else directory
+            )
+            payload = {
+                "version": "3",
+                "kind": "LibraryBenchmark",
+                "module_path": module_path,
+                "function_name": function_name,
+                "id": case_id,
+                "callgrind_summary": {
+                    "out_paths": [str(self.root / raw_directory / "callgrind.fake.out")],
+                    "callgrind_run": {
+                        "total": {"summary": {"Ir": {"metrics": "__METRICS__"}}, "regressions": []}
+                    },
+                },
+            }
+            encoded = json.dumps(payload, separators=(",", ":")).replace('"__METRICS__"', "%s")
+            case_commands += (
+                f"  mkdir -p {directory}\n"
+                f"  if [[ -f {directory}/callgrind.fake.out && {comparison_flag} -eq 1 ]]; then\n"
+                "    metrics='{\"Both\":[101,100]}'\n"
+                "  else\n"
+                "    metrics='{\"Left\":101}'\n"
+                "  fi\n"
+            )
+            if index < getattr(self, "_raw_case_count", len(cases)):
+                case_commands += f"  echo 'events: Ir' >{directory}/callgrind.fake.out\n"
+            if emits_summary:
+                case_commands += f"  printf '{encoded}\\n' \"$metrics\" >{directory}/summary.json\n"
         _shim(
             self.bin,
             "cargo",
@@ -297,16 +419,8 @@ class Harness:
             '    echo "unsupported summary format" >&2; exit 3;\n'
             "  }\n"
             f"  if [[ {0 if ok else 1} -ne 0 ]]; then echo 'benchmark failed'; exit 1; fi\n"
-            "  mkdir -p target/iai/fake\n"
-            "  if [[ -f target/iai/fake/callgrind.fake.out "
-            f"&& {comparison_flag} -eq 1 ]]; then\n"
-            "    metrics='{\"Both\":[101,100]}'\n"
-            "  else\n"
-            "    metrics='{\"Left\":101}'\n"
-            "  fi\n"
-            "  echo 'events: Ir' >target/iai/fake/callgrind.fake.out\n"
-            + (summary_command if emits_summary else "")
-            + "  echo 'Iai-Callgrind result: Ok; 1 benchmark finished'\n"
+            + case_commands
+            + f"  echo 'Iai-Callgrind result: Ok; {len(cases)} benchmarks finished'\n"
             "  exit 0\n"
             "fi\n"
             "exit 0\n",
@@ -368,6 +482,22 @@ def test_symlinked_baseline_directory_is_refused(harness: Harness, tmp_path: Pat
     assert list(outside.iterdir()) == []
 
 
+def test_symlinked_target_parent_cannot_delete_an_external_baseline(
+    harness: Harness, tmp_path: Path
+) -> None:
+    outside = tmp_path / "outside"
+    baseline = outside / "iai"
+    baseline.mkdir(parents=True)
+    marker = baseline / "keep.txt"
+    marker.write_text("external baseline\n", encoding="utf-8")
+    (harness.root / "target").symlink_to(outside, target_is_directory=True)
+
+    proc = harness.run()
+    assert proc.returncode == 1
+    assert "target parent is a symlink" in proc.stderr
+    assert marker.read_text(encoding="utf-8") == "external baseline\n"
+
+
 def test_a_runner_whose_version_cannot_be_read_says_so_instead_of_dying_silently(
     harness: Harness,
 ) -> None:
@@ -410,6 +540,34 @@ def test_first_run_records_a_baseline_and_second_run_qualifies(harness: Harness)
     assert "NOT regression-qualified" not in second.stderr
 
 
+def test_partial_benchmark_suite_cannot_qualify(harness: Harness) -> None:
+    assert harness.run().returncode == 0
+    # A zero-exit runner that emits only one summary must not attest the three
+    # governance cases defined by iai_governance.rs.
+    harness.bench_case_count(1)
+    proc = harness.run()
+    assert proc.returncode == 1
+    assert "benchmark case inventory mismatch" in proc.stderr
+    assert "status=QUALIFIED" not in proc.stdout
+
+
+def test_every_case_requires_its_own_raw_callgrind_output(harness: Harness) -> None:
+    harness.bench_raw_case_count(1)
+    proc = harness.run()
+    assert proc.returncode == 1
+    assert "one or more summary artifacts are invalid" in proc.stderr
+    assert not harness.baseline_manifest.exists()
+
+
+def test_two_cases_cannot_claim_the_same_raw_callgrind_output(harness: Harness) -> None:
+    assert harness.run().returncode == 0
+    harness.bench_share_raw_reference(True)
+    proc = harness.run()
+    assert proc.returncode == 1
+    assert "raw callgrind output is shared across benchmark cases" in proc.stderr
+    assert "status=QUALIFIED" not in proc.stdout
+
+
 def test_stamp_only_cache_never_qualifies(harness: Harness) -> None:
     stamp = harness.root / "target" / "iai" / "taskmesh-fingerprint"
     stamp.parent.mkdir(parents=True)
@@ -426,7 +584,7 @@ def test_missing_or_corrupt_raw_baseline_restarts_without_qualifying(
     harness: Harness, damage: str
 ) -> None:
     assert harness.run().returncode == 0
-    raw = harness.root / "target" / "iai" / "fake" / "callgrind.fake.out"
+    raw = harness.root / "target" / "iai" / "admit_release.roundtrip" / "callgrind.fake.out"
     if damage == "missing":
         raw.unlink()
     else:

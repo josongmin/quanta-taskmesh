@@ -1,6 +1,6 @@
 # SEP22-T07 Rayon bounded rendezvous
 
-- 상태: IMPLEMENTED_UNQUALIFIED
+- 상태: LOCALLY_VERIFIED (전체 qualification은 W3)
 - finding: TO-07
 - priority: P1
 - write lane: `rayon-adapter-test`
@@ -87,5 +87,21 @@ cargo test --locked -p taskmesh-rayon --test rayon_smoke -- --nocapture
   결과 receive는 `recv_timeout(Duration::from_secs(1))`이며 값 42와 sender-side assertion이
   유지된다. Unbounded `recv()`는 이 owner file에 남지 않았다.
 - `cargo test --locked -p taskmesh-rayon --test rayon_smoke`: exit 0, 4/4 실행·통과,
-  실패/filtered/ignored 0. Timeout/disconnect intentional negative와 반복 worst duration,
-  W3 receipt는 미확보다. 표준 채널 동작만 재검증하는 영구 테스트는 추가하지 않았다.
+  실패/filtered/ignored 0. 당시에는 timeout/disconnect intentional negative와 반복 worst
+  duration을 수집하지 않았다. 표준 채널 동작만 재검증하는 영구 테스트는 추가하지 않았다.
+
+## 2026-09-23 오너 로컬 negative 및 반복 증거
+
+- `main@1d2bb2fedcbe45ed5809d5f87e4f66560f5c7d9b`의 owner source SHA-256은
+  `4a6c3fa70d554c76e01824551a51ed804a70bdb36a126c1aa41ab5a13d9a8c20`이다.
+  임시 detached worktree에서 각 단일 변이를 적용하고 `cargo test --locked -p
+  taskmesh-rayon --test rayon_smoke executor_runs_cpu_work -- --exact --nocapture`로 검증했다.
+- dispatch 제거 후 sender를 살아 있게 둔 변이는 1/1 실행, 약 1.01초에 `Timeout`으로 실패
+  (exit 101). sender drop 변이는 1/1 실행, `Disconnected`로 즉시 실패(exit 101).
+  반환값 42를 36으로 바꾼 변이는 1/1 실행 후 값 assertion에서 실패(exit 101).
+- 원본 복원 후 같은 cargo 명령은 1/1 통과했다. 그때 만든 exact test binary를 직접
+  20회 실행해 20/20 통과했다. macOS 15.6 arm64, rustc 1.95.0에서 process wall time의
+  median 0.0030초, worst 0.0057초로 1초 receive deadline과 거리가 있다. 이는 이
+  호스트의 정상 경로 관찰이지 성능 절감률이나 다른 호스트의 deadline 보장이 아니다.
+  임시 worktree owner source는 원래 SHA로 복원됐고 현재 작업 트리의 owner 파일도 clean이다.
+- A01–A04의 오너 로컬 증거는 충족했다. W3 exact-source full receipt는 별도다.

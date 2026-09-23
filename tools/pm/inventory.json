@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "startup": [
+    {
+      "path": "AGENTS.md",
+      "max_bytes": 4096,
+      "max_lines": 80,
+      "imports": []
+    },
+    {
+      "path": ".claude/CLAUDE.md",
+      "max_bytes": 256,
+      "max_lines": 5,
+      "imports": [
+        "../AGENTS.md"
+      ]
+    }
+  ],
+  "cursor_rules": [
+    {
+      "path": ".cursor/rules/runtime-governance.mdc",
+      "patterns": [
+        "Cargo.toml",
+        "crates/**/Cargo.toml",
+        "crates/**/*.rs"
+      ]
+    },
+    {
+      "path": ".cursor/rules/verification-and-release.mdc",
+      "patterns": [
+        ".github/workflows/**",
+        "Justfile",
+        "docs/release-checklist.md",
+        "tools/arch/**",
+        "tools/bench/**",
+        "tools/bench-*.sh",
+        "tools/consumer-msrv/**",
+        "tools/coverage/**",
+        "tools/doc-examples/**",
+        "tools/fuzz/**",
+        "tools/gates/**",
+        "tools/modelcheck/**",
+        "tools/process_supervisor.py",
+        "tools/qualification/**",
+        "tools/release/**",
+        "tools/semgrep/**",
+        "tools/tsan/**",
+        "tools/verification/**"
+      ]
+    }
+  ]
+}

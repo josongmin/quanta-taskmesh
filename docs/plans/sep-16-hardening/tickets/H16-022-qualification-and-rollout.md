@@ -52,10 +52,32 @@
   (clean committed tree `cc5b256`). raw `.gates.json`은 22 PASS + 1 SKIPPED + mutation NOT_RUN이고,
   combined 파일은 별도 curated mutation receipt에서 derived PASS를 append했지만 summary를 재계산하지
   않아 자기모순이었다. coverage도 instantiations 56.63%와 branch 미수집을 status line에서 누락했다.
-  따라서 이 bundle은 historical execution evidence일 뿐 현재 schema-v2 validator의 qualification
-  receipt가 아니다. 수정된 collector를 commit한 뒤 Linux CI에서 새 receipt of record를 수집해야 한다.
+  따라서 이 bundle은 historical execution evidence일 뿐 현재 schema-v4 validator의
+  qualification receipt가 아니다. 당시 계획은 수정된 collector를 commit한 뒤 Linux CI에서
+  새 receipt of record를 수집하는 것이었다.
 - rollout/rollback: 새 snapshot schema(v2)는 구버전 reader가 읽지 못하므로 downgrade는
   drain-and-restart 또는 forward fix가 필요하다(release-checklist 기록). 배포/activation은 수행하지 않았다.
+
+## 현재 qualification 경로 — 2026-09-23
+
+- 위 CI push/credential 설명은 2026-09-16 실행 기록이다. hardening 구현은 현재
+  `origin/main@e55d3aa`에 포함됐고, GitHub `ci`·`bench-gates`·`release-qualification`
+  workflows는 수동 비활성화 상태다. push나 hosted CI를 기다리는 것으로 A04가 닫히지 않는다.
+- 현재 [release checklist](../../../release-checklist.md)와 `Justfile`은 clean Linux
+  checkout에서 `just qualify-local` 및 `just validate-local-qualification`을 ordinary
+  qualification의 권위로 둔다. 현재 receipt schema는 v4다. `bench-iai`는 같은
+  fingerprint의 baseline 생성과 후속 `QUALIFIED` 실행을 구분한다. 현재 HEAD의 local
+  qualification receipt는 없다.
+- 이 local 경로는 clean 시작·종료 source identity를 확인하지만 checkout의 중간 수정 불가성을
+  강제하지 않는다. 위 2026-09-16 "수정 불가한 별도 checkout" 액션의 hosted 구현 기록을 현재
+  local run의 속성으로 옮겨 주장하지 않는다. 최종 실행은 배타적 clean checkout에서 수행하고
+  실행 중 writer가 없음을 운영 경계로 확보해야 한다.
+- merge-to-main은 확인됐다. `semantica-codegraph-v2@f2b5180b28e55d8fc268ec6fb299f1d16a81995b`의 추적된
+  `quanta-runtime/Cargo.toml`은 Taskmesh 0.3.0 optional path dependency와
+  `taskmesh-governance-test-hooks` 소비자 테스트를 선언한다. 이는 소비자 경로의 발견이지
+  현재 dirty checkout과 Taskmesh 후보의 호환성 실행 증거가 아니다. PR review,
+  consumer compile/test, deployment, activation 및 rollback owner 승인은 여전히
+  별도 증거가 필요하다. [예외 대장](EXCEPTIONS.md)에 현재 경로를 기록한다.
 
 ## 검증 / 완료 조건
 
@@ -66,13 +88,31 @@
       release-checklist에 명시했다.
 - [x] `H16-022-A03` curated mutation inventory 103건 = 102 defect probes + 1 CONTROL_GREEN
       (cargo runner 90, pytest runner 13; generated cargo-mutants score와 별도). historical receipt는
-      첫 100건이고 receipt/coverage/runner 무결성 probe 4건은 schema-v2 보완에서 추가했다.
-- [ ] `H16-022-A04` MSRV consumer receipt 존재(PASS); Linux IAI는 **명시적 blocker** (macOS). CI
-      `qualification` job(ci.yml)이 clean ubuntu checkout에서 `receipt.py collect`를 실행하고 artifact로
-      올리도록 wired — 첫 push에서 BASELINE_CREATED, 두 번째부터 bench-iai QUALIFIED. 이 저장소에서
-      push 권한이 없어(`songminjo` → `josongmin/quanta-taskmesh` 403) 실제 실행은 owner의 push 후다.
+      당시 inventory 100건을 담는다. 현재 inventory는 그 100개 ID 대비 6개가 추가되고
+      3개가 제거되어 103건이다 (`tools/verification/mutations.json`).
+- [ ] `H16-022-A04` MSRV consumer의 과거 local PASS는 현 HEAD의 qualification이 아니다.
+      Linux IAI와 ordinary required gates는 clean Linux 후보에서 `just qualify-local`로 수집하고
+      `just validate-local-qualification`이 동일 source에 `QUALIFIED`를 반환해야 한다.
+      IAI의 첫 동일-fingerprint run은 baseline 생성이며 qualified 비교가 아니다.
+      2026-09-23 owner-local IAI fixture에서는 `Ir` 누락·비수치·0이 비교를
+      `QUALIFIED`로 오인하던 결함과 raw `.out` 없이 baseline을 생성하던 결함을 재현 후
+      수정했다 (`tools/bench/tests/test_iai_gate.py`). 후속 감사에서는 runner가 세 case 중
+      하나만 출력해도 `QUALIFIED`가 되던 경로를 재현하고, `perf-gate.json`의 명시적
+      case inventory와 실제 summary identity의 완전 일치, case별 raw `.out`의 존재와
+      case 간 raw 출력의 비공유를 강제했다.
+      `target` 상위 경로 symlink가 외부 baseline을 지우는 경로도 재현해 차단했다. 이 fixture 결과는
+      Linux Valgrind 실측, 정상 control 및 >5% negative, clean-source qualification을 대체하지 않는다.
+      Release raw 파일의 digest가 맞아도 비교 manifest가 `BASELINE_CREATED`인 경우를
+      release validator가 별도로 거절하지 않던 경로를 2026-09-23 재현해 보강했다.
+      현재 validator는 source fingerprint, baseline/raw summary, 기대 case와 ordinary
+      `bench-iai` 상태줄을 다시 대조한다. in-store 상위 symlink를 통한 raw `.out` 별칭도
+      두 case가 동일 출력으로 인정되지 않도록 차단했다. Dirty owner-local release 55/55 및 IAI 36/36
+      테스트 PASS는 이 검증 로직의 회귀 증거이며 Linux 실측이나 release qualification이 아니다.
   → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
-- [ ] `H16-022-A05` review/merge/consumer/activation은 **UNVERIFIED** (commit/push 미수행, 외부 접근 없음)
+- [ ] `H16-022-A05` hardening 구현의 `origin/main` 포함과 Semantica 소비자
+      `f2b5180b28e55d8fc268ec6fb299f1d16a81995b`의 추적된 optional path dependency는 확인했다. 현재 두 소스를 결합한
+      consumer compile/test, PR review disposition, deployment 및 activation은
+      **UNVERIFIED**다.
   → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)
 - [ ] `H16-022-A06` rollback 계약 문서화; owner 승인은 별도
   → 예외 대장: [EXCEPTIONS.md](EXCEPTIONS.md)

@@ -127,10 +127,15 @@ def confined_artifact(root: Path, relative: str) -> Path | None:
     """Resolve a manifest artifact only when it stays inside the baseline store."""
     try:
         named = Path(relative)
-        if not relative or named.is_absolute() or ".." in named.parts:
+        if not relative or named.is_absolute() or ".." in named.parts or root.is_symlink():
             return None
         artifact = root / named
-        if artifact.is_symlink() or not artifact.resolve().is_relative_to(root.resolve()):
+        component = root
+        for part in named.parts:
+            component /= part
+            if component.is_symlink():
+                return None
+        if not artifact.resolve().is_relative_to(root.resolve()):
             return None
     except (OSError, ValueError):
         return None
@@ -154,15 +159,23 @@ def baseline_artifacts(root: Path) -> list[dict[str, object]]:
 
 
 def baseline_manifest_problems(
-    root: Path, *, fingerprint_value: str, runner: str, valgrind: str, rustc: str
+    root: Path,
+    *,
+    fingerprint_value: str,
+    runner: str,
+    valgrind: str,
+    rustc: str,
+    config_path: Path = CONFIG,
 ) -> list[str]:
     path = root / BASELINE_MANIFEST
     if path.is_symlink() or not path.is_file():
         return ["baseline manifest is missing"]
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
         return [f"baseline manifest is unreadable: {error}"]
+    if not isinstance(manifest, dict):
+        return ["baseline manifest is malformed"]
     problems: list[str] = []
     expected = {
         "schema_version": BASELINE_MANIFEST_VERSION,
@@ -172,7 +185,7 @@ def baseline_manifest_problems(
         "runner": runner,
         "valgrind": valgrind.strip(),
         "rustc": rustc.strip(),
-        "config_sha256": _sha256(CONFIG),
+        "config_sha256": _sha256(config_path),
     }
     for key, value in expected.items():
         if manifest.get(key) != value:
@@ -202,29 +215,109 @@ def baseline_manifest_problems(
     return problems
 
 
-def _summary_comparison_complete(summary: object) -> bool:
+def _total_metrics(summary: object) -> dict | None:
     if not isinstance(summary, dict):
-        return False
+        return None
     callgrind = summary.get("callgrind_summary")
     if not isinstance(callgrind, dict):
-        return False
+        return None
     run = callgrind.get("callgrind_run")
     total = run.get("total") if isinstance(run, dict) else None
     metrics = total.get("summary") if isinstance(total, dict) else None
-    if not isinstance(metrics, dict) or not metrics:
+    return metrics if isinstance(metrics, dict) and metrics else None
+
+
+def _instruction_counts_present(summary: object) -> bool:
+    metrics = _total_metrics(summary)
+    if metrics is None:
+        return False
+    ir = metrics.get("Ir")
+    values = ir.get("metrics") if isinstance(ir, dict) else None
+    if not isinstance(values, dict):
+        return False
+    # iai-callgrind 0.14.2 serializes EitherOrBoth<u64> as Left or Both.
+    # A measured governance operation must execute at least one instruction.
+    if set(values) == {"Left"}:
+        return type(values["Left"]) is int and values["Left"] > 0
+    if set(values) == {"Both"}:
+        both = values["Both"]
+        return (
+            isinstance(both, list)
+            and len(both) == 2
+            and all(type(value) is int and value > 0 for value in both)
+        )
+    return False
+
+
+def _summary_comparison_complete(summary: object) -> bool:
+    metrics = _total_metrics(summary)
+    if metrics is None or not _instruction_counts_present(summary):
+        return False
+    ir = metrics["Ir"]["metrics"].get("Both")
+    if not isinstance(ir, list) or len(ir) != 2:
         return False
     for metric in metrics.values():
         values = metric.get("metrics") if isinstance(metric, dict) else None
         both = values.get("Both") if isinstance(values, dict) else None
-        if not isinstance(both, list) or len(both) != 2:
+        if (
+            not isinstance(both, list)
+            or len(both) != 2
+            or not all(type(value) is int and value >= 0 for value in both)
+        ):
             return False
     return True
+
+
+def _case_identity(summary: object) -> str | None:
+    if not isinstance(summary, dict) or summary.get("kind") != "LibraryBenchmark":
+        return None
+    module_path = summary.get("module_path")
+    case_id = summary.get("id")
+    function_name = summary.get("function_name")
+    if (
+        not isinstance(module_path, str)
+        or not module_path
+        or not isinstance(case_id, str)
+        or not case_id
+        or not isinstance(function_name, str)
+        or module_path.rsplit("::", 1)[-1] != function_name
+    ):
+        return None
+    return f"{module_path}#{case_id}"
+
+
+def _raw_output_paths(summary: object, root: Path) -> list[str] | None:
+    callgrind = summary.get("callgrind_summary") if isinstance(summary, dict) else None
+    out_paths = callgrind.get("out_paths") if isinstance(callgrind, dict) else None
+    if not isinstance(out_paths, list) or not out_paths:
+        return None
+    checked: list[str] = []
+    for named in out_paths:
+        if not isinstance(named, str) or not named:
+            return None
+        path = Path(named)
+        try:
+            relative = path.relative_to(root.resolve()) if path.is_absolute() else path
+        except ValueError:
+            return None
+        artifact = confined_artifact(root, relative.as_posix())
+        if (
+            artifact is None
+            or artifact.suffix != ".out"
+            or not artifact.is_file()
+            or artifact.stat().st_size == 0
+        ):
+            return None
+        checked.append(relative.as_posix())
+    return checked
 
 
 def inspect_summaries(root: Path) -> dict[str, object]:
     paths = sorted(root.rglob("summary.json"))
     invalid: list[str] = []
     compared = 0
+    cases: list[str] = []
+    raw_outputs: list[str] = []
     for path in paths:
         relative = path.relative_to(root).as_posix()
         if confined_artifact(root, relative) is None:
@@ -232,18 +325,24 @@ def inspect_summaries(root: Path) -> dict[str, object]:
             continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeError, json.JSONDecodeError):
             invalid.append(relative)
             continue
-        if not isinstance(payload, dict) or not payload.get("callgrind_summary"):
+        case = _case_identity(payload)
+        outputs = _raw_output_paths(payload, root)
+        if case is None or not _instruction_counts_present(payload) or outputs is None:
             invalid.append(relative)
             continue
+        cases.append(case)
+        raw_outputs.extend(outputs)
         if _summary_comparison_complete(payload):
             compared += 1
     return {
         "selected_count": len(paths),
         "executed_count": len(paths) - len(invalid),
         "comparison_count": compared,
+        "cases": cases,
+        "raw_outputs": raw_outputs,
         "invalid_summaries": invalid,
         "summaries": [path.relative_to(root).as_posix() for path in paths],
     }
@@ -271,10 +370,24 @@ def finalize_run(
         problems.append("verified old-vs-new comparison is incomplete")
     if not expected_comparison and compared:
         problems.append("fresh-baseline run unexpectedly claims an old-vs-new comparison")
+    expected_cases = gate_config().get("expected_cases")
+    if (
+        not isinstance(expected_cases, list)
+        or not expected_cases
+        or any(not isinstance(case, str) or not case for case in expected_cases)
+        or len(set(expected_cases)) != len(expected_cases)
+        or sorted(inspection["cases"]) != sorted(expected_cases)
+    ):
+        problems.append("benchmark case inventory mismatch")
+    raw_outputs = inspection["raw_outputs"]
+    if len(raw_outputs) != len(set(raw_outputs)):
+        problems.append("raw callgrind output is shared across benchmark cases")
+    artifacts = baseline_artifacts(root)
+    if not any(str(item["path"]).endswith(".out") for item in artifacts):
+        problems.append("raw callgrind .out artifact is missing")
     status = "NOT_RUN" if problems else ("QUALIFIED" if expected_comparison else "BASELINE_CREATED")
     raw_log = root / "benchmark-output.log"
     safe_raw_log = confined_artifact(root, "benchmark-output.log")
-    artifacts = baseline_artifacts(root)
     if safe_raw_log is None or not raw_log.is_file() or raw_log.stat().st_size == 0:
         problems.append("raw benchmark output is missing")
         status = "NOT_RUN"
@@ -311,7 +424,10 @@ def finalize_run(
         "config_sha256": _sha256(CONFIG),
         "artifacts": artifacts,
     }
-    (root / BASELINE_MANIFEST).write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
+    if status != "NOT_RUN":
+        (root / BASELINE_MANIFEST).write_text(
+            json.dumps(baseline, indent=2) + "\n", encoding="utf-8"
+        )
     return status, problems
 
 

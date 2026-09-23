@@ -3,11 +3,10 @@
 
 import hashlib
 import json
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 from urllib.parse import unquote, urlsplit
-
 
 BASE = Path(__file__).resolve().parent
 ROOT = BASE.parents[3]
@@ -95,7 +94,14 @@ def main():
         ]
         for ticket in tickets:
             tid = ticket["id"]
-            require(ticket["status"] == "IMPLEMENTED", f"{tid}: unexpected status")
+            expected_status = "RETIRED" if tid == "H16-020" else "IMPLEMENTED"
+            require(ticket["status"] == expected_status, f"{tid}: unexpected status")
+            if expected_status == "RETIRED":
+                require(
+                    ticket.get("retired_on") == "2026-09-23"
+                    and bool(ticket.get("retirement_reason")),
+                    f"{tid}: retirement decision is incomplete",
+                )
             require(ticket["priority"] in {"P0", "P1", "P2"}, f"{tid}: invalid priority")
             require(ticket["owner"] in set("IERFVBCDQ"), f"{tid}: invalid owner")
             require(bool(ticket["locks"]), f"{tid}: missing write leases")
@@ -226,7 +232,11 @@ def main():
             print(f"FAIL: {error}", file=sys.stderr)
         return 1
     print(
-        "PASS: 22 implemented tickets; unchecked items all registered in EXCEPTIONS.md; 40 findings uniquely mapped and source hashes preserved; 33 quality items; 12 decisions; acyclic complete closure; 30 Markdown files/links/acceptance IDs valid"
+        "PASS: 22 tracked tickets (21 implemented, 1 retired); "
+        "unchecked items all registered in EXCEPTIONS.md; "
+        "40 findings uniquely mapped and source hashes preserved; "
+        "33 quality items; 12 decisions; acyclic complete closure; "
+        "30 Markdown files/links/acceptance IDs valid"
     )
     print("Scope: document integrity only; production implementation/tests/qualification NOT RUN")
     return 0

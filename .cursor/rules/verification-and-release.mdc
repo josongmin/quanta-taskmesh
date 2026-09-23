@@ -1,0 +1,34 @@
+---
+description: Taskmesh verification inventory, proof, and release routing
+globs:
+  - ".github/workflows/**"
+  - "Justfile"
+  - "docs/release-checklist.md"
+  - "tools/arch/**"
+  - "tools/bench/**"
+  - "tools/bench-*.sh"
+  - "tools/consumer-msrv/**"
+  - "tools/coverage/**"
+  - "tools/doc-examples/**"
+  - "tools/fuzz/**"
+  - "tools/gates/**"
+  - "tools/modelcheck/**"
+  - "tools/process_supervisor.py"
+  - "tools/qualification/**"
+  - "tools/release/**"
+  - "tools/semgrep/**"
+  - "tools/tsan/**"
+  - "tools/verification/**"
+alwaysApply: false
+---
+
+# Verification and release
+
+- Treat `tools/gates/inventory.json` and `tools/gates/required.json` as the gate inventory and
+  required-set authorities. Keep recipe, inventory, workflow, and validation changes explicit.
+- Use the relevant section of `docs/release-checklist.md`; do not load historical plans or
+  receipts unless the task names them.
+- A focused test, static check, or diagnostic subset is not a qualification receipt. Preserve
+  the repository's exact-source and clean-tree requirements when changing proof producers.
+- Add expensive work only to the explicit qualification path. Keep the laptop edit loop
+  purpose-scoped and bounded.

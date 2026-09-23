@@ -1,0 +1,20 @@
+---
+description: Taskmesh crate ownership and runtime-governance routing
+globs:
+  - "Cargo.toml"
+  - "crates/**/Cargo.toml"
+  - "crates/**/*.rs"
+alwaysApply: false
+---
+
+# Runtime governance
+
+- Locate the owning crate before editing: contract owns public vocabulary and ports, engine
+  owns governance decisions, taskmesh owns host adapters, and taskmesh-rayon owns the Rayon
+  adapter.
+- Read `docs/adr/0001-hexagonal-feature-sliced-architecture.md` only for crate or dependency
+  boundary changes.
+- For public API changes, read the relevant part of `docs/taskmesh-library-spec.md`; for wire or
+  external behavior, use `docs/taskmesh-external-interface.md`.
+- Run the owning crate's focused tests first. Broaden verification only when the changed
+  surface crosses crate boundaries or a required gate demands it.

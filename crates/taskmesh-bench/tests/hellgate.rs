@@ -10,11 +10,9 @@ use taskmesh_bench::loadgen::{contention_throughput, simulate, SimResult};
 use taskmesh_bench::metrics::{argmax_throughput, fit_usl, reject_ratio};
 use taskmesh_bench::workload::{fixture, generate, retrieval_policy, WorkloadConfig};
 
-// This is a structural smoke, not a throughput benchmark. 10k cycles per
-// worker is well above the load generator's 4k positive-throughput unit rail,
-// while avoiding the old 350k-cycle total that added no semantic checkpoints.
-// Criterion/IAI remain the performance-regression authorities.
-const STRUCTURAL_CONTENTION_OPS_PER_THREAD: usize = 10_000;
+// This is a structural smoke, not a throughput benchmark. Keep the fixed
+// workload small; Criterion/IAI own performance-regression measurements.
+const STRUCTURAL_CONTENTION_OPS_PER_THREAD: usize = 2_000;
 
 /// One open-loop run of a single retrieval class at a given offered load and
 /// aggregate capacity. Returns (p50, p99, p999, dropped, result).

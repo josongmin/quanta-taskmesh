@@ -53,6 +53,7 @@ LOCAL_RELEASE_CHECKS = {
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from tools.bench import iai_gate  # noqa: E402
 from tools.qualification import receipt as ordinary  # noqa: E402
 from tools.qualification.evidence import runtime_action  # noqa: E402
 from tools.release import finding_proof  # noqa: E402
@@ -102,6 +103,138 @@ def check_identity(root: Path, value: object, label: str, reasons: list[str]) ->
         reasons.append(f"{label} artifact missing, unsafe, or digest/size mismatch")
         return None
     return read_json(root / actual["path"])
+
+
+def iai_raw_problems(
+    root: Path,
+    baseline: object,
+    comparison: object,
+    output_ref: object,
+    gate_status_line: object,
+) -> list[str]:
+    """Re-derive the Linux IAI verdict from the saved raw producer artifacts."""
+    problems: list[str] = []
+    if not isinstance(baseline, dict):
+        problems.append("IAI baseline manifest is missing or malformed")
+        return problems
+    if not isinstance(comparison, dict):
+        problems.append("IAI comparison manifest is missing or malformed")
+        return problems
+    if comparison.get("status") != "QUALIFIED":
+        problems.append("IAI comparison status is not QUALIFIED")
+    if (
+        comparison.get("schema_version") != 1
+        or comparison.get("kind") != "iai-callgrind-comparison"
+    ):
+        problems.append("IAI comparison manifest schema/kind mismatch")
+    if comparison.get("problems") != []:
+        problems.append("IAI comparison manifest reports problems")
+
+    config_path = safe_artifact(root, "tools/bench/perf-gate.json")
+    config = read_json(config_path) if config_path is not None else None
+    gate = config.get("instruction_count_gate") if isinstance(config, dict) else None
+    if not isinstance(gate, dict):
+        problems.append("IAI gate config is missing or malformed")
+        return problems
+    expected_cases = gate.get("expected_cases")
+    if (
+        not isinstance(expected_cases, list)
+        or not expected_cases
+        or any(not isinstance(case, str) or not case for case in expected_cases)
+        or len(expected_cases) != len(set(expected_cases))
+    ):
+        problems.append("IAI expected case inventory is malformed")
+        return problems
+    inputs = gate.get("fingerprint_inputs")
+    if (
+        not isinstance(inputs, list)
+        or not inputs
+        or any(not isinstance(path, str) for path in inputs)
+    ):
+        problems.append("IAI fingerprint input inventory is malformed")
+        return problems
+    input_paths = [safe_artifact(root, name) for name in inputs]
+    if any(path is None for path in input_paths):
+        problems.append("IAI fingerprint source input is missing or unsafe")
+        return problems
+    runner, valgrind, rustc = (baseline.get(key) for key in ("runner", "valgrind", "rustc"))
+    if (
+        not isinstance(runner, str)
+        or runner != gate.get("iai_callgrind_runner")
+        or not isinstance(valgrind, str)
+        or not valgrind.strip()
+        or not isinstance(rustc, str)
+        or not rustc.strip()
+    ):
+        problems.append("IAI baseline toolchain identity is missing or incompatible")
+        return problems
+    fingerprint = iai_gate.fingerprint(
+        input_paths, gate.get("measurement_schema"), runner, valgrind, rustc
+    )
+    if baseline.get("fingerprint") != fingerprint or comparison.get("fingerprint") != fingerprint:
+        problems.append("IAI baseline/comparison fingerprint differs from current source")
+    status_tokens = gate_status_line.split() if isinstance(gate_status_line, str) else []
+    expected_tokens = (
+        "status=QUALIFIED",
+        f"fingerprint={fingerprint}",
+        f"regression={gate.get('regression')}",
+        f"schema={gate.get('measurement_schema')}",
+    )
+    if (
+        not isinstance(gate_status_line, str)
+        or not gate_status_line.startswith("taskmesh-iai-gate ")
+        or any(status_tokens.count(token) != 1 for token in expected_tokens)
+        or len(status_tokens) != len(expected_tokens) + 1
+    ):
+        problems.append("IAI raw verdict differs from ordinary bench-iai status line")
+
+    store = root / "target/iai"
+    if (
+        store.is_symlink()
+        or not store.is_dir()
+        or not store.resolve().is_relative_to(root.resolve())
+    ):
+        problems.append("IAI raw store is missing or unsafe")
+        return problems
+    problems.extend(
+        f"IAI {problem}"
+        for problem in iai_gate.baseline_manifest_problems(
+            store,
+            fingerprint_value=fingerprint,
+            runner=runner,
+            valgrind=valgrind,
+            rustc=rustc,
+            config_path=config_path,
+        )
+    )
+    if baseline.get("artifacts") != iai_gate.baseline_artifacts(store):
+        problems.append("IAI baseline raw artifact inventory differs from disk")
+    inspection = iai_gate.inspect_summaries(store)
+    if (
+        inspection["selected_count"] != len(expected_cases)
+        or inspection["executed_count"] != len(expected_cases)
+        or inspection["comparison_count"] != len(expected_cases)
+        or sorted(inspection["cases"]) != sorted(expected_cases)
+        or len(inspection["raw_outputs"]) != len(set(inspection["raw_outputs"]))
+        or inspection["invalid_summaries"]
+    ):
+        problems.append("IAI summary case/comparison/raw-output inventory is incomplete")
+    for key, expected in inspection.items():
+        if comparison.get(key) != expected:
+            problems.append(f"IAI comparison {key} differs from raw summaries")
+    summaries = [identity(store, path) for path in inspection["summaries"]]
+    if None in summaries or comparison.get("summary_artifacts") != summaries:
+        problems.append("IAI comparison summary artifact identities differ from disk")
+    output = identity(store, "benchmark-output.log")
+    release_output = identity(root, "target/iai/benchmark-output.log")
+    if (
+        output is None
+        or output["size"] == 0
+        or comparison.get("raw_output") != output
+        or output_ref != release_output
+    ):
+        problems.append("IAI benchmark output identity differs from raw log")
+    return problems
 
 
 def metric_report(raw: object, reasons: list[str]) -> dict:
@@ -711,6 +844,28 @@ def evaluate(value: object, *, root: Path = REPO, current: dict | None = None) -
             reasons.append(f"release raw artifact {name} path mismatch")
             continue
         raw_payloads[name] = check_identity(root, raw[name], name, reasons)
+    gate_status_line = None
+    if isinstance(ordinary_receipt, dict):
+        gates = ordinary_receipt.get("gates")
+        results = gates.get("results") if isinstance(gates, dict) else None
+        if isinstance(results, list):
+            gate_status_line = next(
+                (
+                    row.get("status_line")
+                    for row in results
+                    if isinstance(row, dict) and row.get("id") == "bench-iai"
+                ),
+                None,
+            )
+    reasons.extend(
+        iai_raw_problems(
+            root,
+            raw_payloads.get("iai_baseline"),
+            raw_payloads.get("iai_comparison"),
+            raw.get("iai_output"),
+            gate_status_line,
+        )
+    )
     coverage = raw_payloads.get("coverage_summary")
     metric_reasons: list[str] = []
     expected_metrics = metric_report(coverage, metric_reasons)

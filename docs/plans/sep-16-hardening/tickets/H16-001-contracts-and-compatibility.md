@@ -44,6 +44,11 @@
   이번 범위에서 도입하지 않았고, 대신 admission 앞의 무제한 대기 공간 자체를 제거했다(D01).
 - stages/reduce/checkpoint 자동 실행, dedupe, process kill은 추가하지 않았다.
 
+2026-09-23 후속 inventory에서는 `semantica-codegraph-v2@f2b5180b28e55d8fc268ec6fb299f1d16a81995b`의 추적된
+`quanta-runtime/Cargo.toml`에서 Taskmesh 0.3.0 optional path dependency를 확인했다.
+위 2026-09-16의 `UNKNOWN`은 당시 관찰이다. Semantica의 현재 checkout은 dirty이며
+이 Taskmesh 후보와 결합한 consumer compile/test는 아직 없다(H16-022-A05).
+
 ## 검증 / 완료 조건
 
 - [x] `H16-001-A01` D01–D12 각각 선택 또는 명시적 범위 제한 기록
@@ -70,4 +75,3 @@ cargo test -p taskmesh-contract
 - [x] acceptance ID별 exact-source receipt와 정상/negative 결과를 [검증 계약](VERIFICATION.md)에 맞춰 첨부한다. → `../receipts/local-2026-09-19.json` (gate·mutation receipt; [EXCEPTIONS.md](EXCEPTIONS.md) §인계 항목 1)
 - [x] 공용 파일 변경은 lease owner에게 인계하고, production 통합·외부 소비자·activation 상태를 독립 표시한다. → 단일 작업자(인계 없음); production 통합·외부 소비자·activation은 UNVERIFIED로 [EXCEPTIONS.md](EXCEPTIONS.md)에 표시
 - [x] 남은 예외는 owner·사유·만료/재검토 조건을 기록한다. 티켓 구현 완료가 전체 qualification 완료는 아니다. → [EXCEPTIONS.md](EXCEPTIONS.md)
-

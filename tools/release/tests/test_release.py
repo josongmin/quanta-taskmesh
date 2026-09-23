@@ -340,6 +340,170 @@ def test_required_raw_coverage_path_cannot_read_outside_root(tmp_path: Path, mon
     assert any("coverage_summary" in reason for reason in verdict["reasons"])
 
 
+def test_release_rechecks_iai_comparison_state_after_hashing_raw_files(tmp_path: Path) -> None:
+    required_path = tmp_path / "tools/release/release-required.json"
+    required_path.parent.mkdir(parents=True)
+    required_path.write_bytes(receipt.REQUIRED.read_bytes())
+    required = json.loads(required_path.read_text(encoding="utf-8"))
+    for name, relative in required["required_raw_artifacts"].items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if name == "iai_comparison":
+            path.write_text('{"status":"BASELINE_CREATED"}\n', encoding="utf-8")
+        else:
+            path.write_text("{}\n", encoding="utf-8")
+    value = {
+        "schema_version": 1,
+        "source": {"dirty": False},
+        "required": receipt.identity(tmp_path, "tools/release/release-required.json"),
+        "raw_artifacts": {
+            name: receipt.identity(tmp_path, relative)
+            for name, relative in required["required_raw_artifacts"].items()
+        },
+    }
+    verdict = receipt.evaluate(value, root=tmp_path, current=None)
+    assert any("IAI comparison status is not QUALIFIED" in reason for reason in verdict["reasons"])
+
+
+def iai_release_fixture(tmp_path: Path) -> tuple[dict, dict, dict, str]:
+    gate = receipt.iai_gate.gate_config()
+    inputs = ["tools/bench/perf-gate.json", *gate["fingerprint_inputs"]]
+    for relative in set(inputs):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((REPO / relative).read_bytes())
+    store = tmp_path / "target/iai"
+    for case in gate["expected_cases"]:
+        module_path, case_id = case.split("#", 1)
+        function_name = module_path.rsplit("::", 1)[-1]
+        directory = store / f"{function_name}.{case_id}"
+        directory.mkdir(parents=True)
+        raw = directory / "callgrind.fixture.out"
+        raw.write_text("events: Ir\n", encoding="utf-8")
+        (directory / "summary.json").write_text(
+            json.dumps(
+                {
+                    "kind": "LibraryBenchmark",
+                    "module_path": module_path,
+                    "function_name": function_name,
+                    "id": case_id,
+                    "callgrind_summary": {
+                        "out_paths": [str(raw)],
+                        "callgrind_run": {
+                            "total": {"summary": {"Ir": {"metrics": {"Both": [101, 100]}}}}
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+    (store / "benchmark-output.log").write_text("3 benchmarks finished\n", encoding="utf-8")
+    runner = gate["iai_callgrind_runner"]
+    valgrind = "valgrind-3.22"
+    rustc = "rustc 1.95.0\nhost: x86_64-unknown-linux-gnu"
+    fingerprint = receipt.iai_gate.fingerprint(
+        [tmp_path / name for name in gate["fingerprint_inputs"]],
+        gate["measurement_schema"],
+        runner,
+        valgrind,
+        rustc,
+    )
+    status, problems = receipt.iai_gate.finalize_run(
+        store,
+        fingerprint_value=fingerprint,
+        runner=runner,
+        valgrind=valgrind,
+        rustc=rustc,
+        expected_comparison=True,
+    )
+    assert (status, problems) == ("QUALIFIED", [])
+    baseline = json.loads((store / "baseline-manifest.json").read_text(encoding="utf-8"))
+    comparison = json.loads((store / "comparison-manifest.json").read_text(encoding="utf-8"))
+    output_ref = receipt.identity(tmp_path, "target/iai/benchmark-output.log")
+    assert output_ref is not None
+    line = (
+        f"taskmesh-iai-gate status=QUALIFIED fingerprint={fingerprint} "
+        f"regression={gate['regression']} schema={gate['measurement_schema']}"
+    )
+    return baseline, comparison, output_ref, line
+
+
+def test_release_iai_raw_semantics_match_current_source_and_ordinary_gate(tmp_path: Path) -> None:
+    baseline, comparison, output_ref, line = iai_release_fixture(tmp_path)
+
+    def check() -> list[str]:
+        return receipt.iai_raw_problems(tmp_path, baseline, comparison, output_ref, line)
+
+    assert check() == []
+
+    bad = deepcopy(comparison)
+    bad["cases"] = bad["cases"][:-1]
+    assert any(
+        "comparison cases differs" in reason
+        for reason in receipt.iai_raw_problems(tmp_path, baseline, bad, output_ref, line)
+    )
+    assert any(
+        "status line" in reason
+        for reason in receipt.iai_raw_problems(
+            tmp_path,
+            baseline,
+            comparison,
+            output_ref,
+            line.replace("fingerprint=", "fingerprint=0"),
+        )
+    )
+    assert any(
+        "status line" in reason
+        for reason in receipt.iai_raw_problems(
+            tmp_path,
+            baseline,
+            comparison,
+            output_ref,
+            line.replace("status=QUALIFIED", "status=BASELINE_CREATED"),
+        )
+    )
+    raw = next((tmp_path / "target/iai").rglob("*.out"))
+    raw.write_text("tampered\n", encoding="utf-8")
+    assert any("digest mismatch" in reason for reason in check())
+    (tmp_path / "target/iai/baseline-manifest.json").write_text("[]\n", encoding="utf-8")
+    assert any("baseline manifest is malformed" in reason for reason in check())
+    (tmp_path / "target/iai/baseline-manifest.json").write_bytes(b"\xff")
+    assert any("baseline manifest is unreadable" in reason for reason in check())
+    next((tmp_path / "target/iai").rglob("summary.json")).write_bytes(b"\xff")
+    assert any("summary case/comparison" in reason for reason in check())
+
+
+def test_release_rejects_symlinked_iai_raw_store(tmp_path: Path) -> None:
+    baseline, comparison, output_ref, line = iai_release_fixture(tmp_path)
+    store = tmp_path / "target/iai"
+    original = tmp_path / "target/iai-original"
+    store.rename(original)
+    store.symlink_to(original, target_is_directory=True)
+    assert "IAI raw store is missing or unsafe" in receipt.iai_raw_problems(
+        tmp_path, baseline, comparison, output_ref, line
+    )
+
+
+def test_release_rejects_two_cases_aliasing_one_raw_output_through_symlink(
+    tmp_path: Path,
+) -> None:
+    baseline, comparison, output_ref, line = iai_release_fixture(tmp_path)
+    store = tmp_path / "target/iai"
+    first, second = [store / path for path in comparison["summaries"][:2]]
+    second_payload = json.loads(second.read_text(encoding="utf-8"))
+    second_raw = Path(second_payload["callgrind_summary"]["out_paths"][0])
+    (store / "alias").symlink_to(second_raw.parent, target_is_directory=True)
+    first_payload = json.loads(first.read_text(encoding="utf-8"))
+    first_payload["callgrind_summary"]["out_paths"] = [f"alias/{second_raw.name}"]
+    first.write_text(json.dumps(first_payload), encoding="utf-8")
+    forged = deepcopy(comparison)
+    forged["raw_outputs"][0] = f"alias/{second_raw.name}"
+    forged["summary_artifacts"][0] = receipt.identity(store, comparison["summaries"][0])
+
+    problems = receipt.iai_raw_problems(tmp_path, baseline, forged, output_ref, line)
+    assert any("summary case/comparison/raw-output inventory is incomplete" in p for p in problems)
+
+
 @pytest.mark.parametrize("bad", [None, [], 0, "PASS", {"verdict": {"status": "QUALIFIED"}}])
 def test_malformed_release_receipt_never_qualifies(bad: object) -> None:
     assert receipt.evaluate(bad, current=None)["status"] == "NOT_QUALIFIED"

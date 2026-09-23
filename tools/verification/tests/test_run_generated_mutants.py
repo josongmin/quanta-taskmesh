@@ -269,9 +269,10 @@ def test_duplicate_planned_or_executed_identity_fails_closed(tmp_path: Path) -> 
         gm.parse_outcomes(executed)
 
 
-def test_all_caught_nonzero_process_cannot_pass() -> None:
+@pytest.mark.parametrize("exit_code", [2, None])
+def test_all_caught_nonzero_or_missing_process_cannot_pass(exit_code) -> None:
     status, problems = gm.apply_process_truth(
-        "PASS", [], SimpleNamespace(exit_code=2, signal=None, timed_out=False)
+        "PASS", [], SimpleNamespace(exit_code=exit_code, signal=None, timed_out=False)
     )
     assert status == "FAIL"
     assert problems == ["invalid_success_process"]
@@ -358,7 +359,14 @@ def test_parallel_jobs_never_inherit_one_absolute_cargo_target() -> None:
 
 
 @pytest.mark.parametrize(
-    "key", ["RUSTFLAGS", "RUSTUP_TOOLCHAIN", "CARGO_BUILD_TARGET", "CARGO_PROFILE_RELEASE_LTO"]
+    "key",
+    [
+        "RUSTFLAGS",
+        "RUSTUP_TOOLCHAIN",
+        "CARGO_BUILD_TARGET",
+        "CARGO_PROFILE_RELEASE_LTO",
+        "CARGO_MUTANTS_MINIMUM_TEST_TIMEOUT",
+    ],
 )
 def test_generated_campaign_rejects_unrecorded_build_environment(key: str) -> None:
     with pytest.raises(ValueError, match=key):

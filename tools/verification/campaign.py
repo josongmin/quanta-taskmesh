@@ -39,7 +39,7 @@ AMBIENT_BUILD_ENV_KEYS = {
     "RUSTFLAGS",
     "RUSTUP_TOOLCHAIN",
 }
-AMBIENT_BUILD_ENV_PREFIXES = ("CARGO_PROFILE_", "CARGO_TARGET_")
+AMBIENT_BUILD_ENV_PREFIXES = ("CARGO_PROFILE_", "CARGO_TARGET_", "CARGO_MUTANTS_")
 CAMPAIGN_ISOLATION_ENV_KEYS = {"CARGO_BUILD_TARGET_DIR", "CARGO_TARGET_DIR"}
 
 
@@ -62,7 +62,7 @@ def sanitized_campaign_environment(parent: dict[str, str]) -> dict[str, str]:
     )
     if forbidden:
         raise ValueError(
-            "mutation campaign refuses unrecorded build-affecting environment: "
+            "mutation campaign refuses unrecorded build or mutation-affecting environment: "
             + ", ".join(forbidden)
         )
     environment = parent.copy()

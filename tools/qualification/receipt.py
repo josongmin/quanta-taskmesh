@@ -56,6 +56,8 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from tools.gates.status_line import pass_status_line_problems  # noqa: E402
+from tools.process_supervisor import run_process  # noqa: E402
 from tools.qualification.evidence import (  # noqa: E402
     canonical_digest,  # noqa: F401 - compatibility re-export for callers
     git_source_paths,
@@ -75,6 +77,7 @@ INVENTORY = REPO / "tools" / "gates" / "inventory.json"
 SCHEMA_VERSION = 4
 GATE_SCHEMA_VERSION = 2
 MUTATION_GATE_ID = "mutants-critical"
+RUNNER_FINALIZATION_GRACE_SECONDS = 120
 ATTESTATION_CHECK_NAMES = {
     "github_actions",
     "ci",
@@ -218,36 +221,46 @@ def collection_attestation(source: dict, hosted_ci: bool, local_qualified: bool 
 
 class JsonRun(NamedTuple):
     payload: dict
-    exit_code: int
+    exit_code: int | None
     started_at: str
     duration_s: float
+    timed_out: bool = False
+    interrupted_by_signal: int | None = None
 
 
-def run_json(cmd: list[str], receipt_path: Path) -> JsonRun:
+def run_json(cmd: list[str], receipt_path: Path, *, timeout_seconds: float) -> JsonRun:
     # Never mistake a sidecar from an earlier collection for this process's
     # output when the process dies before writing anything.
     receipt_path.unlink(missing_ok=True)
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
-    proc = subprocess.run(
+    process = run_process(
         cmd + ["--receipt", str(receipt_path)],
         cwd=REPO,
-        capture_output=True,
-        text=True,
-        check=False,
+        env=os.environ.copy(),
+        timeout_seconds=timeout_seconds,
     )
     duration_s = round(time.monotonic() - started, 3)
     if receipt_path.exists():
         try:
             payload = json.loads(receipt_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            payload = {"error": f"runner wrote invalid JSON: {exc}"}
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            payload = {"error": f"runner wrote invalid JSON or UTF-8: {type(exc).__name__}: {exc}"}
+        except OSError as exc:
+            payload = {"error": f"runner sidecar could not be read: {exc}"}
     else:
         payload = {
             "error": "runner did not write its receipt",
-            "stderr_tail": proc.stderr[-2000:],
+            "stderr_tail": process.stderr[-2000:],
         }
-    return JsonRun(payload, proc.returncode, started_at, duration_s)
+    return JsonRun(
+        payload,
+        process.returncode,
+        started_at,
+        duration_s,
+        process.timed_out,
+        process.interrupted_by_signal,
+    )
 
 
 def required_gate_ids() -> list[str]:
@@ -299,6 +312,10 @@ def gate_runner_problems(
     raw_required = value.get("raw_required")
     if type(exit_code) is not int:
         problems.append("gate runner exit_code must be an integer")
+    if value.get("timed_out") is not False:
+        problems.append("gate runner timed_out/timeout invalidates qualification")
+    if "interrupted_by_signal" not in value or value["interrupted_by_signal"] is not None:
+        problems.append("gate runner interrupted_by_signal invalidates qualification")
     if not isinstance(started_at, str) or not started_at:
         problems.append("gate runner started_at is missing")
     if not (
@@ -397,6 +414,7 @@ def collect(
     gate_run = run_json(
         [sys.executable, "tools/gates/run.py", *gate_args],
         out.with_suffix(".gates.json"),
+        timeout_seconds=deadline_seconds + RUNNER_FINALIZATION_GRACE_SECONDS,
     )
     gate_receipt = gate_run.payload
     if not isinstance(gate_receipt, dict):
@@ -480,6 +498,8 @@ def collect(
             "exit_code": gate_run.exit_code,
             "started_at": gate_run.started_at,
             "duration_s": gate_run.duration_s,
+            "timed_out": gate_run.timed_out,
+            "interrupted_by_signal": gate_run.interrupted_by_signal,
             "skipped_gate_ids": skipped_gate_ids,
             "raw_required": raw_required,
         },
@@ -626,6 +646,15 @@ def evaluate(receipt: object, current: dict | None, *, artifact_root: Path | Non
             # with the exact integer code zero.
             if type(exit_code) is not int or exit_code != 0:
                 reasons.append(f"gate {result.get('id')} reports PASS without integer exit_code 0")
+            if (
+                ("timed_out" in result and result.get("timed_out") is not False)
+                or result.get("interrupted_by_signal") is not None
+                or result.get("signal") is not None
+            ):
+                reasons.append(f"gate {result.get('id')} reports PASS after interrupted execution")
+    reasons.extend(
+        pass_status_line_problems(valid_gate_results, INVENTORY, allow_imported_producers=True)
+    )
     computed_summary = summarize_gate_results(valid_gate_results)
     if gates.get("schema_version") != GATE_SCHEMA_VERSION:
         reasons.append(

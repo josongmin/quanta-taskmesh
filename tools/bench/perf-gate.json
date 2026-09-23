@@ -21,6 +21,11 @@
     "iai_callgrind_crate": "0.14",
     "iai_callgrind_runner": "0.14.2",
     "regression": "Ir=5.0",
+    "expected_cases": [
+      "iai_governance::governance::admit_release#roundtrip",
+      "iai_governance::governance::admit_unknown_reject#reject",
+      "iai_governance::governance::snapshot#classes8"
+    ],
     "fingerprint_inputs": [
       "crates/taskmesh-bench/benches/iai_governance.rs",
       "crates/taskmesh-bench/Cargo.toml",

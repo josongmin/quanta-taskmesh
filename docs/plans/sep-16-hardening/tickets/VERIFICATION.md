@@ -1,5 +1,15 @@
 # 검증·증거 계약
 
+## 현재 권위 — 2026-09-23
+
+아래의 "이번 문서 작업"과 제안 schema는 2026-09-16 계획 작성 당시 기록이다. 현재
+ordinary qualification은 [release checklist](../../../release-checklist.md)의 clean-source
+local 경로와 `tools/qualification/receipt.py collect --local-qualified`가 소유한다.
+Linux에서 모든 required gate가 PASS하고 `validate`가 같은 HEAD/tree/path digest를 확인해야
+`QUALIFIED`다. macOS의 platform skip과 보관된 schema-v1 receipt는 Linux proof가 아니다.
+현재 source digest는 path와 file bytes를 길이 프레임으로 구분한다. 이전의 구분자만 쓰는
+digest와 값이 달라지므로 과거 receipt/cache를 현재 소스의 증거로 재사용하지 않는다.
+
 ## 이번 문서 작업의 증거 경계
 
 - current source/manifest/commands와 기존 audit 문서를 정적으로 대조했다. 두 독립 reviewer는 runtime/engine과 toolchain/gate/proof 관점의 설계 누락을 검토했다.
@@ -83,10 +93,11 @@ cargo bench -p taskmesh-bench -- --test
 }
 ```
 
-최종 receipt schema/validator는 H16-022에서 구현한다. secret env 값은 저장하지 않는다. before/after
-digest가 같아도 중간 edit-and-restore가 없었다는 증거는 아니다. hosted qualification에는 isolated
-GitHub Actions checkout, exact `GITHUB_SHA`/workspace 검증과 artifact custody가 필요하다. local collection은
-exact-source evidence일 뿐 `QUALIFIED`를 낼 수 없다. HEAD만 같은 dirty overlay는 동일 source가 아니다.
+위 schema와 설명은 2026-09-16 당시 제안이다. 현재 schema/validator는 H16-022에서 구현됐다.
+secret env 값은 저장하지 않는다. before/after digest가 같아도 중간 edit-and-restore가 없었다는
+증거는 아니다. hosted qualification은 isolated checkout, exact SHA/workspace 검증과 artifact
+custody가 필요하다. 현재 local Linux clean-source 경로는 모든 required gate가 통과하면
+`QUALIFIED`를 낼 수 있다. HEAD만 같은 dirty overlay는 동일 source가 아니다.
 
 ## 이번 계획 검증 재현
 

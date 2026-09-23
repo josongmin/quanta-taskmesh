@@ -1,0 +1,170 @@
+{
+  "candidate_ops_per_thread": [
+    50000,
+    20000,
+    10000,
+    5000,
+    2000,
+    1000
+  ],
+  "compile_command": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "taskmesh-bench",
+    "--test",
+    "hellgate",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "host": "Darwin Joui-MacBookPro.local 24.6.0 Darwin Kernel Version 24.6.0: Mon Jul 14 11:30:40 PDT 2025; root:xnu-11417.140.69~1/RELEASE_ARM64_T6041 arm64",
+  "host_concurrency": "No cargo/rustc process was visible at preflight; other host work was not monitored continuously during runs.",
+  "input_1000_sha256": "7cb7241da0057a69e84c3cb06f851f1b635ee563842ac990905a986bd5d01125",
+  "kind": "owner-local-t08-macos-ladder",
+  "limitations": [
+    "macOS-only owner-local cost and repeated structure test",
+    "process wall time includes libtest startup",
+    "no Linux or clean-source qualification",
+    "three throughput values are not emitted by the test",
+    "timing samples do not qualify a quiet-host performance comparison"
+  ],
+  "order": "alternating ascending/descending by repeat",
+  "profile": "cargo test profile",
+  "records": {
+    "1000": {
+      "binary_sha256": "945464cbe420eaa3edaee74d12e62263ef652cee3ea9dda126370481c3d7ae44",
+      "compile_seconds": 0.363,
+      "median_seconds": 0.065743,
+      "pass_count": 10,
+      "source_sha256": "7cb7241da0057a69e84c3cb06f851f1b635ee563842ac990905a986bd5d01125",
+      "wall_seconds": [
+        0.304341,
+        0.080547,
+        0.11776,
+        0.075431,
+        0.057649,
+        0.05726,
+        0.067993,
+        0.063493,
+        0.058791,
+        0.058366
+      ],
+      "worst_seconds": 0.304341
+    },
+    "10000": {
+      "binary_sha256": "00be0f8922164c367bd3ae310c56b2fcb2af4cec4fa4e603876da89165e8658d",
+      "compile_seconds": 0.439,
+      "median_seconds": 0.626194,
+      "pass_count": 10,
+      "source_sha256": "0ba368013b8ac7320eca970e484201b5e9790aa37dd6c6c1e5271d5dbc2a1c01",
+      "wall_seconds": [
+        0.823687,
+        0.638389,
+        0.6503,
+        0.712505,
+        0.536743,
+        0.642218,
+        0.608306,
+        0.606359,
+        0.613999,
+        0.582655
+      ],
+      "worst_seconds": 0.823687
+    },
+    "2000": {
+      "binary_sha256": "2245742bb49a5be50532a2c798a85639e331787dc731a07f4417cfee62900781",
+      "compile_seconds": 0.447,
+      "median_seconds": 0.119584,
+      "pass_count": 10,
+      "source_sha256": "52d3ff8d7d234569cbd0636c251d251e3b715eded918c936dda863e4e3da1f40",
+      "wall_seconds": [
+        0.358963,
+        0.173863,
+        0.134435,
+        0.118984,
+        0.110062,
+        0.111142,
+        0.120183,
+        0.12103,
+        0.11034,
+        0.110306
+      ],
+      "worst_seconds": 0.358963
+    },
+    "20000": {
+      "binary_sha256": "e954d3f46f6b0cf7f8cb228bf83f37ec6afbbc1e3846fb74790699b468061bef",
+      "compile_seconds": 0.651,
+      "median_seconds": 1.351794,
+      "pass_count": 10,
+      "source_sha256": "5b9e519d3562e7e87e169ad555abacfd1578f8850c14da30664274211cacc889",
+      "wall_seconds": [
+        1.747766,
+        1.245498,
+        1.666659,
+        1.523161,
+        1.048318,
+        1.455544,
+        1.13849,
+        1.190202,
+        1.248044,
+        1.478918
+      ],
+      "worst_seconds": 1.747766
+    },
+    "5000": {
+      "binary_sha256": "0a3604646f2f52423ff99fd37516029a1d227d11d0e088f9de98d75cace52f77",
+      "compile_seconds": 0.419,
+      "median_seconds": 0.303704,
+      "pass_count": 10,
+      "source_sha256": "216e8703875ed45aabd2e2e2e52f5cbdc8756e40698e78e132dcfdeb61e06864",
+      "wall_seconds": [
+        0.567126,
+        0.312484,
+        0.324022,
+        0.311554,
+        0.270747,
+        0.277671,
+        0.295855,
+        0.344234,
+        0.269821,
+        0.272059
+      ],
+      "worst_seconds": 0.567126
+    },
+    "50000": {
+      "binary_sha256": "34ee92398032c718e1d06a1984ad4bf070ee4f588a3684f30c06ef2911bed664",
+      "compile_seconds": 20.555,
+      "median_seconds": 3.283446,
+      "pass_count": 10,
+      "source_sha256": "5a48eb9a7eaf300c1de43a2ef7f12e842a6e2d146e2835f0dca95ecdcd7b2399",
+      "wall_seconds": [
+        3.39022,
+        3.943034,
+        3.713037,
+        3.627121,
+        3.176672,
+        3.16359,
+        2.833765,
+        3.007949,
+        2.930809,
+        3.68817
+      ],
+      "worst_seconds": 3.943034
+    }
+  },
+  "run_argv_template": [
+    "<copied exact hellgate test binary>",
+    "usl_contention_sweep_is_structurally_sound",
+    "--exact"
+  ],
+  "runs_per_variant": 10,
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "selected_executed_per_run": {
+    "executed": 1,
+    "selected": 1
+  },
+  "source_head": "1d2bb2fedcbe45ed5809d5f87e4f66560f5c7d9b",
+  "target_policy": "one isolated CARGO_TARGET_DIR shared by all variants; scratch directory removed after measurement",
+  "test_name": "usl_contention_sweep_is_structurally_sound"
+}

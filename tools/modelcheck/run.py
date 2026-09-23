@@ -9,7 +9,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -20,6 +19,7 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from tools.process_supervisor import run_process  # noqa: E402
 from tools.qualification.evidence import (  # noqa: E402
     canonical_bytes,
     command_digest,
@@ -230,43 +230,27 @@ def run_command(
     timeout_seconds: float,
     termination_grace_seconds: float = 2.0,
 ) -> dict[str, Any]:
-    if timeout_seconds <= 0:
-        raise ValueError("model command timeout must be positive")
-    process = subprocess.Popen(
+    process = run_process(
         argv,
         cwd=REPO,
         env={**os.environ, **environment},
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
+        timeout_seconds=timeout_seconds,
+        termination_grace_seconds=termination_grace_seconds,
     )
-    timed_out = False
-    try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            stdout, stderr = process.communicate(timeout=termination_grace_seconds)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            stdout, stderr = process.communicate()
-    text = stdout + stderr
-    if timed_out:
+    text = process.stdout + process.stderr
+    if process.timed_out:
         text += f"\ntaskmesh-model-process timed_out=true timeout_seconds={timeout_seconds}\n"
+    if process.interrupted_by_signal is not None:
+        text += f"\ntaskmesh-model-process interrupted_by_signal={process.interrupted_by_signal}\n"
     log_path.write_text(text)
     sys.stderr.write(text)
+    if process.interrupted_by_signal is not None:
+        raise SystemExit(128 + process.interrupted_by_signal)
+    returncode = process.returncode
     return {
-        "exit_code": process.returncode,
-        "signal": -process.returncode if process.returncode < 0 else None,
-        "timed_out": timed_out,
+        "exit_code": returncode,
+        "signal": -returncode if returncode is not None and returncode < 0 else None,
+        "timed_out": process.timed_out,
         "timeout_seconds": timeout_seconds,
     }
 

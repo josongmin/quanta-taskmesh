@@ -88,16 +88,14 @@ def test_duplicate_ids_are_reported() -> None:
 def test_parallel_groups_reject_gates_without_an_independence_review() -> None:
     inventory, *_ = real_inputs()
     inventory = copy.deepcopy(inventory)
-    next(gate for gate in inventory["gates"] if gate["id"] == "clippy")[
-        "parallel_group"
-    ] = "static-independent"
+    next(gate for gate in inventory["gates"] if gate["id"] == "clippy")["parallel_group"] = (
+        "static-independent"
+    )
     problems = problems_with(inventory=inventory)
     assert any("clippy: is not approved for parallel_group" in p for p in problems)
 
     inventory = copy.deepcopy(real_inputs()[0])
-    next(gate for gate in inventory["gates"] if gate["id"] == "fmt-check")[
-        "parallel_group"
-    ] = []
+    next(gate for gate in inventory["gates"] if gate["id"] == "fmt-check")["parallel_group"] = []
     problems = problems_with(inventory=inventory)
     assert any("fmt-check: unknown parallel_group" in p for p in problems)
 
@@ -719,6 +717,74 @@ def test_runner_cancellation_stops_later_gates_even_in_keep_going_mode() -> None
     assert results[1]["blocked_by"] == "signal-15"
 
 
+@pytest.mark.parametrize(
+    ("first_result", "keep_going", "blocker"),
+    [
+        ({"status": "FAIL"}, False, "fmt-check"),
+        ({"status": "FAIL", "interrupted_by_signal": signal.SIGTERM}, True, "signal-15"),
+        ({"status": "FAIL", "timeout_seconds": 0}, True, "fmt-check"),
+    ],
+)
+def test_parallel_wave_records_unstarted_tail_after_stop(
+    first_result: dict, keep_going: bool, blocker: str
+) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    names = ("fmt-check", "py-lint", "test-architecture", "semgrep", "deny")
+    selected = [
+        {"id": name, "recipe": name, "platforms": ["any"], "parallel_group": "static-independent"}
+        for name in names
+    ]
+    calls: list[str] = []
+
+    def fake_runner(gate: dict) -> dict:
+        calls.append(gate["id"])
+        return {
+            "id": gate["id"],
+            "recipe": gate["recipe"],
+            **(first_result if gate["id"] == "fmt-check" else {"status": "PASS"}),
+        }
+
+    results = module.run_selected_gates(selected, "macos", None, keep_going, fake_runner)
+    assert len(results) == len(selected)
+    assert [result["id"] for result in results] == list(names)
+    assert results[-1]["status"] == "NOT_RUN"
+    assert results[-1]["blocked_by"] == blocker
+    assert names[-1] not in calls
+
+
+def test_real_parallel_wave_failure_keeps_unstarted_gate_in_receipt(tmp_path: Path) -> None:
+    recipes = ("fmt-check", "py-lint", "test-architecture", "semgrep", "deny")
+    (tmp_path / "Justfile").write_text(
+        "fmt-check:\n    exit 1\n\n"
+        + "".join(f"{name}:\n    @echo {name}-ok\n\n" for name in recipes[1:]),
+        encoding="utf-8",
+    )
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    module.REPO = tmp_path
+    selected = [
+        {"id": name, "recipe": name, "platforms": ["any"], "parallel_group": "static-independent"}
+        for name in recipes
+    ]
+
+    results = module.run_selected_gates(selected, "macos", None, False)
+
+    assert [result["id"] for result in results] == list(recipes)
+    assert [result["status"] for result in results] == [
+        "FAIL",
+        "PASS",
+        "PASS",
+        "PASS",
+        "NOT_RUN",
+    ]
+    assert results[-1]["blocked_by"] == "fmt-check"
+
+
 def test_exhausted_global_deadline_has_one_fail_and_explicit_not_run_tail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -847,6 +913,17 @@ def test_platform_scope_requires_every_applicable_gate_and_keeps_exclusions() ->
     )
     assert scoped is False
 
+    # Toolchain availability is a conditional prerequisite, not a platform
+    # exclusion. The inventory declares consumer-msrv applicable on macOS.
+    scoped, excluded = module.platform_scope_qualification(
+        {"consumer-msrv"},
+        [{"id": "consumer-msrv", "status": "SKIPPED_PLATFORM", "exit_code": None}],
+        {"consumer-msrv": "declared-toolchain-installed"},
+        "macos",
+    )
+    assert scoped is False
+    assert excluded == []
+
 
 def test_local_receipt_is_exact_source_bound() -> None:
     run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
@@ -866,6 +943,9 @@ def test_local_receipt_is_exact_source_bound() -> None:
         "source": dict(source),
         "source_after": dict(source),
         "source_problems": [],
+        "qualified": False,
+        "required_not_run": [],
+        "required_not_passed": ["bench-iai"],
         "platform_scope": {
             "qualified": True,
             "excluded_required_gates": ["bench-iai"],
@@ -895,6 +975,94 @@ def test_local_receipt_is_exact_source_bound() -> None:
         receipt, dirty, required, conditional, "macos", source["head"]
     )
     assert any("must both be clean" in problem for problem in problems), problems
+
+    for field, false_value in (
+        ("qualified", True),
+        ("required_not_run", ["bench-iai"]),
+        ("required_not_passed", []),
+    ):
+        inconsistent = {**receipt, field: false_value}
+        problems = module.local_receipt_problems(
+            inconsistent, source, required, conditional, "macos", source["head"]
+        )
+        assert any(field in problem for problem in problems), (field, problems)
+
+
+@pytest.mark.parametrize(
+    "saved_line",
+    [
+        None,
+        "taskmesh-iai-gate status=BASELINE_CREATED status=QUALIFIED fingerprint=abc",
+        "taskmesh-iai-gate status=QUALIFIED\ntaskmesh-iai-gate status=QUALIFIED",
+    ],
+)
+def test_saved_local_receipt_rejects_a_conflicting_pass_status_line(
+    saved_line: str | None,
+) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    source = {"head": "a" * 40, "tree": "b" * 40, "paths_digest": "c" * 64, "dirty": False}
+    result = {
+        "id": "bench-iai",
+        "status": "PASS",
+        "exit_code": 0,
+        "status_line": "taskmesh-iai-gate status=QUALIFIED fingerprint=abc",
+    }
+    value = {
+        "schema_version": 2,
+        "platform": "linux",
+        "source": source,
+        "source_after": source,
+        "source_problems": [],
+        "qualified": True,
+        "required_not_run": [],
+        "required_not_passed": [],
+        "platform_scope": {"qualified": True, "excluded_required_gates": []},
+        "results": [result],
+    }
+    assert module.local_receipt_problems(value, source, {"bench-iai"}, {}, "linux") == []
+    result["status_line"] = saved_line
+    problems = module.local_receipt_problems(value, source, {"bench-iai"}, {}, "linux")
+    assert any("bench-iai" in problem and "status line" in problem for problem in problems)
+
+
+def test_local_receipt_rejects_tool_prerequisite_as_platform_exclusion() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+
+    source = {
+        "head": "a" * 40,
+        "tree": "b" * 40,
+        "paths_digest": "c" * 64,
+        "dirty": False,
+    }
+    receipt = {
+        "schema_version": 2,
+        "platform": "macos",
+        "source": dict(source),
+        "source_after": dict(source),
+        "source_problems": [],
+        "platform_scope": {
+            "qualified": True,
+            "excluded_required_gates": ["consumer-msrv"],
+        },
+        "results": [
+            {"id": "consumer-msrv", "status": "SKIPPED_PLATFORM", "exit_code": None},
+        ],
+    }
+    problems = module.local_receipt_problems(
+        receipt,
+        source,
+        {"consumer-msrv"},
+        {"consumer-msrv": "declared-toolchain-installed"},
+        "macos",
+        source["head"],
+    )
+    assert any("platform qualification" in problem for problem in problems), problems
 
 
 @pytest.mark.parametrize("exit_code", [1, False, None, "0"])
@@ -1141,6 +1309,31 @@ def test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps(monkeypa
     )
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "taskmesh-iai-gate status=BASELINE_CREATED status=QUALIFIED fingerprint=abc\n",
+        "taskmesh-iai-gate status=QUALIFIED status=QUALIFIED fingerprint=abc\n",
+    ],
+)
+def test_self_report_with_multiple_status_tokens_cannot_pass(line: str) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    gate = {
+        "id": "bench-iai",
+        "recipe": "bench-iai",
+        "status_line": {"marker": "taskmesh-iai-gate", "require": "status=QUALIFIED"},
+    }
+    proc = subprocess.CompletedProcess(
+        args=["just", "bench-iai"], returncode=0, stdout=line, stderr=""
+    )
+    result = module.gate_process_result(gate, proc, False, "2026-09-23T00:00:00Z", 0.01)
+    assert result["status"] == "NOT_RUN"
+    assert result["status_line"] == line.strip()
+
+
 def test_generated_mutation_timeout_is_bounded_and_inventory_owned() -> None:
     inventory, *_ = real_inputs()
     generated = next(gate for gate in inventory["gates"] if gate["id"] == "mutants-generated")
@@ -1215,6 +1408,78 @@ def test_timed_out_gate_result_is_not_qualified(monkeypatch) -> None:
     assert result["status"] == "FAIL"
     assert result["timed_out"] is True and result["timeout_seconds"] == 7
     assert result["exit_code"] == -9 and result["signal"] == 9
+
+
+def test_interrupted_gate_cannot_pass_when_child_exits_zero() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    process = subprocess.CompletedProcess(
+        args=["just", "modelcheck"],
+        returncode=0,
+        stdout="taskmesh-modelcheck status=PASS\n",
+        stderr="",
+    )
+    process.interrupted_by_signal = signal.SIGTERM
+
+    result = module.gate_process_result(
+        {
+            "id": "modelcheck",
+            "recipe": "modelcheck",
+            "status_line": {"marker": "taskmesh-modelcheck", "require": "status=PASS"},
+        },
+        process,
+        False,
+        "2026-09-23T00:00:00+00:00",
+        0.1,
+    )
+    assert result["status"] == "FAIL"
+    assert result["interrupted_by_signal"] == signal.SIGTERM
+    assert module.result_record_problems([result]) == []
+
+
+def test_orphaned_group_invalidates_successful_gate_status_line() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    process = subprocess.CompletedProcess(
+        args=["just", "modelcheck"],
+        returncode=None,
+        stdout="taskmesh-modelcheck status=PASS\n",
+        stderr="SUPERVISOR: leader exited with live process group",
+    )
+    result = module.gate_process_result(
+        {
+            "id": "modelcheck",
+            "recipe": "modelcheck",
+            "status_line": {"marker": "taskmesh-modelcheck", "require": "status=PASS"},
+        },
+        process,
+        False,
+        "2026-09-23T00:00:00+00:00",
+        0.1,
+    )
+    assert result["status"] == "FAIL"
+    assert result["exit_code"] is None
+    assert "live process group" in result["output_tail"]
+
+
+def test_local_receipt_rejects_interrupted_pass() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    result = {
+        "id": "modelcheck",
+        "status": "PASS",
+        "exit_code": 0,
+        "interrupted_by_signal": signal.SIGTERM,
+        "timed_out": False,
+    }
+    assert module.result_record_problems([result])
+    assert module.platform_scope_qualification({"modelcheck"}, [result], {}, "macos")[0] is False
 
 
 def test_a_recipe_script_git_does_not_track_is_reported(tmp_path: Path) -> None:

@@ -1,6 +1,6 @@
 # SEP22-T04 drain completion boundary
 
-- 상태: IMPLEMENTED_UNQUALIFIED
+- 상태: LOCALLY_VERIFIED (전체 qualification은 W3)
 - finding: TO-04
 - priority: P2
 - write lane: `e2e-scenarios`
@@ -92,4 +92,26 @@ cargo test --locked -p taskmesh --test e2e_scenarios --test e2e_chaos
   `e2e_scenarios` 9/9 및 `e2e_chaos` 3/3 실행·통과, 실패/filtered/ignored 0.
 - `overload_is_bounded_and_fail_closed`와 `claim_timeout_abandon_race_storm`을 각각 동일한
   로컬 소스에서 20회 반복해 20/20 통과했다. Semantic 안정성 증거이며, 동시 호스트 부하가
-  있어 timing 비교에는 사용하지 않는다. 변경 전후 median/worst와 W3 receipt는 미확보다.
+  있어 이 실행의 timing은 비교에 사용하지 않는다. 당시 변경 전후 median/worst와 W3
+  receipt는 미확보다.
+
+## 2026-09-23 post-completion sleep 대조
+
+- `main@1d2bb2fedcbe45ed5809d5f87e4f66560f5c7d9b`의 동일 production 소스에서
+  현재 테스트와 60ms/50ms sleep만 복원한 대조군을 각각 `cargo test --locked -p
+  taskmesh --test e2e_scenarios --test e2e_chaos --no-run`의 `test` 프로필로 빌드했다.
+  현재 owner SHA-256은 `e2e_scenarios.rs` =
+  `2935d7a27320dff36f068cd7afe598fe55a235185bb54c9a079dc412f6e56974`,
+  `e2e_chaos.rs` = `38b4f410ae92a4ab62f04309f39707d76956ca0e3c13f2bbe0233b07b989b5c1`이다.
+  sleep 대조군 SHA는 각각 `e26fdcf9b368f636f4194a5de1e370ca8929c284e02e705b95d7b13fd1277e21`,
+  `76cbc9a076c33a10f983713e731789d87875ded7d5f2914079890e6a9672a69b`이다.
+- 같은 macOS 15.6 arm64와 target directory에서 exact binary를 교차 순서로 각
+  10회 실행했다. `overload_is_bounded_and_fail_closed`: 현재 10/10 통과,
+  median/worst 0.0522/0.2867초; sleep 복원 10/10, 0.1221/0.3509초.
+  `claim_timeout_abandon_race_storm`: 현재 10/10, 0.0317/0.2546초;
+  sleep 복원 10/10, 0.0920/0.3107초. median 차이 0.0700초 및 0.0603초는
+  제거된 sleep의 국소 효과와 일치한다. worst outlier는 동시 호스트 부하의 영향을
+  받으므로 일반적인 wall-time 절감률로 확대하지 않는다.
+- 앞 절의 현재 소스 20/20 반복과 함께 A01–A04의 오너 로컬 계약을 충족했다.
+  즉시 drain 실패는 관찰되지 않았다. 임시 소스를 원래 SHA로 복원했고 W3
+  exact-source full receipt는 별도다.

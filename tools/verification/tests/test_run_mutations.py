@@ -74,7 +74,8 @@ def test_parent_sigterm_kills_and_reaps_the_owned_process_group(tmp_path: Path) 
         "marker = Path(sys.argv[1])\n"
         'child = "from pathlib import Path; import os, signal, sys; '
         "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-        'Path(sys.argv[1]).write_text(str(os.getpid())); signal.pause()"\n'
+        "marker = Path(sys.argv[1]); pending = marker.with_suffix('.tmp'); "
+        'pending.write_text(str(os.getpid())); os.replace(pending, marker); signal.pause()"\n'
         "result = execute([sys.executable, '-c', child, str(marker)], "
         "cwd=Path.cwd(), env=os.environ.copy(), timeout_seconds=60)\n"
         "print(json.dumps({'returncode': result.returncode, 'signal': result.signal, "
@@ -117,24 +118,41 @@ def test_parent_sigterm_kills_and_reaps_the_owned_process_group(tmp_path: Path) 
                 raise AssertionError("owned child survived parent cancellation")
 
 
-def test_timeout_escalates_and_reaps_the_owned_process_group(tmp_path: Path) -> None:
+def test_timeout_escalates_and_reaps_the_owned_process_group(tmp_path: Path, monkeypatch) -> None:
     marker = tmp_path / "child.pid"
     child = (
         "from pathlib import Path; import os, signal, sys; "
         "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-        "Path(sys.argv[1]).write_text(str(os.getpid())); signal.pause()"
+        "marker = Path(sys.argv[1]); pending = marker.with_suffix('.tmp'); "
+        "pending.write_text(str(os.getpid())); os.replace(pending, marker); "
+        "sys.stderr.write('READY\\n'); sys.stderr.flush(); signal.pause()"
     )
     import tools.process_supervisor as supervisor
+
+    original_popen = supervisor.subprocess.Popen
+
+    def popen_after_child_ready(*args, **kwargs):
+        process = original_popen(*args, **kwargs)
+        assert process.stderr is not None
+        readable, _, _ = select.select([process.stderr], [], [], 5)
+        if not readable:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            raise AssertionError("owned child never reached its blocking point")
+        assert process.stderr.readline() == "READY\n"
+        return process
 
     previous_grace = supervisor.TERMINATION_GRACE_SECONDS
     supervisor.TERMINATION_GRACE_SECONDS = 0.1
     try:
-        result = campaign_module.execute(
-            [sys.executable, "-c", child, str(marker)],
-            cwd=tmp_path,
-            env=os.environ.copy(),
-            timeout_seconds=0.1,
-        )
+        with monkeypatch.context() as patch:
+            patch.setattr(supervisor.subprocess, "Popen", popen_after_child_ready)
+            result = campaign_module.execute(
+                [sys.executable, "-c", child, str(marker)],
+                cwd=tmp_path,
+                env=os.environ.copy(),
+                timeout_seconds=0.1,
+            )
     finally:
         supervisor.TERMINATION_GRACE_SECONDS = previous_grace
     assert result.timed_out is True
@@ -143,6 +161,61 @@ def test_timeout_escalates_and_reaps_the_owned_process_group(tmp_path: Path) -> 
     child_pid = int(marker.read_text(encoding="utf-8"))
     with pytest.raises(ProcessLookupError):
         os.kill(child_pid, 0)
+
+
+def test_successful_leader_with_live_detached_pipe_child_is_not_success(tmp_path: Path) -> None:
+    import tools.process_supervisor as supervisor
+
+    marker = tmp_path / "child.pid"
+    child = (
+        "from pathlib import Path; import os, signal, sys; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "marker = Path(sys.argv[1]); pending = marker.with_suffix('.tmp'); "
+        "pending.write_text(f'{os.getpid()} {os.getpgrp()}'); "
+        "os.replace(pending, marker); signal.pause()"
+    )
+    parent = (
+        "import os, subprocess, sys, time\n"
+        "marker, child = sys.argv[1:]\n"
+        "subprocess.Popen([sys.executable, '-c', child, marker], "
+        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+        "deadline = time.monotonic() + 2\n"
+        "while not os.path.exists(marker) and time.monotonic() < deadline:\n"
+        "    time.sleep(0.01)\n"
+        "sys.exit(0 if os.path.exists(marker) else 1)\n"
+    )
+    pgid: int | None = None
+    try:
+        result = supervisor.run_process(
+            [sys.executable, "-c", parent, str(marker), child],
+            cwd=tmp_path,
+            env=os.environ.copy(),
+            timeout_seconds=5,
+        )
+        assert marker.exists(), result.stderr
+        child_pid, pgid = map(int, marker.read_text(encoding="utf-8").split())
+        assert result.returncode is None, "a live owned child must invalidate leader exit 0"
+        assert result.timed_out is False
+        assert "live process group" in result.stderr
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            status = subprocess.run(
+                ["ps", "-o", "stat=", "-p", str(child_pid)],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+            if not status or status.startswith("Z"):
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("orphaned owned child survived supervisor return")
+    finally:
+        if pgid is not None:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_curated_campaign_records_unstarted_rows_after_interruption(

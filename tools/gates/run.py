@@ -11,7 +11,8 @@ A gate with `status_line: {marker, require}` in the inventory self-reports on
 stdout (`taskmesh-<gate> status=… …`). Its *final* marker line is the verdict:
 it is kept verbatim in the result (`status_line`) — the output tail is bounded
 and cannot be relied on to contain it — and the run is PASS only if that line
-carries the required token. Exit 0 without it is NOT_RUN.
+has exactly one `status=` token equal to the required value. Exit 0 without
+that unambiguous verdict is NOT_RUN.
 
 Usage:
     python3 tools/gates/run.py --tier fast              # e.g. the fast gate
@@ -41,6 +42,11 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from tools.gates.parallel_policy import PARALLEL_GATE_LIMIT, PARALLEL_GROUP_MEMBERS  # noqa: E402
+from tools.gates.status_line import (  # noqa: E402
+    final_status_line,
+    pass_status_line_problems,
+    status_line_qualifies,
+)
 from tools.process_supervisor import (  # noqa: E402
     SupervisedCommand,
     run_process,
@@ -86,6 +92,13 @@ def platform_scope_qualification(
     platform condition. This lets a Mac prove its complete local surface
     without relabelling the Linux-only IAI gate as a pass.
     """
+    try:
+        inventory_gates = json.loads(INVENTORY.read_text(encoding="utf-8"))["gates"]
+        declared_platforms = {gate["id"]: gate["platforms"] for gate in inventory_gates}
+        if len(declared_platforms) != len(inventory_gates):
+            return False, []
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return False, []
     by_id = {result["id"]: result for result in results}
     excluded: list[str] = []
     for gate_id in sorted(required):
@@ -96,12 +109,21 @@ def platform_scope_qualification(
             result.get("status") == "PASS"
             and type(result.get("exit_code")) is int
             and result["exit_code"] == 0
+            and result.get("timed_out") is not True
+            and result.get("interrupted_by_signal") is None
+            and result.get("signal") is None
         ):
             continue
         if (
             result.get("status") == "SKIPPED_PLATFORM"
-            and platform_conditional.get(gate_id)
-            and platform_conditional[gate_id] != here
+            and result.get("exit_code") is None
+            and result.get("timed_out") is not True
+            and result.get("interrupted_by_signal") is None
+            and result.get("signal") is None
+            and isinstance(declared_platforms.get(gate_id), list)
+            and "any" not in declared_platforms[gate_id]
+            and here not in declared_platforms[gate_id]
+            and platform_conditional.get(gate_id) in declared_platforms[gate_id]
         ):
             excluded.append(gate_id)
             continue
@@ -116,9 +138,23 @@ def result_record_problems(results: list[dict]) -> list[str]:
         gate_id = result.get("id", "<missing>")
         status = result.get("status")
         exit_code = result.get("exit_code")
+        timed_out = result.get("timed_out", False)
+        interrupted = result.get("interrupted_by_signal")
+        if type(timed_out) is not bool:
+            problems.append(f"local receipt gate {gate_id} timed_out must be boolean")
+        if interrupted is not None and (
+            not isinstance(interrupted, int) or isinstance(interrupted, bool) or interrupted <= 0
+        ):
+            problems.append(f"local receipt gate {gate_id} interrupted_by_signal is malformed")
         if status == "PASS":
             if type(exit_code) is not int or exit_code != 0:
                 problems.append(f"local receipt gate {gate_id} PASS requires integer exit_code 0")
+            if (
+                timed_out is not False
+                or interrupted is not None
+                or result.get("signal") is not None
+            ):
+                problems.append(f"local receipt gate {gate_id} PASS reports interrupted execution")
         elif status == "SKIPPED_PLATFORM":
             if exit_code is not None:
                 problems.append(
@@ -130,9 +166,13 @@ def result_record_problems(results: list[dict]) -> list[str]:
                     f"local receipt gate {gate_id} NOT_RUN exit_code must be null or integer 2"
                 )
         elif status == "FAIL":
-            if exit_code is not None and (type(exit_code) is not int or exit_code == 0):
+            if exit_code is not None and (
+                type(exit_code) is not int
+                or (exit_code == 0 and timed_out is not True and interrupted is None)
+            ):
                 problems.append(
-                    f"local receipt gate {gate_id} FAIL exit_code must be null or a nonzero integer"
+                    f"local receipt gate {gate_id} FAIL exit_code must be null, "
+                    "nonzero, or explicitly interrupted"
                 )
         else:
             problems.append(f"local receipt gate {gate_id} has unknown status {status!r}")
@@ -187,6 +227,22 @@ def local_receipt_problems(
     if len(valid_results) != len(results) or len(ids) != len(set(ids)):
         problems.append("local receipt result ids are malformed or duplicated")
     problems.extend(result_record_problems(valid_results))
+    problems.extend(pass_status_line_problems(valid_results, INVENTORY))
+    expected_not_run, expected_not_passed = summarize_required(required, valid_results)
+    if value.get("required_not_run") != expected_not_run:
+        problems.append("local receipt required_not_run differs from its results")
+    if value.get("required_not_passed") != expected_not_passed:
+        problems.append("local receipt required_not_passed differs from its results")
+    expected_qualified = (
+        not expected_not_run
+        and not expected_not_passed
+        and source.get("dirty") is False
+        and source_after == expected_after
+        and value.get("source_problems") == []
+        and all(result.get("interrupted_by_signal") is None for result in valid_results)
+    )
+    if value.get("qualified") is not expected_qualified:
+        problems.append("local receipt qualified differs from its results and source")
     recomputed, excluded = platform_scope_qualification(
         required, valid_results, platform_conditional, here
     )
@@ -223,33 +279,18 @@ def execute_gate_process(
     return completed, process.timed_out
 
 
-def status_line_qualifies(gate: dict, stdout: str) -> bool:
-    """For a gate that self-reports (`status_line` in the inventory: a marker
-    and a token that must appear on the marker's line), exit 0 alone is not
-    PASS. A missing marker line is treated as not qualified too: a recipe that
-    stopped printing its verdict has not proved anything."""
-    spec = gate.get("status_line")
-    if not spec:
-        return True
-    verdict = final_status_line(spec["marker"], stdout)
-    return verdict is not None and spec["require"] in verdict.split()
-
-
-def final_status_line(marker: str, stdout: str) -> str | None:
-    """The *last* `<marker> …` line on stdout: a recipe that reports per-surface
-    lines before its summary (consumer-msrv) ends with the verdict, and an
-    earlier line must not stand in for it."""
-    lines = [line for line in stdout.splitlines() if line.startswith(marker + " ")]
-    return lines[-1] if lines else None
-
-
 def run_gate(gate: dict) -> dict:
     started = time.monotonic()
     started_at = datetime.now(timezone.utc).isoformat()
     timeout_seconds = gate.get("timeout_seconds", GATE_TIMEOUT_SECONDS)
     try:
         proc, timed_out = execute_gate_process(["just", gate["recipe"]], timeout_seconds)
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
+        detail = (
+            f"gate command could not start: {exc}"
+            if isinstance(exc, OSError)
+            else f"gate output could not be decoded: {type(exc).__name__}: {exc}"
+        )
         return {
             "id": gate["id"],
             "recipe": gate["recipe"],
@@ -260,7 +301,7 @@ def run_gate(gate: dict) -> dict:
             "timeout_seconds": timeout_seconds,
             "started_at": started_at,
             "duration_s": round(time.monotonic() - started, 3),
-            "output_tail": f"gate command could not start: {exc}",
+            "output_tail": detail,
         }
     return gate_process_result(gate, proc, timed_out, started_at, time.monotonic() - started)
 
@@ -281,7 +322,12 @@ def run_gate_batch(gates: list[dict]) -> list[dict]:
     ]
     try:
         completed = run_process_batch(commands)
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
+        detail = (
+            f"gate command could not start: {exc}"
+            if isinstance(exc, OSError)
+            else f"gate output could not be decoded: {type(exc).__name__}: {exc}"
+        )
         return [
             {
                 "id": gate["id"],
@@ -289,7 +335,7 @@ def run_gate_batch(gates: list[dict]) -> list[dict]:
                 "status": "FAIL",
                 "exit_code": None,
                 "timed_out": False,
-                "output_tail": f"gate command could not start: {exc}",
+                "output_tail": detail,
             }
             for gate in gates
         ]
@@ -341,7 +387,11 @@ def gate_process_result(
             "output_tail": f"TIMEOUT after {timeout_seconds}s\n"
             + (proc.stdout + proc.stderr)[-1500:],
         }
-    if proc.returncode == 0 and not status_line_qualifies(gate, proc.stdout):
+    if getattr(proc, "interrupted_by_signal", None) is not None:
+        # A child may handle SIGTERM and exit zero after cancellation. Its
+        # status line is partial execution evidence, not a completed gate.
+        status = "FAIL"
+    elif proc.returncode == 0 and not status_line_qualifies(gate, proc.stdout):
         # The recipe ran and exited 0 but its own machine-readable line says
         # it did not reach the qualifying state (e.g. bench-iai recorded a
         # baseline instead of comparing against one). That is not a pass.
@@ -362,9 +412,7 @@ def gate_process_result(
         "recipe": gate["recipe"],
         "status": status,
         "exit_code": proc.returncode,
-        "signal": -proc.returncode
-        if proc.returncode is not None and proc.returncode < 0
-        else None,
+        "signal": -proc.returncode if proc.returncode is not None and proc.returncode < 0 else None,
         "timed_out": False,
         "interrupted_by_signal": getattr(proc, "interrupted_by_signal", None),
         "timeout_seconds": timeout_seconds,
@@ -568,17 +616,20 @@ def run_selected_gates(
                         else:
                             result = record_unrun(item, deadline_blocker)
                     results.append(result)
-                    print(
-                        f"{item['id']:<20} {result['status']} "
-                        f"({result.get('duration_s', 0)}s)"
-                    )
+                    print(f"{item['id']:<20} {result['status']} ({result.get('duration_s', 0)}s)")
                     if result.get("interrupted_by_signal") is not None and blocked_by is None:
                         blocked_by = f"signal-{result['interrupted_by_signal']}"
                     elif result.get("timeout_seconds") == 0 and blocked_by is None:
                         blocked_by = item["id"]
                     elif result["status"] != "PASS" and not keep_going and blocked_by is None:
                         blocked_by = item["id"]
-                if blocked_by is not None and not keep_going:
+                if blocked_by is not None:
+                    # The wave was consumed when its contiguous members were
+                    # collected. Preserve every unstarted member in the receipt,
+                    # including after cancellation with --keep-going.
+                    for remaining_item in wave[offset + len(batch) :]:
+                        results.append(record_unrun(remaining_item, blocked_by))
+                        print(f"{remaining_item['id']:<20} NOT_RUN (blocked by {blocked_by})")
                     break
             continue
 
@@ -621,12 +672,12 @@ def summarize_required(required: set[str], results: list[dict]) -> tuple[list[st
     not_run = (required - ran_ids) | {
         result["id"]
         for result in results
-        if result["id"] in required and result["status"] == "NOT_RUN"
+        if result["id"] in required and result.get("status") == "NOT_RUN"
     }
     not_passed = {
         result["id"]
         for result in results
-        if result["id"] in required and result["status"] != "PASS"
+        if result["id"] in required and result.get("status") != "PASS"
     }
     return sorted(not_run), sorted(not_passed)
 

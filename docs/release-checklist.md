@@ -10,11 +10,18 @@ be used for routine verification. `required.json` also owns the fail-fast execut
 order; an explicit receipt `--tier` is a diagnostic subset, not canonical qualification.
 Run the registered recipes through `just`:
 
+- Per-edit feedback: use `just dev-rust-fast <crate> [consumer-crates...]` for
+  production Rust changes, `just dev-rust-tests <crate> [consumer-crates...]`
+  for test-only Rust changes, or `just dev-python-fast <changed.py> <owner-tests>`.
+  These scope checks to changed owners. `verify-local` is a broader
+  cross-package checkpoint, not a required step after every edit.
 - [ ] `just verify-local` — purpose-scoped macOS feedback: core workspace tests
-      (benchmark harness and generated doc fixture excluded), production `lib/bin` Clippy, cheap Python
-      tests for the arch/gates policy owners, and the corresponding real
-      static-policy commands. Semgrep scans real source once; test/example/bench
-      Clippy and its synthetic rule-pack regression suite stay in the full gates.
+      (benchmark harness and generated doc fixture excluded), production `lib/bin`
+      Clippy, and the corresponding real static-policy commands. Python tooling
+      checks are path-scoped (`just dev-python-fast <changed.py> <owner-tests>`)
+      and should run only when those owners change.
+      Semgrep scans real source once; test/example/bench Clippy and its synthetic
+      rule-pack regression suite stay in the full gates.
       It is not a qualification verdict and deliberately excludes dependency,
       performance, feature/docs/MSRV, mutation, and other heavyweight rails.
       Cargo build/test concurrency defaults to 4 on these local paths; override
@@ -27,11 +34,35 @@ Run the registered recipes through `just`:
       an intentional diagnostic sweep. Dirty-source qualification is rejected
       before any gate command starts. A full dirty diagnostic requires the explicit
       `--allow-dirty-source --keep-going` override and cannot produce a qualifying receipt.
+      An interrupted gate is `FAIL` even if its child handles the signal and exits zero.
+      Undecodable gate output is also recorded as `FAIL`; a zero-exit child cannot
+      bypass receipt creation by emitting invalid UTF-8.
+      If a recipe leader exits while an owned descendant remains in its process group,
+      the supervisor kills the remaining group and records a missing group exit status;
+      the gate is `FAIL` even when the leader printed a PASS marker and exited zero.
+      A descendant that creates a new session is outside that signal boundary. If it
+      retains captured pipes, their drain is bounded after timeout and termination
+      grace; the gate records `FAIL` with a capture-pipe diagnostic. The escaped
+      process itself needs host-side cleanup and is not claimed as reaped.
+      Local and final receipt validators reject `PASS` rows with timeout or signal metadata.
+      A stopped parallel wave records every unstarted member as `NOT_RUN` and does not launch
+      later batches after a signal or exhausted global deadline, even with `--keep-going`.
+      A saved `SKIPPED_PLATFORM` row qualifies only when the gate inventory excludes this host;
+      a missing toolchain or other conditional prerequisite remains `NOT_RUN`.
+      Saved `qualified`, `required_not_run`, and `required_not_passed` fields must match the
+      re-derived gate results and source stability; edited summary fields invalidate the receipt.
 - [ ] `just qualify-local` on local Linux — every ordinary required gate must PASS;
-      platform skips and missing tools remain `NOT_QUALIFIED`.
+      platform skips and missing tools remain `NOT_QUALIFIED`. Run it in an exclusive
+      clean checkout with no concurrent writers: source digests before and after the
+      run cannot detect an edit restored between those observations.
 - [ ] `just gate` — fmt-check, strict clippy (3 passes), test, deny, semgrep
       (real integration tests enrolled), architecture checker, py-lint, py-test,
-      allocation gate, gates-inventory parity
+      allocation gate, gates-inventory parity. A self-reporting gate's final
+      marker line must have exactly one `status=` token matching its required
+      verdict; conflicting or duplicated status tokens cannot produce PASS.
+      Saved local and final receipts recheck a directly executed PASS row against
+      that retained line. Hosted producer-import rows use their registered
+      envelope and raw-artifact validation instead of a local status line.
 - [ ] `just test-rayon` / `just doctest` / `just rustdoc` / `just bench-smoke`
 - [ ] `just mutants-critical` — curated single-edit inventory의 non-control 102개가
       KILLED이고 control 1개가 CONTROL_GREEN인지 확인한다. 이것은 cargo-mutants
@@ -46,10 +77,13 @@ Run the registered recipes through `just`:
       전체 denominator에는 `unviable` ID도 남긴다. 다만 cargo-mutants가 컴파일하지 못한
       `unviable`은 명시적 비채점 한계이며 quality denominator에서 제외한다. 최소 한 개의
       caught가 있고 missed/timeout/equivalent가 모두 0이어야 PASS다. `REPORTED`는 denominator
-      disclosure일 뿐 quality PASS가 아니다.
+      disclosure일 뿐 quality PASS가 아니다. 저장된 PASS 검증은 discovery와 campaign의
+      정상 종료, 원시 unfiltered 목록과 planned/제외 목록의 차이, source의 `exclude_re`
+      정책을 다시 대조한다.
 - [ ] `just modelcheck` — bounded Loom/Shuttle run identity와 독립 clean-process replay.
       Full proof에서는 이것이 Loom/Shuttle의 단일 owner다. `just loom`/`just shuttle`은
-      focused debugging용이며 modelcheck와 중복 실행하지 않는다.
+      focused debugging용이며 modelcheck와 중복 실행하지 않는다. 부모가 중단되면
+      modelcheck가 소유한 자식 process group도 종료하고 중단을 PASS로 기록하지 않는다.
 - [ ] `just tsan` — `status=CLEAN` (ThreadSanitizer over the production engine and
       host concurrency tests; needs nightly + rust-src, otherwise NOT_RUN which is
       not a pass)
@@ -64,7 +98,14 @@ Run the registered recipes through `just`:
       baseline and reports `BASELINE_CREATED`; the *next* run with the same
       fingerprint qualifies. A deliberately dispatched hosted reproduction may
       reuse its cache keyed by `tools/bench-iai.sh fingerprint`; ordinary local
-      runs use the local baseline store.
+      runs use the local baseline store. The owner-local IAI fixture verifies that
+      `Ir` contains positive integer instruction counts, raw `.out` exists, and a
+      failed finalize does not overwrite the baseline manifest. It also requires
+      exactly the three configured governance case identities and each case's raw
+      `.out` artifact in the runner summaries, without sharing an output path
+      or aliasing one through a symlinked parent directory across cases. The
+      gate refuses a symlinked `target` parent before touching its baseline store.
+      Linux Valgrind measurement and the >5% negative control remain required.
 - [ ] `uv run python tools/qualification/receipt.py collect --local-qualified
       --out target/qualification/local-receipt.json` from a clean local Linux
       checkout, and `validate` reports `QUALIFIED`. `validate`
@@ -76,7 +117,12 @@ Run the registered recipes through `just`:
       Receipt schema 4 records the gate-runner process exit and its raw required
       summary separately from the enriched gate rows: local qualification requires
       exit 0, while hosted producer import may account only for its exact skipped
-      producer set. A PASS JSON sidecar cannot override a failed local process.
+      producer set. The collector supervises that runner for the inventory's
+      qualification budget plus 120 seconds of finalization grace. A timeout or
+      interruption invalidates the receipt even if the runner exits 0 after
+      termination; missing process-status flags also invalidate it. A PASS JSON
+      sidecar cannot override a failed or incomplete local process. An unreadable
+      or invalid UTF-8 sidecar is recorded as invalid evidence.
 - [ ] hell-gate e2e: `crates/taskmesh/tests/e2e_proof.rs`, `e2e_scenarios.rs`
 
 ## Invariant proofs
@@ -107,7 +153,7 @@ Run the registered recipes through `just`:
   against the Python tooling), each killed by its named regression for its named
   reason found in that test's own output, plus one cargo behaviour-preserving control
   that must stay green. The historical schema-v1 receipt contains the first 100;
-  five receipt/coverage/runner integrity probes were added with schema v2.
+  the current inventory retains 97 of those IDs, adds 6, and removes 3, for 103 total.
 
 ## Required proof scenarios
 
@@ -196,7 +242,11 @@ Run the registered recipes through `just`:
       `target/release/input/adjudication.json`. The independent
       release receipt revalidates the ordinary 23-gate receipt, four-crate semver
       raw outputs, all 23 finding/ticket links, coverage and Linux IAI raw
-      digests. Missing/NOT_RUN/SKIPPED/TIMEOUT, dirty or stale source, unapproved
+      digests. The IAI check also re-derives the baseline fingerprint and raw
+      comparison from the exact source, summaries, and runner outputs, then
+      matches them to the ordinary `bench-iai` verdict. A matching file digest
+      alone cannot qualify a baseline-only or incomplete comparison.
+      Missing/NOT_RUN/SKIPPED/TIMEOUT, dirty or stale source, unapproved
       version or behavior break yield `NOT_QUALIFIED`. Hosted workflows are disabled;
       no push, PR, schedule, or manual dispatch is part of the release authority.
 - [ ] The local release recipe also runs `tools/release/finding_proof.py` from the

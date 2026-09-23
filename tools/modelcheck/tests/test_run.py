@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
+
+import pytest
 
 MODULE_PATH = Path(__file__).parents[1] / "run.py"
 SPEC = importlib.util.spec_from_file_location("modelcheck_run", MODULE_PATH)
@@ -103,3 +110,52 @@ def test_wedged_model_process_times_out_and_is_reaped(tmp_path: Path) -> None:
     assert result["exit_code"] != 0
     assert result["signal"] in {9, 15}
     assert "timed_out=true" in (tmp_path / "timeout.log").read_text()
+
+
+def test_parent_signal_reaps_owned_model_command(tmp_path: Path) -> None:
+    marker = tmp_path / "model-child.pid"
+    child = "import os, signal, sys; open(sys.argv[1], 'w').write(str(os.getpid())); signal.pause()"
+    wrapper = tmp_path / "model_wrapper.py"
+    wrapper.write_text(
+        f"import sys\nsys.path.insert(0, {str(MODULE_PATH.parents[2])!r})\n"
+        "from pathlib import Path\n"
+        "from tools.modelcheck.run import run_command\n"
+        f"run_command([sys.executable, '-c', {child!r}, {str(marker)!r}], "
+        f"{{}}, Path({str(tmp_path / 'model.log')!r}), timeout_seconds=30)\n",
+        encoding="utf-8",
+    )
+    parent = subprocess.Popen([sys.executable, str(wrapper)], cwd=tmp_path)
+    child_pid: int | None = None
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not marker.exists():
+            if parent.poll() is not None:
+                break
+            time.sleep(0.01)
+        assert marker.exists(), "model child did not start"
+        child_pid = int(marker.read_text(encoding="utf-8"))
+        parent.send_signal(signal.SIGTERM)
+        parent.wait(timeout=5)
+        assert parent.returncode == 128 + signal.SIGTERM
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            state = subprocess.run(
+                ["ps", "-o", "stat=", "-p", str(child_pid)],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+            if not state or state.startswith("Z"):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("model command survived its parent termination")
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=5)
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass

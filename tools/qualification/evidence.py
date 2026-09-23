@@ -70,22 +70,27 @@ def git_source_paths(root: Path) -> list[str]:
 
 
 def source_tree_digest(root: Path, paths: Iterable[str]) -> str:
-    """Digest path, file kind, executable bit, and bytes for an explicit source set."""
+    """Digest an unambiguous sequence of path, kind, mode, and content records."""
     digest = hashlib.sha256()
+    digest.update(b"taskmesh-source-tree-v2\0")
+
+    def frame(data: bytes) -> None:
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+
     for relative in sorted(paths):
         path = root / relative
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
+        frame(os.fsencode(relative))
         if path.is_symlink():
-            digest.update(b"symlink\0")
-            digest.update(os.readlink(path).encode("utf-8"))
+            digest.update(b"L")
+            frame(os.fsencode(os.readlink(path)))
         elif path.is_file():
-            digest.update(b"file\0")
-            executable = path.stat().st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-            digest.update(b"x" if executable else b"-")
-            digest.update(path.read_bytes())
+            digest.update(b"F")
+            mode = stat.S_IMODE(path.stat().st_mode)
+            digest.update(mode.to_bytes(2, "big"))
+            frame(path.read_bytes())
         else:
-            digest.update(b"missing\0")
+            digest.update(b"M")
     return digest.hexdigest()
 
 

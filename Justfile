@@ -79,13 +79,27 @@ py-lint:
 py-test:
     uv run pytest tools -q
 
-# Laptop feedback runs the cheap negative oracles for the architecture, gate,
-# and prompt-policy owners. The real Semgrep gate still scans the source once;
-# its 43-case synthetic rule-pack regression scan belongs to full `py-test`,
-# alongside benchmark, mutation, modelcheck, fuzz, MSRV, qualification, and
-# release tooling.
-py-test-fast:
-    uv run pytest tools/arch/tests tools/gates/tests -q -m "not qualification"
+prompt-check:
+    uv run python tools/pm/check.py
+
+# Targeted Python tooling feedback. Pass changed .py paths and the owning test
+# path; use full `py-lint` / `py-test` only for qualification or broad refactors.
+dev-python-fast files tests:
+    uv run ruff check {{files}}
+    uv run pytest {{tests}} -q -m "not qualification"
+
+# Rust edit loop: scope compilation, lint, and behavior tests to the changed
+# package. Use `dev-fast` for cross-package or shared-boundary changes.
+dev-rust-fast package *consumers:
+    cargo fmt --package {{package}} --check
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" CLIPPY_CONF_DIR={{root}}/config cargo clippy --locked -p {{package}} --lib --bins -- {{clippy_strict}} {{clippy_allows}} {{clippy_restrict}}
+    packages=({{package}} {{consumers}}); args=(); for package in "${packages[@]}"; do args+=(-p "$package"); done; CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked "${args[@]}" --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"
+
+# Test-only Rust edits do not need a production Clippy pass. Include downstream
+# consumer package names when a public contract change needs compatibility proof.
+dev-rust-tests package *consumers:
+    cargo fmt --package {{package}} --check
+    packages=({{package}} {{consumers}}); args=(); for package in "${packages[@]}"; do args+=(-p "$package"); done; CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked "${args[@]}" --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"
 
 # Gate inventory (H16-018): the Justfile, the manual fallback workflows, and the
 # required set must agree. The validator also rejects automatic hosted triggers,
@@ -107,6 +121,11 @@ mutants-critical *ARGS:
 mutants-generated *ARGS:
     uv run python tools/verification/run_generated_mutants.py --jobs 2 {{ARGS}}
 
+# Package/file-scoped mutation diagnostics for the edit loop. Never a full
+# qualification receipt; use `mutants-generated` for the complete denominator.
+mutants-focused *ARGS:
+    uv run python tools/verification/run_focused_mutants.py {{ARGS}}
+
 lint-rust: fmt-check clippy
 
 lint-arch: test-architecture
@@ -117,7 +136,7 @@ lint-deps: deny
 
 lint-py: py-lint py-test
 
-lint-rules: semgrep test-architecture
+lint-rules: semgrep test-architecture prompt-check
 
 # Feature-matrix drift: the `rayon` feature auto-wires the default CPU executor
 # on a cfg-gated path that default-feature builds never compile.
@@ -176,11 +195,10 @@ gate: fmt-check clippy test deny semgrep test-architecture py-lint py-test bench
 fuzz-check:
     bash tools/fuzz/check.sh
 
-# Purpose-scoped laptop loop. Supply-chain resolution, benchmark authorities,
-# feature/docs/MSRV matrix, fuzz harness compilation, mutation, model checking,
-# sanitizers and coverage remain in `gate`/`matrix`/`proof` and therefore in
-# `verify-macos-full`; they are not repeated on every edit.
-dev-fast: fmt-check clippy-core test-core semgrep test-architecture py-lint py-test-fast gates-inventory
+# Purpose-scoped Rust product loop. Python tooling checks are separate in
+# `dev-python-fast`; unrelated Python lint/tests are not repeated for Rust edits.
+# Heavy authorities remain in `gate`/`matrix`/`proof` and `verify-macos-full`.
+dev-fast: fmt-check clippy-core test-core semgrep test-architecture gates-inventory
     @echo "dev-fast: core macOS feedback passed; run 'just verify-macos-full' for receipt-backed qualification"
 
 # Local proof matrix: feature-matrix drift, doctests, link-clean rustdoc, bench

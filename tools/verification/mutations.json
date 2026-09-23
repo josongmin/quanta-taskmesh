@@ -824,7 +824,7 @@
       "finding": "R3C-1",
       "runner": "pytest",
       "rationale": "consumer-msrv prints a per-surface line before its summary; taking the first marker line as the verdict qualifies a run whose final line is NOT_RUN or FAIL, and records the wrong line in the receipt.",
-      "file": "tools/gates/run.py",
+      "file": "tools/gates/status_line.py",
       "find": "    return lines[-1] if lines else None",
       "replace": "    return lines[0] if lines else None",
       "test_target": "tools/gates/tests/test_inventory.py::test_the_recipes_final_status_line_is_the_verdict_the_receipt_keeps",

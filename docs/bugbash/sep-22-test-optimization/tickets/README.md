@@ -6,11 +6,17 @@ Baseline: `main@7023e945e1c9b3e7e7cca1b26f7af8467df6ab60`, tree
 These tickets track the eight baseline findings in [`../README.md`](../README.md). They optimize
 test execution without weakening semantic or qualification authority.
 
-At the 2026-09-23 re-audit, all eight baseline code changes are present. T01, T02, and T05 are
-`LOCALLY_VERIFIED`; T03–T04 and T06–T08 are `IMPLEMENTED_UNQUALIFIED` because ticket-specific
-timing, harness-negative, or cross-host evidence is still missing. W3 cannot start from the current dirty
-shared worktree; it requires a clean, frozen candidate. The baseline and waves below preserve the
-original campaign dependency map.
+At the 2026-09-23 owner-local pass, all eight baseline code changes are present. T01–T07 are
+`LOCALLY_VERIFIED`; T08 remains `IMPLEMENTED_UNQUALIFIED`. T03–T04 have isolated same-source
+ablation timings; those host-contended samples do not establish general performance savings.
+T08 now has 2,000 admit/release cycles per worker, selected one step above the smallest
+passing 1,000-cycle variant. Rust 1.92.0 macOS and Docker Linux ladders each passed 10/10
+per variant; the selected 2,000-cycle exact case passed 20/20 on each. Raw throughput and
+host-specific cost samples are recorded in T08. The Linux environment is a Docker VM on the
+Mac host, so independent hardware performance is not established. Clean-source gate/matrix
+acceptance remains open. W3 requires a clean, frozen candidate and a complete
+exact-source receipt. The baseline and waves
+below preserve the original campaign dependency map.
 
 ## Ticket map
 
@@ -32,7 +38,8 @@ original campaign dependency map.
 | W0 | T01, T02, T03, T05, T06, T07, T08 | Re-freeze HEAD and verify exclusive paths before editing. |
 | W1 | T04 | Starts only after T03 settles `e2e_scenarios.rs`. |
 | W2 | Integrator | Rebase/reconcile, run focused suites, then exact-source `just gate` and `just matrix`. |
-| W3 | Qualification | Run `just verify-macos-full`; closure requires its exact-source receipt, not W0/W1 passes. |
+| W3 | macOS full receipt | Freeze a clean candidate, then run `just verify-macos-full` once. Its exact-source receipt closes the macOS applicable gate set only. |
+| W4 | Linux qualification | Provision the required Linux tools, create and compare an IAI baseline for the same fingerprint, then run `just qualify-local` on the same frozen candidate. Closure requires a validated `QUALIFIED` receipt with every ordinary required gate PASS. |
 
 ## Ownership and patch-on-patch prevention
 
@@ -90,11 +97,18 @@ just gate
 just matrix
 just verify-local
 just verify-macos-full
+just qualify-local
+just validate-local-qualification
 ```
 
 `just verify-local` is the daily `dev-fast` feedback subset and does not emit a qualification
 receipt. `just verify-macos-full` runs the required host-applicable rails and writes the exact-source
 receipt; missing/NOT_RUN required rails keep the campaign open.
+On macOS, `bench-iai` is a platform skip. The W3 receipt therefore cannot close
+the Linux ordinary qualification or the external consumer check. W4 requires
+Linux `valgrind` and the configured `iai-callgrind-runner`, plus the other
+required toolchains and gate commands; a fresh IAI baseline is `BASELINE_CREATED`
+and needs a second same-fingerprint comparison before qualification.
 
 ## Plan validation
 

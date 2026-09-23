@@ -26,6 +26,25 @@
 - 계획의 P0/P1/P2는 실행 순서다. 원본 severity를 상향한 것이 아니다.
 - “SOTA++”는 정확한 계약·유한한 소유권·독립 검증을 목표로 한 설계안의 이름이다. 최신 업계 대비 우월성이나 성능 개선을 측정한 결과가 아니다.
 
+## 현재 상태 — 2026-09-23
+
+- 위 2026-09-21 상태와 실행 기록은 당시 snapshot의 증거다. hardening 구현 commit은 현재
+  `origin/main@e55d3aa`의 조상이며, `hardening/sep-16` 전용 branch 상태는 아니다.
+  `plan.json`은 21개 `IMPLEMENTED`와 H16-020의 `RETIRED`를 구분한다. H16-020 PM renderer는
+  실제 생성 target이 0임을 확인해 2026-09-23 제거했다.
+- `ci`, `bench-gates`, `release-qualification` GitHub workflow는 수동 비활성화되어 있다.
+  현재 검증 경로는 [release checklist](../../../release-checklist.md)의 clean-source
+  `just verify-macos-full`과 Linux `just qualify-local`이다. Linux `bench-iai`는 같은
+  fingerprint의 baseline 생성 뒤 별도 qualified run이 필요하다.
+- 2026-09-23 IAI owner-local 감사에서는 누락된 `Ir` 값, 일부 case만 실행된 비교,
+  case별 raw `.out` 누락, symlink된 `target` 상위 경로를 재현하고 gate를 보강했다.
+  fixture 테스트는 Linux Valgrind 실측과 clean-source qualification이 아니다.
+- 보관된 2026-09-19 schema-v1 receipt는 `NOT_QUALIFIED`인 역사적 실행 증거다. 현재
+  collector/validator의 receipt schema는 v4다. 현재 HEAD에 대한 ordinary qualification,
+  외부 consumer 실행, deployment, activation 및 rollback owner 승인은 아직 이 문서에
+  입증되지 않았다. Semantica의 추적된 optional path dependency는 발견했으나 frozen
+  두 소스의 consumer rail은 미실행이다. [예외 대장](EXCEPTIONS.md)을 따른다.
+
 ## 읽는 순서
 
 1. [최종 audit와 증거 한계](FINAL-AUDIT.md)
@@ -62,7 +81,7 @@
 | [H16-021](H16-021-quality-and-doc-migration.md) | 중복·dead data·계약 문서 정리 | Q | P2 | H16-007, H16-012, H16-015, H16-016, H16-018, H16-020 |
 | [H16-022](H16-022-qualification-and-rollout.md) | Exact-head qualification·rollout·rollback | I | P1 | H16-021 |
 
-## 남은 작업 (구현 밖)
+## 남은 작업 (2026-09-21 기록; 현재 상태는 위 절 참조)
 
 - **commit/push는 하지 않았다.** working tree는 dirty이며 review·merge·hosted CI는 UNVERIFIED다.
 - Linux에서 `just bench-iai`(instruction-count)를 실행해 QUALIFIED baseline을 만들어야 한다.

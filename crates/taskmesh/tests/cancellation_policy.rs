@@ -87,13 +87,19 @@ async fn pre_submit_only_ignores_mid_run_token() {
     let opts = SubmitOptions::unbounded().with_cancel(token.clone());
 
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (cancel_observed_tx, cancel_observed_rx) = tokio::sync::oneshot::channel();
     let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
     let rt2 = rt.clone();
+    let work_token = token.clone();
     let handle = tokio::spawn(async move {
         rt2.run_io_with(io_spec(), opts, async {
             started_tx
                 .send(())
                 .expect("test observes work admission before cancellation");
+            work_token.cancelled().await;
+            cancel_observed_tx
+                .send(())
+                .expect("test observes work continuing after cancellation");
             finish_rx
                 .await
                 .expect("test releases the pre-submit-only work");
@@ -110,6 +116,12 @@ async fn pre_submit_only_ignores_mid_run_token() {
     .await
     .expect("work start signal sender survives");
     token.cancel();
+    bounded(
+        "pre_submit_only_ignores_mid_run_token: work did not observe cancellation while still running",
+        cancel_observed_rx,
+    )
+    .await
+    .expect("work remains active after observing the cancelled token");
     finish_tx
         .send(())
         .expect("work remains live after a pre-submit-only cancellation");

@@ -8,7 +8,7 @@
 //! on completion, conservation, drain-to-zero, and forward progress), and every
 //! randomized scenario is driven by a fixed-seed LCG so failures reproduce.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -271,9 +271,11 @@ async fn all_substrates_concurrently() {
     });
 
     // `join!` polls the non-Send local future on this task (no spawn needed).
-    let (a, b, c, d) = bounded_storm("all-substrate join group", async {
-        tokio::join!(io, blk, cpu, local)
-    })
+    // Boxed: the joined run futures exceed the large-future stack budget.
+    let (a, b, c, d) = bounded_storm(
+        "all-substrate join group",
+        Box::pin(async { tokio::join!(io, blk, cpu, local) }),
+    )
     .await;
     assert_eq!(a.unwrap(), "io");
     assert_eq!(b.unwrap(), "blk");
@@ -284,8 +286,8 @@ async fn all_substrates_concurrently() {
 
 // ─────────────────── 4. backpressure forward progress ───────────────────
 
-/// A client that retries on a bounded acquire timeout must eventually make
-/// progress once a long-held slot frees — the backpressure contract is usable.
+/// A rejected submission must make progress on its first retry after the
+/// holder has returned its lease.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn backpressure_retry_makes_forward_progress() {
     let rt = Builder::new()
@@ -294,8 +296,9 @@ async fn backpressure_retry_makes_forward_progress() {
             cls("c"),
             ClassPolicy::new()
                 .max_inflight(1)
-                .max_queue_depth(0) // not queueable -> immediate CpuSaturated
-                .cpu_units(1),
+                .max_queue_depth(0)
+                .cpu_units(1)
+                .overflow_policy(OverflowPolicy::Reject),
         )
         .build()
         .unwrap();
@@ -323,62 +326,44 @@ async fn backpressure_retry_makes_forward_progress() {
     .await
     .expect("holder start sender survives");
 
-    // The first rejection proves saturation; only then release the holder and
-    // permit the client to retry. This has no scheduler-delay assumption.
-    let (saturated_tx, saturated_rx) = tokio::sync::oneshot::channel::<()>();
-    let (retry_tx, retry_rx) = tokio::sync::oneshot::channel::<()>();
-    let rt_c = rt.clone();
-    let client = tokio::spawn(async move {
-        let mut saturated_tx = Some(saturated_tx);
-        let mut retry_rx = Some(retry_rx);
-        let mut attempt = 0u32;
-        loop {
-            let spec = TaskSpec::blocking(cls("c")).operation(format!("try-{attempt}"));
-            match rt_c.run_blocking(spec, move || Ok::<_, ()>(attempt)).await {
-                Ok(_) => return attempt,
-                Err(RunError::Governor(GovernorError::Rejected(
-                    AdmissionVerdict::CpuSaturated { .. },
-                ))) => {
-                    if let Some(saturated_tx) = saturated_tx.take() {
-                        saturated_tx
-                            .send(())
-                            .expect("test observes the first saturation");
-                        retry_rx
-                            .take()
-                            .expect("retry gate exists once")
-                            .await
-                            .expect("test permits retry after releasing holder");
-                    } else {
-                        tokio::task::yield_now().await;
-                    }
-                }
-                other => panic!("unexpected: {other:?}"),
-            }
-            attempt = attempt
-                .checked_add(1)
-                .expect("attempt counter cannot overflow");
-        }
-    });
-
-    bounded(
-        "backpressure_retry_makes_forward_progress: client was never saturated",
-        saturated_rx,
-    )
-    .await
-    .expect("saturation signal sender survives");
-    release.send(()).unwrap();
-    retry_tx
-        .send(())
-        .expect("client waits for retry permission");
-
-    let (holder_result, client_result) = bounded_storm(
-        "backpressure_retry_makes_forward_progress: released task group did not finish",
-        async { tokio::join!(holder, client) },
+    let rejected_work_ran = Arc::new(AtomicBool::new(false));
+    let rejected_work_ran_in_closure = Arc::clone(&rejected_work_ran);
+    let first = bounded(
+        "backpressure_retry_makes_forward_progress: first submission did not reject",
+        rt.run_blocking(TaskSpec::blocking(cls("c")).operation("first"), move || {
+            rejected_work_ran_in_closure.store(true, Ordering::SeqCst);
+            Ok::<_, ()>(1)
+        }),
     )
     .await;
-    holder_result.unwrap().unwrap();
-    let attempts = client_result.expect("client task must not panic");
-    assert!(attempts > 0, "client should have hit saturation first");
+    assert!(matches!(
+        first,
+        Err(RunError::Governor(GovernorError::Rejected(
+            AdmissionVerdict::CpuSaturated { .. }
+        )))
+    ));
+    assert!(!rejected_work_ran.load(Ordering::SeqCst));
+
+    release.send(()).expect("holder waits for test release");
+    bounded(
+        "backpressure_retry_makes_forward_progress: holder did not finish after release",
+        holder,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let class = &rt.snapshot().classes[&cls("c")];
+    assert_eq!((class.inflight, class.queued), (0, 0));
+
+    let retry = bounded(
+        "backpressure_retry_makes_forward_progress: retry did not finish after holder completion",
+        rt.run_blocking(TaskSpec::blocking(cls("c")).operation("retry"), || {
+            Ok::<_, ()>(42)
+        }),
+    )
+    .await
+    .expect("first retry after holder completion must succeed");
+    assert_eq!(retry, 42);
     assert_drained(&rt, &["c"]);
 }
 

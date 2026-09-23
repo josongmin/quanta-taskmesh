@@ -77,7 +77,6 @@ async fn cooperative_class_cancels_mid_run() {
     assert!(matches!(err, RunError::Governor(GovernorError::Cancelled)));
 
     // Permit released by the guard — runtime drained and usable.
-    tokio::task::yield_now().await;
     assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
 }
 

@@ -66,6 +66,28 @@ def test_real_cargo_mutants_v27_fixture_parses_exact_identity_sets() -> None:
     }
 
 
+def test_discovery_cancellation_does_not_start_mutant_campaign(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    discovery = SimpleNamespace(interrupted_by_signal=15)
+
+    def execute(argv, **_kwargs):
+        calls.append(argv)
+        return discovery
+
+    monkeypatch.setattr(gm, "execute", execute)
+    observed_discovery, campaign = gm.execute_campaign_after_discovery(
+        ["discover"],
+        ["mutants"],
+        source=tmp_path,
+        environment={},
+        discovery_timeout=1,
+        campaign_timeout=2,
+    )
+    assert observed_discovery is discovery
+    assert campaign is None
+    assert calls == [["discover"]]
+
+
 def test_exact_generated_denominator_and_non_green_categories(tmp_path: Path) -> None:
     root = tmp_path / "mutants.out"
     write_outcomes(

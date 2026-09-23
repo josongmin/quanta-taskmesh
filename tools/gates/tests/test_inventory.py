@@ -10,10 +10,12 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import signal
 import subprocess
 import sys
 from functools import cache
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -508,6 +510,34 @@ def test_runner_keep_going_executes_later_gates() -> None:
     assert [result["status"] for result in results] == ["FAIL", "PASS"]
 
 
+def test_runner_cancellation_stops_later_gates_even_in_keep_going_mode() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    selected = [
+        {"id": "first", "recipe": "first", "platforms": ["any"]},
+        {"id": "second", "recipe": "second", "platforms": ["any"]},
+    ]
+    calls: list[str] = []
+
+    def interrupted(gate: dict) -> dict:
+        calls.append(gate["id"])
+        return {
+            "id": gate["id"],
+            "recipe": gate["recipe"],
+            "status": "FAIL",
+            "exit_code": 143,
+            "interrupted_by_signal": signal.SIGTERM,
+            "duration_s": 0.0,
+        }
+
+    results = module.run_selected_gates(selected, "macos", None, True, interrupted)
+    assert calls == ["first"]
+    assert [result["status"] for result in results] == ["FAIL", "NOT_RUN"]
+    assert results[1]["blocked_by"] == "signal-15"
+
+
 def test_exhausted_global_deadline_has_one_fail_and_explicit_not_run_tail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -555,18 +585,54 @@ def test_dirty_source_preflight_starts_no_gate() -> None:
     assert {result["blocked_by"] for result in results} == {"dirty-source-preflight"}
 
 
-def test_dirty_source_preflight_is_explicit_not_implied_by_full_selection() -> None:
+def test_full_denominator_requires_clean_source_unless_diagnostics_opt_out() -> None:
     run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
     assert run and run.loader
     module = importlib.util.module_from_spec(run)
     run.loader.exec_module(module)
     dirty = {"dirty": True}
 
-    assert module.source_preflight_blocker(dirty, require_clean_source=False) is None
+    required = module.clean_source_required(
+        select_required=True,
+        select_all=False,
+        explicit_requirement=False,
+        allow_dirty_source=False,
+    )
     assert (
-        module.source_preflight_blocker(dirty, require_clean_source=True)
+        module.source_preflight_blocker(dirty, require_clean_source=required)
         == "dirty-source-preflight"
     )
+    diagnostic = module.clean_source_required(
+        select_required=True,
+        select_all=False,
+        explicit_requirement=False,
+        allow_dirty_source=True,
+    )
+    assert module.source_preflight_blocker(dirty, require_clean_source=diagnostic) is None
+
+
+def test_named_diagnostic_gate_can_run_dirty_without_an_override() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+
+    assert (
+        module.clean_source_required(
+            select_required=False,
+            select_all=False,
+            explicit_requirement=False,
+            allow_dirty_source=False,
+        )
+        is False
+    )
+
+
+def test_macos_full_recipe_explicitly_rejects_dirty_source() -> None:
+    body = vi.recipe_body("verify-macos-full")
+    assert "--required" in body
+    assert "--require-clean-source" in body
+    assert "--allow-dirty-source" not in body
 
 
 def test_platform_scope_requires_every_applicable_gate_and_keeps_exclusions() -> None:
@@ -945,36 +1011,29 @@ def test_missing_gate_executable_is_fail_not_missing_receipt(monkeypatch) -> Non
     assert "could not start" in result["output_tail"]
 
 
-def test_timed_out_gate_terminates_then_kills_the_process_group(monkeypatch) -> None:
+def test_timed_out_gate_result_is_not_qualified(monkeypatch) -> None:
     run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
     assert run and run.loader
     module = importlib.util.module_from_spec(run)
     run.loader.exec_module(module)
 
-    class Process:
-        pid = 123
-        returncode = -9
-
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def communicate(self, timeout=None):
-            self.calls += 1
-            if self.calls < 3:
-                raise subprocess.TimeoutExpired(["just", "mutants-generated"], timeout)
-            return "partial stdout", "partial stderr"
-
-    process = Process()
-    monkeypatch.setattr(module.subprocess, "Popen", lambda *_args, **_kwargs: process)
-    signals = []
-    monkeypatch.setattr(module.os, "killpg", lambda pid, sig: signals.append((pid, sig)))
+    monkeypatch.setattr(
+        module,
+        "run_process",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=-9,
+            stdout="partial stdout",
+            stderr="partial stderr",
+            timed_out=True,
+            interrupted_by_signal=None,
+        ),
+    )
     result = module.run_gate(
         {"id": "mutants-generated", "recipe": "mutants-generated", "timeout_seconds": 7}
     )
     assert result["status"] == "FAIL"
     assert result["timed_out"] is True and result["timeout_seconds"] == 7
     assert result["exit_code"] == -9 and result["signal"] == 9
-    assert signals == [(123, module.signal.SIGTERM), (123, module.signal.SIGKILL)]
 
 
 def test_a_recipe_script_git_does_not_track_is_reported(tmp_path: Path) -> None:

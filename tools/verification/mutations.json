@@ -171,7 +171,7 @@
       "package": "taskmesh",
       "test_target": "substrate_enforcement",
       "expect_failing_test": "blocking_threads_caps_substrate_concurrency",
-      "expect_message": "expected a capability-pool shed",
+      "expect_message": "blocking pool is full -> non-queueing class sheds",
       "note": "The class used by the named test has `max_inflight` above the pool size, so the capability pool is the *only* limit that can shed the request; a class quota of one would mask the mutation."
     },
     {

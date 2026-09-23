@@ -1,12 +1,12 @@
-# Test optimization audit — current actionable set
+# Test optimization audit — 2026-09-22 baseline
 
 Audit baseline: `main` at `7023e945e1c9b3e7e7cca1b26f7af8467df6ab60` on 2026-09-22.
 
-This directory contains only issues that are still reachable on that source snapshot. A
+The table below records issues reachable on that source snapshot. A
 duplicate-looking test is not actionable unless it either weakens an oracle, leaves a behavior
 uncovered, can hang, or has measured avoidable cost.
 
-## Open items
+## Baseline findings
 
 | ID | Priority | Owner | Evidence | Required change |
 | --- | --- | --- | --- | --- |
@@ -19,7 +19,24 @@ uncovered, can hang, or has measured avoidable cost.
 | TO-07 | P1 | `crates/taskmesh-rayon/tests/rayon_smoke.rs:13-19` | Rayon smoke can block until the external runner kills it if accepted work is never executed. | Use `recv_timeout` with a named failure while retaining the returned-value oracle. |
 | TO-08 | P1 | `crates/taskmesh-bench/tests/hellgate.rs:140-154` | `hellgate` took 15.94 s; the structural USL test requests 350,000 admit/release cycles but asserts no performance threshold. | Isolate-time the USL test, then reduce/cap structural work only after repeated runs show the three-point fit remains stable. |
 
-## Current measurements
+## 2026-09-23 source re-audit
+
+At `main@146233665942d75b73e2b724f781be7e105fd7c4` plus the dirty overlay,
+the re-audit identified two test-code boundaries, now repaired locally:
+
+- TO-02: first-poll/spawn handshakes are present, but the local cancellation result and stalled
+  CPU caller join remain unbounded. See [T02](tickets/SEP22-T02-cancellation-handshakes.md).
+- TO-03: the initial saturation is observed, but retry is released before holder completion and
+  a loop with `yield_now()` covers that race. The default `OverflowPolicy::Reject`, not queue depth
+  alone, causes immediate `CpuSaturated`. See [T03](tickets/SEP22-T03-backpressure-handshake.md).
+
+T02/T03 owner-local tests pass on the repaired dirty source. T04–T08 code changes are also
+present on the current source; T05 has a Python 3.9 floor proof, while T04/T08 repeated local
+semantic cases passed. Negative mutations, valid timing comparisons, cross-host evidence where
+required, and the current-source `verify-macos-full` receipt remain open. The
+2026-09-22 rows above are historical findings, not claims that their original code remains live.
+
+## Baseline measurements
 
 - `uv run pytest tools -q --durations=40`: `544 passed in 136.17s`.
 - `taskmesh-bench` warm test times: `fairness_property` 4.74 s, `hellgate` 15.94 s,

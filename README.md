@@ -105,6 +105,11 @@ full receipt가 현재 push SHA와 일치하지 않으면 branch push를 거부�
 cheap/static blocker 뒤에 고비용 proof producer를 배치한다. 명시적 `--tier`는 진단 subset이다.
 `--required`/`--all`과 정식 qualification collector는 dirty source를 실행 전에 거부하므로,
 자격 취득이 불가능한 상태에서 mutation/fuzz 등 고비용 작업을 시작하지 않는다.
+dirty checkout 전체를 의도적으로 진단해야 할 때만
+`--allow-dirty-source --keep-going`을 함께 사용한다. 이 override로 생성된 receipt는 source
+상태 때문에 qualification으로 승격되지 않는다. `mutants-generated`는 제품 회귀 테스트가 아니라
+현재 테스트망이 compiler-generated 변경 전체를 잡는지 감사하는 final-candidate proof다. 수천 개
+변이를 격리 실행하므로 일상 수정이나 focused 재검증에서는 실행하지 않는다.
 구현·증명·운영을 함께 재감사할 때는
 [Taskmesh SOTA Audit Checklist](docs/taskmesh-sota-audit-checklist.md)의 `M/R/D` 판정과
 증거 ledger를 사용한다.

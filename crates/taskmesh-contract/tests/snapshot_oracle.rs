@@ -62,6 +62,21 @@ fn inflight_must_equal_the_phase_sum() {
 }
 
 #[test]
+fn phase_sum_adds_dispatch_reserved_and_accepted_together() {
+    // Admission may have reserved the dispatch slot while a previously
+    // dispatched request is already accepted. Both phase gauges contribute
+    // independently to the inflight partition.
+    let class = ClassSnapshot {
+        inflight: 2,
+        dispatch_reserved: 1,
+        accepted: 1,
+        admitted_total: 2,
+        ..ClassSnapshot::default()
+    };
+    assert_eq!(class.conservation_violation(), None);
+}
+
+#[test]
 fn admitted_total_must_equal_inflight_plus_terminated() {
     // Three admitted, two live, none terminated: one request left without
     // being counted as terminated — or was never live in the first place.

@@ -9,6 +9,7 @@ import select
 import signal
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
@@ -41,6 +42,15 @@ def test_timeout_exit_race_preserves_process_truth(tmp_path: Path, monkeypatch) 
     process = ExitingProcess()
     monkeypatch.setattr(campaign_module.subprocess, "Popen", lambda *_a, **_kw: process)
 
+    clock_calls = 0
+
+    def monotonic_after_timeout() -> float:
+        nonlocal clock_calls
+        clock_calls += 1
+        return 0.0 if clock_calls <= 2 else 2.0
+
+    monkeypatch.setattr(campaign_module.time, "monotonic", monotonic_after_timeout)
+
     def already_exited(_pid: int, _sig: int) -> None:
         raise ProcessLookupError
 
@@ -49,6 +59,123 @@ def test_timeout_exit_race_preserves_process_truth(tmp_path: Path, monkeypatch) 
     assert result.timed_out is True
     assert result.returncode == 0
     assert result.stdout == "finished"
+
+
+def test_parent_sigterm_kills_and_reaps_the_owned_process_group(tmp_path: Path) -> None:
+    marker = tmp_path / "child.pid"
+    wrapper = tmp_path / "wrapper.py"
+    wrapper.write_text(
+        "import json, os, sys\n"
+        f"sys.path.insert(0, {str(REPO)!r})\n"
+        "from pathlib import Path\n"
+        "from tools.verification.campaign import execute\n"
+        "import tools.process_supervisor as supervisor\n"
+        "supervisor.TERMINATION_GRACE_SECONDS = 0.1\n"
+        "marker = Path(sys.argv[1])\n"
+        'child = "from pathlib import Path; import os, signal, sys; '
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        'Path(sys.argv[1]).write_text(str(os.getpid())); signal.pause()"\n'
+        "result = execute([sys.executable, '-c', child, str(marker)], "
+        "cwd=Path.cwd(), env=os.environ.copy(), timeout_seconds=60)\n"
+        "print(json.dumps({'returncode': result.returncode, 'signal': result.signal, "
+        "'interrupted_by_signal': result.interrupted_by_signal}))\n",
+        encoding="utf-8",
+    )
+    parent = subprocess.Popen(
+        [sys.executable, str(wrapper), str(marker)],
+        cwd=REPO,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    child_pid: int | None = None
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not marker.exists():
+            if parent.poll() is not None:
+                break
+            time.sleep(0.01)
+        assert marker.exists(), "owned child never reached its blocking point"
+        child_pid = int(marker.read_text(encoding="utf-8"))
+        parent.send_signal(signal.SIGTERM)
+        stdout, stderr = parent.communicate(timeout=5)
+        assert parent.returncode == 0, stderr
+        result = json.loads(stdout)
+        assert result["interrupted_by_signal"] == signal.SIGTERM
+        assert result["signal"] == signal.SIGKILL
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=5)
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                os.kill(child_pid, signal.SIGKILL)
+                raise AssertionError("owned child survived parent cancellation")
+
+
+def test_timeout_escalates_and_reaps_the_owned_process_group(tmp_path: Path) -> None:
+    marker = tmp_path / "child.pid"
+    child = (
+        "from pathlib import Path; import os, signal, sys; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "Path(sys.argv[1]).write_text(str(os.getpid())); signal.pause()"
+    )
+    import tools.process_supervisor as supervisor
+
+    previous_grace = supervisor.TERMINATION_GRACE_SECONDS
+    supervisor.TERMINATION_GRACE_SECONDS = 0.1
+    try:
+        result = campaign_module.execute(
+            [sys.executable, "-c", child, str(marker)],
+            cwd=tmp_path,
+            env=os.environ.copy(),
+            timeout_seconds=0.1,
+        )
+    finally:
+        supervisor.TERMINATION_GRACE_SECONDS = previous_grace
+    assert result.timed_out is True
+    assert result.interrupted_by_signal is None
+    assert result.signal == signal.SIGKILL
+    child_pid = int(marker.read_text(encoding="utf-8"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
+
+
+def test_curated_campaign_records_unstarted_rows_after_interruption(
+    tmp_path: Path, monkeypatch
+) -> None:
+    first = {**MUT, "id": "first"}
+    second = {**MUT, "id": "second"}
+    identity = rm.command_identity(first)
+    baseline = SimpleNamespace(
+        identity_sha256="baseline",
+        interrupted_by_signal=None,
+    )
+    calls: list[str] = []
+
+    def interrupt_one(mutation, _campaign, _baseline, _raw_dir):
+        calls.append(mutation["id"])
+        return rm.Outcome(
+            mutation_id=mutation["id"],
+            finding=mutation["finding"],
+            status="INTERRUPTED",
+            detail="cancelled",
+            duration_s=0.1,
+            interrupted_by_signal=signal.SIGTERM,
+        )
+
+    monkeypatch.setattr(rm, "run_one", interrupt_one)
+    outcomes, interrupted = rm.run_selected_mutations(
+        [first, second], {identity: baseline}, SimpleNamespace(), tmp_path
+    )
+    assert calls == ["first"]
+    assert interrupted == signal.SIGTERM
+    assert [outcome.status for outcome in outcomes] == ["INTERRUPTED", "NOT_RUN_INTERRUPTED"]
+    assert outcomes[1].interrupted_by_signal == signal.SIGTERM
 
 
 MUT = {
@@ -456,6 +583,7 @@ def test_baseline_identity_and_manifest_bind_all_evidence_dimensions(tmp_path: P
         "exit_code": 0,
         "signal": None,
         "timed_out": False,
+        "interrupted_by_signal": None,
         "completed": True,
         "test_count": 3,
         "observed_failures": [],
@@ -473,6 +601,7 @@ def test_baseline_identity_and_manifest_bind_all_evidence_dimensions(tmp_path: P
         ("tools_sha256", "different-tools"),
         ("command_sha256", "different-command"),
         ("exit_code", 1),
+        ("interrupted_by_signal", signal.SIGTERM),
         ("stdout_sha256", "different-stdout"),
     ):
         changed = deepcopy(record)

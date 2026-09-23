@@ -9,7 +9,7 @@
     "untracked_source_files": [],
     "audit_output_prefixes": ["docs/bugbash/sep-21/"],
     "checklist": "docs/taskmesh-sota-audit-checklist.md",
-    "checklist_sha256": "9911323a0242b8329d77b72721052dcfdde1fc0d579d47446f56267cc4a8940d",
+    "checklist_sha256": "80cc61adaef3b059825fe2965e55e915ff0ae942ff60b72e52a6326d448e570a",
     "findings": "docs/bugbash/sep-21/findings.md",
     "findings_sha256": "9ad7ddf10d4f5d0470b23fead592e5220971ed302ae9f961d3bfebec11b28351"
   },

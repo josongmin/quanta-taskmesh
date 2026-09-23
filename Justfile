@@ -243,9 +243,10 @@ proof: gate matrix mutants-critical mutants-generated modelcheck tsan fuzz cover
 
 # Full macOS receipt: every required gate applicable to this host, including
 # the generated cargo-mutants campaign. This is intentionally explicit: it is
-# a release/push-admission proof, not a laptop inner-loop command.
+# a clean, frozen release/push candidate proof, not a laptop inner-loop command.
+# Dirty source is rejected before any gate starts.
 verify-macos-full:
-    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" uv run python tools/gates/run.py --required --allow-platform-skips --receipt target/verification/macos-gates.json
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" uv run python tools/gates/run.py --required --require-clean-source --allow-platform-skips --receipt target/verification/macos-gates.json
 
 # Daily macOS feedback is deliberately purpose-scoped. It runs core functional
 # tests and static policy, but leaves dependency/performance/feature/release

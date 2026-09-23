@@ -17,8 +17,8 @@ Usage:
     python3 tools/gates/run.py --tier fast              # e.g. the fast gate
     python3 tools/gates/run.py --id clippy --id test    # named gates
     python3 tools/gates/run.py --all --receipt r.json   # everything applicable
-    python3 tools/gates/run.py --required --allow-platform-skips  # host scope
-    python3 tools/gates/run.py --required --keep-going  # diagnostic sweep
+    python3 tools/gates/run.py --required --allow-platform-skips  # clean host scope
+    python3 tools/gates/run.py --required --allow-dirty-source --keep-going  # diagnostic sweep
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ import argparse
 import json
 import os
 import platform
-import signal
 import subprocess
 import sys
 import time
@@ -40,6 +39,7 @@ REQUIRED = Path(__file__).resolve().parent / "required.json"
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from tools.process_supervisor import run_process  # noqa: E402
 from tools.qualification.receipt import source_identity  # noqa: E402
 
 
@@ -201,46 +201,20 @@ def local_receipt_problems(
 # returns (which no receipt would ever describe).
 GATE_TIMEOUT_SECONDS = 3600
 MAX_GATE_TIMEOUT_SECONDS = 21600
-TERMINATION_GRACE_SECONDS = 5
 
 
 def execute_gate_process(
     argv: list[str], timeout_seconds: int
 ) -> tuple[subprocess.CompletedProcess, bool]:
-    process = subprocess.Popen(
-        argv,
-        cwd=REPO,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
+    process = run_process(argv, cwd=REPO, env=os.environ.copy(), timeout_seconds=timeout_seconds)
+    completed = subprocess.CompletedProcess(
+        args=argv,
+        returncode=process.returncode,
+        stdout=process.stdout,
+        stderr=process.stderr,
     )
-    timed_out = False
-    try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            stdout, stderr = process.communicate(timeout=TERMINATION_GRACE_SECONDS)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            stdout, stderr = process.communicate()
-    return (
-        subprocess.CompletedProcess(
-            args=argv,
-            returncode=process.returncode,
-            stdout=stdout or "",
-            stderr=stderr or "",
-        ),
-        timed_out,
-    )
+    completed.interrupted_by_signal = process.interrupted_by_signal
+    return completed, process.timed_out
 
 
 def status_line_qualifies(gate: dict, stdout: str) -> bool:
@@ -292,6 +266,7 @@ def run_gate(gate: dict) -> dict:
             "signal": -proc.returncode
             if proc.returncode is not None and proc.returncode < 0
             else None,
+            "interrupted_by_signal": getattr(proc, "interrupted_by_signal", None),
             "timed_out": True,
             "timeout_seconds": timeout_seconds,
             "started_at": started_at,
@@ -323,6 +298,7 @@ def run_gate(gate: dict) -> dict:
         "exit_code": proc.returncode,
         "signal": -proc.returncode if proc.returncode < 0 else None,
         "timed_out": False,
+        "interrupted_by_signal": getattr(proc, "interrupted_by_signal", None),
         "timeout_seconds": timeout_seconds,
         "started_at": started_at,
         "duration_s": round(duration, 3),
@@ -413,21 +389,30 @@ def run_selected_gates(
         result = runner(effective_gate)
         results.append(result)
         print(f"{gate['id']:<20} {result['status']} ({result['duration_s']}s)")
+        if result.get("interrupted_by_signal") is not None:
+            blocked_by = f"signal-{result['interrupted_by_signal']}"
+            continue
         if result["status"] != "PASS" and not keep_going:
             blocked_by = gate["id"]
     return results
 
 
 def source_preflight_blocker(source: dict, *, require_clean_source: bool) -> str | None:
-    """Return the qualification preflight blocker, if explicitly requested.
-
-    Selecting the full or required denominator is also useful for diagnostic
-    evidence on a dirty checkout. Cleanliness is an admission policy selected
-    by the qualification caller, not an implicit property of a selector.
-    """
+    """Return the qualification preflight blocker."""
     if require_clean_source and source.get("dirty") is not False:
         return "dirty-source-preflight"
     return None
+
+
+def clean_source_required(
+    *,
+    select_required: bool,
+    select_all: bool,
+    explicit_requirement: bool,
+    allow_dirty_source: bool,
+) -> bool:
+    """Full-denominator runs reject dirty source unless diagnostics opt out."""
+    return not allow_dirty_source and (select_required or select_all or explicit_requirement)
 
 
 def summarize_required(required: set[str], results: list[dict]) -> tuple[list[str], list[str]]:
@@ -491,9 +476,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--require-clean-source",
         action="store_true",
-        help="record gates as NOT_RUN without starting them when the source is dirty",
+        help="record gates as NOT_RUN without starting them when the source is dirty "
+        "(the default for --required and --all)",
+    )
+    parser.add_argument(
+        "--allow-dirty-source",
+        action="store_true",
+        help="diagnostic override: allow --required/--all gates to run on dirty source; "
+        "the receipt still cannot qualify",
     )
     args = parser.parse_args(argv)
+    if args.require_clean_source and args.allow_dirty_source:
+        parser.error("--require-clean-source conflicts with --allow-dirty-source")
     if args.deadline_seconds is not None and args.deadline_seconds <= 0:
         raise SystemExit("--deadline-seconds must be positive")
     inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
@@ -563,7 +557,13 @@ def main(argv: list[str] | None = None) -> int:
         time.monotonic() + args.deadline_seconds if args.deadline_seconds is not None else None
     )
     preflight_blocker = source_preflight_blocker(
-        source, require_clean_source=args.require_clean_source
+        source,
+        require_clean_source=clean_source_required(
+            select_required=args.required,
+            select_all=args.all,
+            explicit_requirement=args.require_clean_source,
+            allow_dirty_source=args.allow_dirty_source,
+        ),
     )
     if preflight_blocker is not None:
         print(
@@ -577,15 +577,28 @@ def main(argv: list[str] | None = None) -> int:
         args.keep_going,
         preflight_blocker=preflight_blocker,
     )
+    interrupted = next(
+        (
+            result["interrupted_by_signal"]
+            for result in results
+            if result.get("interrupted_by_signal") is not None
+        ),
+        None,
+    )
     missing_required, not_passed_required = summarize_required(required, results)
     source_after = source_identity()
     source_problems = source_stability_problems(source, source_after)
-    qualified = not missing_required and not not_passed_required and not source_problems
+    qualified = (
+        not missing_required
+        and not not_passed_required
+        and not source_problems
+        and interrupted is None
+    )
     platform_conditional = required_document.get("platform_conditional", {})
     gates_scoped_qualified, excluded_platform_gates = platform_scope_qualification(
         required, results, platform_conditional, here
     )
-    scoped_qualified = gates_scoped_qualified and not source_problems
+    scoped_qualified = gates_scoped_qualified and not source_problems and interrupted is None
 
     receipt = {
         "schema_version": 2,
@@ -620,6 +633,9 @@ def main(argv: list[str] | None = None) -> int:
             f"excluded platform gate(s): {excluded_platform_gates}"
         )
         return 0
+    if interrupted is not None:
+        print(f"gates: INTERRUPTED by signal {interrupted}", file=sys.stderr)
+        return 128 + interrupted
     print("gates: NOT_QUALIFIED", file=sys.stderr)
     if missing_required:
         print(f"  required gates not run in this invocation: {missing_required}", file=sys.stderr)

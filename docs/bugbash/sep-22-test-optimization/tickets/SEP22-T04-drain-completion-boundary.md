@@ -1,6 +1,6 @@
 # SEP22-T04 drain completion boundary
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED_UNQUALIFIED
 - finding: TO-04
 - priority: P2
 - write lane: `e2e-scenarios`
@@ -83,3 +83,13 @@ cargo test --locked -p taskmesh --test e2e_scenarios --test e2e_chaos
   permit custody를 조사하는 별도 티켓으로 재개한다.
 - T03 미완료 또는 동일 파일 dirty 상태면 이 티켓을 시작하지 않는다.
 - 호스트 부하로 실행 자체가 지연된 경우 timing evidence는 폐기하되 semantic failure는 폐기하지 않는다.
+
+## 2026-09-23 현재 소스 재검증
+
+- `main@146233665942d75b73e2b724f781be7e105fd7c4`에는 두 post-join sleep이 이미 없다.
+  두 test는 모든 handle join과 결과 수 conservation 직후 `assert_drained`를 즉시 호출한다.
+- `cargo test --locked -p taskmesh --test e2e_scenarios --test e2e_chaos`: exit 0,
+  `e2e_scenarios` 9/9 및 `e2e_chaos` 3/3 실행·통과, 실패/filtered/ignored 0.
+- `overload_is_bounded_and_fail_closed`와 `claim_timeout_abandon_race_storm`을 각각 동일한
+  로컬 소스에서 20회 반복해 20/20 통과했다. Semantic 안정성 증거이며, 동시 호스트 부하가
+  있어 timing 비교에는 사용하지 않는다. 변경 전후 median/worst와 W3 receipt는 미확보다.

@@ -1,6 +1,6 @@
 # SEP22-T07 Rayon bounded rendezvous
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED_UNQUALIFIED
 - finding: TO-07
 - priority: P1
 - write lane: `rayon-adapter-test`
@@ -81,3 +81,12 @@ cargo test --locked -p taskmesh-rayon --test rayon_smoke -- --nocapture
 - 정상 duration이 host class별로 deadline에 근접하면 환경별 adaptive timeout을 넣지 말고 공통
   hang budget 정책을 별도 결정한다.
 - 해결에 production executor 변경이 필요하면 이 test-only 티켓을 중단한다.
+
+## 2026-09-23 현재 소스 재검증
+
+- `main@146233665942d75b73e2b724f781be7e105fd7c4`에서 실제 2-worker Rayon pool의
+  결과 receive는 `recv_timeout(Duration::from_secs(1))`이며 값 42와 sender-side assertion이
+  유지된다. Unbounded `recv()`는 이 owner file에 남지 않았다.
+- `cargo test --locked -p taskmesh-rayon --test rayon_smoke`: exit 0, 4/4 실행·통과,
+  실패/filtered/ignored 0. Timeout/disconnect intentional negative와 반복 worst duration,
+  W3 receipt는 미확보다. 표준 채널 동작만 재검증하는 영구 테스트는 추가하지 않았다.

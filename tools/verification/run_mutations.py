@@ -65,6 +65,7 @@ class Outcome:
     baseline_sha256: str = ""
     stdout_sha256: str = ""
     stderr_sha256: str = ""
+    interrupted_by_signal: int | None = None
 
 
 @dataclass
@@ -93,6 +94,7 @@ class Baseline:
     stderr_artifact: str
     stdout_sha256: str
     stderr_sha256: str
+    interrupted_by_signal: int | None = None
 
 
 PYTEST_COUNT = re.compile(r"\b(\d+) (passed|failed|errors?|skipped|xfailed|xpassed)\b")
@@ -448,6 +450,9 @@ def run_baseline(
     stdout_artifact = f"raw/baseline-{definition}.stdout.log"
     stderr_artifact = f"raw/baseline-{definition}.stderr.log"
     status, detail = baseline_evaluate(mutation, result)
+    if result.interrupted_by_signal is not None:
+        status = "FAIL"
+        detail = f"campaign interrupted by signal {result.interrupted_by_signal}"
     runner = mutation.get("runner", "cargo")
     record: dict[str, object] = {
         "definition_sha256": definition,
@@ -463,6 +468,7 @@ def run_baseline(
         "exit_code": result.exit_code,
         "signal": result.signal,
         "timed_out": result.timed_out,
+        "interrupted_by_signal": result.interrupted_by_signal,
         "completed": completed(result.stdout, runner),
         "test_count": collected_tests(result.stdout, runner),
         "observed_failures": failing_tests(result.stdout, runner),
@@ -499,6 +505,7 @@ def run_baseline(
         stderr_artifact=stderr_artifact,
         stdout_sha256=stdout_digest,
         stderr_sha256=stderr_digest,
+        interrupted_by_signal=result.interrupted_by_signal,
     )
 
 
@@ -527,6 +534,9 @@ def run_one(
         result = execute(argv, cwd=campaign.source, env=env, timeout_seconds=TEST_TIMEOUT_SECONDS)
         stdout_digest, stderr_digest = _write_raw(raw_dir, f"mutant-{mutation['id']}", result)
         status, detail, failures = evaluate(mutation, result)
+        if result.interrupted_by_signal is not None:
+            status = "INTERRUPTED"
+            detail = f"campaign interrupted by signal {result.interrupted_by_signal}"
         runner = mutation.get("runner", "cargo")
         return Outcome(
             mutation_id=mutation["id"],
@@ -539,6 +549,7 @@ def run_one(
             exit_code=result.exit_code,
             signal=result.signal,
             timed_out=result.timed_out,
+            interrupted_by_signal=result.interrupted_by_signal,
             completed=completed(result.stdout, runner),
             test_count=collected_tests(result.stdout, runner),
             command=argv,
@@ -551,6 +562,60 @@ def run_one(
         )
     finally:
         target.write_text(original, encoding="utf-8")
+
+
+def run_selected_mutations(
+    mutations: list[dict],
+    baselines: dict[str, Baseline],
+    campaign: IsolatedCampaign,
+    raw_dir: Path,
+) -> tuple[list[Outcome], int | None]:
+    """Run in inventory order and preserve unstarted rows after cancellation."""
+    outcomes: list[Outcome] = []
+    interrupted_by_signal = next(
+        (
+            baseline.interrupted_by_signal
+            for baseline in baselines.values()
+            if baseline.interrupted_by_signal is not None
+        ),
+        None,
+    )
+    for mutation in mutations:
+        baseline = baselines.get(command_identity(mutation))
+        if baseline is None:
+            if interrupted_by_signal is None:
+                raise RuntimeError(
+                    f"mutation {mutation['id']}: baseline is missing without a cancellation signal"
+                )
+            outcomes.append(
+                Outcome(
+                    mutation_id=mutation["id"],
+                    finding=mutation["finding"],
+                    status="NOT_RUN_INTERRUPTED",
+                    detail=f"not run after signal {interrupted_by_signal}",
+                    duration_s=0,
+                    interrupted_by_signal=interrupted_by_signal,
+                )
+            )
+            continue
+        if interrupted_by_signal is not None:
+            outcomes.append(
+                Outcome(
+                    mutation_id=mutation["id"],
+                    finding=mutation["finding"],
+                    status="NOT_RUN_INTERRUPTED",
+                    detail=f"not run after signal {interrupted_by_signal}",
+                    duration_s=0,
+                    baseline_sha256=baseline.identity_sha256,
+                    interrupted_by_signal=interrupted_by_signal,
+                )
+            )
+            continue
+        outcome = run_one(mutation, campaign, baseline, raw_dir)
+        outcomes.append(outcome)
+        if outcome.interrupted_by_signal is not None:
+            interrupted_by_signal = outcome.interrupted_by_signal
+    return outcomes, interrupted_by_signal
 
 
 def validate_anchors(source: Path, mutations: list[dict]) -> None:
@@ -667,15 +732,13 @@ def main(argv: list[str] | None = None) -> int:
         for mutation in mutations:
             identity = command_identity(mutation)
             if identity not in baselines_by_id:
-                baselines_by_id[identity] = run_baseline(
-                    mutation, campaign, output_dir / "raw", tools
-                )
-        outcomes = [
-            run_one(
-                mutation, campaign, baselines_by_id[command_identity(mutation)], output_dir / "raw"
-            )
-            for mutation in mutations
-        ]
+                baseline = run_baseline(mutation, campaign, output_dir / "raw", tools)
+                baselines_by_id[identity] = baseline
+                if baseline.interrupted_by_signal is not None:
+                    break
+        outcomes, interrupted_by_signal = run_selected_mutations(
+            mutations, baselines_by_id, campaign, output_dir / "raw"
+        )
         source_after = campaign.source_after(REPO)
         receipt = build_receipt(
             mutations,
@@ -686,6 +749,7 @@ def main(argv: list[str] | None = None) -> int:
             source_after=source_after,
         )
         receipt["tools"] = tools
+        receipt["interrupted_by_signal"] = interrupted_by_signal
         baseline_path = output_dir / "mutation-baseline-manifest.json"
         receipt_path = output_dir / "receipt.mutations.json"
         baseline_manifest = build_baseline_manifest(campaign, tools, list(baselines_by_id.values()))
@@ -711,7 +775,13 @@ def main(argv: list[str] | None = None) -> int:
             ],
             job="local-curated-mutations",
             status=receipt["status"],
-            exit_code=0 if receipt["status"] == "PASS" else 1,
+            exit_code=(
+                128 + interrupted_by_signal
+                if interrupted_by_signal is not None
+                else 0
+                if receipt["status"] == "PASS"
+                else 1
+            ),
             started_at=campaign.created_at,
             finished_at=receipt["generated_at"],
             selected_count=len(mutations),
@@ -720,7 +790,13 @@ def main(argv: list[str] | None = None) -> int:
         write_json(output_dir / "evidence-envelope.json", envelope)
         for outcome in outcomes:
             print(f"{outcome.mutation_id}: {outcome.status}")
-        return 0 if receipt["status"] == "PASS" else 1
+        return (
+            128 + interrupted_by_signal
+            if interrupted_by_signal is not None
+            else 0
+            if receipt["status"] == "PASS"
+            else 1
+        )
     finally:
         if not args.keep_isolation:
             campaign.cleanup()

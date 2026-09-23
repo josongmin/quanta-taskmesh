@@ -582,18 +582,25 @@ async fn run_local_honors_cooperative_cancel() {
             token.cancel();
         })
     };
-    let err = rt
-        .run_local_with(spec, opts, async {
+    let err = bounded(
+        "run_local_honors_cooperative_cancel: local work did not return after cancellation",
+        rt.run_local_with(spec, opts, async {
             let _rc = std::rc::Rc::new(()); // !Send, proves the local path
             started_tx
                 .send(())
                 .expect("cancellation task observes the local work poll");
             std::future::pending::<()>().await;
             Ok::<i32, ()>(1)
-        })
-        .await
-        .expect_err("run_local must cancel mid-run");
-    firer.await.unwrap();
+        }),
+    )
+    .await
+    .expect_err("run_local must cancel mid-run");
+    bounded(
+        "run_local_honors_cooperative_cancel: cancellation task did not finish",
+        firer,
+    )
+    .await
+    .unwrap();
     assert!(matches!(err, RunError::Governor(GovernorError::Cancelled)));
 }
 
@@ -610,7 +617,8 @@ struct StallExecutor {
 impl CpuExecutor for StallExecutor {
     fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
         self.held.lock().unwrap().push(work);
-        if let Some(accepted) = self.accepted.lock().unwrap().take() {
+        let mut accepted = self.accepted.lock().unwrap();
+        if let Some(accepted) = accepted.take() {
             accepted
                 .send(())
                 .expect("test observes stalled executor custody");
@@ -650,7 +658,7 @@ async fn run_cpu_escapes_stalled_executor_via_cancel() {
     let opts = SubmitOptions::unbounded().with_cancel(token.clone());
     let spec = TaskSpec::cpu(TaskClass::new("c")).operation("op");
     let rt2 = rt.clone();
-    let handle =
+    let mut handle =
         tokio::spawn(async move { rt2.run_cpu_with(spec, opts, || Ok::<i32, ()>(1)).await });
 
     bounded(
@@ -660,12 +668,18 @@ async fn run_cpu_escapes_stalled_executor_via_cancel() {
     .await
     .expect("stalled executor acceptance sender survives");
     token.cancel();
-    let err = handle
-        .await
+    let joined = match tokio::time::timeout(HANG, &mut handle).await {
+        Ok(joined) => joined,
+        Err(_) => {
+            handle.abort();
+            executor.held.lock().unwrap().clear();
+            panic!("run_cpu_escapes_stalled_executor_via_cancel: caller did not return after cancellation within {HANG:?}");
+        }
+    };
+    let err = joined
         .unwrap()
         .expect_err("must escape the stalled executor");
     assert!(matches!(err, RunError::Governor(GovernorError::Cancelled)));
-    tokio::task::yield_now().await;
     assert_eq!(
         rt.snapshot().classes[&TaskClass::new("c")].inflight,
         1,
@@ -673,13 +687,10 @@ async fn run_cpu_escapes_stalled_executor_via_cancel() {
     );
 
     executor.held.lock().unwrap().clear();
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while rt.snapshot().classes[&TaskClass::new("c")].inflight != 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("permit must release after the executor drops the queued work");
+    let snapshot = rt.snapshot();
+    let class = &snapshot.classes[&TaskClass::new("c")];
+    assert_eq!((class.inflight, class.queued), (0, 0));
+    assert_eq!(snapshot.conservation_violation(), None);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

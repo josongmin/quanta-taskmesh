@@ -1,6 +1,6 @@
 # SEP22-T05 Python floor
 
-- 상태: PLANNED
+- 상태: LOCALLY_VERIFIED
 - finding: TO-05
 - priority: P0
 - write lane: `python-compat`
@@ -9,20 +9,19 @@
 
 ## 목적
 
-선언된 Python 지원 범위와 실제 표준 라이브러리 사용을 일치시킨다. 기본 결정은 현재 구현을
-사실대로 반영해 Python floor를 3.11로 올리는 것이며, 3.9 지원 요구가 확인될 때만 explicit
-backport dependency 경로로 재설계한다.
+선언된 Python 3.9 지원 범위와 실제 import를 일치시킨다. 현재 소스는 3.9 경로에 explicit
+`tomli` dependency와 guarded import를 제공하므로 floor 인상은 필요하지 않다.
 
 ## RCA
 
-프로젝트 metadata와 Ruff는 Python 3.9를 지원한다고 선언하지만 generated-mutants runner는
-3.11에 추가된 stdlib `tomllib`를 unconditional import한다. 이 때문에 3.9/3.10 환경은 테스트
-수집 또는 도구 시작 단계에서 실패하며 declared support가 거짓이다.
+2026-09-22 baseline은 Python 3.9 지원을 선언하면서 generated-mutants runner가 3.11의
+stdlib `tomllib`를 unconditional import했다. 현재 소스는 conditional `tomli` backport와
+guarded import로 이 불일치를 해소했다.
 
 ## 확정 근거
 
 - metadata는 `requires-python = ">=3.9"`, Ruff는 `py39`를 선언한다: `pyproject.toml:1-19`.
-- runner는 fallback 없이 `tomllib`를 import한다:
+- baseline runner는 fallback 없이 `tomllib`를 import했다. 현재 runner는 guarded import다:
   `tools/verification/run_generated_mutants.py:1-18`.
 - 테스트는 module import 시 runner를 즉시 execute하므로 낮은 Python에서는 collection 전에
   실패한다: `tools/verification/tests/test_run_generated_mutants.py:13-20`.
@@ -36,22 +35,15 @@ backport dependency 경로로 재설계한다.
 
 ## 구현 플랜
 
-1. workflows, setup scripts, devcontainer/toolchain inventory에서 실제 Python 버전을 검색해 3.11
-   미만 consumer가 있는지 기록한다.
-2. 3.9/3.10 의무 consumer가 없으면 `requires-python`을 `>=3.11`, Ruff target을 `py311`로 맞춘다.
-3. `uv lock`으로 lock metadata를 재생성하고 diff에서 package graph가 불필요하게 변하지 않았는지
-   확인한다.
-4. 현재 interpreter와 별도로 Python 3.11 환경에서 runner import 및 focused tests를 실행한다.
-5. resolver negative로 Python 3.10이 새 metadata를 지원 환경으로 오인하지 않는지 확인한다.
-6. inventory가 3.9 지원을 요구하면 이 변경을 중단한다. 그 경우 `[project]` dependency에
-   conditional `tomli; python_version < '3.11'`를 명시하고 guarded import를 사용하는 별도 계획을
-   승인받는다.
-7. 어느 경로든 `uv.lock`, declared floor, lint target이 atomic하게 변경되어야 한다.
+1. 선언된 3.9 floor와 `tools/arch/tests`의 3.9 import 경계를 보존한다.
+2. Python `<3.11`에만 `tomli`를 설치하고 runner는 guarded import로 stdlib/backport를 선택한다.
+3. `uv.lock`과 Ruff target을 metadata에 맞게 유지하고 `uv lock --check`로 검증한다.
+4. 실제 Python 3.9에서 focused 및 전체 도구 suite를 실행하고 3.8 resolver 거부를 확인한다.
 
 ## 테스트와 intentional negative
 
 - positive: declared minimum Python에서 runner import와 generated-mutants tests가 통과한다.
-- negative: unsupported Python은 resolver가 명시적으로 거부하며 runtime `ModuleNotFoundError`까지
+- negative: Python 3.8은 resolver가 명시적으로 거부하며 runtime `ModuleNotFoundError`까지
   진행하지 않는다.
 - lock negative: `uv lock --check`가 metadata/lock 불일치를 잡아야 한다.
 - mutation negative: unconditional `tomllib`를 유지한 채 floor만 3.9로 되돌리면 compatibility
@@ -91,3 +83,17 @@ uv run ruff check tools pyproject.toml
 - lock 재생성이 관련 없는 대규모 dependency churn을 만들면 uv 버전과 lock procedure를 먼저
   고정한다.
 - 최저 버전 실행 환경을 확보하지 못하면 static metadata 변경만으로 완료 처리하지 않는다.
+
+## 2026-09-23 현재 소스 재검증
+
+- `main@146233665942d75b73e2b724f781be7e105fd7c4`의 `pyproject.toml`/`uv.lock`은
+  `>=3.9`, Ruff `py39`, Python `<3.11`의 `tomli>=2`를 일치시킨다.
+  `run_generated_mutants.py`는 3.11+의 `tomllib`와 3.9/3.10의 `tomli`를 선택한다.
+- `uv lock --check` exit 0. `uv run --isolated --python 3.9 pytest
+  tools/verification/tests/test_run_generated_mutants.py -q`는 Python 3.9.25에서 27/27 통과.
+  같은 focused rail은 Python 3.10.19에서 28/28, 3.11에서 28/28 통과했다.
+  동일 interpreter의 `uv run --isolated --python 3.9 pytest tools -q --durations=10`은
+  564/564 통과, skip 0, exit 0. 3.8.20의 `uv run --isolated --python 3.8 python --version`은
+  `requires-python >=3.9` 위반으로 exit 2 거부한다.
+- 이는 dirty shared worktree의 로컬 proof다. W3 exact-source receipt가 없으므로 캠페인
+  qualification으로 승격하지 않는다. 전체 suite duration은 동시 호스트 부하 때문에 성능 증거가 아니다.

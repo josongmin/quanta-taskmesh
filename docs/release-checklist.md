@@ -25,7 +25,8 @@ Run the registered recipes through `just`:
       expensive later work after the first non-pass and records every blocked
       applicable gate as `NOT_RUN` with `blocked_by`; use `--keep-going` only for
       an intentional diagnostic sweep. Dirty-source qualification is rejected
-      before any gate command starts.
+      before any gate command starts. A full dirty diagnostic requires the explicit
+      `--allow-dirty-source --keep-going` override and cannot produce a qualifying receipt.
 - [ ] `just qualify-local` on local Linux — every ordinary required gate must PASS;
       platform skips and missing tools remain `NOT_QUALIFIED`.
 - [ ] `just gate` — fmt-check, strict clippy (3 passes), test, deny, semgrep
@@ -38,6 +39,9 @@ Run the registered recipes through `just`:
       oracle 하나만 `--exact --test-threads 1`로 실행하며 cargo cofailure 선언은 거부한다;
       pytest mutation은 file-scope exact failure-set 분류를 유지한다.
 - [ ] `just mutants-generated` — full current-source cargo-mutants workspace sweep.
+      This audits test-suite sensitivity over the generated denominator; it is not an
+      inner-loop product regression test. Run it only for a clean frozen candidate's full
+      qualification or an explicit mutation-quality investigation.
       planned/executed/categorized IDs가 완전히 일치하고 baseline이 green이어야 한다.
       전체 denominator에는 `unviable` ID도 남긴다. 다만 cargo-mutants가 컴파일하지 못한
       `unviable`은 명시적 비채점 한계이며 quality denominator에서 제외한다. 최소 한 개의

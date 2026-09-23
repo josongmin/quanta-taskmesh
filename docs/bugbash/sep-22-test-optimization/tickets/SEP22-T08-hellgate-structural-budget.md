@@ -1,6 +1,6 @@
 # SEP22-T08 Hellgate structural budget
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED_UNQUALIFIED
 - finding: TO-08
 - priority: P1
 - write lane: `bench-validity`
@@ -94,3 +94,14 @@ sample은 폐기한다.
 - 50% 절감과 20/20 stability를 동시에 만족하는 값이 없으면 test를 그대로 두고 Criterion/fixture
   구조 개선 티켓으로 재개한다.
 - load generator 또는 production governor 변경이 필요해지면 이 소유 범위를 벗어나므로 중단한다.
+
+## 2026-09-23 현재 소스 재검증
+
+- `main@146233665942d75b73e2b724f781be7e105fd7c4`에 reviewable
+  `STRUCTURAL_CONTENTION_OPS_PER_THREAD = 10_000`이 이미 있다. `[1,2,4]`, finite positive
+  throughput, recoverable three-point USL fit, empirical peak oracle은 유지된다.
+- `cargo test --locked -p taskmesh-bench --test hellgate`: exit 0, 6/6 실행·통과,
+  실패/filtered/ignored 0. 현재 10k focused case는 동일한 로컬 소스에서 20/20 반복 통과했다.
+- 50k baseline과 10k candidate의 동일 조건 측정 및 hosted Linux 20/20이 없다.
+  호스트에서 여러 Cargo 작업이 동시에 실행되어 이번 duration은 성능 비교에 사용할 수 없다.
+  50% 절감이나 두 host class 안정성은 아직 주장하지 않는다.

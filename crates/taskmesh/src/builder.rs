@@ -312,7 +312,7 @@ fn default_cpu_executor(
     _cpu_workers: usize,
     shared_blocking_workers: usize,
 ) -> Result<Arc<dyn CpuExecutor>, GovernorError> {
-    let workers = u32::try_from(shared_blocking_workers).map_err(|_| {
+    let workers = u32::try_from(shared_blocking_workers).map_err(|_conversion_error| {
         GovernorError::InvalidTopology(TopologyError::SlotCountTooLarge {
             pool: PHYSICAL_SHARED_BLOCKING,
             slots: shared_blocking_workers,

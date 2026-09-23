@@ -179,11 +179,15 @@ def main() -> None:
         if sha256_bytes(tracked_diff) != source.get("tracked_diff_sha256"):
             fail("audited tracked working-tree diff changed")
 
-    checklist_path = REPO / source.get("checklist", "")
-    if not checklist_path.is_file():
-        fail(f"checklist does not exist: {checklist_path}")
-    if sha256_file(checklist_path) != source.get("checklist_sha256"):
-        fail("checklist digest changed")
+    checklist = source.get("checklist")
+    if not isinstance(checklist, str) or not checklist:
+        fail("checklist path is missing")
+    # The checklist is an input to the frozen audit, unlike findings produced
+    # by that audit. Read it from the recorded source commit: later release
+    # policy edits to the working-tree document cannot redefine this input.
+    frozen_checklist = git_bytes("show", f"{source['head']}:{checklist}")
+    if sha256_bytes(frozen_checklist) != source.get("checklist_sha256"):
+        fail("frozen checklist digest differs from source HEAD")
 
     findings_path = REPO / source.get("findings", "")
     if not findings_path.is_file():

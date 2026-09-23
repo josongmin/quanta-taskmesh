@@ -19,6 +19,7 @@ except ModuleNotFoundError:  # Python 3.9-3.10, supported by pyproject.toml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from campaign import (  # noqa: E402
+    ProcessResult,
     canonical_digest,
     create_isolated_campaign,
     evidence_envelope,
@@ -340,6 +341,33 @@ def execution_environment(parent: dict[str, str]) -> dict[str, str]:
     return sanitized_campaign_environment(parent)
 
 
+def execute_campaign_after_discovery(
+    discovery_argv: list[str],
+    campaign_argv: list[str],
+    *,
+    source: Path,
+    environment: dict[str, str],
+    discovery_timeout: int,
+    campaign_timeout: int,
+) -> tuple[ProcessResult, ProcessResult | None]:
+    """Never launch the expensive campaign after discovery cancellation."""
+    discovery = execute(
+        discovery_argv,
+        cwd=source,
+        env=environment,
+        timeout_seconds=discovery_timeout,
+    )
+    if discovery.interrupted_by_signal is not None:
+        return discovery, None
+    result = execute(
+        campaign_argv,
+        cwd=source,
+        env=environment,
+        timeout_seconds=campaign_timeout,
+    )
+    return discovery, result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=REPO / "target/sep21/v02/generated")
@@ -365,17 +393,13 @@ def main(argv: list[str] | None = None) -> int:
         execution_env = execution_environment(dict(os.environ))
         recorded_env: dict[str, str] = {}
         discovery_argv = unfiltered_list_command(args)
-        discovery = execute(
+        discovery, result = execute_campaign_after_discovery(
             discovery_argv,
-            cwd=campaign.source,
-            env=execution_env,
-            timeout_seconds=min(args.campaign_timeout, 600),
-        )
-        result = execute(
             argv_command,
-            cwd=campaign.source,
-            env=execution_env,
-            timeout_seconds=args.campaign_timeout,
+            source=campaign.source,
+            environment=execution_env,
+            discovery_timeout=min(args.campaign_timeout, 600),
+            campaign_timeout=args.campaign_timeout,
         )
         raw_source = isolated_raw_parent / "mutants.out"
         raw_destination = output_dir / "raw" / "mutants.out"
@@ -388,8 +412,12 @@ def main(argv: list[str] | None = None) -> int:
         (output_dir / "raw" / "unfiltered-mutants.stderr.log").write_text(
             discovery.stderr, encoding="utf-8"
         )
-        (output_dir / "raw" / "runner.stdout.log").write_text(result.stdout, encoding="utf-8")
-        (output_dir / "raw" / "runner.stderr.log").write_text(result.stderr, encoding="utf-8")
+        (output_dir / "raw" / "runner.stdout.log").write_text(
+            result.stdout if result is not None else "", encoding="utf-8"
+        )
+        (output_dir / "raw" / "runner.stderr.log").write_text(
+            result.stderr if result is not None else "", encoding="utf-8"
+        )
 
         parse_error = None
         outcomes: dict[str, list[str]] = {category: [] for category in CATEGORIES}
@@ -401,6 +429,13 @@ def main(argv: list[str] | None = None) -> int:
         semantic_status = "FAIL"
         problems: list[str] = []
         try:
+            if result is None:
+                raise ValueError(
+                    f"campaign interrupted during discovery by signal "
+                    f"{discovery.interrupted_by_signal}"
+                )
+            if result.interrupted_by_signal is not None:
+                raise ValueError(f"campaign interrupted by signal {result.interrupted_by_signal}")
             if result.timed_out:
                 raise ValueError("cargo-mutants campaign timed out")
             if result.signal is not None:
@@ -446,15 +481,19 @@ def main(argv: list[str] | None = None) -> int:
                 "exit_code": result.exit_code,
                 "signal": result.signal,
                 "timed_out": result.timed_out,
+                "interrupted_by_signal": result.interrupted_by_signal,
                 "started_at": result.started_at,
                 "finished_at": result.finished_at,
                 "duration_s": result.duration_s,
-            },
+            }
+            if result is not None
+            else None,
             "discovery_process": {
                 "argv": discovery_argv,
                 "exit_code": discovery.exit_code,
                 "signal": discovery.signal,
                 "timed_out": discovery.timed_out,
+                "interrupted_by_signal": discovery.interrupted_by_signal,
                 "duration_s": discovery.duration_s,
             },
             "status": semantic_status,
@@ -475,7 +514,21 @@ def main(argv: list[str] | None = None) -> int:
         receipt_path = output_dir / "receipt.generated-mutations.json"
         write_json(receipt_path, receipt)
         raw_paths = sorted(path for path in (output_dir / "raw").rglob("*") if path.is_file())
-        envelope_status = "TIMEOUT" if result.timed_out else semantic_status
+        interrupted_by_signal = (
+            discovery.interrupted_by_signal
+            if discovery.interrupted_by_signal is not None
+            else result.interrupted_by_signal
+            if result is not None
+            else None
+        )
+        envelope_status = "TIMEOUT" if result is not None and result.timed_out else semantic_status
+        envelope_exit_code = (
+            128 + interrupted_by_signal
+            if interrupted_by_signal is not None
+            else result.exit_code
+            if result is not None
+            else 1
+        )
         envelope = evidence_envelope(
             repo=REPO,
             campaign=campaign,
@@ -493,9 +546,9 @@ def main(argv: list[str] | None = None) -> int:
             ],
             job="local-generated-mutations",
             status=envelope_status,
-            exit_code=result.exit_code,
-            started_at=result.started_at,
-            finished_at=result.finished_at,
+            exit_code=envelope_exit_code,
+            started_at=(result.started_at if result is not None else discovery.started_at),
+            finished_at=(result.finished_at if result is not None else discovery.finished_at),
             selected_count=sum(counts.values()),
             executed_count=sum(counts.values()),
         )
@@ -505,7 +558,11 @@ def main(argv: list[str] | None = None) -> int:
                 {"status": semantic_status, "counts": counts, "problems": problems}, sort_keys=True
             )
         )
-        return 0 if semantic_status == "PASS" else 1
+        return (
+            128 + interrupted_by_signal
+            if interrupted_by_signal is not None
+            else (0 if semantic_status == "PASS" else 1)
+        )
     finally:
         if not args.keep_isolation:
             campaign.cleanup()

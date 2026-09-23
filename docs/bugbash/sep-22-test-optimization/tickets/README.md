@@ -3,8 +3,14 @@
 Baseline: `main@7023e945e1c9b3e7e7cca1b26f7af8467df6ab60`, tree
 `e49ed06e109525a9da243c47b9207919a74ed15e`.
 
-These tickets implement the eight open findings in [`../README.md`](../README.md). They optimize
+These tickets track the eight baseline findings in [`../README.md`](../README.md). They optimize
 test execution without weakening semantic or qualification authority.
+
+At the 2026-09-23 re-audit, all eight baseline code changes are present. T01, T02, and T05 are
+`LOCALLY_VERIFIED`; T03–T04 and T06–T08 are `IMPLEMENTED_UNQUALIFIED` because ticket-specific
+timing, harness-negative, or cross-host evidence is still missing. W3 cannot start from the current dirty
+shared worktree; it requires a clean, frozen candidate. The baseline and waves below preserve the
+original campaign dependency map.
 
 ## Ticket map
 
@@ -26,7 +32,7 @@ test execution without weakening semantic or qualification authority.
 | W0 | T01, T02, T03, T05, T06, T07, T08 | Re-freeze HEAD and verify exclusive paths before editing. |
 | W1 | T04 | Starts only after T03 settles `e2e_scenarios.rs`. |
 | W2 | Integrator | Rebase/reconcile, run focused suites, then exact-source `just gate` and `just matrix`. |
-| W3 | Qualification | Run `just verify-local`; closure requires its exact-source receipt, not W0/W1 passes. |
+| W3 | Qualification | Run `just verify-macos-full`; closure requires its exact-source receipt, not W0/W1 passes. |
 
 ## Ownership and patch-on-patch prevention
 
@@ -83,10 +89,12 @@ cargo test --locked -p taskmesh-bench --test hellgate
 just gate
 just matrix
 just verify-local
+just verify-macos-full
 ```
 
-Focused and gate passes are not qualification. `just verify-local` must emit a current-source receipt
-for closure; missing/NOT_RUN required rails keep the campaign open.
+`just verify-local` is the daily `dev-fast` feedback subset and does not emit a qualification
+receipt. `just verify-macos-full` runs the required host-applicable rails and writes the exact-source
+receipt; missing/NOT_RUN required rails keep the campaign open.
 
 ## Plan validation
 

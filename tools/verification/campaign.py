@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -21,6 +20,7 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from tools.process_supervisor import run_process  # noqa: E402
 from tools.qualification.evidence import (  # noqa: E402
     canonical_bytes,  # noqa: F401 - compatibility re-export for callers
     canonical_digest,  # noqa: F401 - compatibility re-export for callers
@@ -233,52 +233,29 @@ class ProcessResult:
     started_at: str
     finished_at: str
     duration_s: float
+    interrupted_by_signal: int | None = None
 
 
 def execute(
     argv: list[str], *, cwd: Path, env: dict[str, str], timeout_seconds: int
 ) -> ProcessResult:
-    """Run one process group and preserve exit, signal, timeout, and complete output."""
+    """Run one process group and reap it on timeout or parent cancellation."""
     started_at = utc_now()
     started = time.monotonic()
-    process = subprocess.Popen(
-        argv,
-        cwd=cwd,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
-    timed_out = False
-    try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass  # The process group exited between timeout and termination.
-        try:
-            stdout, stderr = process.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass  # Preserve timeout evidence even if the group just exited.
-            stdout, stderr = process.communicate()
+    process = run_process(argv, cwd=cwd, env=env, timeout_seconds=timeout_seconds)
     returncode = process.returncode
     return ProcessResult(
         argv=list(argv),
         returncode=returncode,
         exit_code=returncode if returncode is not None and returncode >= 0 else None,
         signal=-returncode if returncode is not None and returncode < 0 else None,
-        timed_out=timed_out,
-        stdout=stdout,
-        stderr=stderr,
+        timed_out=process.timed_out,
+        stdout=process.stdout,
+        stderr=process.stderr,
         started_at=started_at,
         finished_at=utc_now(),
         duration_s=time.monotonic() - started,
+        interrupted_by_signal=process.interrupted_by_signal,
     )
 
 

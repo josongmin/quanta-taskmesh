@@ -358,9 +358,12 @@ async fn queued_and_inflight_work_finish_before_drain_reports_ok() {
     // Graceful: the drain refuses new work but has cancelled nothing.
     refused(
         "a submission during the drain",
-        rt.run_blocking(TaskSpec::blocking(class("c")).operation("late"), || {
-            Ok::<i32, ()>(3)
-        })
+        bounded(
+            "submission during the drain",
+            rt.run_blocking(TaskSpec::blocking(class("c")).operation("late"), || {
+                Ok::<i32, ()>(3)
+            }),
+        )
         .await,
     );
     let during = rt.snapshot();

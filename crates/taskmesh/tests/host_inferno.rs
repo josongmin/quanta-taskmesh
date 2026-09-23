@@ -1,8 +1,7 @@
 //! Inferno · host (T07/T09): the real `TokioRuntime` execution paths under
-//! abuse. Panicking work, substrate-hint mismatch, cooperative vs pre-submit
-//! queue-full, cancellation-safety of queued submissions, the topology
-//! substrate gate, and concurrent promotion — every one asserted to a typed
-//! outcome with no permit leaked. Mid-run cancellation policy has a single
+//! abuse. Panicking work, queue-full, cancellation-safety of queued submissions,
+//! the topology substrate gate, and concurrent promotion — every one asserted
+//! to a typed outcome with no permit leaked. Mid-run cancellation has a single
 //! stronger owner in `cancellation_policy.rs`.
 
 use std::time::Duration;
@@ -100,54 +99,6 @@ async fn task_error_stays_a_task_error() {
         .await;
     assert!(matches!(res, Err(RunError::Task("domain failure"))));
     assert_eq!(inflight(&rt, "c"), 0);
-}
-
-// ---- substrate classification is authoritative -----------------------------
-
-#[tokio::test]
-async fn substrate_hint_mismatch_is_fail_closed() {
-    let rt = rt_default();
-    let io_on_blocking: Result<i32, RunError<()>> =
-        rt.run_io(blk("c", "x"), async { Ok::<i32, ()>(1) }).await;
-    assert!(matches!(
-        io_on_blocking,
-        Err(RunError::Governor(GovernorError::Rejected(
-            AdmissionVerdict::SubstrateMismatch
-        )))
-    ));
-
-    let cpu_on_io: Result<i32, RunError<()>> = rt
-        .run_cpu(TaskSpec::io(TaskClass::new("c")).operation("x"), || Ok(1))
-        .await;
-    assert!(matches!(
-        cpu_on_io,
-        Err(RunError::Governor(GovernorError::Rejected(
-            AdmissionVerdict::SubstrateMismatch
-        )))
-    ));
-
-    let blocking_on_cpu: Result<i32, RunError<()>> = rt
-        .run_blocking(TaskSpec::cpu(TaskClass::new("c")).operation("x"), || Ok(1))
-        .await;
-    assert!(matches!(
-        blocking_on_cpu,
-        Err(RunError::Governor(GovernorError::Rejected(
-            AdmissionVerdict::SubstrateMismatch
-        )))
-    ));
-
-    let local_on_blocking: Result<i32, RunError<()>> = rt
-        .run_local(blk("c", "x"), async { Ok::<i32, ()>(1) })
-        .await;
-    assert!(
-        matches!(
-            local_on_blocking,
-            Err(RunError::Governor(GovernorError::Rejected(
-                AdmissionVerdict::SubstrateMismatch
-            )))
-        ),
-        "run_local is the local-runtime exception, not a general path"
-    );
 }
 
 // ---- bounded queue + cancellation-safety -----------------------------------

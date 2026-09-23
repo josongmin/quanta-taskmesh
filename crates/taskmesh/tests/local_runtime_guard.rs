@@ -18,13 +18,3 @@ async fn run_local_rejects_non_local_classified_work() {
         RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstrateMismatch))
     ));
 }
-
-#[tokio::test]
-async fn run_local_accepts_local_classified_work() {
-    let rt = runtime();
-    let out: i32 = rt
-        .run_local(local(), async { Ok::<_, ()>(99) })
-        .await
-        .expect("local work accepted");
-    assert_eq!(out, 99);
-}

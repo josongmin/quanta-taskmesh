@@ -1,8 +1,9 @@
 //! Hardcore operational e2e scenarios — "does the whole thing actually behave
 //! under pressure?" These go beyond the per-feature proof gate (`e2e_proof.rs`):
-//! multiclass concurrency, cancellation chaos, backpressure forward-progress,
-//! bounded fail-closed overload, a multi-stage composite pipeline, and a CPU soak
-//! through the Rayon executor.
+//! cancellation chaos, backpressure forward-progress, bounded fail-closed
+//! overload, a multi-stage composite pipeline, and a CPU soak through the Rayon
+//! executor. Cross-class contention and mixed-substrate soak live in
+//! `e2e_chaos.rs`.
 //!
 //! Robustness rules followed here: no assertions on cross-thread ordering (only
 //! on completion, conservation, drain-to-zero, and forward progress), and every
@@ -63,69 +64,7 @@ fn assert_drained(rt: &TokioRuntime, classes: &[&str]) {
     }
 }
 
-// ───────────────────────── 1. concurrency storm ─────────────────────────
-
-/// A production-like 3-class mix hammered by 240 concurrent submissions across
-/// real worker threads. Every request must complete (forward progress through
-/// queue→promote) and all accounting must drain to zero.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn high_concurrency_multiclass_drains_clean() {
-    let rt = Builder::new()
-        .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
-        .class_policy(
-            cls("retrieval"),
-            ClassPolicy::new()
-                .max_inflight(4)
-                .max_queue_depth(512)
-                .cpu_units(1)
-                .overflow_policy(OverflowPolicy::QueueWithinDepth),
-        )
-        .class_policy(
-            cls("rank"),
-            ClassPolicy::new()
-                .max_inflight(2)
-                .max_queue_depth(512)
-                .cpu_units(2)
-                .overflow_policy(OverflowPolicy::QueueWithinDepth),
-        )
-        .class_policy(
-            cls("index"),
-            ClassPolicy::new()
-                .max_inflight(1)
-                .max_queue_depth(512)
-                .cpu_units(1)
-                .best_effort(true)
-                .overflow_policy(OverflowPolicy::QueueWithinDepth),
-        )
-        .build()
-        .unwrap();
-
-    let names = ["retrieval", "rank", "index"];
-    let mut handles = Vec::new();
-    for i in 0..240usize {
-        let rt = rt.clone();
-        let name = names[i % 3];
-        handles.push(tokio::spawn(async move {
-            let spec = TaskSpec::io(cls(name)).operation(format!("{name}-{i}"));
-            rt.run_io(spec, async move { Ok::<_, ()>(i) }).await
-        }));
-    }
-
-    let ok = bounded_storm("high-concurrency multiclass storm", async move {
-        let mut ok = 0usize;
-        for handle in handles {
-            if handle.await.unwrap().is_ok() {
-                ok += 1;
-            }
-        }
-        ok
-    })
-    .await;
-    assert_eq!(ok, 240, "every queued submission must eventually complete");
-    assert_drained(&rt, &names);
-}
-
-// ───────────────────────── 2. cancellation chaos ────────────────────────
+// ───────────────────────── 1. cancellation chaos ────────────────────────
 
 /// Spawn a churn of submissions, cancel a deterministic ~half of them mid-flight
 /// via outer timeouts, and prove the governor never leaks: after everything
@@ -197,7 +136,7 @@ async fn cancellation_chaos_never_leaks() {
     assert_eq!(out, 7);
 }
 
-// ─────────────────── 3. all substrates concurrently ─────────────────────
+// ─────────────────── 2. all substrates concurrently ─────────────────────
 
 /// Drive all four substrates at once on one runtime; each lands on its path and
 /// returns its own value, with the governor/task error split intact.
@@ -244,7 +183,7 @@ async fn all_substrates_concurrently() {
     assert_drained(&rt, &["svc"]);
 }
 
-// ─────────────────── 4. backpressure forward progress ───────────────────
+// ─────────────────── 3. backpressure forward progress ───────────────────
 
 /// A rejected submission must make progress on its first retry after the
 /// holder has returned its lease.
@@ -327,7 +266,7 @@ async fn backpressure_retry_makes_forward_progress() {
     assert_drained(&rt, &["c"]);
 }
 
-// ───────────── 5. bounded, fail-closed overload under concurrency ─────────
+// ───────────── 4. bounded, fail-closed overload under concurrency ─────────
 
 /// 64 concurrent submissions onto a 1-slot / depth-4 class with a short acquire
 /// timeout. Every outcome is success or a *governor-side* rejection/timeout —
@@ -383,7 +322,7 @@ async fn overload_is_bounded_and_fail_closed() {
     assert_drained(&rt, &["c"]);
 }
 
-// ───────────── 6. multi-stage composite pipeline ─────────────────────────
+// ───────────── 5. multi-stage composite pipeline ─────────────────────────
 
 /// A realistic composite: a root fans into children across distinct stages;
 /// attribution rolls up, the recursion guard rejects a same-stage re-entry, and
@@ -450,7 +389,7 @@ fn composite_pipeline_attribution_recursion_and_reduce() {
     assert!(g.root_attribution("root-1").is_none());
 }
 
-// ───────────── 7. memory reconcile lifecycle ─────────────────────────────
+// ───────────── 6. memory reconcile lifecycle ─────────────────────────────
 
 /// Hybrid memory across its full lifecycle: reserve estimate, reconcile up to
 /// measured, reconcile back down (held never drops below the estimate), stage
@@ -503,7 +442,7 @@ fn memory_reconcile_lifecycle_is_consistent() {
     assert_drained(&rt, &["h"]);
 }
 
-// ───────────── 8. CPU soak through the Rayon executor ────────────────────
+// ───────────── 7. CPU soak through the Rayon executor ────────────────────
 
 /// 96 concurrent CPU jobs through the shared Rayon pool, each computing a real
 /// reduction; results must be correct and accounting must drain.

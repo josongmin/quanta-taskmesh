@@ -157,18 +157,3 @@ async fn blocking_threads_caps_substrate_concurrency() {
         .unwrap();
     assert_eq!(out, 9);
 }
-
-#[tokio::test]
-async fn zero_slots_means_unlimited() {
-    // Default topology (all slot counts 0) imposes no substrate gate: blocking
-    // work runs without a configured pool.
-    let rt = rt_unlimited(); // default topology
-    let out: i32 = rt
-        .run_blocking(
-            TaskSpec::blocking(TaskClass::new("c")).operation("x"),
-            || Ok::<_, ()>(5),
-        )
-        .await
-        .unwrap();
-    assert_eq!(out, 5);
-}

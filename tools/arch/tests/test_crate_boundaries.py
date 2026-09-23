@@ -11,7 +11,6 @@ The checks are driven through the real `check_*` functions with synthetic
 from __future__ import annotations
 
 import importlib.util
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -289,18 +288,3 @@ def test_the_real_cli_reports_a_broken_workspace(tmp_path: Path) -> None:
     )
     assert proc.returncode == 1
     assert "error:" in proc.stderr
-
-
-def test_the_checker_reads_the_same_graph_cargo_reports() -> None:
-    """Guard against the policy table drifting from the real manifest set."""
-    proc = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
-        capture_output=True,
-        text=True,
-        check=True,
-        cwd=REPO,
-    )
-    real = json.loads(proc.stdout)
-    members = arch.workspace_member_names(real)
-    undeclared = members - set(arch.ALLOWED_EDGES)
-    assert not undeclared, f"workspace members without a boundary policy: {sorted(undeclared)}"

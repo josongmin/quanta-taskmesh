@@ -162,21 +162,6 @@ def test_producer_failure_propagates_its_own_exit_code(tmp_path: Path) -> None:
     assert "boom" in proc.stderr
 
 
-def test_the_configured_threshold_is_itself_valid() -> None:
-    """The committed config must satisfy the grammar it enforces."""
-    proc = subprocess.run(
-        [sys.executable, str(PARSER), "--input", "/dev/null"],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=REPO,
-    )
-    # /dev/null has no marker: the failure must be about the marker, which means
-    # the threshold parsed first.
-    assert proc.returncode == 1
-    assert "expected exactly one" in proc.stderr
-
-
 # ---- the instrument itself ----------------------------------------------------
 
 

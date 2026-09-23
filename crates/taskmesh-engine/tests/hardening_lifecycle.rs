@@ -247,45 +247,6 @@ fn a_foreign_or_repeated_release_does_not_free_another_execution() {
 }
 
 #[test]
-fn terminal_records_stay_bounded_under_repeated_churn() {
-    // Terminal outcomes are retained for late claimers, so retention has to be
-    // bounded or it is a leak. Past the bound the answer degrades from "why" to
-    // "unknown" — still terminal, still never "keep waiting".
-    let (g, clock, class) = gov(leak_detecting_single_slot());
-    let churn = taskmesh_engine::MAX_TERMINAL_TICKETS + 64;
-    let mut first_ticket = None;
-    for i in 0..churn {
-        // Each cycle promotes a queued request and then reclaims it unclaimed,
-        // which is the transition that retains a terminal reason.
-        let holder = admit(&g, &format!("h{i}"));
-        let ticket = queue(&g, &format!("q{i}"));
-        if first_ticket.is_none() {
-            first_ticket = Some(ticket);
-        }
-        assert_eq!(g.release(holder), ReleaseOutcome::Released);
-        clock.advance(100);
-        assert_eq!(g.reap_leaks_with(10).reclaimed_permits, 1);
-    }
-
-    // The oldest outcomes were evicted to stay inside the retention bound. They
-    // read as `Invalid` — still terminal, so a waiter stops rather than parks;
-    // only the specific reason is gone.
-    assert_eq!(
-        g.claim(first_ticket.expect("at least one ticket")),
-        ClaimOutcome::Invalid
-    );
-    assert!(
-        g.retained_terminal_tickets() <= taskmesh_engine::MAX_TERMINAL_TICKETS,
-        "retention {} exceeds the bound",
-        g.retained_terminal_tickets()
-    );
-    let snapshot = g.snapshot();
-    assert_eq!(snapshot.classes[&class].inflight, 0);
-    assert_eq!(snapshot.classes[&class].queued, 0);
-    assert_eq!(snapshot.conservation_violation(), None);
-}
-
-#[test]
 fn terminal_retention_holds_exactly_the_bound_and_evicts_the_oldest_first() {
     // The bound is exact and inclusive: `MAX_TERMINAL_TICKETS` outcomes are
     // all retained with their reason, and the next one evicts precisely the
@@ -328,6 +289,11 @@ fn terminal_retention_holds_exactly_the_bound_and_evicts_the_oldest_first() {
         g.ticket_status(first),
         ClaimOutcome::Invalid,
         "the oldest outcome is the one evicted"
+    );
+    assert_eq!(
+        g.claim(first),
+        ClaimOutcome::Invalid,
+        "an evicted waiter must stop rather than remain pending"
     );
     let snapshot = g.snapshot();
     assert_eq!(snapshot.classes[&class].inflight, 0);

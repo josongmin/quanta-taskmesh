@@ -82,11 +82,17 @@ py-test:
 prompt-check:
     uv run python tools/pm/check.py
 
-# Targeted Python tooling feedback. Pass changed .py paths and the owning test
-# path; use full `py-lint` / `py-test` only for qualification or broad refactors.
-dev-python-fast files tests:
+# Targeted Python tooling checks. Keep lint-only and test-only edits separate;
+# `dev-python-fast` is the convenience path when both changed.
+dev-python-lint *files:
     uv run ruff check {{files}}
+
+dev-python-tests *tests:
     uv run pytest {{tests}} -q -m "not qualification"
+
+dev-python-fast files tests:
+    just dev-python-lint {{files}}
+    just dev-python-tests {{tests}}
 
 # Rust edit loop: scope compilation, lint, and behavior tests to the changed
 # package. Use `dev` for cross-package or shared-boundary changes.

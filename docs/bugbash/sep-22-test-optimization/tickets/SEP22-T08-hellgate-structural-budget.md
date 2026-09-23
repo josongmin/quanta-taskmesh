@@ -14,14 +14,15 @@
 
 ## RCA
 
-현재 case는 concurrency 1/2/4 각각에서 worker당 50,000 admit/release cycle을 실행해 총 350,000
-cycle을 소비한다. assertion은 positive throughput, 3-point fit, empirical peak의 구조만 검사하므로
-큰 sample count가 semantic coverage를 늘린다는 근거가 없다. 반대로 real-thread timing을 사용하므로
-너무 작은 workload는 0-duration/measurement noise로 fit 안정성을 해칠 수 있다.
+2026-09-22 baseline은 concurrency 1/2/4 각각에서 worker당 50,000 admit/release cycle을
+실행해 총 350,000 cycle을 소비했다. 현재 소스는 10,000으로 줄였지만 동일 조건의 비용 절감과
+cross-host fit 안정성은 아직 측정되지 않았다. 작은 workload의 measurement noise 가능성을
+구조 oracle의 로컬 통과만으로 제거할 수는 없다.
 
 ## 확정 근거
 
-- 테스트는 `[1, 2, 4]` 각 점에 `contention_throughput(t, 50_000)`을 호출한다:
+- baseline 테스트는 `[1, 2, 4]` 각 점에 `contention_throughput(t, 50_000)`을 호출했다.
+  현재는 `STRUCTURAL_CONTENTION_OPS_PER_THREAD = 10_000`을 사용한다:
   `crates/taskmesh-bench/tests/hellgate.rs:140-154`.
 - load generator는 요청 op를 worker에 정확히 분배하고 barrier 뒤 측정하며 completed-op conservation을
   assert한다: `crates/taskmesh-bench/src/loadgen.rs:375-441`.

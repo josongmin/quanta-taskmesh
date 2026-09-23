@@ -14,15 +14,14 @@ hang 대신 attributable failure로 만든다.
 
 ## RCA
 
-테스트는 work를 real pool에 spawn한 뒤 `mpsc::Receiver::recv()`를 무기한 기다린다. worker가
-시작하지 않거나 panic/custody 문제가 생기면 test binary 전체가 timeout될 때까지 원인을
-제공하지 않는다. 검증하려는 값은 단일 결과이므로 local timeout으로 경계를 둘 수 있다.
+2026-09-22 baseline은 work를 real pool에 spawn한 뒤 `mpsc::Receiver::recv()`를 무기한
+기다렸다. 현재 소스는 `recv_timeout`으로 이 경계를 닫았고 실제 pool/value oracle을 유지한다.
 
 ## 확정 근거
 
 - 테스트가 2-worker real Rayon executor를 생성하고 closure를 spawn한다:
   `crates/taskmesh-rayon/tests/rayon_smoke.rs:8-18`.
-- 결과 assertion은 unbounded `recv()`를 사용한다:
+- baseline 결과 assertion은 unbounded `recv()`를 사용했다. 현재는 bounded `recv_timeout`이다:
   `crates/taskmesh-rayon/tests/rayon_smoke.rs:19-20`.
 
 ## 목표 불변식

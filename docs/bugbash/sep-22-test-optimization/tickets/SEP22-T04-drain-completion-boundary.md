@@ -14,17 +14,17 @@ post-completion settle sleep을 제거한다.
 
 ## RCA
 
-두 E2E 시나리오는 모든 handle을 join하고 conservation을 확인한 뒤 50~60ms를 추가로 잔다.
-이 sleep은 상태 전이를 유발하지 않으며 accounting release가 terminal reply보다 늦어도 테스트를
-통과시킨다. 실제 completion 계약 위반을 숨기면서 suite 시간만 늘린다.
+2026-09-22 baseline의 두 E2E 시나리오는 모든 handle을 join하고 conservation을 확인한 뒤
+50~60ms를 추가로 잤다. 이 sleep은 상태 전이를 유발하지 않고 completion 계약 위반을 숨길 수
+있었다. 현재 소스에서는 제거되어 있다.
 
 ## 확정 근거
 
-- overload case는 모든 handle join과 64개 결과 conservation 뒤 60ms를 기다린다:
+- baseline overload case는 모든 handle join과 64개 결과 conservation 뒤 60ms를 기다렸다:
   `crates/taskmesh/tests/e2e_scenarios.rs:358-366`.
-- chaos race case도 200개 반환 확인 뒤 50ms를 기다린다:
+- baseline chaos race case도 200개 반환 확인 뒤 50ms를 기다렸다:
   `crates/taskmesh/tests/e2e_chaos.rs:354-366`.
-- 두 위치 모두 sleep 직후 동일한 `assert_drained`를 실행한다.
+- 현재 두 위치 모두 join 직후 `assert_drained`를 실행한다.
 
 ## 목표 불변식
 

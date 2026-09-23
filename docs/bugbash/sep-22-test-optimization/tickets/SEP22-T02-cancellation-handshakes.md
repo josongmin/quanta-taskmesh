@@ -134,3 +134,15 @@ worktree/target에서 수행하고 원상 복구한 source SHA를 확인한다. 
   `deadline_cancel.rs` SHA-256은 위 owner hash와 같다. 원복 뒤 15/15 재통과했다.
 - 이 증거는 dirty shared worktree의 owner-local proof다. W3 exact-source qualification이 없어
   campaign closeout으로 승격하지 않는다.
+
+## 2026-09-23 clean-source gate 재검증
+
+- clean `main@fa11a1c5780297d575b5091721b2ea24dc0d8980`의 첫
+  `just verify-macos-full`은 `deadline_cancel.rs` CPU timeout의 단일 패턴 `match`에서
+  `clippy::manual_let_else` 및 `clippy::single_match_else`로 실패했다. 이때 후속 필수 rail은
+  `NOT_RUN`이므로 qualification receipt가 아니다.
+- 같은 timeout/abort/held-work cleanup 의미를 유지하면서 `let Ok(joined) = ... else`로
+  수정했다. 현재 `deadline_cancel.rs` SHA-256은
+  `ab581b7ec56b8dd31bba12603cd64fd07fc979b13d95b209b64d351ad0a08508`.
+  `just clippy` exit 0, `cargo test --locked -p taskmesh --test deadline_cancel` 15/15,
+  `cargo fmt --all -- --check`와 `git diff --check` exit 0. 새 clean-source W3 receipt는 별도다.

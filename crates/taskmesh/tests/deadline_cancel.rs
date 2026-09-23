@@ -668,13 +668,10 @@ async fn run_cpu_escapes_stalled_executor_via_cancel() {
     .await
     .expect("stalled executor acceptance sender survives");
     token.cancel();
-    let joined = match tokio::time::timeout(HANG, &mut handle).await {
-        Ok(joined) => joined,
-        Err(_) => {
-            handle.abort();
-            executor.held.lock().unwrap().clear();
-            panic!("run_cpu_escapes_stalled_executor_via_cancel: caller did not return after cancellation within {HANG:?}");
-        }
+    let Ok(joined) = tokio::time::timeout(HANG, &mut handle).await else {
+        handle.abort();
+        executor.held.lock().unwrap().clear();
+        panic!("run_cpu_escapes_stalled_executor_via_cancel: caller did not return after cancellation within {HANG:?}");
     };
     let err = joined
         .unwrap()

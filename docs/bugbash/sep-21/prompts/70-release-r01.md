@@ -58,7 +58,7 @@ Assigned ticket: `SEP21-R01`.
 ```sh
 just gate
 just matrix
-just proof
+just release
 just semver-release
 uv run python tools/qualification/receipt.py validate release-receipt.json
 uv run python tools/gates/validate_inventory.py

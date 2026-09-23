@@ -125,7 +125,7 @@
 git rev-parse HEAD
 git status --porcelain=v1 --untracked-files=all
 just gate
-just proof
+just release
 ```
 
 ## 호환성 / 실패 모드

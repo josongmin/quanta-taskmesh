@@ -15,9 +15,9 @@ Run the registered recipes through `just`:
 - Per-edit feedback: use `just dev-rust-fast <crate> [consumer-crates...]` for
   production Rust changes, `just dev-rust-tests <crate> [consumer-crates...]`
   for test-only Rust changes, or `just dev-python-fast <changed.py> <owner-tests>`.
-  These scope checks to changed owners. `verify-local` is a broader
+  These scope checks to changed owners. `dev` is a broader
   cross-package checkpoint, not a required step after every edit.
-- [ ] `just verify-local` — purpose-scoped macOS feedback: core workspace tests
+- [ ] `just dev` — purpose-scoped macOS feedback: core workspace tests
       (benchmark harness and generated doc fixture excluded), production `lib/bin`
       Clippy, and the corresponding real static-policy commands. Python tooling
       checks are path-scoped (`just dev-python-fast <changed.py> <owner-tests>`)

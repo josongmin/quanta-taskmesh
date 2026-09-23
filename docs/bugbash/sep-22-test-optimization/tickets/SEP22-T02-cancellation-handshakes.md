@@ -105,7 +105,7 @@ cargo test --locked -p taskmesh --test deadline_cancel -- --nocapture
 
 각 exact filter의 executed count와 exit code를 기록한다. mutation probe는 별도 임시
 worktree/target에서 수행하고 원상 복구한 source SHA를 확인한다. `just gate`, `just matrix`,
-`just verify-macos-full`은 integrator 단계에서 현재 source에 대해 별도로 실행한다.
+`just verify-macos-ci`는 integrator 단계에서 현재 source에 대해 별도로 실행한다.
 
 ## Stop/reopen 조건
 
@@ -138,7 +138,7 @@ worktree/target에서 수행하고 원상 복구한 source SHA를 확인한다. 
 ## 2026-09-23 clean-source gate 재검증
 
 - clean `main@fa11a1c5780297d575b5091721b2ea24dc0d8980`의 첫
-  `just verify-macos-full`은 `deadline_cancel.rs` CPU timeout의 단일 패턴 `match`에서
+  `just verify-macos-ci`는 `deadline_cancel.rs` CPU timeout의 단일 패턴 `match`에서
   `clippy::manual_let_else` 및 `clippy::single_match_else`로 실패했다. 이때 후속 필수 rail은
   `NOT_RUN`이므로 qualification receipt가 아니다.
 - 같은 timeout/abort/held-work cleanup 의미를 유지하면서 `let Ok(joined) = ... else`로

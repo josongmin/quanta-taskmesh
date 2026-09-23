@@ -483,13 +483,13 @@
       "id": "proof-parity-not-checked",
       "finding": "A3-P1-2",
       "runner": "pytest",
-      "rationale": "`just proof` chained `gate` plus the heavy rails but skipped four required gates; nothing compared the proof chain against required.json.",
+      "rationale": "The release gate chain must include every required CI and nightly gate; the validator rejects omissions.",
       "file": "tools/gates/validate_inventory.py",
-      "find": "        if missing:\n            problems.append(\n                f\"`just proof` skips required gate(s) {missing}: a local proof is not the CI proof\"\n            )",
-      "replace": "        if False:\n            problems.append(\n                f\"`just proof` skips required gate(s) {missing}: a local proof is not the CI proof\"\n            )",
-      "test_target": "tools/gates/tests/test_inventory.py::test_just_proof_skipping_a_required_gate_is_reported",
-      "expect_failing_test": "test_just_proof_skipping_a_required_gate_is_reported",
-      "expect_message": "`just proof` skips required gate(s)"
+      "find": "        if missing:\n            problems.append(\n                f\"`just release` skips required gate(s) {missing}: release proof is incomplete\"\n            )",
+      "replace": "        if False:\n            problems.append(\n                f\"`just release` skips required gate(s) {missing}: release proof is incomplete\"\n            )",
+      "test_target": "tools/gates/tests/test_inventory.py::test_just_release_skipping_a_required_gate_is_reported",
+      "expect_failing_test": "test_just_release_skipping_a_required_gate_is_reported",
+      "expect_message": "`just release` skips required gate(s)"
     },
     {
       "id": "iai-runner-self-report-ignored",

@@ -1,7 +1,7 @@
-name: release-proof (ci + nightly)
+name: release (ci + nightly)
 
 # Disabled hosted compatibility workflow. Ordinary verification runs locally
-# through `just verify-local` / `just verify-macos-full`; this manual fallback
+# through `just dev` / `just verify-macos-ci`; this manual fallback
 # runs final release proof including the nightly mutation campaigns. Push, pull-request and
 # schedule events are forbidden. The repository workflow is disabled in GitHub
 # settings and retained only as reproducible historical infrastructure.

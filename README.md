@@ -64,7 +64,7 @@ async fn main() {
 
 ## 검증 표면 (proof surface)
 
-macOS 기본 피드백 진입점은 `just verify-local`이다. core workspace(Rust benchmark harness와
+macOS 기본 피드백 진입점은 `just dev`이다. core workspace(Rust benchmark harness와
 generated doc fixture 제외),
 production `lib/bin` Clippy, 저비용 architecture/gate owner tests와 실제 정적 정책만 실행한다.
 Semgrep은 실제 소스를 한 번 스캔하고, test/example/bench Clippy 및 43-case synthetic rule-pack

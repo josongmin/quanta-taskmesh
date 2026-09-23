@@ -1,7 +1,7 @@
 name: bench-gates
 
 # Disabled hosted compatibility workflow. Ordinary benchmark verification runs
-# through local `just verify-local` / `just qualify-local`; push, pull-request
+# through local `just dev` / `just qualify-local`; push, pull-request
 # and schedule events are forbidden. The repository workflow is disabled in
 # GitHub settings and retained only as reproducible historical infrastructure.
 #

@@ -14,8 +14,8 @@ Fails closed on:
 - duplicate ids, unknown tiers, unknown platforms,
 - `just gate`'s dependency list drifting from the inventory's `fast` tier,
 - `just matrix`'s dependency list drifting from the inventory's `matrix` tier,
-- `just proof` not expanding to exactly the required set (a required gate
-  CI runs that the local proof surface skips is a local/CI proof gap),
+- `just release` not expanding to exactly the required set (a required gate
+  omitted from the local release surface is a proof gap),
 - a workflow step that *invokes* an inventory gate but cannot *fail* on it
   (`continue-on-error`, an `if:` condition, `|| true`, `set +e`, `exit 0`):
   parity is about enforcement, and a masked gate is a green check over nothing,
@@ -319,7 +319,7 @@ def gate_recipe_dependencies() -> list[str]:
 
 def expand_recipe(recipe: str, text: str | None = None) -> set[str]:
     """Every leaf recipe `just <recipe>` runs, following chained recipes
-    (`proof: gate matrix …` expands `gate` and `matrix`)."""
+    (`release: ci nightly` expands both profiles)."""
     text = JUSTFILE.read_text(encoding="utf-8") if text is None else text
     leaves: set[str] = set()
     pending = [recipe]
@@ -507,7 +507,7 @@ def validate(
     invocations: dict[str, set[str]],
     gate_deps: list[str],
     matrix_deps: list[str] | None = None,
-    proof_leaves: set[str] | None = None,
+    release_leaves: set[str] | None = None,
     enforcement_problems: list[str] | None = None,
     self_reports: dict[str, set[str]] | None = None,
     untracked_scripts: dict[str, list[str]] | None = None,
@@ -545,9 +545,7 @@ def validate(
             if members is None:
                 problems.append(f"{gate_id}: unknown parallel_group {parallel_group!r}")
             elif gate_id not in members:
-                problems.append(
-                    f"{gate_id}: is not approved for parallel_group {parallel_group!r}"
-                )
+                problems.append(f"{gate_id}: is not approved for parallel_group {parallel_group!r}")
             elif gate.get("platforms") != ["any"]:
                 problems.append(
                     f"{gate_id}: parallel_group {parallel_group!r} requires platforms ['any']"
@@ -682,8 +680,10 @@ def validate(
 
     required_ids = required.get("required", [])
     nightly_ids = required.get("nightly_required")
-    if not isinstance(nightly_ids, list) or not nightly_ids or any(
-        not isinstance(gate_id, str) for gate_id in nightly_ids
+    if (
+        not isinstance(nightly_ids, list)
+        or not nightly_ids
+        or any(not isinstance(gate_id, str) for gate_id in nightly_ids)
     ):
         problems.append("nightly_required must be a nonempty list of gate ids")
         nightly_ids = []
@@ -740,16 +740,16 @@ def validate(
                 f"`just matrix` chains {sorted(matrix_deps)} "
                 f"but the inventory's matrix tier is {sorted(matrix_ids)}"
             )
-    if proof_leaves is not None:
+    if release_leaves is not None:
         required_set = set(required_ids)
-        missing = sorted(required_set - proof_leaves)
-        extra = sorted(proof_leaves - required_set)
+        missing = sorted(required_set - release_leaves)
+        extra = sorted(release_leaves - required_set)
         if missing:
             problems.append(
-                f"`just proof` skips required gate(s) {missing}: a local proof is not release proof"
+                f"`just release` skips required gate(s) {missing}: release proof is incomplete"
             )
         if extra:
-            problems.append(f"`just proof` runs {extra}, which required.json does not require")
+            problems.append(f"`just release` runs {extra}, which required.json does not require")
     if ci_leaves is not None and ci_leaves != set(required_ids) - set(nightly_ids):
         problems.append("`just ci` must expand to required gates excluding nightly_required")
     if nightly_leaves is not None and nightly_leaves != set(nightly_ids):
@@ -766,7 +766,7 @@ def main() -> int:
         invocations = workflow_invocations(WORKFLOWS)
         gate_deps = gate_recipe_dependencies()
         matrix_deps = recipe_dependencies("matrix")
-        proof_leaves = expand_recipe("proof")
+        release_leaves = expand_recipe("release")
         ci_leaves = expand_recipe("ci")
         nightly_leaves = expand_recipe("nightly")
         inventory_recipes = {g.get("recipe") for g in inventory.get("gates", []) if g.get("recipe")}
@@ -801,7 +801,7 @@ def main() -> int:
         invocations,
         gate_deps,
         matrix_deps,
-        proof_leaves,
+        release_leaves,
         enforcement,
         self_reports,
         untracked_scripts,

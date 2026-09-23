@@ -461,7 +461,7 @@ spec 문자열을 빌려 allocation 없이 한다.
   대신 `cargo install --list` 또는 runner의 self-report로 버전을 읽고, 모든 early exit가
   진단을 출력하며, baseline stamp는 bench *성공 후*에만 쓴다. CI cache key는 script가
   계산하는 fingerprint 그 자체다. 이 script는 PATH shim으로 end-to-end test된다(13개).
-- `just proof`는 `required.json` 전체로 expand되어야 하며 `gates-inventory`가 이를
+- `just release`는 `required.json` 전체로 expand되어야 하며 `gates-inventory`가 이를
   검증한다(workflow `run:` block은 YAML로 parse). `just matrix`가 proof-matrix job이다.
   parity는 *집행*이다: inventory gate를 호출하는 step에 `continue-on-error`, `if:`,
   `|| true`/`set +e`/`exit 0`이 있으면 validator가 거절한다 — 호출만 있고 실패할 수 없는

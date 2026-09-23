@@ -135,5 +135,5 @@ cargo test --locked -p taskmesh --test runtime_cancel_timeout cancel_while_queue
   (133 files, 0 findings), `just clippy` (test, production, rayon, docs, bench)는 exit 0이다.
   Rust 1.95의 `clippy::map_err_ignore`가 탐지한 `crates/taskmesh/src/builder.rs:315`의
   익명 변환 오류 바인딩을 의도가 드러나는 이름으로 바꾸어 gate를 통과시켰다.
-  `just verify-macos-full` exact-source W3 receipt는 아직 없다. 이 ticket의
+  `just verify-macos-ci` exact-source W3 receipt는 아직 없다. 이 ticket의
   `LOCALLY_VERIFIED`는 campaign qualification을 뜻하지 않는다.

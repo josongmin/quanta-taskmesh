@@ -93,14 +93,14 @@ cargo test --locked -p taskmesh-rayon --test rayon_smoke
 cargo test --locked -p taskmesh-bench --test hellgate
 just gate
 just matrix
-just verify-local
+just dev
 just verify-macos-ci
 # Explicit final release qualification only; includes mutation and other nightly gates.
 just qualify-local
 just validate-local-qualification
 ```
 
-`just verify-local` is the daily `dev` feedback subset and does not emit a qualification
+`just dev` is the daily feedback profile and does not emit a qualification
 receipt. `just verify-macos-ci` runs the host-applicable CI rails and writes the exact-source
 receipt; missing/NOT_RUN CI rails keep that profile open.
 `bench-iai` belongs to nightly and is not in W3. The W3 receipt therefore cannot close

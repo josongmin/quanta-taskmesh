@@ -89,7 +89,7 @@ dev-python-fast files tests:
     uv run pytest {{tests}} -q -m "not qualification"
 
 # Rust edit loop: scope compilation, lint, and behavior tests to the changed
-# package. Use `dev-fast` for cross-package or shared-boundary changes.
+# package. Use `dev` for cross-package or shared-boundary changes.
 dev-rust-fast package *consumers:
     cargo fmt --package {{package}} --check
     CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" CLIPPY_CONF_DIR={{root}}/config cargo clippy --locked -p {{package}} --lib --bins -- {{clippy_strict}} {{clippy_allows}} {{clippy_restrict}}
@@ -179,13 +179,13 @@ bench-iai:
 
 # Focused checker commands are kept for debugging. The registered `modelcheck`
 # gate runs both checkers plus failure replay, so these are not standalone proof
-# inventory gates and must not be added to `proof` or hosted CI.
+# inventory gates and must not be added to `release` or hosted CI.
 loom:
     RUSTFLAGS="--cfg loom" cargo test --locked -p taskmesh-engine --features loom --test loom_governance --release
 
 # Registered qualification gate: fmt, full clippy/tests, supply-chain, static
 # policy, Python, allocation, inventory, and fuzz-harness compilation. Use
-# `just verify-local` for the smaller laptop feedback subset and
+# `just dev` for the smaller laptop feedback subset and
 # `just verify-macos-ci` for the complete CI profile.
 gate: fmt-check clippy test deny semgrep test-architecture py-lint py-test bench-gate gates-inventory fuzz-check
     @echo "gate: registered functional/static gate passed; run 'just verify-macos-ci' for CI qualification"
@@ -197,11 +197,9 @@ fuzz-check:
 
 # Purpose-scoped Rust product loop. Python tooling checks are separate in
 # `dev-python-fast`; unrelated Python lint/tests are not repeated for Rust edits.
-# Heavy authorities remain in `ci`/`nightly`/`release-proof` profiles.
-dev-fast: fmt-check clippy-core test-core semgrep test-architecture gates-inventory
-    @echo "dev-fast: core macOS feedback passed; run 'just verify-macos-ci' for receipt-backed CI qualification"
-
-dev: dev-fast
+# Heavy authorities remain in the `ci`, `nightly`, and `release` profiles.
+dev: fmt-check clippy-core test-core semgrep test-architecture gates-inventory
+    @echo "dev: core macOS feedback passed; run 'just verify-macos-ci' for receipt-backed CI qualification"
 
 # Local proof matrix: feature-matrix drift, doctests, link-clean rustdoc, bench
 # compilation, and the consumer-MSRV build. Chained by `ci`.
@@ -237,12 +235,12 @@ coverage-report:
     bash tools/coverage/report.sh
 
 # Release-only compatibility audit against the immutable 0.2.0 release commit.
-# This is not in ordinary `proof`: a current-source qualification receipt and
+# This is not in `release`: a current-source qualification receipt and
 # explicit API/wire/behavior adjudication are separate release inputs.
 semver-release:
     python3 tools/release/semver.py --out target/release/semver
 
-# Final release collector runs both full and night; never use for routine full checks.
+# Final release collector runs CI and nightly gates; use only for explicit release qualification.
 qualify-local:
     uv run python tools/qualification/receipt.py collect --local-qualified --out target/qualification/local-receipt.json
 
@@ -270,9 +268,6 @@ nightly: mutants-critical modelcheck tsan fuzz coverage-report bench-iai mutants
 release: ci nightly
     @echo "release: ci and nightly required gate surfaces passed"
 
-# Compatibility entry point for existing release tooling.
-proof: release
-
 # CI macOS receipt without high-cost nightly campaigns. Release qualification
 # remains `release` or the nightly-inclusive required collector.
 # Independent low-cost static checks use the inventory's bounded four-worker
@@ -283,17 +278,6 @@ verify-macos-ci:
 
 verify-macos-nightly:
     CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" uv run python tools/gates/run.py --profile nightly --require-clean-source --allow-platform-skips --receipt target/verification/macos-nightly-gates.json
-
-# Compatibility aliases. Prefer the profile names above in new instructions.
-verify-macos-full: verify-macos-ci
-
-# Daily macOS feedback is deliberately purpose-scoped. It runs core functional
-# tests and static policy, but leaves dependency/performance/feature/release
-# authorities to the exact-source full receipt.
-verify-macos: dev
-
-# Canonical laptop entry point.
-verify-local: verify-macos
 
 # Install the tracked fail-closed push admission hook for this clone. The hook
 # accepts a branch update only when the saved local receipt matches the exact

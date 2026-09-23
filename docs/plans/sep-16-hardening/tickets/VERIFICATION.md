@@ -23,7 +23,7 @@ digest와 값이 달라지므로 과거 receipt/cache를 현재 소스의 증거
 
 ```sh
 just gate
-just proof
+just release
 just clippy
 just deny
 just semgrep

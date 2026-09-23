@@ -436,11 +436,11 @@ cargo metadata --format-version 1 --no-deps
 just gates-inventory
 just gate
 just matrix
-just proof
+just release
 uv run python tools/qualification/receipt.py validate <receipt>
 ```
 
-`just proof`의 성공은 local proof다. 릴리스 자격은 clean hosted checkout에서
+`just release`의 성공은 local gate proof다. 릴리스 자격은 clean hosted checkout에서
 clean local Linux에서 `collect --local-qualified`가 만든 exact-SHA receipt만 인정한다.
 
 ## 22. 문서·릴리스·외부 consumer·운영

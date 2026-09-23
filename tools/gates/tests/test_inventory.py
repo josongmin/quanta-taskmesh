@@ -136,21 +136,40 @@ def test_just_matrix_drifting_from_the_matrix_tier_is_reported() -> None:
     assert any("`just matrix` chains" in p for p in problems), problems
 
 
-def test_just_proof_skipping_a_required_gate_is_reported() -> None:
-    # The audit's gap: `proof` chained `gate` plus the heavy rails but not the
-    # proof-matrix job, so a green local proof skipped four required gates.
-    leaves = vi.expand_recipe("proof")
-    problems = problems_with(proof_leaves=leaves - {"doctest", "bench-smoke"})
+def test_just_release_skipping_a_required_gate_is_reported() -> None:
+    # Release must include every CI and nightly gate in the required set.
+    leaves = vi.expand_recipe("release")
+    problems = problems_with(release_leaves=leaves - {"doctest", "bench-smoke"})
     assert any(
-        "`just proof` skips required gate(s) ['bench-smoke', 'doctest']" in p for p in problems
+        "`just release` skips required gate(s) ['bench-smoke', 'doctest']" in p for p in problems
     ), problems
-    problems = problems_with(proof_leaves=leaves | {"bench"})
-    assert any("`just proof` runs ['bench']" in p for p in problems), problems
+    problems = problems_with(release_leaves=leaves | {"bench"})
+    assert any("`just release` runs ['bench']" in p for p in problems), problems
 
 
-def test_the_real_proof_recipe_expands_to_exactly_the_required_set() -> None:
+def test_the_real_release_recipe_expands_to_exactly_the_required_set() -> None:
     _, required, *_ = real_inputs()
-    assert vi.expand_recipe("proof") == set(required["required"])
+    assert vi.expand_recipe("release") == set(required["required"])
+
+
+def test_ci_and_nightly_recipes_partition_the_required_set() -> None:
+    _, required, *_ = real_inputs()
+    ci = vi.expand_recipe("ci")
+    nightly = vi.expand_recipe("nightly")
+    assert ci == set(required["required"]) - set(required["nightly_required"])
+    assert nightly == set(required["nightly_required"])
+    assert ci.isdisjoint(nightly)
+    assert not {"mutants-critical", "mutants-generated"} & ci
+
+
+def test_validator_rejects_ci_or_nightly_recipe_drift() -> None:
+    ci = vi.expand_recipe("ci")
+    nightly = vi.expand_recipe("nightly")
+    assert any("`just ci` must expand" in p for p in problems_with(ci_leaves=ci | {"fuzz"}))
+    assert any(
+        "`just nightly` must expand" in p
+        for p in problems_with(nightly_leaves=nightly - {"mutants-generated"})
+    )
 
 
 def test_loom_and_shuttle_debug_recipes_are_not_duplicate_proof_gates() -> None:
@@ -875,6 +894,73 @@ def test_macos_ci_recipe_explicitly_rejects_dirty_source() -> None:
     assert "--profile ci" in body
     assert "--require-clean-source" in body
     assert "--allow-dirty-source" not in body
+
+
+@pytest.mark.parametrize("profile", ["ci", "nightly", "release"])
+def test_runner_profile_selects_only_its_required_gates(
+    profile: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    source = {"head": "a" * 40, "tree": "b" * 40, "paths_digest": "c" * 64, "dirty": False}
+    monkeypatch.setattr(module, "source_identity", lambda: dict(source))
+    selected_ids: list[str] = []
+
+    def fake_run(selected, _here, _deadline, _keep_going, *, preflight_blocker):
+        assert preflight_blocker is None
+        selected_ids.extend(gate["id"] for gate in selected)
+        return [{"id": gate["id"], "status": "PASS", "exit_code": 0} for gate in selected]
+
+    monkeypatch.setattr(module, "run_selected_gates", fake_run)
+    receipt_path = tmp_path / f"{profile}.json"
+    assert module.main(["--profile", profile, "--receipt", str(receipt_path)]) == 0
+    required = real_inputs()[1]
+    expected = (
+        required["nightly_required"]
+        if profile == "nightly"
+        else [
+            gate_id
+            for gate_id in required["required"]
+            if profile == "release" or gate_id not in required["nightly_required"]
+        ]
+    )
+    assert selected_ids == expected
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["profile"] == profile
+    assert receipt["required_not_run"] == []
+
+
+@pytest.mark.parametrize("profile,expected_code", [("ci", 0), ("release", 0), ("nightly", 1)])
+def test_push_receipt_requires_ci_or_release_profile(
+    profile: str, expected_code: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    head = "a" * 40
+    source = {"head": head, "tree": "b" * 40, "paths_digest": "c" * 64, "dirty": False}
+    monkeypatch.setattr(module, "source_identity", lambda: dict(source))
+    calls: list[tuple[set[str], str | None]] = []
+
+    def fake_validate(_value, _current, required, _conditional, _here, expected_head):
+        calls.append((required, expected_head))
+        return []
+
+    monkeypatch.setattr(module, "local_receipt_problems", fake_validate)
+    path = tmp_path / "receipt.json"
+    path.write_text(json.dumps({"profile": profile, "source": source}), encoding="utf-8")
+    assert module.main(["--validate-receipt", str(path), "--expected-head", head]) == expected_code
+    required = real_inputs()[1]
+    if profile == "nightly":
+        assert calls == []
+    else:
+        expected = set(required["required"])
+        if profile == "ci":
+            expected -= set(required["nightly_required"])
+        assert calls == [(expected, head)]
 
 
 def test_platform_scope_requires_every_applicable_gate_and_keeps_exclusions() -> None:

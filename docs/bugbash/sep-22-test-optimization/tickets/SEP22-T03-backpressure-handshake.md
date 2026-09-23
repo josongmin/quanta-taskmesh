@@ -106,7 +106,7 @@ cargo test --locked -p taskmesh --test e2e_scenarios -- --nocapture
 
 각 exact filter가 1/1 실행되어야 한다. 동일 host/profile/target policy에서 변경 전후 각 최소
 5회 측정하고 source SHA, median, worst를 기록한다. mutation probe는 격리된 임시 worktree와
-target에서 수행한다. 이후 integrator가 `just gate`, `just matrix`, `just verify-macos-full`을
+target에서 수행한다. 이후 integrator가 `just gate`, `just matrix`, `just verify-macos-ci`를
 현재 source에서 실행한다.
 
 ## Stop/reopen 조건

@@ -94,7 +94,7 @@
 ```sh
 just gate
 just matrix
-just proof
+just release
 just semver-release
 uv run python tools/qualification/receipt.py validate release-receipt.json
 ```
@@ -116,7 +116,7 @@ uv run python tools/qualification/receipt.py validate release-receipt.json
   the final candidate is clean/frozen.
 - `tools/release/release-required.json` is independent of ordinary
   `tools/gates/required.json`; `semver-release` is a release-tier inventory
-  recipe, not silently added to ordinary `just proof`. Tracked
+  recipe, not silently added to the `just release` gate chain. Tracked
   `tools/release/adjudication.json` remains a non-approving PENDING template;
   final-SHA-bound reviewer input must be supplied to the manual release workflow
   and stored as an ignored, digest-checked artifact. The template covers

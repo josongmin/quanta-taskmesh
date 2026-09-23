@@ -1802,7 +1802,7 @@ def test_collect_qualifies_on_a_clean_tree_with_receipts_written_at_the_root(
     out = repo / "receipt.json"
     code = receipt.collect(
         out,
-        ["fast", "matrix", "proof"],
+        ["fast", "matrix", "nightly"],
         skip_mutations=False,
         hosted_ci=True,
         consume_producers=True,

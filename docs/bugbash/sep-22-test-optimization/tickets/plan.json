@@ -96,7 +96,7 @@
       "id": "SEP22-T08",
       "finding": "TO-08",
       "file": "SEP22-T08-hellgate-structural-budget.md",
-      "status": "IMPLEMENTED_UNQUALIFIED",
+      "status": "LOCALLY_VERIFIED",
       "priority": "P1",
       "lane": "bench-validity",
       "depends_on": [],

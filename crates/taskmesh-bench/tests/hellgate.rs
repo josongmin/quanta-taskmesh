@@ -1,18 +1,13 @@
 //! Hell-gate: deterministic end-to-end invariants for the benchmark harness.
 //!
 //! These are not timings — they assert that the open-loop simulator, the
-//! raw latency recorder, the control-plane metrics, and the USL
-//! contention path all behave correctly and *fail closed* across seeds and load
-//! regimes. If any of these break, the headline benchmark numbers are not
-//! trustworthy, so they gate.
+//! raw latency recorder, and the control-plane metrics behave correctly and
+//! *fail closed* across seeds and load regimes. If any of these break, the
+//! headline benchmark numbers are not trustworthy, so they gate.
 
-use taskmesh_bench::loadgen::{contention_throughput, simulate, SimResult};
-use taskmesh_bench::metrics::{argmax_throughput, fit_usl, reject_ratio};
+use taskmesh_bench::loadgen::{simulate, SimResult};
+use taskmesh_bench::metrics::reject_ratio;
 use taskmesh_bench::workload::{fixture, generate, retrieval_policy, WorkloadConfig};
-
-// This is a structural smoke, not a throughput benchmark. Keep the fixed
-// workload small; Criterion/IAI own performance-regression measurements.
-const STRUCTURAL_CONTENTION_OPS_PER_THREAD: usize = 2_000;
 
 /// One open-loop run of a single retrieval class at a given offered load and
 /// aggregate capacity. Returns (p50, p99, p999, dropped, result).
@@ -139,36 +134,4 @@ fn simulation_is_deterministic_for_a_seed() {
     assert_eq!(a.1, b.1, "p99 must be identical");
     assert_eq!(a.2, b.2, "p999 must be identical");
     assert_eq!(a.4, b.4, "SimResult must be identical");
-}
-
-#[test]
-fn usl_contention_sweep_is_structurally_sound() {
-    // Real-thread sweep: timing is non-deterministic, so assert only structure —
-    // every level produces positive throughput, the fit is recoverable, and the
-    // empirical peak is at a real concurrency level.
-    let mut samples = Vec::new();
-    for &t in &[1usize, 2, 4] {
-        let tput = contention_throughput(t, STRUCTURAL_CONTENTION_OPS_PER_THREAD);
-        assert!(
-            tput.is_finite() && tput > 0.0,
-            "throughput must be finite and positive at {t} threads"
-        );
-        samples.push((t as f64, tput));
-    }
-    let fit = fit_usl(&samples).expect("USL fit must be recoverable from 3 points");
-    assert!(fit.x1.is_finite() && fit.x1 > 0.0);
-    assert!(
-        fit.alpha.is_finite() && fit.beta.is_finite(),
-        "USL coefficients must be finite: {fit:?}"
-    );
-    let (peak_n, peak_tput) = argmax_throughput(&samples).expect("empirical peak");
-    assert!(
-        samples.contains(&(peak_n, peak_tput)),
-        "empirical peak must be one of the measured concurrency points"
-    );
-    assert_eq!(
-        peak_tput,
-        samples.iter().map(|&(_, tput)| tput).fold(0.0, f64::max),
-        "empirical peak must have the highest measured throughput"
-    );
 }

@@ -7,16 +7,14 @@ These tickets track the eight baseline findings in [`../README.md`](../README.md
 test execution without weakening semantic or qualification authority.
 
 At the 2026-09-23 owner-local pass, all eight baseline code changes are present. T01–T07 are
-`LOCALLY_VERIFIED`; T08 remains `IMPLEMENTED_UNQUALIFIED`. T03–T04 have isolated same-source
+`LOCALLY_VERIFIED`; T08's redundant real-thread USL smoke has been removed and is
+`LOCALLY_VERIFIED` by the focused bench package (71/71). T03–T04 have isolated same-source
 ablation timings; those host-contended samples do not establish general performance savings.
-T08 now has 2,000 admit/release cycles per worker, selected one step above the smallest
-passing 1,000-cycle variant. Rust 1.92.0 macOS and Docker Linux ladders each passed 10/10
-per variant; the selected 2,000-cycle exact case passed 20/20 on each. Raw throughput and
-host-specific cost samples are recorded in T08. The Linux environment is a Docker VM on the
-Mac host, so independent hardware performance is not established. Clean-source gate/matrix
-acceptance remains open. W3 requires a clean, frozen candidate and a complete
-exact-source receipt. The baseline and waves
-below preserve the original campaign dependency map.
+T08's historical 50k→2k workload measurements establish only the cost of the removed smoke,
+not a unique correctness oracle. Existing loadgen and metrics unit tests retain semantic
+coverage; the five other Hellgate cases have no exact substitute and remain. Clean-source
+gate/matrix acceptance remains open. W3 requires a clean, frozen candidate and a complete
+exact-source receipt. The baseline and waves below preserve the original campaign dependency map.
 
 ## Ticket map
 

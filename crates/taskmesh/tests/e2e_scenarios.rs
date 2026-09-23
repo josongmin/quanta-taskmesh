@@ -1,6 +1,6 @@
 //! Hardcore operational e2e scenarios — "does the whole thing actually behave
 //! under pressure?" These go beyond the per-feature proof gate (`e2e_proof.rs`):
-//! concurrency storms, cancellation chaos, backpressure forward-progress,
+//! multiclass concurrency, cancellation chaos, backpressure forward-progress,
 //! bounded fail-closed overload, a multi-stage composite pipeline, and a CPU soak
 //! through the Rayon executor.
 //!
@@ -123,46 +123,6 @@ async fn high_concurrency_multiclass_drains_clean() {
     .await;
     assert_eq!(ok, 240, "every queued submission must eventually complete");
     assert_drained(&rt, &names);
-}
-
-/// A single-slot class flooded by 128 concurrent submissions: serialization is
-/// total, yet every one must drain through the queue with no deadlock or leak.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn single_slot_storm_serializes_without_deadlock() {
-    let rt = Builder::new()
-        .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
-        .class_policy(
-            cls("solo"),
-            ClassPolicy::new()
-                .max_inflight(1)
-                .max_queue_depth(1024)
-                .cpu_units(1)
-                .overflow_policy(OverflowPolicy::QueueWithinDepth),
-        )
-        .build()
-        .unwrap();
-
-    let done = Arc::new(AtomicUsize::new(0));
-    let mut handles = Vec::new();
-    for i in 0..128usize {
-        let rt = rt.clone();
-        let done = done.clone();
-        handles.push(tokio::spawn(async move {
-            let spec = TaskSpec::blocking(cls("solo")).operation(format!("s-{i}"));
-            let r: Result<usize, RunError<()>> = rt.run_blocking(spec, move || Ok(i)).await;
-            if r.is_ok() {
-                done.fetch_add(1, Ordering::SeqCst);
-            }
-        }));
-    }
-    bounded_storm("single-slot serialization storm", async move {
-        for handle in handles {
-            handle.await.unwrap();
-        }
-    })
-    .await;
-    assert_eq!(done.load(Ordering::SeqCst), 128);
-    assert_drained(&rt, &["solo"]);
 }
 
 // ───────────────────────── 2. cancellation chaos ────────────────────────

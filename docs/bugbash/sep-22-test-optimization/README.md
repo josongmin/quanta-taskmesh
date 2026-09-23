@@ -39,27 +39,15 @@ T07's timeout, disconnect, and wrong-value negatives and 20 normal-path runs wer
 verified on an isolated owner source. T06's real-source gate and CI missing-binary failure
 were rerun. T03–T04 have same-production-source test ablations with median/worst and exact
 execution counts; their host-contended worst values are not performance qualification.
-All eight tickets have some owner-local evidence. T01–T07 are locally verified; T08 has
-macOS and containerized Linux owner-local evidence, while clean-source and independent-host
-qualification remain open. The current-source `verify-macos-full` receipt also remains open.
-
-The earlier T08 owner update used 1,000 admit/release cycles per worker (7,000 total across
-`[1,2,4]`) and passed the full `hellgate` binary 6/6 once. A subsequent edit removed its
-original candidate ladder, safety margin, 20-run, and cross-host acceptance, but current audit
-restores those completion conditions because the test uses measured throughput and the finding
-concerns avoidable cost.
-An isolated same-source macOS exact-test comparison later observed a 97.75% median process-wall
-reduction over ten interleaved runs per variant, with the 1,000-cycle candidate passing 20/20.
-This is local focused cost evidence. A later six-candidate macOS ladder passed 10/10 per
-variant ([raw samples](T08-MACOS-LADDER-2026-09-23.json)); its local margin candidate was 2,000
-cycles. A later Rust 1.92.0 comparison on [macOS](T08-MACOS-RUST192-LADDER-2026-09-23.json)
-and [Docker Linux](T08-LINUX-CONTAINER-LADDER-2026-09-23.json) recorded all three raw
-throughputs per exact run. The 2,000-cycle one-step margin passed 20/20 in each environment;
-the focused median reduction from 50,000 cycles was 96.15% and 95.82%, respectively.
-The current source fixes 2,000 cycles per worker (14,000 total) and the owner-local full
-bench package passed 72/72 on each OS. Docker Linux shares the Mac's hardware, and neither
-host was continuously monitored for interference. Clean-source gate/matrix and ordinary
-qualification remain missing, so T08 stays `IMPLEMENTED_UNQUALIFIED`.
+All eight tickets have owner-local evidence. T01–T08 are locally verified. T08's
+previous 50k→2k workload ladder passed 20/20 on both macOS and Docker Linux, but that
+only established cheaper execution of a weak smoke, not a unique correctness oracle. The
+current audit removed the real-thread USL smoke entirely: loadgen verifies exact completed
+admit/release counts and finite positive throughput, metrics verifies known USL coefficients
+and empirical peak, and Criterion owns actual contention timing. The five other Hellgate
+tests retain distinct open-loop semantic oracles. See [T08](tickets/SEP22-T08-hellgate-structural-budget.md)
+for the explicit coverage loss and focused verification. Clean-source gate/matrix and the
+current-source `verify-macos-full` receipt remain separate qualification work.
 
 ## Baseline measurements
 

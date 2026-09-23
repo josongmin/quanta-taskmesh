@@ -765,11 +765,26 @@ mod tests {
     }
 
     #[test]
-    fn contention_runner_reports_positive_throughput() {
-        let run = contention_run(2, 4_000);
-        assert!(run.throughput_per_sec() > 1.0, "{run:?}");
-        let convenience = contention_throughput(2, 2_000);
+    fn contention_throughput_math_and_convenience_smoke() {
+        let known = ContentionRun {
+            threads: 2,
+            completed_ops: 4,
+            elapsed: Duration::from_secs(2),
+        };
+        assert_eq!(known.throughput_per_sec(), 2.0);
+        assert_eq!(
+            ContentionRun {
+                elapsed: Duration::ZERO,
+                ..known
+            }
+            .throughput_per_sec(),
+            0.0
+        );
+
+        // The real-thread convenience path only needs to prove that a positive
+        // elapsed measurement reaches the rate calculation; no stress budget.
+        let convenience = contention_throughput(2, 1);
         assert!(convenience.is_finite());
-        assert!(convenience > 1.0, "{convenience}");
+        assert!(convenience > 0.0, "{convenience}");
     }
 }

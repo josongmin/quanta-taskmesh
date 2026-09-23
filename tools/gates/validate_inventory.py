@@ -60,6 +60,10 @@ INVENTORY = Path(__file__).resolve().parent / "inventory.json"
 REQUIRED = Path(__file__).resolve().parent / "required.json"
 WORKFLOWS = REPO / ".github" / "workflows"
 JUSTFILE = REPO / "Justfile"
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from tools.gates.parallel_policy import PARALLEL_GROUP_MEMBERS  # noqa: E402
 
 TIERS = {"fast", "matrix", "proof", "release"}
 PLATFORMS = {"any", "linux", "macos"}
@@ -523,9 +527,31 @@ def validate(
 
     by_id = {gate["id"]: gate for gate in gates if gate.get("id")}
     producer_registrations: set[str] = set()
+    assigned_parallel_members: dict[str, set[str]] = {
+        group: set() for group in PARALLEL_GROUP_MEMBERS
+    }
 
     for gate in gates:
         gate_id = gate.get("id", "<missing>")
+        parallel_group = gate.get("parallel_group")
+        if parallel_group is not None:
+            members = (
+                PARALLEL_GROUP_MEMBERS.get(parallel_group)
+                if isinstance(parallel_group, str)
+                else None
+            )
+            if members is None:
+                problems.append(f"{gate_id}: unknown parallel_group {parallel_group!r}")
+            elif gate_id not in members:
+                problems.append(
+                    f"{gate_id}: is not approved for parallel_group {parallel_group!r}"
+                )
+            elif gate.get("platforms") != ["any"]:
+                problems.append(
+                    f"{gate_id}: parallel_group {parallel_group!r} requires platforms ['any']"
+                )
+            else:
+                assigned_parallel_members[parallel_group].add(gate_id)
         if gate.get("tier") not in TIERS:
             problems.append(f"{gate_id}: unknown tier {gate.get('tier')!r}")
         for platform in gate.get("platforms", []):
@@ -638,6 +664,13 @@ def validate(
                     "inventory declares no status_line — the receipt would drop the verdict "
                     "line and exit 0 alone would count as PASS"
                 )
+
+    for group, expected in PARALLEL_GROUP_MEMBERS.items():
+        if assigned_parallel_members[group] != expected:
+            problems.append(
+                f"parallel_group {group!r} membership mismatch: "
+                f"expected {sorted(expected)}, got {sorted(assigned_parallel_members[group])}"
+            )
 
     for recipe, files in invocations.items():
         if recipe not in {gate.get("recipe") for gate in gates}:

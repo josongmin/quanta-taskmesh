@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Every verification gate this repository runs, keyed by a stable id. The Justfile is the single definition of each command; this file records where each gate runs and what it needs. Required-ness lives in required.json, on purpose a separate file.",
+  "description": "Every verification gate this repository runs, keyed by a stable id. The Justfile is the single definition of each command; this file records where each gate runs, what it needs, and approved bounded local parallel groups. Required-ness lives in required.json, on purpose a separate file.",
   "qualification_budget_seconds": 18000,
   "gates": [
     {
@@ -27,7 +27,8 @@
       "prerequisites": [
         "rustfmt"
       ],
-      "workflow": "ci.yml"
+      "workflow": "ci.yml",
+      "parallel_group": "static-independent"
     },
     {
       "id": "clippy",
@@ -75,7 +76,8 @@
         "cargo-deny",
         "network for advisory db"
       ],
-      "workflow": "ci.yml"
+      "workflow": "ci.yml",
+      "parallel_group": "static-independent"
     },
     {
       "id": "semgrep",
@@ -91,7 +93,8 @@
       "prerequisites": [
         "semgrep (version pinned in tools/semgrep/version.txt)"
       ],
-      "workflow": "ci.yml"
+      "workflow": "ci.yml",
+      "parallel_group": "static-independent"
     },
     {
       "id": "test-architecture",
@@ -108,7 +111,8 @@
         "uv",
         "cargo metadata"
       ],
-      "workflow": "ci.yml"
+      "workflow": "ci.yml",
+      "parallel_group": "static-independent"
     },
     {
       "id": "py-lint",
@@ -124,7 +128,8 @@
       "prerequisites": [
         "uv"
       ],
-      "workflow": "ci.yml"
+      "workflow": "ci.yml",
+      "parallel_group": "static-independent"
     },
     {
       "id": "py-test",
@@ -175,7 +180,8 @@
         "uv (PyYAML)",
         "just"
       ],
-      "workflow": "ci.yml"
+      "workflow": "ci.yml",
+      "parallel_group": "static-independent"
     },
     {
       "id": "fuzz-check",
@@ -323,34 +329,6 @@
         "summary": "target/sep21/v02/generated/receipt.generated-mutations.json",
         "envelope": "target/sep21/v02/generated/evidence-envelope.json"
       }
-    },
-    {
-      "id": "loom",
-      "recipe": "loom",
-      "tier": "proof",
-      "runs_in": [
-        "local",
-        "ci"
-      ],
-      "platforms": [
-        "any"
-      ],
-      "prerequisites": [],
-      "workflow": "ci.yml"
-    },
-    {
-      "id": "shuttle",
-      "recipe": "shuttle",
-      "tier": "proof",
-      "runs_in": [
-        "local",
-        "ci"
-      ],
-      "platforms": [
-        "any"
-      ],
-      "prerequisites": [],
-      "workflow": "ci.yml"
     },
     {
       "id": "modelcheck",

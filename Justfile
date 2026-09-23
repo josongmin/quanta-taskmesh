@@ -158,7 +158,9 @@ bench-gate:
 bench-iai:
     bash tools/bench-iai.sh
 
-# Exhaustive concurrency model-check of the governance design (ADR 9000 / P6).
+# Focused checker commands are kept for debugging. The registered `modelcheck`
+# gate runs both checkers plus failure replay, so these are not standalone proof
+# inventory gates and must not be added to `proof` or hosted CI.
 loom:
     RUSTFLAGS="--cfg loom" cargo test --locked -p taskmesh-engine --features loom --test loom_governance --release
 
@@ -187,7 +189,7 @@ matrix: test-rayon doctest rustdoc bench-smoke consumer-msrv
     @echo "matrix: feature-matrix checks passed"
 
 # Exhaustive concurrency model-check with shuttle's randomized scheduler (ADR
-# 9000 / P6). Heavier than loom; matches the CI `shuttle` rail.
+# 9000 / P6). Heavier than loom; run directly only while debugging that checker.
 shuttle:
     RUSTFLAGS="--cfg shuttle" cargo test --locked -p taskmesh-engine --features shuttle --test shuttle_governance --release
 
@@ -244,6 +246,8 @@ proof: gate matrix mutants-critical mutants-generated modelcheck tsan fuzz cover
 # Full macOS receipt: every required gate applicable to this host, including
 # the generated cargo-mutants campaign. This is intentionally explicit: it is
 # a clean, frozen release/push candidate proof, not a laptop inner-loop command.
+# Independent low-cost static checks use the inventory's bounded four-worker
+# group; Cargo builds and resource-heavy proof producers remain serialized.
 # Dirty source is rejected before any gate starts.
 verify-macos-full:
     CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" uv run python tools/gates/run.py --required --require-clean-source --allow-platform-skips --receipt target/verification/macos-gates.json

@@ -13,6 +13,7 @@ import json
 import signal
 import subprocess
 import sys
+import threading
 from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
@@ -82,6 +83,23 @@ def test_duplicate_ids_are_reported() -> None:
     assert any("duplicate gate id" in p for p in problems), problems
 
 
+def test_parallel_groups_reject_gates_without_an_independence_review() -> None:
+    inventory, *_ = real_inputs()
+    inventory = copy.deepcopy(inventory)
+    next(gate for gate in inventory["gates"] if gate["id"] == "clippy")[
+        "parallel_group"
+    ] = "static-independent"
+    problems = problems_with(inventory=inventory)
+    assert any("clippy: is not approved for parallel_group" in p for p in problems)
+
+    inventory = copy.deepcopy(real_inputs()[0])
+    next(gate for gate in inventory["gates"] if gate["id"] == "fmt-check")[
+        "parallel_group"
+    ] = []
+    problems = problems_with(inventory=inventory)
+    assert any("fmt-check: unknown parallel_group" in p for p in problems)
+
+
 def test_a_gate_whose_recipe_vanished_is_reported() -> None:
     inventory, _, recipes, *_ = real_inputs()
     recipes = set(recipes) - {"clippy"}
@@ -133,6 +151,17 @@ def test_just_proof_skipping_a_required_gate_is_reported() -> None:
 def test_the_real_proof_recipe_expands_to_exactly_the_required_set() -> None:
     _, required, *_ = real_inputs()
     assert vi.expand_recipe("proof") == set(required["required"])
+
+
+def test_loom_and_shuttle_debug_recipes_are_not_duplicate_proof_gates() -> None:
+    inventory, *_ = real_inputs()
+    gate_ids = {gate["id"] for gate in inventory["gates"]}
+    assert {"loom", "shuttle"}.isdisjoint(gate_ids)
+    assert {"loom", "shuttle"}.issubset(vi.just_recipes())
+    workflow = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "just modelcheck" in workflow
+    assert "just loom" not in workflow
+    assert "just shuttle" not in workflow
 
 
 def test_recipe_expansion_follows_chains_and_stops_at_leaves() -> None:
@@ -508,6 +537,101 @@ def test_runner_keep_going_executes_later_gates() -> None:
     results = module.run_selected_gates(selected, "macos", None, True, run_all)
     assert calls == ["first", "second"]
     assert [result["status"] for result in results] == ["FAIL", "PASS"]
+
+
+def test_runner_runs_only_approved_parallel_group_concurrently_and_orders_receipt() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    selected = [
+        {
+            "id": gate_id,
+            "recipe": gate_id,
+            "platforms": ["any"],
+            "parallel_group": "static-independent",
+        }
+        for gate_id in ("fmt-check", "py-lint")
+    ]
+    rendezvous = threading.Barrier(2)
+    second_finished = threading.Event()
+
+    def run_parallel(gate: dict) -> dict:
+        rendezvous.wait(timeout=2)
+        if gate["id"] == "first":
+            assert second_finished.wait(timeout=2)
+        else:
+            second_finished.set()
+        return {
+            "id": gate["id"],
+            "recipe": gate["recipe"],
+            "status": "PASS",
+            "duration_s": 0.0,
+        }
+
+    results = module.run_selected_gates(selected, "macos", None, False, run_parallel)
+    assert [result["id"] for result in results] == ["fmt-check", "py-lint"]
+    assert [result["status"] for result in results] == ["PASS", "PASS"]
+
+
+def test_runner_never_parallelizes_an_unapproved_gate() -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    selected = [
+        {
+            "id": "clippy",
+            "recipe": "clippy",
+            "platforms": ["any"],
+            "parallel_group": "static-independent",
+        }
+    ]
+    calls: list[str] = []
+
+    def should_not_run(gate: dict) -> dict:
+        calls.append(gate["id"])
+        raise AssertionError("unapproved gate started")
+
+    results = module.run_selected_gates(selected, "macos", None, False, should_not_run)
+    assert calls == []
+    assert results[0]["status"] == "FAIL"
+    assert "unapproved parallel gate policy" in results[0]["output_tail"]
+
+    selected[0] = {
+        "id": "fmt-check",
+        "recipe": "fmt-check",
+        "platforms": ["linux"],
+        "parallel_group": "static-independent",
+    }
+    results = module.run_selected_gates(selected, "macos", None, False, should_not_run)
+    assert results[0]["status"] == "FAIL"
+    assert "unapproved parallel gate policy" in results[0]["output_tail"]
+
+
+def test_parallel_wave_deadline_has_one_failure_and_explicit_not_run_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    selected = [
+        {
+            "id": gate_id,
+            "recipe": gate_id,
+            "platforms": ["any"],
+            "parallel_group": "static-independent",
+        }
+        for gate_id in ("fmt-check", "py-lint")
+    ]
+    monkeypatch.setattr(module.time, "monotonic", lambda: 10.0)
+
+    results = module.run_selected_gates(selected, "macos", 9.0, True)
+
+    assert [result["status"] for result in results] == ["FAIL", "NOT_RUN"]
+    assert results[0]["timeout_seconds"] == 0
+    assert results[1]["blocked_by"] == "fmt-check"
 
 
 def test_runner_cancellation_stops_later_gates_even_in_keep_going_mode() -> None:

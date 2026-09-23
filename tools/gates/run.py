@@ -30,6 +30,7 @@ import platform
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,6 +40,7 @@ REQUIRED = Path(__file__).resolve().parent / "required.json"
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from tools.gates.parallel_policy import PARALLEL_GATE_LIMIT, PARALLEL_GROUP_MEMBERS  # noqa: E402
 from tools.process_supervisor import run_process  # noqa: E402
 from tools.qualification.receipt import source_identity  # noqa: E402
 
@@ -330,39 +332,24 @@ def run_selected_gates(
         runner = run_gate
     results: list[dict] = []
     blocked_by = preflight_blocker
-    for gate in selected:
-        if not applicable(gate, here):
-            results.append(
-                {
-                    "id": gate["id"],
-                    "recipe": gate["recipe"],
-                    "status": "SKIPPED_PLATFORM",
-                    "exit_code": None,
-                    "platform": here,
-                }
-            )
-            print(f"{gate['id']:<20} SKIPPED_PLATFORM ({here} not in {gate.get('platforms')})")
-            continue
-        if blocked_by is not None:
-            results.append(
-                {
-                    "id": gate["id"],
-                    "recipe": gate["recipe"],
-                    "status": "NOT_RUN",
-                    "exit_code": None,
-                    "platform": here,
-                    "blocked_by": blocked_by,
-                    "output_tail": f"NOT RUN: blocked by earlier non-pass gate {blocked_by}",
-                }
-            )
-            print(f"{gate['id']:<20} NOT_RUN (blocked by {blocked_by})")
-            continue
 
+    def record_unrun(gate: dict, blocker: str) -> dict:
+        return {
+            "id": gate["id"],
+            "recipe": gate["recipe"],
+            "status": "NOT_RUN",
+            "exit_code": None,
+            "platform": here,
+            "blocked_by": blocker,
+            "output_tail": f"NOT RUN: blocked by earlier non-pass gate {blocker}",
+        }
+
+    def run_with_deadline(gate: dict) -> dict:
         effective_gate = gate
         if deadline is not None:
             remaining = int(deadline - time.monotonic())
             if remaining <= 0:
-                result = {
+                return {
                     "id": gate["id"],
                     "recipe": gate["recipe"],
                     "status": "FAIL",
@@ -372,27 +359,134 @@ def run_selected_gates(
                     "timeout_seconds": 0,
                     "output_tail": "QUALIFICATION DEADLINE EXHAUSTED before gate start",
                 }
-                results.append(result)
-                print(f"{gate['id']:<20} FAIL (qualification deadline exhausted)")
-                # A spent global budget cannot be bypassed by --keep-going.
-                # Record the first missed start as the verdict owner and keep
-                # every later applicable gate in the denominator as NOT_RUN.
-                blocked_by = gate["id"]
-                continue
             effective_gate = {
                 **gate,
                 "timeout_seconds": min(
                     gate.get("timeout_seconds", GATE_TIMEOUT_SECONDS), remaining
                 ),
             }
+        return runner(effective_gate)
+
+    index = 0
+    while index < len(selected):
+        gate = selected[index]
+        group = gate.get("parallel_group")
+        members = PARALLEL_GROUP_MEMBERS.get(group) if isinstance(group, str) else None
+        if group is not None and (
+            members is None or gate["id"] not in members or gate.get("platforms") != ["any"]
+        ):
+            result = {
+                "id": gate["id"],
+                "recipe": gate["recipe"],
+                "status": "FAIL",
+                "exit_code": None,
+                "duration_s": 0.0,
+                "output_tail": f"unapproved parallel gate policy: {group!r}/{gate['id']}",
+            }
+            results.append(result)
+            print(f"{gate['id']:<20} FAIL (unapproved parallel group)")
+            blocked_by = gate["id"]
+            index += 1
+            continue
+        if not applicable(gate, here):
+            result = {
+                "id": gate["id"],
+                "recipe": gate["recipe"],
+                "status": "SKIPPED_PLATFORM",
+                "exit_code": None,
+                "platform": here,
+            }
+            print(f"{gate['id']:<20} SKIPPED_PLATFORM ({here} not in {gate.get('platforms')})")
+            results.append(result)
+            index += 1
+            continue
+        if blocked_by is not None:
+            results.append(record_unrun(gate, blocked_by))
+            print(f"{gate['id']:<20} NOT_RUN (blocked by {blocked_by})")
+            index += 1
+            continue
+
+        if group:
+            assert members is not None
+            # Only explicitly inventoried, contiguous groups run concurrently.
+            # Bound fan-out and preserve receipt/output order independent of
+            # completion order. If a batch fails, later batches never start.
+            wave: list[dict] = []
+            while (
+                index < len(selected)
+                and selected[index].get("parallel_group") == group
+                and selected[index]["id"] in members
+                and selected[index].get("platforms") == ["any"]
+            ):
+                candidate = selected[index]
+                index += 1
+                if applicable(candidate, here):
+                    wave.append(candidate)
+                else:
+                    results.append(
+                        {
+                            "id": candidate["id"],
+                            "recipe": candidate["recipe"],
+                            "status": "SKIPPED_PLATFORM",
+                            "exit_code": None,
+                            "platform": here,
+                        }
+                    )
+            for offset in range(0, len(wave), PARALLEL_GATE_LIMIT):
+                batch = wave[offset : offset + PARALLEL_GATE_LIMIT]
+                for item in batch:
+                    print(f"{item['id']:<20} running …", flush=True)
+                by_id: dict[str, dict] = {}
+                with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+                    futures = {pool.submit(run_with_deadline, item): item for item in batch}
+                    for future in as_completed(futures):
+                        item = futures[future]
+                        try:
+                            by_id[item["id"]] = future.result()
+                        except Exception as exc:  # keep a broken worker in the receipt
+                            by_id[item["id"]] = {
+                                "id": item["id"],
+                                "recipe": item["recipe"],
+                                "status": "FAIL",
+                                "exit_code": None,
+                                "timed_out": False,
+                                "output_tail": f"gate runner raised {type(exc).__name__}: {exc}",
+                            }
+                batch_results = [by_id[item["id"]] for item in batch]
+                deadline_blocker: str | None = None
+                for item, result in zip(batch, batch_results):
+                    if result.get("timeout_seconds") == 0:
+                        if deadline_blocker is None:
+                            deadline_blocker = item["id"]
+                            blocked_by = deadline_blocker
+                        else:
+                            result = record_unrun(item, deadline_blocker)
+                    results.append(result)
+                    print(
+                        f"{item['id']:<20} {result['status']} "
+                        f"({result.get('duration_s', 0)}s)"
+                    )
+                    if result.get("interrupted_by_signal") is not None and blocked_by is None:
+                        blocked_by = f"signal-{result['interrupted_by_signal']}"
+                    elif result.get("timeout_seconds") == 0 and blocked_by is None:
+                        blocked_by = item["id"]
+                    elif result["status"] != "PASS" and not keep_going and blocked_by is None:
+                        blocked_by = item["id"]
+                if blocked_by is not None and not keep_going:
+                    break
+            continue
+
+        index += 1
         print(f"{gate['id']:<20} running …", flush=True)
-        result = runner(effective_gate)
+        result = run_with_deadline(gate)
         results.append(result)
-        print(f"{gate['id']:<20} {result['status']} ({result['duration_s']}s)")
+        print(f"{gate['id']:<20} {result['status']} ({result.get('duration_s', 0)}s)")
         if result.get("interrupted_by_signal") is not None:
             blocked_by = f"signal-{result['interrupted_by_signal']}"
-            continue
-        if result["status"] != "PASS" and not keep_going:
+        elif result.get("timeout_seconds") == 0:
+            # A spent global budget cannot be bypassed by --keep-going.
+            blocked_by = gate["id"]
+        elif result["status"] != "PASS" and not keep_going:
             blocked_by = gate["id"]
     return results
 

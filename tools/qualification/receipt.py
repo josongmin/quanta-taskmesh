@@ -380,9 +380,9 @@ def collect(
     deadline_seconds = inventory.get("qualification_budget_seconds")
     if type(deadline_seconds) is not int or deadline_seconds <= 0:
         raise ValueError("inventory qualification_budget_seconds must be a positive integer")
-    # No explicit tier means the canonical required set. Selecting every gate
-    # in fast/matrix/proof also picked optional focused-debug gates (notably
-    # standalone loom/shuttle) and duplicated the modelcheck producer.
+    # No explicit tier means the canonical required set. Keep that as the
+    # receipt default so qualification scope follows required.json, not tier
+    # composition or optional diagnostic gates.
     gate_args = (
         ["--required"] if tiers is None else [*sum([["--tier", tier] for tier in tiers], [])]
     )

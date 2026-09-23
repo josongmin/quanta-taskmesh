@@ -23,17 +23,24 @@ fn rt_unlimited() -> TokioRuntime {
 // ---- P1#5: hint ↔ run-path enforcement ------------------------------------
 
 #[tokio::test]
-async fn run_blocking_rejects_io_hinted_spec() {
+async fn run_blocking_rejects_nonblocking_hints() {
     let rt = rt_unlimited();
-    let io_spec = TaskSpec::io(TaskClass::new("c")).operation("x");
-    let err = rt
-        .run_blocking(io_spec, || Ok::<i32, ()>(1))
-        .await
-        .expect_err("io spec on blocking path must reject");
-    assert!(matches!(
-        err,
-        RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstrateMismatch))
-    ));
+    for (hint, spec) in [
+        ("io", TaskSpec::io(TaskClass::new("c"))),
+        ("cpu", TaskSpec::cpu(TaskClass::new("c"))),
+    ] {
+        let err = rt
+            .run_blocking(spec.operation(hint), || Ok::<i32, ()>(1))
+            .await
+            .expect_err("nonblocking hint on blocking path must reject");
+        assert!(
+            matches!(
+                err,
+                RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstrateMismatch))
+            ),
+            "{hint} spec on blocking path must reject"
+        );
+    }
 }
 
 #[tokio::test]

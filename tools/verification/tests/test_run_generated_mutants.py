@@ -302,6 +302,21 @@ def test_generated_command_uses_two_isolated_cargo_mutants_jobs() -> None:
     args = SimpleNamespace(jobs=2, timeout=None, package=[])
     generated = gm.command(args, Path("/tmp/raw"))
     assert generated[generated.index("--jobs") + 1] == "2"
+    assert generated[generated.index("--test-tool") + 1] == "nextest"
+
+
+def test_generated_receipt_identifies_nextest(monkeypatch, tmp_path: Path) -> None:
+    seen: list[list[str]] = []
+
+    def version(argv, *, cwd):
+        assert cwd == tmp_path
+        seen.append(argv)
+        return "tool-version"
+
+    monkeypatch.setattr(gm, "exact_tool_version", version)
+    names = {tool["name"] for tool in gm.tool_identity(tmp_path)}
+    assert names == {"cargo-mutants", "cargo-nextest", "cargo", "rustc"}
+    assert ["cargo", "nextest", "--version"] in seen
 
 
 def test_generated_exclusions_are_narrow_and_have_alternate_oracles() -> None:

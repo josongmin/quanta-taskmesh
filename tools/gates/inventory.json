@@ -306,6 +306,7 @@
       ],
       "prerequisites": [
         "cargo-mutants",
+        "cargo-nextest",
         "cargo",
         "one isolated target directory per campaign"
       ],

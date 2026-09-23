@@ -39,6 +39,13 @@
 - 2026-09-23 IAI owner-local 감사에서는 누락된 `Ir` 값, 일부 case만 실행된 비교,
   case별 raw `.out` 누락, symlink된 `target` 상위 경로를 재현하고 gate를 보강했다.
   fixture 테스트는 Linux Valgrind 실측과 clean-source qualification이 아니다.
+- clean 후보 `86d8f4d`의 macOS required gate는 generated mutation 전까지 모두 PASS였으나,
+  package-wide `cargo test` 변형 2건의 timeout으로 생성 mutation sweep을 중단했다.
+  이 receipt는 `NOT_QUALIFIED`다. 같은 4개 변형의 nextest owner-local 실행은
+  4/4 caught였고 생성 runner를 nextest로 변경했지만, 새 전체 receipt는 아직 없다.
+- 2026-09-24 `main@95c1b6d`까지 test-oracle 정리 commit 3개가 추가됐다. 이전 clean
+  후보의 receipt는 그 HEAD에 적용되지 않는다. 현재 owner-local Rust 35건과 Python
+  50건, 실제 crate-boundary checker는 PASS지만 새 exact-source 전체 receipt는 없다.
 - 보관된 2026-09-19 schema-v1 receipt는 `NOT_QUALIFIED`인 역사적 실행 증거다. 현재
   collector/validator의 receipt schema는 v4다. 현재 HEAD에 대한 ordinary qualification,
   외부 consumer 실행, deployment, activation 및 rollback owner 승인은 아직 이 문서에

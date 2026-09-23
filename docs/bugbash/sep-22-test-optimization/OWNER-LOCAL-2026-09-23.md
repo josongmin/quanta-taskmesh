@@ -402,7 +402,8 @@ Final-run preflight (2026-09-23): `main@1d2bb2fedcbe45ed5809d5f87e4f66560f5c7d9b
 has 50 modified or untracked status entries, so the required clean-source gate
 preflight rejects this checkout before executing a gate. The local
 `rust:1.92-bookworm` Docker image provides Rust 1.92.0 and Python 3 on Linux
-arm64, but lacks `valgrind`, `iai-callgrind-runner`, `uv`, and `just`; it cannot
+arm64, but lacks `valgrind`, `iai-callgrind-runner`, `uv`, `just`, and
+`cargo-nextest`; it cannot
 run `just qualify-local` as provisioned. macOS has the applicable toolchains,
 but `just verify-macos-full` includes the bounded full generated mutation
 sweep and must run once on a clean frozen candidate. A macOS receipt retains
@@ -423,3 +424,38 @@ rules as presumed personal files, but `tools/pm/inventory.json` declares
 them required prompt-policy source. This was a candidate assembly error, not
 a production test regression. The complete frozen candidate must include all
 three files before rerunning the owner suite and full gate.
+
+The third clean candidate, `86d8f4d`, passed every macOS-applicable required
+gate through `coverage-report`, including curated mutation, modelcheck, TSan,
+fuzz, and consumer MSRV. The generated cargo-mutants gate was stopped after
+4,092 seconds because two `GovernorError::retry_after_ms` variants had already
+timed out under its package-wide `cargo test` runner; the saved interrupted
+receipt is `NOT_QUALIFIED`. Its partial raw files record 593 caught, 86
+compile-unviable, 2 timeout, and 0 missed identities, but are not a complete
+denominator or qualification evidence. The existing `error_surface.rs` test
+asserts the returned hint directly. A separate same-source four-variant run
+with `--test-tool nextest` had a green baseline and caught all four in about
+two minutes, including both timed-out variants. The generated producer now
+requires nextest, records its version, and the manual workflow installs it.
+The generated-runner and gate-inventory owner suites passed 112/112; inventory
+parity, Ruff, formatting, and `git diff --check` passed. A new clean-candidate
+full sweep and receipt are still required for closure.
+
+2026-09-24 source reconciliation: while the earlier candidate was running,
+`main` advanced through `fa2492c`, `d9a359a`, and `95c1b6d` with test-oracle
+pruning. Those commits change the generated mutation kill surface, so neither
+earlier candidate receipt qualifies the new HEAD. At `95c1b6d`, the removed
+cross-class storm has a stronger global-budget cross-class owner in
+`e2e_chaos.rs`; substrate mismatch, local non-Send execution, blocking task
+error/panic, and terminal retention have surviving named owners. The affected
+Rust integration binaries passed 35/35, the architecture/allocation Python
+owners passed 50/50, and the live crate-boundary checker passed. The H16 and
+SEP22 plan validators passed in their document scopes. The nextest repair
+remains a dirty overlay on `main`; full exact-source qualification
+must wait for a stable final candidate.
+
+The generated runner now watches cargo-mutants' incremental `missed.txt` and
+`timeout.txt` outputs and stops its owned process group when either becomes
+nonempty. The resulting partial campaign is `FAIL`, never qualification proof.
+This change has syntax, lint, and diff checks only; the early-stop path and a
+full current-source campaign have not been executed.

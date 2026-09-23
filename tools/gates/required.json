@@ -38,6 +38,6 @@
     "tsan": "nightly-toolchain-with-rust-src",
     "coverage-report": "cargo-llvm-cov-installed",
     "fuzz": "nightly-toolchain-with-cargo-fuzz",
-    "mutants-generated": "cargo-mutants-installed"
+    "mutants-generated": "cargo-mutants-and-nextest-installed"
   }
 }

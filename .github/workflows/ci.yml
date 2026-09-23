@@ -101,7 +101,7 @@ jobs:
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
         with:
-          tool: cargo-mutants
+          tool: cargo-mutants,cargo-nextest@0.9.104
       # A distinct full-workspace denominator; curated outcomes cannot satisfy it.
       - run: just mutants-generated
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -231,7 +231,7 @@ jobs:
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
         with:
-          tool: cargo-deny@0.19.7,cargo-llvm-cov,cargo-fuzz,cargo-mutants
+          tool: cargo-deny@0.19.7,cargo-llvm-cov,cargo-fuzz,cargo-mutants,cargo-nextest@0.9.104
       - name: Install semgrep
         run: uv tool install "semgrep==$(cat tools/semgrep/version.txt)"
       - name: Install valgrind

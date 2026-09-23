@@ -70,6 +70,12 @@ Run the registered recipes through `just`:
       oracle 하나만 `--exact --test-threads 1`로 실행하며 cargo cofailure 선언은 거부한다;
       pytest mutation은 file-scope exact failure-set 분류를 유지한다.
 - [ ] `just mutants-generated` — full current-source cargo-mutants workspace sweep.
+      Its required test runner is cargo-nextest; the tool version is recorded in
+      the producer receipt. Package-wide `cargo test` can time out after another
+      test has already detected a mutant, so the generated gate uses nextest's
+      per-test failure reporting. The full planned mutant set remains required.
+      Once cargo-mutants writes a missed or timed-out identity, the wrapper stops
+      its process group: PASS is impossible and the partial receipt stays FAIL.
       This audits test-suite sensitivity over the generated denominator; it is not an
       inner-loop product regression test. Run it only for a clean frozen candidate's full
       qualification or an explicit mutation-quality investigation.

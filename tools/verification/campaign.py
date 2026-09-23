@@ -15,6 +15,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
@@ -234,15 +235,19 @@ class ProcessResult:
     finished_at: str
     duration_s: float
     interrupted_by_signal: int | None = None
+    aborted_early: bool = False
 
 
 def execute(
-    argv: list[str], *, cwd: Path, env: dict[str, str], timeout_seconds: int
+    argv: list[str], *, cwd: Path, env: dict[str, str], timeout_seconds: int,
+    abort_when: Callable[[], bool] | None = None,
 ) -> ProcessResult:
     """Run one process group and reap it on timeout or parent cancellation."""
     started_at = utc_now()
     started = time.monotonic()
-    process = run_process(argv, cwd=cwd, env=env, timeout_seconds=timeout_seconds)
+    process = run_process(
+        argv, cwd=cwd, env=env, timeout_seconds=timeout_seconds, abort_when=abort_when
+    )
     returncode = process.returncode
     return ProcessResult(
         argv=list(argv),
@@ -256,6 +261,7 @@ def execute(
         finished_at=utc_now(),
         duration_s=time.monotonic() - started,
         interrupted_by_signal=process.interrupted_by_signal,
+        aborted_early=process.aborted_early,
     )
 
 

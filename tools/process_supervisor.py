@@ -15,6 +15,7 @@ import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 TERMINATION_GRACE_SECONDS = 5.0
 POLL_INTERVAL_SECONDS = 0.2
@@ -93,6 +94,7 @@ class SupervisedProcess:
     stderr: str
     timed_out: bool
     interrupted_by_signal: int | None
+    aborted_early: bool = False
 
 
 @dataclass(frozen=True)
@@ -285,6 +287,7 @@ def run_process(
     env: dict[str, str],
     timeout_seconds: float,
     termination_grace_seconds: float | None = None,
+    abort_when: Callable[[], bool] | None = None,
 ) -> SupervisedProcess:
     """Capture complete output and reap the owned process group on every exit path."""
     if timeout_seconds <= 0:
@@ -298,6 +301,7 @@ def run_process(
 
     process: subprocess.Popen[str] | None = None
     timed_out = False
+    aborted_early = False
     interrupted_by_signal: int | None = None
     termination_deadline: float | None = None
     hard_stop = False
@@ -344,7 +348,11 @@ def run_process(
                 termination_deadline = time.monotonic() + termination_grace_seconds
         while True:
             now = time.monotonic()
-            if timed_out and termination_deadline is not None and now >= termination_deadline:
+            if (
+                (timed_out or aborted_early)
+                and termination_deadline is not None
+                and now >= termination_deadline
+            ):
                 signal_group(signal.SIGKILL)
                 termination_deadline = None
                 hard_stop = True
@@ -357,9 +365,21 @@ def run_process(
                 timed_out = True
                 signal_group(signal.SIGTERM)
                 termination_deadline = now + termination_grace_seconds
+            elif (
+                not timed_out
+                and not aborted_early
+                and interrupted_by_signal is None
+                and abort_when is not None
+                and abort_when()
+            ):
+                aborted_early = True
+                signal_group(signal.SIGTERM)
+                termination_deadline = now + termination_grace_seconds
 
             deadlines = (
-                [timeout_deadline] if not timed_out and interrupted_by_signal is None else []
+                [timeout_deadline]
+                if not timed_out and not aborted_early and interrupted_by_signal is None
+                else []
             )
             if termination_deadline is not None:
                 deadlines.append(termination_deadline)
@@ -385,7 +405,10 @@ def run_process(
                 ORPHANED_GROUP_DIAGNOSTIC if cleanup == "killed" else INACCESSIBLE_GROUP_DIAGNOSTIC
             )
             orphaned_group = (
-                process.returncode == 0 and not timed_out and interrupted_by_signal is None
+                process.returncode == 0
+                and not timed_out
+                and not aborted_early
+                and interrupted_by_signal is None
             )
     except BaseException:
         if process is not None:
@@ -415,4 +438,5 @@ def run_process(
         stderr=stderr or "",
         timed_out=timed_out,
         interrupted_by_signal=interrupted_by_signal,
+        aborted_early=aborted_early,
     )

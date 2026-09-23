@@ -242,6 +242,8 @@ def command(args: argparse.Namespace, raw_parent: Path) -> list[str]:
         "--workspace",
         "--baseline",
         "run",
+        "--test-tool",
+        "nextest",
         "--no-shuffle",
         "--colors",
         "never",
@@ -323,6 +325,7 @@ def excluded_mutants(
 def tool_identity(source: Path) -> list[dict[str, str]]:
     versions = {
         "cargo-mutants": exact_tool_version(["cargo", "mutants", "--version"], cwd=source),
+        "cargo-nextest": exact_tool_version(["cargo", "nextest", "--version"], cwd=source),
         "cargo": exact_tool_version(["cargo", "--version"], cwd=source),
         "rustc": exact_tool_version(["rustc", "-Vv"], cwd=source),
     }
@@ -341,6 +344,16 @@ def execution_environment(parent: dict[str, str]) -> dict[str, str]:
     return sanitized_campaign_environment(parent)
 
 
+def terminal_failure_written(raw_parent: Path) -> bool:
+    """Stop once cargo-mutants has recorded an outcome that forbids PASS."""
+    raw = raw_parent / "mutants.out"
+    return any(
+        (raw / f"{category}.txt").is_file()
+        and (raw / f"{category}.txt").stat().st_size > 0
+        for category in ("missed", "timeout")
+    )
+
+
 def execute_campaign_after_discovery(
     discovery_argv: list[str],
     campaign_argv: list[str],
@@ -349,6 +362,7 @@ def execute_campaign_after_discovery(
     environment: dict[str, str],
     discovery_timeout: int,
     campaign_timeout: int,
+    raw_parent: Path | None = None,
 ) -> tuple[ProcessResult, ProcessResult | None]:
     """Never launch the expensive campaign after discovery cancellation."""
     discovery = execute(
@@ -364,6 +378,7 @@ def execute_campaign_after_discovery(
         cwd=source,
         env=environment,
         timeout_seconds=campaign_timeout,
+        abort_when=(lambda: terminal_failure_written(raw_parent)) if raw_parent else None,
     )
     return discovery, result
 
@@ -400,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:
             environment=execution_env,
             discovery_timeout=min(args.campaign_timeout, 600),
             campaign_timeout=args.campaign_timeout,
+            raw_parent=isolated_raw_parent,
         )
         raw_source = isolated_raw_parent / "mutants.out"
         raw_destination = output_dir / "raw" / "mutants.out"
@@ -436,6 +452,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
             if result.interrupted_by_signal is not None:
                 raise ValueError(f"campaign interrupted by signal {result.interrupted_by_signal}")
+            if result.aborted_early:
+                raise ValueError("campaign stopped after a missed or timed-out mutant")
             if result.timed_out:
                 raise ValueError("cargo-mutants campaign timed out")
             if result.signal is not None:
@@ -482,6 +500,7 @@ def main(argv: list[str] | None = None) -> int:
                 "signal": result.signal,
                 "timed_out": result.timed_out,
                 "interrupted_by_signal": result.interrupted_by_signal,
+                "aborted_early": result.aborted_early,
                 "started_at": result.started_at,
                 "finished_at": result.finished_at,
                 "duration_s": result.duration_s,

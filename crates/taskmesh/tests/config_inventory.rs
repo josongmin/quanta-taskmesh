@@ -82,6 +82,19 @@ fn builder_owned_capability_pools_cannot_be_overridden() {
 }
 
 #[test]
+fn an_unbounded_sentinel_cannot_override_a_builder_owned_pool() {
+    let Err(GovernorError::PolicyViolation(message)) =
+        Builder::new().capability_limit("blocking", 0).build()
+    else {
+        panic!("the unbounded sentinel must not bypass builder ownership");
+    };
+    assert!(
+        message.contains("capability limit for built-in pool blocking cannot be overridden"),
+        "{message}"
+    );
+}
+
+#[test]
 fn config_carries_resolved_substrate_inventory() {
     let extra = SubstrateRecord::new(
         "external-gpu",

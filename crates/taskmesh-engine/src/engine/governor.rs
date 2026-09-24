@@ -557,7 +557,13 @@ impl Governor {
                 .policy
                 .class(&class)
                 .expect("queued class belongs to the validated policy");
-            fairness::on_request_served(state, &class, policy, selection.service_finish_tag);
+            fairness::on_request_served(
+                state,
+                &class,
+                policy,
+                selection.queue_index,
+                selection.service_finish_tag,
+            );
             state.tickets.remove(&head.ticket);
             let permit_id = self.next_permit.fetch_add(1, Ordering::Relaxed);
             let parent_permit_id = head
@@ -1148,6 +1154,19 @@ impl Governor {
     #[doc(hidden)]
     pub fn drr_ring_visits(&self) -> u64 {
         self.state.lock().drr_ring_visits
+    }
+
+    /// Survivor entries repriced by WFQ after queue mutations. Head-only
+    /// service is `O(1)` and therefore contributes zero.
+    #[cfg(feature = "test-util")]
+    #[doc(hidden)]
+    pub fn wfq_reprice_visits(&self) -> u64 {
+        self.state
+            .lock()
+            .classes
+            .values()
+            .map(|cstate| cstate.wfq_reprice_visits)
+            .fold(0, u64::saturating_add)
     }
 
     // ---- validation (T02) -------------------------------------------------

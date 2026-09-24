@@ -420,7 +420,9 @@ The current operator path is local; hosted attestation remains a compatibility p
 - TM16-014 / TM16-037: WFQ cancelled-service debt and DRR idle credit let past
   history decide the order of identical queue states. Cross-pool WFQ followers
   now charge only their actual service and immediately rebuild survivor tags,
-  so an unrelated cancellation cannot reorder an older blocked request.
+  so an unrelated cancellation cannot reorder an older blocked request. Normal
+  WFQ head service keeps the already-canonical tail and runs in `O(1)` under
+  the governor lock instead of rescanning every survivor.
 - `Builder::capability_limit` could override a topology-owned built-in pool when
   its topology slot count was the unbounded `0` sentinel, leaving portable
   config and the governor capacity ledger in disagreement.

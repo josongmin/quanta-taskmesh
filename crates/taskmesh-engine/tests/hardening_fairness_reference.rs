@@ -1934,6 +1934,30 @@ fn a_wfq_nonhead_candidate_excludes_the_blocked_prefix_from_its_service_tag() {
 }
 
 #[test]
+fn wfq_head_only_service_does_not_reprice_the_remaining_queue() {
+    let g = contended(vec![("a", weighted_class(1))]);
+    let mut holder = admit_filler(&g);
+    let tickets: Vec<_> = (0..64)
+        .map(|index| queue(&g, "a", &format!("a-{index}")).0)
+        .collect();
+
+    let before = g.wfq_reprice_visits();
+    for ticket in tickets {
+        assert_eq!(g.release(holder), ReleaseOutcome::Released);
+        let ClaimOutcome::Ready(next) = g.claim(ticket) else {
+            panic!("the WFQ head must promote in arrival order");
+        };
+        holder = next;
+    }
+    assert_eq!(g.release(holder), ReleaseOutcome::Released);
+    assert_eq!(
+        g.wfq_reprice_visits() - before,
+        0,
+        "ordinary WFQ head service must be O(1), not rescan every survivor"
+    );
+}
+
+#[test]
 fn cancellation_after_cross_pool_service_does_not_reprice_an_older_head() {
     fn first_after_pool_release(cancel_unserved_follower: bool) -> &'static str {
         let g = cross_pool_weighted_governor(1, 2);

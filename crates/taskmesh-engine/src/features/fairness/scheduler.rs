@@ -206,12 +206,14 @@ pub fn on_unserved_removed(state: &mut GovernedState, class: &TaskClass, policy:
 /// The service tag is computed from actual prior service, rather than from the
 /// request's original queue position. A request may overtake a head blocked on
 /// another capability pool; the skipped request is still unserved and must not
-/// be counted in the class baseline. Rebuilding the remaining queue immediately
-/// makes later cancellation a no-op for unrelated survivor ordering.
+/// be counted in the class baseline. Only that non-head service changes the
+/// canonical order of the surviving tags; ordinary head service leaves the
+/// already-derived tail intact and runs in `O(1)` under the governor lock.
 pub fn on_request_served(
     state: &mut GovernedState,
     class: &TaskClass,
     policy: &ClassPolicy,
+    queue_index: usize,
     service_finish_tag: u128,
 ) {
     let virtual_time = state.virtual_time;
@@ -223,20 +225,20 @@ pub fn on_request_served(
         return;
     }
     cstate.last_served_finish_tag = cstate.last_served_finish_tag.max(service_finish_tag);
-    if let FairnessPolicy::WeightedFairQueue { weight, .. } = policy.fairness {
-        rebuild_wfq_queue(cstate, weight, virtual_time);
-    } else {
-        cstate.last_finish_tag = cstate
-            .queue
-            .iter()
-            .map(|request| request.finish_tag)
-            .max()
-            .unwrap_or(virtual_time)
-            .max(virtual_time);
+    if queue_index > 0 {
+        if let FairnessPolicy::WeightedFairQueue { weight, .. } = policy.fairness {
+            rebuild_wfq_queue(cstate, weight, virtual_time);
+        }
     }
 }
 
 fn rebuild_wfq_queue(cstate: &mut ClassState, weight: u32, virtual_time: u128) {
+    #[cfg(feature = "test-util")]
+    {
+        cstate.wfq_reprice_visits = cstate
+            .wfq_reprice_visits
+            .saturating_add(u64::try_from(cstate.queue.len()).unwrap_or(u64::MAX));
+    }
     let mut cursor = cstate.last_served_finish_tag;
     for request in &mut cstate.queue {
         let start = cursor.max(request.wfq_arrival_tag);
@@ -336,6 +338,7 @@ fn runnable_candidates(state: &GovernedState, policies: &PolicySet) -> Vec<Candi
             continue;
         };
         let service_finish_tag = match policy.fairness {
+            FairnessPolicy::WeightedFairQueue { .. } if queue_index == 0 => head.finish_tag,
             FairnessPolicy::WeightedFairQueue { weight, .. } => cstate
                 .last_served_finish_tag
                 .max(head.wfq_arrival_tag)

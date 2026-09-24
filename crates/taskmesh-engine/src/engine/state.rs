@@ -84,6 +84,11 @@ pub struct ClassState {
     pub last_served_finish_tag: u128,
     /// DRR: accumulated deficit, in the same unit domain as head cost.
     pub deficit: u128,
+    /// Work oracle for WFQ queue repricing. Ordinary head service must not
+    /// traverse the remaining queue; only out-of-order service or cancellation
+    /// can require a survivor rebuild.
+    #[cfg(feature = "test-util")]
+    pub wfq_reprice_visits: u64,
     /// Running per-class CPU units held by inflight permits (snapshot in O(1)).
     pub cpu_units_held: u128,
     /// Running per-class effective memory units held by inflight permits.

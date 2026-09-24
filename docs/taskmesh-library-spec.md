@@ -74,7 +74,9 @@ The caller or adapter owns that execution and reducer.
    resets credit when a queue drains; WFQ keeps proportional share across the
    whole accepted weight range, charges only work that actually received
    service when a cross-pool follower overtakes a blocked head, and drops no
-   service debt for cancelled work
+   service debt for cancelled work. Canonical head service preserves the
+   existing tail tags in `O(1)`; only out-of-order service or cancellation
+   reprices survivors
 3. permit admission/release inseparable from inflight + resource accounting.
    Capability-pool occupancy is decided in the same transition — the engine is
    the single authority for physical *and* semantic capacity. Aggregates are

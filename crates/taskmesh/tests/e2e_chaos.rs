@@ -24,6 +24,25 @@ async fn bounded_storm<F: std::future::Future>(what: &str, future: F) -> F::Outp
     output
 }
 
+async fn wait_for_class_state(
+    rt: &TokioRuntime,
+    name: &str,
+    expected_inflight: u32,
+    expected_queued: u32,
+) {
+    bounded_storm("class reaches expected state", async {
+        loop {
+            let snapshot = rt.snapshot();
+            let class = &snapshot.classes[&cls(name)];
+            if (class.inflight, class.queued) == (expected_inflight, expected_queued) {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+}
+
 fn cls(name: &str) -> TaskClass {
     TaskClass::new(name.to_string())
 }
@@ -58,9 +77,8 @@ fn assert_drained(rt: &TokioRuntime, classes: &[&str]) {
 
 /// The bottleneck is the *global* cpu budget, not any per-class cap: three
 /// classes (each cost 2) share a budget of 4, so at most two permits are
-/// inflight system-wide regardless of class. 300 concurrent submissions must all
-/// make forward progress through global-budget-driven cross-class promotion and
-/// drain to zero — a deadlock or lost wakeup would hang or strand here.
+/// inflight system-wide regardless of class. Two held jobs fill the budget; a
+/// third class must queue and then start when one holder returns its permit.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn global_budget_cross_class_contention_makes_progress() {
     let policy = || {
@@ -78,31 +96,90 @@ async fn global_budget_cross_class_contention_makes_progress() {
         .build()
         .unwrap();
 
-    let names = ["alpha", "beta", "gamma"];
-    let done = Arc::new(AtomicUsize::new(0));
-    let mut handles = Vec::new();
-    for i in 0..300usize {
-        let rt = rt.clone();
-        let done = done.clone();
-        let name = names[i % 3];
-        handles.push(tokio::spawn(async move {
-            let spec = TaskSpec::io(cls(name)).operation(format!("{name}-{i}"));
-            if rt.run_io(spec, async move { Ok::<_, ()>(i) }).await.is_ok() {
-                done.fetch_add(1, Ordering::SeqCst);
-            }
-        }));
-    }
-    bounded_storm("global-budget contention task group", async move {
-        for handle in handles {
-            handle.await.unwrap();
-        }
+    let (alpha_started_tx, alpha_started_rx) = tokio::sync::oneshot::channel();
+    let (release_alpha_tx, release_alpha_rx) = tokio::sync::oneshot::channel();
+    let alpha_rt = rt.clone();
+    let alpha = tokio::spawn(async move {
+        alpha_rt
+            .run_io(
+                TaskSpec::io(cls("alpha")).operation("alpha-holder"),
+                async {
+                    alpha_started_tx.send(()).expect("alpha start is observed");
+                    release_alpha_rx.await.expect("alpha release is sent");
+                    Ok::<_, ()>("alpha")
+                },
+            )
+            .await
+    });
+
+    let (beta_started_tx, beta_started_rx) = tokio::sync::oneshot::channel();
+    let (release_beta_tx, release_beta_rx) = tokio::sync::oneshot::channel();
+    let beta_rt = rt.clone();
+    let beta = tokio::spawn(async move {
+        beta_rt
+            .run_io(TaskSpec::io(cls("beta")).operation("beta-holder"), async {
+                beta_started_tx.send(()).expect("beta start is observed");
+                release_beta_rx.await.expect("beta release is sent");
+                Ok::<_, ()>("beta")
+            })
+            .await
+    });
+    bounded_storm("both global-budget holders start", async {
+        alpha_started_rx.await.expect("alpha starts");
+        beta_started_rx.await.expect("beta starts");
     })
     .await;
+
+    let (gamma_started_tx, gamma_started_rx) = tokio::sync::oneshot::channel();
+    let (release_gamma_tx, release_gamma_rx) = tokio::sync::oneshot::channel();
+    let gamma_rt = rt.clone();
+    let gamma = tokio::spawn(async move {
+        gamma_rt
+            .run_io(
+                TaskSpec::io(cls("gamma")).operation("gamma-waiter"),
+                async {
+                    gamma_started_tx.send(()).expect("gamma start is observed");
+                    release_gamma_rx.await.expect("gamma release is sent");
+                    Ok::<_, ()>("gamma")
+                },
+            )
+            .await
+    });
+    wait_for_class_state(&rt, "gamma", 0, 1).await;
+    let saturated = rt.snapshot();
     assert_eq!(
-        done.load(Ordering::SeqCst),
-        300,
-        "all must progress under global contention"
+        saturated
+            .classes
+            .values()
+            .map(|class| class.cpu_units_held)
+            .sum::<u128>(),
+        4,
+        "the two holders consume the complete global CPU budget"
     );
+
+    release_alpha_tx.send(()).expect("release alpha holder");
+    bounded_storm("gamma is promoted across classes", gamma_started_rx)
+        .await
+        .expect("gamma starts after alpha releases");
+    wait_for_class_state(&rt, "gamma", 1, 0).await;
+    let promoted = rt.snapshot();
+    assert_eq!(
+        promoted
+            .classes
+            .values()
+            .map(|class| class.cpu_units_held)
+            .sum::<u128>(),
+        4,
+        "beta and promoted gamma remain within the global CPU budget"
+    );
+
+    release_beta_tx.send(()).expect("release beta holder");
+    release_gamma_tx.send(()).expect("release gamma holder");
+    assert_eq!(alpha.await.expect("alpha task joins"), Ok("alpha"));
+    assert_eq!(beta.await.expect("beta task joins"), Ok("beta"));
+    assert_eq!(gamma.await.expect("gamma task joins"), Ok("gamma"));
+
+    let names = ["alpha", "beta", "gamma"];
     assert_drained(&rt, &names);
 }
 
@@ -149,8 +226,35 @@ async fn mixed_substrate_soak_with_concurrent_sweeper() {
                 .best_effort(true)
                 .overflow_policy(OverflowPolicy::QueueWithinDepth),
         )
+        .class_policy(
+            cls("sweep-control"),
+            ClassPolicy::new()
+                .max_inflight(1)
+                .cpu_units(1)
+                .memory_units(1)
+                .memory_release_policy(MemoryReleasePolicy::LeakDetecting),
+        )
         .build()
         .unwrap();
+
+    // Keep one leak-detecting lease live and already running for the entire
+    // sweep. This makes the reaper exercise its stale-active retention path;
+    // without this control every storm class uses OnTaskCompletion and the
+    // reaper skips every permit before inspecting its execution phase.
+    let control_spec = TaskSpec::io(cls("sweep-control")).operation("sweep-control-holder");
+    let ext::AdmissionDecision::Admitted {
+        permit_id: control_permit,
+    } = rt.governor().admit(&control_spec)
+    else {
+        panic!("sweep control must admit");
+    };
+    let ext::AdvanceOutcome::Leased(control_lease) = rt
+        .governor()
+        .advance_phase(control_permit, ExecutionPhase::Running)
+    else {
+        panic!("sweep control must become a running lease");
+    };
+    tokio::time::sleep(Duration::from_millis(2)).await;
 
     // Background sweeper: read + reap concurrently with the storm. With the
     // default staleness window it reclaims nothing live, but it must not corrupt.
@@ -165,21 +269,29 @@ async fn mixed_substrate_soak_with_concurrent_sweeper() {
         let stop = stop.clone();
         tokio::spawn(async move {
             let mut sweeps = 0u64;
-            let mut max_live_seen = 0u32;
+            let mut max_storm_live_seen = 0u32;
             while !stop.load(Ordering::Relaxed) {
-                let report = rt.governor().reap_leaks();
+                let report = rt.governor().reap_leaks_with(0);
                 assert_eq!(
-                    report.reclaimed_permits, 0,
-                    "nothing in this soak is stale under the default window"
+                    (
+                        report.reclaimed_permits,
+                        report.suspected_leaks,
+                        report.retained_active,
+                    ),
+                    (0, 1, 1),
+                    "the stale running control lease must be observed and retained"
                 );
                 let snapshot = rt.snapshot();
                 assert_eq!(snapshot.conservation_violation(), None);
-                let live: u32 = snapshot.classes.values().map(|c| c.inflight).sum();
-                max_live_seen = max_live_seen.max(live);
+                let storm_live: u32 = ["io", "heavy", "batch"]
+                    .iter()
+                    .map(|name| snapshot.classes[&cls(name)].inflight)
+                    .sum();
+                max_storm_live_seen = max_storm_live_seen.max(storm_live);
                 sweeps += 1;
                 tokio::task::yield_now().await;
             }
-            (sweeps, max_live_seen)
+            (sweeps, max_storm_live_seen)
         })
     };
 
@@ -257,31 +369,37 @@ async fn mixed_substrate_soak_with_concurrent_sweeper() {
     }
     let joined_tallies = Arc::clone(&tallies);
     let joined_stop = Arc::clone(&stop);
-    let (sweeps, max_live_seen) = bounded_storm("mixed-substrate soak task group", async move {
-        for handle in handles {
-            let (name, i, outcome) = handle.await.unwrap();
-            let mut tallies = joined_tallies.lock().expect("tally lock");
-            let tally = tallies.get_mut(name).expect("known substrate");
-            tally.attempted += 1;
-            match outcome {
-                Ok(value) => {
-                    assert_eq!(value, i, "{name}-{i}: the closure's own value comes back");
-                    tally.completed += 1;
+    let (sweeps, max_storm_live_seen) =
+        bounded_storm("mixed-substrate soak task group", async move {
+            for handle in handles {
+                let (name, i, outcome) = handle.await.unwrap();
+                let mut tallies = joined_tallies.lock().expect("tally lock");
+                let tally = tallies.get_mut(name).expect("known substrate");
+                tally.attempted += 1;
+                match outcome {
+                    Ok(value) => {
+                        assert_eq!(value, i, "{name}-{i}: the closure's own value comes back");
+                        tally.completed += 1;
+                    }
+                    // This soak is sized so nothing is shed: every class queues within
+                    // a depth larger than the whole storm. Any other verdict is a
+                    // regression, and it is named, not discarded.
+                    Err(error) => panic!("{name}-{i} did not complete: {error:?}"),
                 }
-                // This soak is sized so nothing is shed: every class queues within
-                // a depth larger than the whole storm. Any other verdict is a
-                // regression, and it is named, not discarded.
-                Err(error) => panic!("{name}-{i} did not complete: {error:?}"),
             }
-        }
-        joined_stop.store(true, Ordering::Relaxed);
-        sweeper.await.unwrap()
-    })
-    .await;
+            joined_stop.store(true, Ordering::Relaxed);
+            sweeper.await.unwrap()
+        })
+        .await;
+    assert_eq!(
+        rt.governor().release_leased(control_lease),
+        ext::ReleaseOutcome::Released,
+        "the sweeper must leave the live control lease owned by its holder"
+    );
     assert!(sweeps > 0, "sweeper must have run concurrently");
     assert!(
-        max_live_seen > 0,
-        "the sweeper never observed live work: no concurrent overlap was exercised"
+        max_storm_live_seen > 0,
+        "the sweeper never overlapped the io/heavy/batch storm"
     );
 
     // Conservation per substrate: attempted == completed == started.
@@ -309,10 +427,13 @@ async fn mixed_substrate_soak_with_concurrent_sweeper() {
     let snapshot = rt.snapshot();
     let admitted: u128 = snapshot.classes.values().map(|c| c.admitted_total).sum();
     let terminated: u128 = snapshot.classes.values().map(|c| c.terminated_total).sum();
-    assert_eq!(admitted, 360, "admitted_total across classes");
-    assert_eq!(terminated, 360, "terminated_total across classes");
+    assert_eq!(admitted, 361, "360 jobs plus the sweep control lease");
+    assert_eq!(
+        terminated, 361,
+        "every job and the sweep control lease terminated"
+    );
 
-    assert_drained(&rt, &names);
+    assert_drained(&rt, &["io", "heavy", "batch", "sweep-control"]);
 }
 
 // ───────── 3. adversarial claim / timeout / abandon race storm ─────────────
@@ -338,11 +459,79 @@ async fn claim_timeout_abandon_race_storm() {
         .build()
         .unwrap();
 
-    let returned = Arc::new(AtomicUsize::new(0));
+    // Deterministic controls prove both sides of the race before the soak. Two
+    // direct reservations fill the class. The first host waiter must queue and
+    // later be promoted; the second must time out and abandon its ticket while
+    // the reservations remain held.
+    let holder_a = match rt
+        .governor()
+        .admit(&TaskSpec::io(cls("c")).operation("control-holder-a"))
+    {
+        ext::AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("first control holder must admit, got {other:?}"),
+    };
+    let holder_b = match rt
+        .governor()
+        .admit(&TaskSpec::io(cls("c")).operation("control-holder-b"))
+    {
+        ext::AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("second control holder must admit, got {other:?}"),
+    };
+
+    let promoted_rt = rt.clone();
+    let promoted = tokio::spawn(async move {
+        promoted_rt
+            .run_io(
+                TaskSpec::io(cls("c")).operation("control-promoted"),
+                async { Ok::<_, ()>("promoted") },
+            )
+            .await
+    });
+    wait_for_class_state(&rt, "c", 2, 1).await;
+
+    let timeout_rt = rt.clone();
+    let timed_out = tokio::spawn(async move {
+        timeout_rt
+            .run_io_with(
+                TaskSpec::io(cls("c")).operation("control-timeout"),
+                SubmitOptions::unbounded().with_acquire_timeout(Duration::from_secs(1)),
+                async { Ok::<_, ()>("must-not-run") },
+            )
+            .await
+    });
+    wait_for_class_state(&rt, "c", 2, 2).await;
+    let timeout_error = bounded_storm("control waiter times out", timed_out)
+        .await
+        .expect("timeout task joins")
+        .expect_err("the second queued control must time out");
+    assert_eq!(
+        timeout_error,
+        RunError::Governor(GovernorError::Rejected(
+            AdmissionVerdict::PermitAcquireTimedOut {
+                retry_after_ms: None,
+            }
+        ))
+    );
+    wait_for_class_state(&rt, "c", 2, 1).await;
+    assert_eq!(
+        rt.governor().release(holder_a),
+        ext::ReleaseOutcome::Released
+    );
+    assert_eq!(
+        bounded_storm("control waiter is promoted", promoted)
+            .await
+            .expect("promoted task joins"),
+        Ok("promoted")
+    );
+    assert_eq!(
+        rt.governor().release(holder_b),
+        ext::ReleaseOutcome::Released
+    );
+    assert_drained(&rt, &["c"]);
+
     let mut handles = Vec::new();
     for i in 0..200usize {
         let rt = rt.clone();
-        let returned = returned.clone();
         let mut lcg = Lcg(0x1357_9BDF_0000_0000 ^ i as u64);
         // Acquire timeout in a tight band around the tiny service time so the
         // timeout and the promotion frequently race.
@@ -352,7 +541,7 @@ async fn claim_timeout_abandon_race_storm() {
             let spec = TaskSpec::io(cls("c")).operation(format!("r-{i}"));
             let opts =
                 SubmitOptions::unbounded().with_acquire_timeout(Duration::from_millis(acquire_ms));
-            let r = rt
+            let result = rt
                 .run_io_with(spec, opts, async move {
                     if work_ms > 0 {
                         tokio::time::sleep(Duration::from_millis(work_ms)).await;
@@ -360,24 +549,37 @@ async fn claim_timeout_abandon_race_storm() {
                     Ok::<_, ()>(i)
                 })
                 .await;
-            // Must be a decision, never a task error.
-            assert!(
-                !matches!(r, Err(RunError::Task(()))),
-                "task error must not appear in the race"
-            );
-            returned.fetch_add(1, Ordering::SeqCst);
+            (i, result)
         }));
     }
-    bounded_storm("claim-timeout-abandon race task group", async move {
-        for handle in handles {
-            handle.await.unwrap();
-        }
-    })
-    .await;
+    let (completed, acquire_timeouts) =
+        bounded_storm("claim-timeout-abandon race task group", async move {
+            let mut completed = 0usize;
+            let mut acquire_timeouts = 0usize;
+            for handle in handles {
+                let (i, result) = handle.await.expect("storm task joins");
+                match result {
+                    Ok(value) => {
+                        assert_eq!(value, i, "the closure's value must survive the race");
+                        completed += 1;
+                    }
+                    Err(RunError::Governor(GovernorError::Rejected(
+                        AdmissionVerdict::PermitAcquireTimedOut {
+                            retry_after_ms: None,
+                        },
+                    ))) => acquire_timeouts += 1,
+                    Err(other) => {
+                        panic!("storm request {i} returned an unexpected error: {other:?}")
+                    }
+                }
+            }
+            (completed, acquire_timeouts)
+        })
+        .await;
     assert_eq!(
-        returned.load(Ordering::SeqCst),
+        completed + acquire_timeouts,
         200,
-        "every submission returns (no hang)"
+        "every storm submission returns an explicitly classified outcome"
     );
 
     // Every submission future has returned; a permit must be released before

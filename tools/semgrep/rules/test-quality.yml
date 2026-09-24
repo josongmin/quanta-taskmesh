@@ -129,6 +129,27 @@ rules:
     paths:
       include: ["**/crates/**/*.rs"]
 
+  - id: taskmesh-test-policy-violation-without-message-check
+    patterns:
+      - pattern-regex: '(?s)assert!\s*\(\s*matches!\s*\([^;]*GovernorError::PolicyViolation\s*\(\s*_\s*\)[^;]*\)\s*(?:,|\))'
+      - pattern-either:
+          - pattern-inside: |
+              #[test]
+              fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test]
+              async fn $F() { ... }
+          - pattern-inside: |
+              #[tokio::test(...)]
+              async fn $F() { ... }
+    message: |
+      `GovernorError::PolicyViolation(_)` accepts every validation failure, so a later
+      check can mask the missing branch under test. Assert the exact policy message.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include: ["**/crates/**/*.rs"]
+
   - id: taskmesh-test-discards-fallible-let
     patterns:
       - pattern: let _ = $X;

@@ -90,9 +90,11 @@ def test_fingerprint_changes_with_every_compatibility_input(tmp_path: Path) -> N
     assert iai_gate.fingerprint(**base) != reference, "bench definition"
     # Empty descriptions would make every valgrind (or compiler) hash alike.
     for key in ("valgrind", "rustc"):
-        with pytest.raises(ValueError):
+        with pytest.raises(
+            ValueError, match="fingerprint needs non-empty valgrind and rustc descriptions"
+        ):
             iai_gate.fingerprint(**{**base, key: "  "})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="fingerprint needs at least one input file"):
         iai_gate.fingerprint(**{**base, "inputs": []})
 
 

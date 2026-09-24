@@ -110,9 +110,9 @@ fn a_registry_key_that_disagrees_with_its_record_is_rejected() {
     let GovernorError::PolicyViolation(message) = error else {
         panic!("expected a policy violation, got {error:?}");
     };
-    assert!(
-        message.contains("does not match") || message.contains("missing built-in"),
-        "unexpected message: {message}"
+    assert_eq!(
+        message, "substrate registry key not-cpu does not match record name cpu",
+        "the key/record mismatch must be rejected before the later missing-built-in check"
     );
 }
 
@@ -147,7 +147,12 @@ fn a_builtin_with_the_wrong_kind_is_rejected() {
         SubstrateRecord::new("cpu", SubstrateKind::AuthorityOnly, Some("cpu")),
     );
     let error = governor_from(registry).expect_err("rekinded built-in must be rejected");
-    assert!(matches!(error, GovernorError::PolicyViolation(_)));
+    assert_eq!(
+        error,
+        GovernorError::PolicyViolation(
+            "built-in substrate cpu is registered with a non-canonical kind/pool binding".into()
+        )
+    );
 }
 
 #[test]
@@ -207,7 +212,10 @@ fn shadowing_a_builtin_is_rejected() {
             Some("cpu"),
         )])
         .expect_err("a built-in cannot be re-registered");
-    assert!(matches!(error, GovernorError::PolicyViolation(_)));
+    assert_eq!(
+        error,
+        GovernorError::PolicyViolation("duplicate substrate registration: cpu".into())
+    );
 }
 
 #[test]
@@ -217,10 +225,10 @@ fn a_capability_limit_for_an_unregistered_pool_is_rejected() {
     let error = PolicySet::new(ResourceBudget::new(), classes())
         .with_capability_limits(BTreeMap::from([("ghost-pool".to_string(), 4)]))
         .expect_err("a limit must name a registered pool");
-    let GovernorError::PolicyViolation(message) = error else {
-        panic!("expected a policy violation, got {error:?}");
-    };
-    assert!(message.contains("ghost-pool"), "unexpected: {message}");
+    assert_eq!(
+        error,
+        GovernorError::PolicyViolation("capability limit for unregistered pool: ghost-pool".into())
+    );
 }
 
 #[test]

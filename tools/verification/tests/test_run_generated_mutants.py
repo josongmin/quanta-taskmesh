@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -177,20 +178,30 @@ def test_equivalent_requires_id_reachability_and_reviewer_and_stays_non_pass(
 
 
 @pytest.mark.parametrize(
-    "payload",
+    ("payload", "expected"),
     [
-        [],
-        "malformed",
-        {"equivalents": [{"mutant_id": "m", "reviewer": "r"}]},
-        {"equivalents": [{"mutant_id": "unknown", "reachability_evidence": "x", "reviewer": "r"}]},
+        ([], "equivalence review must be an object"),
+        ("malformed", "equivalence review must be an object"),
+        (
+            {"equivalents": [{"mutant_id": "m", "reviewer": "r"}]},
+            "equivalent review requires non-empty reachability_evidence",
+        ),
+        (
+            {
+                "equivalents": [
+                    {"mutant_id": "unknown", "reachability_evidence": "x", "reviewer": "r"}
+                ]
+            },
+            "equivalent review does not name a missed mutant: unknown",
+        ),
     ],
 )
 def test_incomplete_or_detached_equivalent_review_is_rejected(
-    tmp_path: Path, payload: object
+    tmp_path: Path, payload: object, expected: str
 ) -> None:
     path = tmp_path / "equivalents.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=re.escape(expected)):
         gm.load_equivalents(path, ["m"])
 
 

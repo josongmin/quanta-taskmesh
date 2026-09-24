@@ -245,5 +245,8 @@ fn snapshot_inventory_and_fail_closed_config() {
             ClassPolicy::new().cpu_units(8), // exceeds the 4-unit budget
         )
         .build();
-    assert!(matches!(err, Err(GovernorError::PolicyViolation(_))));
+    let Err(GovernorError::PolicyViolation(message)) = err else {
+        panic!("the impossible CPU budget must return a policy violation");
+    };
+    assert_eq!(message, "class c exceeds global cpu budget");
 }

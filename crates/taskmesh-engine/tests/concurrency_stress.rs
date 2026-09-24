@@ -95,17 +95,25 @@ fn inflight_cap_is_never_exceeded_under_contention() {
         1_000_000,
     );
     let held = Arc::new(AtomicI64::new(0));
+    let maximum_held = Arc::new(AtomicI64::new(0));
     let rejected = Arc::new(AtomicI64::new(0));
+    let unexpectedly_queued = Arc::new(AtomicI64::new(0));
+    let failed_releases = Arc::new(AtomicI64::new(0));
     let first_start = Arc::new(Barrier::new(16));
     let first_attempt_done = Arc::new(Barrier::new(16));
+    let first_release_done = Arc::new(Barrier::new(16));
 
     thread::scope(|scope| {
         for tid in 0..16 {
             let g = Arc::clone(&g);
             let held = Arc::clone(&held);
+            let maximum_held = Arc::clone(&maximum_held);
             let rejected = Arc::clone(&rejected);
+            let unexpectedly_queued = Arc::clone(&unexpectedly_queued);
+            let failed_releases = Arc::clone(&failed_releases);
             let first_start = Arc::clone(&first_start);
             let first_attempt_done = Arc::clone(&first_attempt_done);
+            let first_release_done = Arc::clone(&first_release_done);
             scope.spawn(move || {
                 let op: &'static str = Box::leak(format!("c{tid}").into_boxed_str());
                 let spec = TaskSpec::blocking(TaskClass::new("capped")).operation(op);
@@ -116,10 +124,7 @@ fn inflight_cap_is_never_exceeded_under_contention() {
                 let first_permit = match g.admit(&spec) {
                     AdmissionDecision::Admitted { permit_id } => {
                         let now = held.fetch_add(1, Ordering::SeqCst) + 1;
-                        assert!(
-                            now <= CAP as i64,
-                            "concurrent permits {now} exceeded cap {CAP}"
-                        );
+                        maximum_held.fetch_max(now, Ordering::SeqCst);
                         Some(permit_id)
                     }
                     AdmissionDecision::Rejected(_) => {
@@ -127,26 +132,27 @@ fn inflight_cap_is_never_exceeded_under_contention() {
                         None
                     }
                     AdmissionDecision::Queued { .. } => {
-                        panic!("no queue configured; admit must admit or reject")
+                        unexpectedly_queued.fetch_add(1, Ordering::SeqCst);
+                        None
                     }
                 };
                 first_attempt_done.wait();
                 if let Some(permit_id) = first_permit {
+                    if g.release(permit_id) != ReleaseOutcome::Released {
+                        failed_releases.fetch_add(1, Ordering::SeqCst);
+                    }
                     held.fetch_sub(1, Ordering::SeqCst);
-                    assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
                 }
+                // Do not let a second-wave admission race the mirror update for
+                // the synchronized first wave. Past this point the governor's
+                // own snapshot is the authority for concurrent occupancy.
+                first_release_done.wait();
 
                 for _ in 1..1_000 {
                     match g.admit(&spec) {
                         AdmissionDecision::Admitted { permit_id } => {
-                            // Incremented only while the permit is held; bounded by
-                            // the governor's own inflight, which is capped.
-                            let now = held.fetch_add(1, Ordering::SeqCst) + 1;
-                            assert!(
-                                now <= CAP as i64,
-                                "concurrent permits {now} exceeded cap {CAP}"
-                            );
-                            held.fetch_sub(1, Ordering::SeqCst);
+                            let now = g.snapshot().classes[&TaskClass::new("capped")].inflight;
+                            assert!(now <= CAP, "concurrent permits {now} exceeded cap {CAP}");
                             assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
                         }
                         AdmissionDecision::Rejected(_) => {
@@ -162,6 +168,21 @@ fn inflight_cap_is_never_exceeded_under_contention() {
     });
 
     assert_eq!(held.load(Ordering::SeqCst), 0, "all permits released");
+    assert_eq!(
+        maximum_held.load(Ordering::SeqCst),
+        i64::from(CAP),
+        "the synchronized first wave must fill, but never exceed, cap {CAP}"
+    );
+    assert_eq!(
+        unexpectedly_queued.load(Ordering::SeqCst),
+        0,
+        "no queue is configured; first-wave admission must admit or reject"
+    );
+    assert_eq!(
+        failed_releases.load(Ordering::SeqCst),
+        0,
+        "every first-wave permit must release exactly once"
+    );
     // The synchronized first wave admits at most CAP of the 16 attempts.
     assert!(
         rejected.load(Ordering::SeqCst) >= 16 - i64::from(CAP),

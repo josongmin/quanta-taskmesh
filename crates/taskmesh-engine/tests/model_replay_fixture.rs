@@ -4,16 +4,38 @@ use std::any::Any;
 use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use shuttle::scheduler::RandomScheduler;
+use shuttle::sync::atomic::{AtomicUsize, Ordering};
+use shuttle::thread;
 use shuttle::{Config, FailurePersistence, Runner};
 
 const FAILURE_MODEL_ID: &str = "shuttle.replay_fixture.v1";
 const FAILURE_SEED: u64 = 0x5a17_fa11;
 const SENTINEL: &str = "taskmesh-v03-replay-sentinel";
 
-fn deliberate_failure() {
-    panic!("{SENTINEL}");
+fn schedule_sensitive_failure() {
+    let value = Arc::new(AtomicUsize::new(0));
+    let first_value = Arc::clone(&value);
+    let first = thread::spawn(move || {
+        let observed = first_value.load(Ordering::SeqCst);
+        thread::yield_now();
+        first_value.store(observed + 1, Ordering::SeqCst);
+    });
+    let second_value = Arc::clone(&value);
+    let second = thread::spawn(move || {
+        let observed = second_value.load(Ordering::SeqCst);
+        thread::yield_now();
+        second_value.store(observed + 1, Ordering::SeqCst);
+    });
+    first.join().expect("first model thread joins");
+    second.join().expect("second model thread joins");
+    assert_eq!(
+        value.load(Ordering::SeqCst),
+        2,
+        "{SENTINEL}: replayed schedule loses one read-modify-write update"
+    );
 }
 
 fn panic_text(payload: &(dyn Any + Send)) -> &str {
@@ -53,8 +75,8 @@ fn failure_schedule_replays_the_same_failure() {
             let mut config = Config::new();
             config.failure_persistence = FailurePersistence::File(Some(directory.clone()));
             let first = catch_unwind(AssertUnwindSafe(|| {
-                Runner::new(RandomScheduler::new_from_seed(FAILURE_SEED, 1), config)
-                    .run(deliberate_failure);
+                Runner::new(RandomScheduler::new_from_seed(FAILURE_SEED, 100), config)
+                    .run(schedule_sensitive_failure);
             }))
             .expect_err("fixture model must fail");
             assert!(panic_text(first.as_ref()).contains(SENTINEL));
@@ -69,7 +91,7 @@ fn failure_schedule_replays_the_same_failure() {
         Ok("replay") => {
             let schedule = only_schedule(&directory);
             let replay = catch_unwind(AssertUnwindSafe(|| {
-                shuttle::replay_from_file(deliberate_failure, &schedule);
+                shuttle::replay_from_file(schedule_sensitive_failure, &schedule);
             }))
             .expect_err("saved schedule must reproduce the failure");
             assert!(panic_text(replay.as_ref()).contains(SENTINEL));

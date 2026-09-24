@@ -298,6 +298,19 @@ CASES: list[tuple[str, str, str, str, str]] = [
         + '    assert_eq!(result(), Err("broken"));\n}\n',
     ),
     (
+        "taskmesh-test-policy-violation-without-message-check",
+        "test-quality.yml",
+        HOST_ITEST,
+        "enum GovernorError { PolicyViolation(String) }\n"
+        + A
+        + "    let error = GovernorError::PolicyViolation(String::new());\n"
+        + "    assert!(\n        matches!(error, GovernorError::PolicyViolation(_))\n    );\n}\n",
+        "enum GovernorError { PolicyViolation(String) }\n"
+        + A
+        + '    let error = GovernorError::PolicyViolation("bad".into());\n'
+        + '    assert_eq!(error, GovernorError::PolicyViolation("bad".into()));\n}\n',
+    ),
+    (
         "taskmesh-test-discards-fallible-let",
         "test-quality.yml",
         HOST_ITEST,

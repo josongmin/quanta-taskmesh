@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import time
@@ -299,8 +300,7 @@ def passing_gate_results(required: list[str]) -> list[dict]:
             status_line = f"{spec['marker']} {spec['require']}"
             if result["id"] == "test":
                 status_line += (
-                    " runner=cargo runner_version=1.95.0"
-                    " fixture_runner=cargo cargo_version=1.95.0"
+                    " runner=cargo runner_version=1.95.0 fixture_runner=cargo cargo_version=1.95.0"
                 )
             result["status_line"] = status_line
     return results
@@ -828,17 +828,19 @@ def test_run_json_records_an_undecodable_sidecar_as_failed_evidence(
 
 
 @pytest.mark.parametrize(
-    "declared",
+    ("declared", "expected"),
     [
-        "/tmp/out.json",
-        "target/../source.json",
-        "target",
-        "tools/source.json",
+        ("/tmp/out.json", "producer summary path must be a safe repo-relative path"),
+        ("target/../source.json", "producer summary path must be a safe repo-relative path"),
+        ("target", "producer summary path must not be the target root"),
+        ("tools/source.json", "producer summary path must stay below repository target/"),
     ],
 )
-def test_registered_output_cleanup_rejects_unsafe_paths(tmp_path: Path, declared: str) -> None:
+def test_registered_output_cleanup_rejects_unsafe_paths(
+    tmp_path: Path, declared: str, expected: str
+) -> None:
     (tmp_path / "target").mkdir()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=re.escape(expected)):
         receipt.clear_registered_outputs(
             tmp_path, [{"summary": declared, "envelope": "target/safe/envelope.json"}]
         )

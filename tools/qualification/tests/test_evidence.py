@@ -36,7 +36,7 @@ def test_canonical_digest_is_order_independent_and_rejects_nan() -> None:
     assert evidence.canonical_digest({"b": 1, "a": 2}) == evidence.canonical_digest(
         {"a": 2, "b": 1}
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Out of range float values"):
         evidence.canonical_digest({"bad": float("nan")})
 
 

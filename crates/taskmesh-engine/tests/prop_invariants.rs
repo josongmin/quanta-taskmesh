@@ -133,9 +133,11 @@ fn weighted_drain(classes_seq: &[usize], weights: [u32; 3]) -> Vec<usize> {
     let mut tickets: Vec<(u64, usize)> = Vec::new();
     for (i, &ci) in classes_seq.iter().enumerate() {
         let op = format!("{ci}-{i}");
-        if let AdmissionDecision::Queued { ticket } = g.admit(&blocking(CLASSES[ci], &op)) {
-            tickets.push((ticket, ci));
-        }
+        let ticket = match g.admit(&blocking(CLASSES[ci], &op)) {
+            AdmissionDecision::Queued { ticket } => ticket,
+            other => panic!("contended weighted admission must queue: {other:?}"),
+        };
+        tickets.push((ticket, ci));
     }
     assert_eq!(g.release(fill), ReleaseOutcome::Released);
 
@@ -152,10 +154,26 @@ fn weighted_drain(classes_seq: &[usize], weights: [u32; 3]) -> Vec<usize> {
                 other => panic!("property queue ticket must not terminate: {other:?}"),
             }
         }
-        let Some((idx, permit)) = found else { break };
+        let Some((idx, permit)) = found else {
+            panic!(
+                "weighted queue stalled with {} pending tickets",
+                tickets.len()
+            )
+        };
         let (_, ci) = tickets.remove(idx);
         order.push(ci);
         assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    }
+    assert_eq!(
+        order.len(),
+        classes_seq.len(),
+        "every queued ticket must drain"
+    );
+    let snapshot = g.snapshot();
+    for name in CLASSES {
+        let class = &snapshot.classes[&TaskClass::new(name)];
+        assert_eq!(class.queued, 0, "class {name} still has queued work");
+        assert_eq!(class.inflight, 0, "class {name} still has a live permit");
     }
     order
 }

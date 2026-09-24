@@ -1,6 +1,7 @@
 //! T02: fail-closed configuration validation.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use taskmesh_contract::*;
 use taskmesh_engine::*;
@@ -22,6 +23,31 @@ fn valid_minimal_config_passes() {
         vec![("retrieval", ClassPolicy::new().cpu_units(1).memory_units(2))],
     );
     assert!(Governor::validate_policy(&p).is_ok());
+}
+
+#[test]
+fn malformed_policy_class_is_rejected_before_governor_state_exists() {
+    for invalid in [
+        String::new(),
+        " leading".to_owned(),
+        "trailing ".to_owned(),
+        "bad?class".to_owned(),
+        "a".repeat(129),
+    ] {
+        let p = PolicySet::new(
+            ResourceBudget::new(),
+            BTreeMap::from([(TaskClass::new(invalid.clone()), ClassPolicy::new())]),
+        );
+        let Err(GovernorError::PolicyViolation(message)) =
+            Governor::new(p, Arc::new(ManualClock::new(0)))
+        else {
+            panic!("malformed class {invalid:?} must fail at construction");
+        };
+        assert!(
+            message.contains("invalid policy class") && message.contains("class"),
+            "malformed class {invalid:?} returned unrelated violation: {message}"
+        );
+    }
 }
 
 #[test]

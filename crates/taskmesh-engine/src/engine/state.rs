@@ -46,6 +46,9 @@ pub struct PendingRequest {
     pub operation: String,
     pub root_operation_id: String,
     pub scope: TaskScope,
+    /// Exact live parent generation observed at enqueue. `None` means no parent
+    /// was live yet, so promotion may resolve a later declaration by operation.
+    pub parent_permit_id: Option<PermitId>,
     pub target_stage: TaskStage,
     /// Classification provenance (source/reason), preserved through promotion.
     pub provenance: Provenance,
@@ -58,6 +61,10 @@ pub struct PendingRequest {
     pub deadline_ms: u64,
     /// WFQ virtual finish tag assigned at enqueue.
     pub finish_tag: u128,
+    /// Global virtual time observed at enqueue, before same-class queued debt.
+    /// This lets cancellation rebuild survivor tags without erasing progress
+    /// made by other classes between arrivals.
+    pub wfq_arrival_tag: u128,
     /// Which limit forced this request into the queue. Preserved so an acquire
     /// timeout reports the cause the caller was actually waiting on.
     pub blocked_on: CapacityBlock,
@@ -71,6 +78,9 @@ pub struct ClassState {
     pub queue: VecDeque<PendingRequest>,
     /// WFQ: the finish tag of the most recently enqueued request.
     pub last_finish_tag: u128,
+    /// WFQ: finish tag of the last request that actually received service in
+    /// this busy period. Unserved removals rebuild from this baseline.
+    pub last_served_finish_tag: u128,
     /// DRR: accumulated deficit, in the same unit domain as head cost.
     pub deficit: u128,
     /// Running per-class CPU units held by inflight permits (snapshot in O(1)).
@@ -154,6 +164,10 @@ pub struct PermitRecord {
     pub operation: String,
     pub root_operation_id: String,
     pub scope: TaskScope,
+    /// Exact parent generation observed when this permit was granted. Operation
+    /// text can be reused after release, so ancestry must not be reconstructed
+    /// from the current operation index.
+    pub parent_permit_id: Option<PermitId>,
     pub target_stage: TaskStage,
     /// Classification provenance (source/reason), auditable post-intake.
     pub provenance: Provenance,
@@ -423,6 +437,7 @@ pub struct GrantRequest<'a> {
     pub operation: &'a str,
     pub root_operation_id: &'a str,
     pub scope: TaskScope,
+    pub parent_permit_id: Option<PermitId>,
     pub target_stage: TaskStage,
     pub provenance: Provenance,
     pub capabilities: CapabilityRequirementSet,
@@ -564,6 +579,24 @@ impl GovernedState {
             .get(root_operation_id, operation)
     }
 
+    /// Resolve the currently live parent generation named by a child scope.
+    /// Callers that persist lineage must store the returned permit ID rather
+    /// than resolving the operation text again after it can be reused.
+    pub fn parent_permit_for_scope(
+        &self,
+        root_operation_id: &str,
+        scope: &TaskScope,
+    ) -> Option<PermitId> {
+        let TaskScope::Child {
+            parent_operation_id,
+            ..
+        } = scope
+        else {
+            return None;
+        };
+        self.permits_for_operation(root_operation_id, parent_operation_id)
+    }
+
     pub fn has_operation_identity(&self, root_operation_id: &str, operation: &str) -> bool {
         self.permits_for_operation(root_operation_id, operation)
             .is_some()
@@ -583,6 +616,7 @@ impl GovernedState {
             operation,
             root_operation_id,
             scope,
+            parent_permit_id,
             target_stage,
             provenance,
             capabilities,
@@ -643,6 +677,7 @@ impl GovernedState {
                 operation: operation.to_owned(),
                 root_operation_id: root_operation_id.to_owned(),
                 scope,
+                parent_permit_id,
                 target_stage,
                 provenance,
                 capabilities,
@@ -1031,6 +1066,7 @@ mod mutation_semantics {
             operation: "queue-child".to_owned(),
             root_operation_id: "queue-root".to_owned(),
             scope: TaskScope::Root,
+            parent_permit_id: None,
             target_stage: TaskStage::new("io"),
             provenance: Provenance::of(&spec),
             cost: ResolvedCost::default(),
@@ -1038,6 +1074,7 @@ mod mutation_semantics {
             enqueued_at_ms: 0,
             deadline_ms: u64::MAX,
             finish_tag: 0,
+            wfq_arrival_tag: 0,
             blocked_on: CapacityBlock::Cpu,
             waker: None,
         });

@@ -159,3 +159,13 @@ impl ExecutorCapabilities {
 pub trait PermitWaker: Send + Sync {
     fn wake(&self);
 }
+
+/// Notifies a host that an engine transition may have reduced outstanding
+/// custody.
+///
+/// The engine invokes this port only after releasing its state mutex. Hosts
+/// must re-read the authoritative snapshot rather than treating a wake as
+/// proof that the system is idle.
+pub trait SettlementWaker: Send + Sync {
+    fn wake(&self);
+}

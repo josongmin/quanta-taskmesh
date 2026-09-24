@@ -224,12 +224,15 @@ fn admit_class(
     };
     match block {
         CapacityBlock::Ok => {
+            let parent_permit_id =
+                state.parent_permit_for_scope(&spec.root_operation_id, &spec.scope);
             state.grant(GrantRequest {
                 permit_id: ids.permit_id,
                 class,
                 operation: &spec.operation,
                 root_operation_id: &spec.root_operation_id,
                 scope: spec.scope.clone(),
+                parent_permit_id,
                 target_stage: composite::target_stage(spec),
                 provenance: Provenance::of(spec),
                 capabilities: request.capabilities.clone(),
@@ -337,7 +340,8 @@ fn enqueue_or_full(
 
     let cost = resolve_cost(policy);
     let target_stage = composite::target_stage(spec);
-    let (finish_tag, deadline_ms) =
+    let parent_permit_id = state.parent_permit_for_scope(&spec.root_operation_id, &spec.scope);
+    let (finish_tag, wfq_arrival_tag, deadline_ms) =
         fairness::enqueue_tags(state, class, policy, cost.cpu_units, now_ms);
     state.class_mut(class).queue.push_back(PendingRequest {
         ticket: ids.ticket,
@@ -349,6 +353,7 @@ fn enqueue_or_full(
         operation: spec.operation.clone(),
         root_operation_id: spec.root_operation_id.clone(),
         scope: spec.scope.clone(),
+        parent_permit_id,
         target_stage: target_stage.clone(),
         provenance: Provenance::of(spec),
         cost,
@@ -356,6 +361,7 @@ fn enqueue_or_full(
         enqueued_at_ms: now_ms,
         deadline_ms,
         finish_tag,
+        wfq_arrival_tag,
         blocked_on,
         waker,
     });

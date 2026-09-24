@@ -28,9 +28,9 @@ use std::sync::Arc;
 
 use taskmesh_contract::{
     CapabilityUsage, CheckpointPolicy, ClassSnapshot, Clock, ExecutionPhase, FairnessPolicy,
-    GovernorError, MemoryOvercommitPolicy, MemoryPermitMode, OverflowPolicy, PermitWaker, Snapshot,
-    SubstrateKind, SubstrateRecord, TaskClass, TaskSpec, ValidatedTaskPlan,
-    SNAPSHOT_SCHEMA_VERSION,
+    GovernorError, MemoryOvercommitPolicy, MemoryPermitMode, OverflowPolicy, PermitWaker,
+    SettlementWaker, Snapshot, SubstrateKind, SubstrateRecord, TaskClass, TaskSpec,
+    ValidatedTaskPlan, SNAPSHOT_SCHEMA_VERSION,
 };
 
 use crate::engine::state::{
@@ -72,6 +72,7 @@ pub struct Governor {
     next_ticket: AtomicU64,
     next_seq: AtomicU64,
     state: Mutex<GovernedState>,
+    settlement_waker: Option<Arc<dyn SettlementWaker>>,
 }
 
 impl std::fmt::Debug for Governor {
@@ -93,12 +94,29 @@ impl Governor {
     /// policy can never boot.
     pub fn new(policy: PolicySet, clock: Arc<dyn Clock>) -> Result<Self, GovernorError> {
         Self::validate_policy(&policy)?;
-        Ok(Self::construct(policy, clock))
+        Ok(Self::construct(policy, clock, None))
+    }
+
+    /// Construct a validated governor with a host settlement observer. The
+    /// observer runs after the state lock is released whenever a transition may
+    /// have reduced queued or inflight custody. A wake is only a hint: the host
+    /// must re-read [`Self::snapshot`].
+    pub fn new_with_settlement_waker(
+        policy: PolicySet,
+        clock: Arc<dyn Clock>,
+        settlement_waker: Arc<dyn SettlementWaker>,
+    ) -> Result<Self, GovernorError> {
+        Self::validate_policy(&policy)?;
+        Ok(Self::construct(policy, clock, Some(settlement_waker)))
     }
 
     /// Raw constructor (no validation). Private: the validated [`Governor::new`]
     /// and the `test-util`-gated [`Governor::new_unchecked`] both route through it.
-    fn construct(policy: PolicySet, clock: Arc<dyn Clock>) -> Self {
+    fn construct(
+        policy: PolicySet,
+        clock: Arc<dyn Clock>,
+        settlement_waker: Option<Arc<dyn SettlementWaker>>,
+    ) -> Self {
         Self {
             policy,
             clock,
@@ -106,6 +124,7 @@ impl Governor {
             next_ticket: AtomicU64::new(1),
             next_seq: AtomicU64::new(1),
             state: Mutex::new(GovernedState::default()),
+            settlement_waker,
         }
     }
 
@@ -120,7 +139,7 @@ impl Governor {
     #[cfg(feature = "test-util")]
     #[doc(hidden)]
     pub fn new_unchecked(policy: PolicySet, clock: Arc<dyn Clock>) -> Self {
-        Self::construct(policy, clock)
+        Self::construct(policy, clock, None)
     }
 
     pub fn policy(&self) -> &PolicySet {
@@ -408,7 +427,11 @@ impl Governor {
                     }
                     // A cancelled request never received service, so it leaves no
                     // virtual-time debt and no idle DRR credit behind it.
-                    fairness::on_queue_changed(&mut state, &class);
+                    let policy = self
+                        .policy
+                        .class(&class)
+                        .expect("queued class belongs to the validated policy");
+                    fairness::on_unserved_removed(&mut state, &class, policy);
                     let pass = self.promote(&mut state, now);
                     effects.absorb(pass);
                 }
@@ -530,15 +553,19 @@ impl Governor {
             let Some(head) = state.class_mut(&class).queue.remove(selection.queue_index) else {
                 break;
             };
-            fairness::on_queue_changed(state, &class);
+            fairness::on_request_served(state, &class, head.finish_tag);
             state.tickets.remove(&head.ticket);
             let permit_id = self.next_permit.fetch_add(1, Ordering::Relaxed);
+            let parent_permit_id = head
+                .parent_permit_id
+                .or_else(|| state.parent_permit_for_scope(&head.root_operation_id, &head.scope));
             state.grant(GrantRequest {
                 permit_id,
                 class: &class,
                 operation: &head.operation,
                 root_operation_id: &head.root_operation_id,
                 scope: head.scope.clone(),
+                parent_permit_id,
                 target_stage: head.target_stage.clone(),
                 provenance: head.provenance,
                 capabilities: head.capabilities.clone(),
@@ -610,7 +637,11 @@ impl Governor {
         let Some(request) = state.class_mut(&class).queue.remove(index) else {
             return CycleTerminalization::None;
         };
-        fairness::on_queue_changed(state, &class);
+        let policy = self
+            .policy
+            .class(&class)
+            .expect("queued class belongs to the validated policy");
+        fairness::on_unserved_removed(state, &class, policy);
         state.vacate_recursion_guard(&request.root_operation_id, &request.target_stage);
         let held_by_parent = witness
             .held
@@ -657,6 +688,13 @@ impl Governor {
                 effects = self.promote(&mut state, now);
             } else {
                 break;
+            }
+        }
+        if let Some(waker) = &self.settlement_waker {
+            if let Err(payload) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| waker.wake()))
+            {
+                first_panic.get_or_insert(payload);
             }
         }
         first_panic
@@ -1116,6 +1154,9 @@ impl Governor {
         Self::validate_inventory(policy)?;
         let budget = &policy.resources;
         for (class, class_policy) in &policy.classes {
+            class
+                .validate()
+                .map_err(|error| violation(format!("invalid policy class {class:?}: {error}")))?;
             let cost = class_policy.permit_cost;
 
             if budget.per_request_max_cpu_units != 0

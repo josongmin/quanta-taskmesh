@@ -1,8 +1,8 @@
 //! Declared nested-wait cycles (H16-010-A06, ADR 0003 D12).
 //!
-//! A parent that awaits its child holds its permit until the child has run.
-//! If the capacity the child needs is held *entirely* by that parent (the
-//! root-scoped permits of the child's own root), no release can ever come.
+//! Each parent that awaits its child holds its permit until the child has run.
+//! If the capacity the child needs is held *entirely* by its declared awaited
+//! ancestor chain, no release can ever come.
 //! Queueing the child would be a deadlock by declaration; the engine refuses
 //! it before admission with `NestedWaitCycle`, naming the capacity, and
 //! charges nothing.
@@ -163,6 +163,231 @@ fn an_awaited_child_blocked_only_by_its_own_root_is_refused_not_queued() {
     // the same submission is admitted.
     assert_eq!(g.release(parent), ReleaseOutcome::Released);
     let child = admit(&g, &awaited_child("c", "parent"));
+    assert_eq!(g.release(child), ReleaseOutcome::Released);
+}
+
+#[test]
+fn an_awaited_grandchild_blocked_by_its_declared_wait_chain_is_refused() {
+    // The root waits for its child, and that child waits for the grandchild.
+    // The two ancestors hold both class slots, so neither can release before
+    // the grandchild runs. Looking only at the immediate parent sees one of
+    // two slots and incorrectly treats this declared cycle as reversible.
+    let g = governor(vec![("c", Shape::queueing(2))], 100, 100, 0);
+    let root = admit(&g, &root("c", "root"));
+    let child_spec = TaskSpec::io(class("c"))
+        .awaited_child_of("root", "root", TaskStage::new("child"))
+        .operation("child");
+    let child = admit(&g, &child_spec);
+    let before = g.snapshot();
+    let grandchild = TaskSpec::io(class("c"))
+        .awaited_child_of("root", "child", TaskStage::new("grandchild"))
+        .operation("grandchild");
+
+    refused_as_cycle(
+        "grandchild behind its declared wait chain",
+        g.admit(&grandchild),
+        &HeldCapacity::ClassInflight { class: class("c") },
+    );
+    assert_eq!(g.snapshot().classes, before.classes);
+    assert_eq!(g.release(child), ReleaseOutcome::Released);
+    assert_eq!(g.release(root), ReleaseOutcome::Released);
+}
+
+#[test]
+fn a_released_higher_ancestor_does_not_erase_the_live_parent_cycle() {
+    // The root and child use different classes, so both can be admitted while
+    // each class has one slot. Releasing the root removes only a higher frozen
+    // ancestor. The live child still owns all class-c capacity and declares
+    // that it awaits the grandchild, which is already a complete cycle.
+    let g = governor(
+        vec![("r", Shape::queueing(1)), ("c", Shape::queueing(1))],
+        100,
+        100,
+        0,
+    );
+    let root = admit(&g, &root("r", "root"));
+    let child_spec = TaskSpec::io(class("c"))
+        .awaited_child_of("root", "root", TaskStage::new("child"))
+        .operation("child");
+    let child = admit(&g, &child_spec);
+    assert_eq!(g.release(root), ReleaseOutcome::Released);
+
+    let grandchild = TaskSpec::io(class("c"))
+        .awaited_child_of("root", "child", TaskStage::new("grandchild"))
+        .operation("grandchild");
+    refused_as_cycle(
+        "grandchild behind its live parent after a higher ancestor ended",
+        g.admit(&grandchild),
+        &HeldCapacity::ClassInflight { class: class("c") },
+    );
+    assert_eq!(g.release(child), ReleaseOutcome::Released);
+}
+
+#[test]
+fn declared_wait_chain_aggregates_every_non_class_capacity() {
+    for case in ["capability", "cpu", "memory"] {
+        let (g, root_spec, child_spec, grandchild, expected) = match case {
+            "capability" => (
+                governor(vec![("c", Shape::queueing(4))], 100, 100, 2),
+                TaskSpec::blocking(class("c")).operation("root"),
+                TaskSpec::blocking(class("c"))
+                    .awaited_child_of("root", "root", TaskStage::new("child"))
+                    .operation("child"),
+                TaskSpec::blocking(class("c"))
+                    .awaited_child_of("root", "child", TaskStage::new("grandchild"))
+                    .operation("grandchild"),
+                HeldCapacity::CapabilityPool {
+                    pool: "blocking".to_owned(),
+                },
+            ),
+            "cpu" => (
+                governor(vec![("c", Shape::queueing(4))], 2, 100, 0),
+                root("c", "root"),
+                TaskSpec::io(class("c"))
+                    .awaited_child_of("root", "root", TaskStage::new("child"))
+                    .operation("child"),
+                TaskSpec::io(class("c"))
+                    .awaited_child_of("root", "child", TaskStage::new("grandchild"))
+                    .operation("grandchild"),
+                HeldCapacity::CpuBudget,
+            ),
+            "memory" => (
+                governor(vec![("c", Shape::queueing(4))], 100, 2, 0),
+                root("c", "root"),
+                TaskSpec::io(class("c"))
+                    .awaited_child_of("root", "root", TaskStage::new("child"))
+                    .operation("child"),
+                TaskSpec::io(class("c"))
+                    .awaited_child_of("root", "child", TaskStage::new("grandchild"))
+                    .operation("grandchild"),
+                HeldCapacity::MemoryBudget,
+            ),
+            _ => unreachable!(),
+        };
+        let root = admit(&g, &root_spec);
+        let child = admit(&g, &child_spec);
+        let before = g.snapshot();
+
+        refused_as_cycle(case, g.admit(&grandchild), &expected);
+        assert_eq!(g.snapshot(), before, "{case}: rejection is state-neutral");
+        assert_eq!(g.release(child), ReleaseOutcome::Released);
+        assert_eq!(g.release(root), ReleaseOutcome::Released);
+    }
+}
+
+#[test]
+fn an_undeclared_ancestor_link_stops_the_wait_chain() {
+    let g = governor(vec![("c", Shape::queueing(2))], 100, 100, 0);
+    let root = admit(&g, &root("c", "root"));
+    let independent_child = TaskSpec::io(class("c"))
+        .child_of("root", "root", TaskStage::new("child"))
+        .operation("child");
+    let independent_child = admit(&g, &independent_child);
+    let grandchild = TaskSpec::io(class("c"))
+        .awaited_child_of("root", "child", TaskStage::new("grandchild"))
+        .operation("grandchild");
+
+    let ticket = queued(
+        "grandchild behind an ancestor that is not awaited",
+        g.admit(&grandchild),
+    );
+    assert_eq!(g.release(root), ReleaseOutcome::Released);
+    let taskmesh_engine::ClaimOutcome::Ready(grandchild) = g.claim(ticket) else {
+        panic!("the non-awaiting root's release must promote the grandchild")
+    };
+    assert_eq!(g.release(grandchild), ReleaseOutcome::Released);
+    assert_eq!(g.release(independent_child), ReleaseOutcome::Released);
+}
+
+#[test]
+fn a_sibling_outside_a_deep_wait_chain_remains_reversible() {
+    let g = governor(vec![("c", Shape::queueing(3))], 100, 100, 0);
+    let root = admit(&g, &root("c", "root"));
+    let parent = TaskSpec::io(class("c"))
+        .awaited_child_of("root", "root", TaskStage::new("parent"))
+        .operation("parent");
+    let parent = admit(&g, &parent);
+    let sibling = TaskSpec::io(class("c"))
+        .awaited_child_of("root", "root", TaskStage::new("sibling"))
+        .operation("sibling");
+    let sibling = admit(&g, &sibling);
+    let grandchild = TaskSpec::io(class("c"))
+        .awaited_child_of("root", "parent", TaskStage::new("grandchild"))
+        .operation("grandchild");
+
+    let ticket = queued(
+        "grandchild behind a sibling outside its wait chain",
+        g.admit(&grandchild),
+    );
+    assert_eq!(g.release(sibling), ReleaseOutcome::Released);
+    let taskmesh_engine::ClaimOutcome::Ready(grandchild) = g.claim(ticket) else {
+        panic!("the sibling's release must promote the grandchild")
+    };
+    assert_eq!(g.release(grandchild), ReleaseOutcome::Released);
+    assert_eq!(g.release(parent), ReleaseOutcome::Released);
+    assert_eq!(g.release(root), ReleaseOutcome::Released);
+}
+
+#[test]
+fn a_reused_root_operation_is_not_a_new_ancestor_of_a_live_descendant() {
+    let g = governor(vec![("c", Shape::queueing(2))], 100, 100, 0);
+    let old_root = admit(&g, &root("c", "root"));
+    let parent = TaskSpec::io(class("c"))
+        .awaited_child_of("root", "root", TaskStage::new("parent"))
+        .operation("parent");
+    let parent = admit(&g, &parent);
+
+    // A permit may end explicitly or by reclamation while descendants remain.
+    // Reusing its operation text creates a distinct permit generation.
+    assert_eq!(g.release(old_root), ReleaseOutcome::Released);
+    let new_root = admit(&g, &root("c", "root"));
+    let grandchild = TaskSpec::io(class("c"))
+        .awaited_child_of("root", "parent", TaskStage::new("grandchild"))
+        .operation("grandchild");
+
+    let ticket = queued(
+        "grandchild behind a reused, unrelated root operation",
+        g.admit(&grandchild),
+    );
+    assert_eq!(g.release(new_root), ReleaseOutcome::Released);
+    let taskmesh_engine::ClaimOutcome::Ready(grandchild) = g.claim(ticket) else {
+        panic!("the unrelated replacement root's release must promote the grandchild")
+    };
+    assert_eq!(g.release(grandchild), ReleaseOutcome::Released);
+    assert_eq!(g.release(parent), ReleaseOutcome::Released);
+}
+
+#[test]
+fn a_queued_child_does_not_rebind_to_a_reused_parent_operation() {
+    let g = governor(
+        vec![
+            ("parent", Shape::queueing(4)),
+            ("child", Shape::queueing(1)),
+        ],
+        100,
+        100,
+        1,
+    );
+    let old_parent = admit(&g, &root("parent", "root"));
+    let class_holder = admit(&g, &root("child", "class-holder"));
+    let child = TaskSpec::blocking(class("child"))
+        .awaited_child_of("root", "root", TaskStage::new("child"))
+        .operation("child");
+    let ticket = queued("child behind its class holder", g.admit(&child));
+
+    // The queue captured the old live parent. Ending it must not let a later
+    // permit with the same operation text inherit that relationship.
+    assert_eq!(g.release(old_parent), ReleaseOutcome::Released);
+    let replacement = admit(&g, &blocking_root("parent", "root"));
+    assert_eq!(g.release(class_holder), ReleaseOutcome::Released);
+    assert!(
+        matches!(g.claim(ticket), taskmesh_engine::ClaimOutcome::Pending),
+        "a replacement operation is not the queued child's declared parent generation"
+    );
+    assert_eq!(g.release(replacement), ReleaseOutcome::Released);
+    let taskmesh_engine::ClaimOutcome::Ready(child) = g.claim(ticket) else {
+        panic!("the replacement's release must promote the queued child")
+    };
     assert_eq!(g.release(child), ReleaseOutcome::Released);
 }
 
@@ -429,9 +654,8 @@ fn a_root_that_holds_none_of_the_pool_is_not_what_the_child_waits_for() {
 #[test]
 fn capacity_shared_with_a_sibling_is_a_wait_not_a_cycle() {
     // Two slots: the root holds one, an earlier child of the same root the
-    // other. Only root-scoped permits are "cannot end before this child": the
-    // sibling is a child-scoped permit that finishes on its own, whether or
-    // not the parent awaits it too.
+    // other. The sibling is outside this request's exact ancestor chain and
+    // can finish independently, whether or not the parent awaits it too.
     let g = governor(vec![("c", Shape::queueing(2))], 100, 100, 0);
     let parent = admit(&g, &root("c", "parent"));
     let sibling = admit(

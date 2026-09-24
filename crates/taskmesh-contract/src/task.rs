@@ -24,6 +24,13 @@ impl TaskClass {
     pub fn as_str(&self) -> &str {
         self.0.as_ref()
     }
+
+    /// Apply the same identifier rule used when a task plan is admitted.
+    /// Policy declarations can use raw `TaskClass` values, so construction
+    /// checks them before creating a governor.
+    pub fn validate(&self) -> Result<(), TaskPlanError> {
+        validate_identifier(TaskIdentifierField::Class, self.as_str())
+    }
 }
 
 impl fmt::Display for TaskClass {
@@ -76,50 +83,48 @@ impl PlanSource {
 
     #[allow(
         non_upper_case_globals,
-        reason = "legacy 0.2 migration alias keeps its published spelling"
+        reason = "legacy migration alias keeps its published spelling"
     )]
-    #[deprecated(
-        note = "accepted during the 0.2 migration window; use PlanSource::INTERNAL before the next breaking release"
-    )]
+    #[deprecated(note = "accepted in 0.3 for compatibility; use PlanSource::INTERNAL")]
     pub const Internal: Self = Self(Cow::Borrowed("Internal"));
     #[allow(
         non_upper_case_globals,
-        reason = "legacy 0.2 migration alias keeps its published spelling"
+        reason = "legacy migration alias keeps its published spelling"
     )]
     #[deprecated(
-        note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
+        note = "accepted in 0.3 for compatibility; map product provenance in the consumer adapter"
     )]
     pub const PublicSdk: Self = Self(Cow::Borrowed("PublicSdk"));
     #[allow(
         non_upper_case_globals,
-        reason = "legacy 0.2 migration alias keeps its published spelling"
+        reason = "legacy migration alias keeps its published spelling"
     )]
     #[deprecated(
-        note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
+        note = "accepted in 0.3 for compatibility; map product provenance in the consumer adapter"
     )]
     pub const FluentSdk: Self = Self(Cow::Borrowed("FluentSdk"));
     #[allow(
         non_upper_case_globals,
-        reason = "legacy 0.2 migration alias keeps its published spelling"
+        reason = "legacy migration alias keeps its published spelling"
     )]
     #[deprecated(
-        note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
+        note = "accepted in 0.3 for compatibility; map product provenance in the consumer adapter"
     )]
     pub const SearchAdapter: Self = Self(Cow::Borrowed("SearchAdapter"));
     #[allow(
         non_upper_case_globals,
-        reason = "legacy 0.2 migration alias keeps its published spelling"
+        reason = "legacy migration alias keeps its published spelling"
     )]
     #[deprecated(
-        note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
+        note = "accepted in 0.3 for compatibility; map product provenance in the consumer adapter"
     )]
     pub const Warmup: Self = Self(Cow::Borrowed("Warmup"));
     #[allow(
         non_upper_case_globals,
-        reason = "legacy 0.2 migration alias keeps its published spelling"
+        reason = "legacy migration alias keeps its published spelling"
     )]
     #[deprecated(
-        note = "accepted during the 0.2 migration window; map product provenance in the consumer adapter before the next breaking release"
+        note = "accepted in 0.3 for compatibility; map product provenance in the consumer adapter"
     )]
     pub const Indexing: Self = Self(Cow::Borrowed("Indexing"));
 }
@@ -166,9 +171,11 @@ pub enum TaskScope {
         parent_operation_id: String,
         parent_stage: TaskStage,
         /// The parent's execution blocks on this child's result (declared with
-        /// [`TaskSpec::awaited_child_of`]). While the parent holds its permit
-        /// it cannot free capacity, so a child that could only wait for
-        /// capacity held entirely by its own root is refused with
+        /// [`TaskSpec::awaited_child_of`]). Consecutive awaited-parent
+        /// declarations form an exact ancestor wait chain. The engine binds a
+        /// live parent permit generation so later operation-name reuse cannot
+        /// rewrite that chain. A child that could only wait for capacity held
+        /// entirely by that chain is refused with
         /// [`crate::AdmissionVerdict::NestedWaitCycle`] instead of being queued
         /// into a deadlock (ADR 0003 D12). A wait that is not declared is
         /// never inferred: an undeclared child queues as any request does.
@@ -177,7 +184,8 @@ pub enum TaskScope {
     },
 }
 
-/// One stage in a task's execution plan.
+/// One stage in a task's declared governance plan. Later stages are validated
+/// but require caller or adapter execution; the host does not walk them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StageDescriptor {
     pub class: TaskClass,
@@ -187,6 +195,7 @@ pub struct StageDescriptor {
     /// valid without a `reduce_policy` (enforced by the contract validator).
     pub fan_out: bool,
     /// Required for parallel/fan-out stages; validated by the contract validator.
+    /// The caller or adapter executes the reducer.
     pub reduce_policy: Option<DeterministicReducePolicy>,
 }
 
@@ -299,11 +308,12 @@ impl TaskSpec {
     /// Like [`Self::child_of`], and declares that the parent's execution blocks
     /// on this child's result.
     ///
-    /// A parent that awaits its child keeps its own permit — and every unit of
-    /// capacity that permit holds — until the child has run. If the capacity
-    /// this child needs is held *entirely* by its own root, no release can ever
-    /// come: the child would wait on its parent, which waits on the child. The
-    /// engine refuses such a submission before admission with
+    /// A parent that awaits its child keeps its own permit until the child has
+    /// run. The engine follows exact parent identities through consecutive
+    /// `parent_awaits` declarations and freezes each observed live parent permit
+    /// generation. If that declared ancestor chain holds all capacity blocking
+    /// the child, no release can occur before the child runs.
+    /// The engine refuses such a submission before admission with
     /// [`crate::AdmissionVerdict::NestedWaitCycle`] (naming the capacity)
     /// instead of queueing it. Capacity shared with other holders is not a
     /// cycle — they can finish — and is queued for as usual (ADR 0003 D12).
@@ -322,7 +332,8 @@ impl TaskSpec {
         self
     }
 
-    /// Appends a sequential stage carrying the task's class and substrate hint.
+    /// Declares a sequential stage carrying the task's class and substrate hint.
+    /// The host executes only the first stage; the caller drives later stages.
     pub fn stage(mut self, stage: TaskStage, hint: SubstrateHint) -> Self {
         self.stages.push(StageDescriptor {
             class: self.class.clone(),
@@ -343,7 +354,8 @@ impl TaskSpec {
         self
     }
 
-    /// Appends a parallel/fan-out stage that carries its deterministic reduce policy.
+    /// Declares a parallel/fan-out stage and its deterministic reduce policy.
+    /// The caller or adapter executes the fan-out and reducer.
     pub fn reduce_stage(
         mut self,
         stage: TaskStage,

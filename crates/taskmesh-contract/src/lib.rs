@@ -47,7 +47,10 @@ pub use policy::{
     MemoryPermitMode, MemoryReleasePolicy, OverflowPolicy, PartialResultOrdering, RetryAfterPolicy,
     TieBreakPolicy,
 };
-pub use ports::{Clock, CpuExecutor, ExecutorCapabilities, ManualClock, PermitWaker, SystemClock};
+pub use ports::{
+    Clock, CpuExecutor, ExecutorCapabilities, ManualClock, PermitWaker, SettlementWaker,
+    SystemClock,
+};
 pub use resource::{MemoryUnitScale, PermitCost, ResourceBudget, ResourceConversionError};
 pub use runtime::Runtime;
 pub use snapshot::{

@@ -3,7 +3,7 @@
 use taskmesh_contract::{HeldCapacity, TaskClass, TaskScope, TaskSpec};
 
 use crate::engine::state::{CapacityBlock, GovernedState, PendingRequest};
-use crate::shared::{CapabilityId, CapabilityRequirementSet, PolicySet, ResolvedCost};
+use crate::shared::{CapabilityId, CapabilityRequirementSet, PermitId, PolicySet, ResolvedCost};
 
 /// Every capacity dimension blocking a request at the same state revision.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -45,7 +45,7 @@ impl BlockerSet {
     }
 }
 
-/// Exact immediate-parent evidence for an irreversible wait.
+/// Exact parent identity and declared wait-chain evidence for an irreversible wait.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CycleWitness {
     pub parent_operation_id: String,
@@ -131,6 +131,7 @@ pub fn assess(
         ScopeAssessment {
             root_operation_id: &request.spec.root_operation_id,
             scope: &request.spec.scope,
+            parent_permit_id: None,
             class: request.class,
             max_inflight: request.max_inflight,
             cost: request.cost,
@@ -153,6 +154,7 @@ pub fn assess_pending(
         ScopeAssessment {
             root_operation_id: &request.root_operation_id,
             scope: &request.scope,
+            parent_permit_id: request.parent_permit_id,
             class: &request.class,
             max_inflight,
             cost: request.cost,
@@ -166,6 +168,7 @@ pub fn assess_pending(
 struct ScopeAssessment<'a> {
     root_operation_id: &'a str,
     scope: &'a TaskScope,
+    parent_permit_id: Option<PermitId>,
     class: &'a TaskClass,
     max_inflight: u32,
     cost: ResolvedCost,
@@ -195,6 +198,7 @@ fn assess_scope(
         policies,
         request.root_operation_id,
         request.scope,
+        request.parent_permit_id,
         request.class,
         &blockers,
     ) {
@@ -208,6 +212,7 @@ fn cycle_witness(
     policies: &PolicySet,
     root_operation_id: &str,
     scope: &TaskScope,
+    parent_permit_id: Option<PermitId>,
     class: &TaskClass,
     blockers: &BlockerSet,
 ) -> Option<CycleWitness> {
@@ -219,48 +224,70 @@ fn cycle_witness(
     else {
         return None;
     };
-    let parent_id = state.permits_for_operation(root_operation_id, parent_operation_id)?;
-
-    let mut parent_in_class = 0u32;
-    let mut parent_cpu = 0u128;
-    let mut parent_memory = 0u128;
-    let mut parent_capabilities = std::collections::BTreeMap::<&CapabilityId, u32>::new();
-    if let Some(record) = state.permits.get(&parent_id) {
-        if record.class == *class {
-            parent_in_class += 1;
+    let mut ancestor_id =
+        parent_permit_id.or_else(|| state.parent_permit_for_scope(root_operation_id, scope))?;
+    let mut visited = std::collections::BTreeSet::new();
+    let mut chain_in_class = 0u128;
+    let mut chain_cpu = 0u128;
+    let mut chain_memory = 0u128;
+    let mut chain_capabilities = std::collections::BTreeMap::<&CapabilityId, u128>::new();
+    let mut observed_ancestor = false;
+    loop {
+        if !visited.insert(ancestor_id) {
+            break;
         }
-        parent_cpu += u128::from(record.ledger.cpu_units);
-        parent_memory += u128::from(record.ledger.effective_units);
+        let Some(record) = state.permits.get(&ancestor_id) else {
+            // The immediate parent must still be live to witness a cycle. A
+            // higher frozen ancestor may have ended independently; that ends
+            // traversal but cannot erase capacity already held exclusively by
+            // the live lower portion of the awaited chain.
+            if !observed_ancestor {
+                return None;
+            }
+            break;
+        };
+        observed_ancestor = true;
+        if record.class == *class {
+            chain_in_class += 1;
+        }
+        chain_cpu += u128::from(record.ledger.cpu_units);
+        chain_memory += u128::from(record.ledger.effective_units);
         for id in record.capabilities.iter() {
-            *parent_capabilities.entry(id).or_default() += 1;
+            *chain_capabilities.entry(id).or_default() += 1;
+        }
+        match &record.scope {
+            TaskScope::Child {
+                parent_awaits: true,
+                ..
+            } => {
+                let Some(next) = record.parent_permit_id else {
+                    break;
+                };
+                ancestor_id = next;
+            }
+            TaskScope::Root | TaskScope::Child { .. } => break,
         }
     }
 
     let mut held = Vec::new();
     if blockers.class_inflight
-        && parent_exclusively_holds(
-            u128::from(state.inflight(class)),
-            u128::from(parent_in_class),
-        )
+        && wait_chain_exclusively_holds(u128::from(state.inflight(class)), chain_in_class)
     {
         held.push(HeldCapacity::ClassInflight {
             class: class.clone(),
         });
     }
     for id in &blockers.capabilities {
-        let by_parent = parent_capabilities.get(id).copied().unwrap_or(0);
-        if parent_exclusively_holds(
-            u128::from(state.capability_in_use(id)),
-            u128::from(by_parent),
-        ) {
+        let by_chain = chain_capabilities.get(id).copied().unwrap_or(0);
+        if wait_chain_exclusively_holds(u128::from(state.capability_in_use(id)), by_chain) {
             let pool = policies.capability_record(id)?.name().to_owned();
             held.push(HeldCapacity::CapabilityPool { pool });
         }
     }
-    if blockers.cpu && parent_exclusively_holds(state.cpu_units_held, parent_cpu) {
+    if blockers.cpu && wait_chain_exclusively_holds(state.cpu_units_held, chain_cpu) {
         held.push(HeldCapacity::CpuBudget);
     }
-    if blockers.memory && parent_exclusively_holds(state.memory_units_held, parent_memory) {
+    if blockers.memory && wait_chain_exclusively_holds(state.memory_units_held, chain_memory) {
         held.push(HeldCapacity::MemoryBudget);
     }
     (!held.is_empty()).then(|| CycleWitness {
@@ -269,11 +296,12 @@ fn cycle_witness(
     })
 }
 
-/// A wait is cyclic only when the immediate parent owns a positive amount of
-/// every unit currently occupying the blocked capacity. Equality alone is not
-/// enough: an oversized child can exceed a budget while the parent owns zero.
-fn parent_exclusively_holds(total_held: u128, held_by_parent: u128) -> bool {
-    held_by_parent > 0 && total_held == held_by_parent
+/// A wait is cyclic only when the declared awaited ancestor chain owns a
+/// positive amount of every unit currently occupying the blocked capacity.
+/// Equality alone is not enough: an oversized child can exceed a budget while
+/// its wait chain owns zero.
+fn wait_chain_exclusively_holds(total_held: u128, held_by_chain: u128) -> bool {
+    held_by_chain > 0 && total_held == held_by_chain
 }
 
 /// Whether a request has an earlier same-domain predecessor in its class queue.
@@ -294,7 +322,7 @@ pub fn queued_behind_index(
 #[cfg(test)]
 mod tests {
     use super::{
-        cycle_witness, parent_exclusively_holds, queued_behind_index, BlockerSet,
+        cycle_witness, queued_behind_index, wait_chain_exclusively_holds, BlockerSet,
         CapacityAssessment,
     };
     use crate::engine::state::{ClassState, GovernedState};
@@ -334,10 +362,10 @@ mod tests {
     }
 
     #[test]
-    fn exclusive_parent_capacity_requires_positive_exact_ownership() {
-        assert!(!parent_exclusively_holds(0, 0));
-        assert!(!parent_exclusively_holds(2, 1));
-        assert!(parent_exclusively_holds(2, 2));
+    fn exclusive_wait_chain_capacity_requires_positive_exact_ownership() {
+        assert!(!wait_chain_exclusively_holds(0, 0));
+        assert!(!wait_chain_exclusively_holds(2, 1));
+        assert!(wait_chain_exclusively_holds(2, 2));
     }
 
     #[test]
@@ -369,6 +397,7 @@ mod tests {
             operation: "parent",
             root_operation_id: "root",
             scope: TaskScope::Root,
+            parent_permit_id: None,
             target_stage: TaskStage::new("io"),
             provenance: Provenance::of(&parent_spec),
             capabilities: CapabilityRequirementSet::empty(),
@@ -402,7 +431,15 @@ mod tests {
             parent_awaits: true,
         };
         assert_eq!(
-            cycle_witness(&state, &policy, "root", &scope, &requested_class, &blockers,),
+            cycle_witness(
+                &state,
+                &policy,
+                "root",
+                &scope,
+                None,
+                &requested_class,
+                &blockers,
+            ),
             None,
             "capacity held only by unrelated work is reversible for this parent"
         );

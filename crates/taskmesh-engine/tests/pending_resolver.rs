@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 
 use taskmesh_contract::{
     AdmissionVerdict, ClassPolicy, HeldCapacity, ManualClock, MemoryOvercommitPolicy,
-    OverflowPolicy, PermitWaker, ResourceBudget, SubstrateHint, TaskClass, TaskSpec, TaskStage,
+    OverflowPolicy, PermitWaker, ResourceBudget, SettlementWaker, SubstrateHint, TaskClass,
+    TaskSpec, TaskStage,
 };
 use taskmesh_engine::{
     AdmissionDecision, BlockerSet, CapacityAssessment, ClaimOutcome, Governor, PolicySet,
@@ -391,6 +392,97 @@ fn promotion_reassessment_terminalizes_a_newly_formed_parent_cycle() {
     assert_eq!(g.snapshot().classes[&class("child")].queued, 0);
     assert_eq!(g.release(parent), ReleaseOutcome::Released);
     assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
+struct SettlementProbe {
+    governor: OnceLock<Weak<Governor>>,
+    wakes: AtomicUsize,
+    child_queued_at_wake: AtomicUsize,
+}
+
+impl SettlementWaker for SettlementProbe {
+    fn wake(&self) {
+        let governor = self
+            .governor
+            .get()
+            .and_then(Weak::upgrade)
+            .expect("probe is attached before any settling transition");
+        let queued = governor.snapshot().classes[&class("child")].queued;
+        self.child_queued_at_wake.store(
+            usize::try_from(queued).expect("queued count fits usize"),
+            Ordering::SeqCst,
+        );
+        self.wakes.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[allow(
+    clippy::clone_on_ref_ptr,
+    reason = "Arc::clone fixes the output type before the trait-object unsizing coercion"
+)]
+fn settlement_port<T: SettlementWaker + 'static>(value: &Arc<T>) -> Arc<dyn SettlementWaker> {
+    value.clone()
+}
+
+#[test]
+fn cycle_terminalization_notifies_settlement_after_unlock() {
+    let policies = BTreeMap::from([
+        (class("parent"), queueing(4, 1, 1)),
+        (class("child"), queueing(1, 1, 1)),
+    ]);
+    let policy = PolicySet::new(
+        ResourceBudget::new().cpu_units(100).memory_units(100),
+        policies,
+    )
+    .with_capability_limits(BTreeMap::from([
+        ("blocking".to_owned(), 1),
+        ("large_stack".to_owned(), 0),
+    ]))
+    .expect("built-in capability authority");
+    let probe = Arc::new(SettlementProbe {
+        governor: OnceLock::new(),
+        wakes: AtomicUsize::new(0),
+        child_queued_at_wake: AtomicUsize::new(usize::MAX),
+    });
+    let settlement = settlement_port(&probe);
+    let g = Arc::new(
+        Governor::new_with_settlement_waker(policy, Arc::new(ManualClock::new(10)), settlement)
+            .expect("valid policy"),
+    );
+    probe
+        .governor
+        .set(Arc::downgrade(&g))
+        .expect("probe attached once");
+
+    let stranger = admitted(&g, &TaskSpec::io(class("child")).operation("stranger"));
+    let queued = TaskSpec::blocking(class("child"))
+        .awaited_child_of("root", "parent", TaskStage::new("parent-stage"))
+        .operation("queued-child");
+    let AdmissionDecision::Queued { ticket } = g.admit(&queued) else {
+        panic!("the unrelated holder initially creates a reversible wait");
+    };
+    let parent = admitted(
+        &g,
+        &rename_primary(
+            TaskSpec::blocking(class("parent"))
+                .child_of("root", "root", TaskStage::new("root-stage"))
+                .operation("parent"),
+            "parent-stage",
+        ),
+    );
+
+    assert_eq!(g.release(stranger), ReleaseOutcome::Released);
+    assert_eq!(probe.wakes.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        probe.child_queued_at_wake.load(Ordering::SeqCst),
+        0,
+        "the callback re-enters snapshot after terminalization and after unlock"
+    );
+    assert!(matches!(
+        g.claim(ticket),
+        ClaimOutcome::Terminal(TerminalReason::IrreversibleWaitCycle { .. })
+    ));
+    assert_eq!(g.release(parent), ReleaseOutcome::Released);
 }
 
 #[test]

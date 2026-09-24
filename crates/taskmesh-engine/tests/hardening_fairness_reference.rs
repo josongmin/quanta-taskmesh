@@ -1784,6 +1784,87 @@ fn cancelled_requests_leave_no_virtual_time_debt() {
 }
 
 #[test]
+fn cancelling_a_wfq_head_removes_its_debt_from_live_survivors() {
+    // All three requests arrive while one global unit is held. With equal
+    // weights, removing unserved a0 must make a1's effective finish tag tie
+    // b0's; a1 arrived first and therefore wins the stable tie-break. Keeping
+    // a1's original tag charges class a for service a0 never received.
+    let g = contended(vec![("a", weighted_class(1)), ("b", weighted_class(1))]);
+    let filler = admit_filler(&g);
+    let (cancelled, _) = queue(&g, "a", "a0");
+    let (survivor, _) = queue(&g, "a", "a1");
+    let (peer, _) = queue(&g, "b", "b0");
+
+    g.abandon(cancelled);
+    assert_eq!(g.release(filler), ReleaseOutcome::Released);
+    assert!(
+        matches!(g.ticket_status(survivor), ClaimOutcome::Ready(_)),
+        "an unserved cancelled head must not leave virtual service debt"
+    );
+    assert_eq!(g.ticket_status(peer), ClaimOutcome::Pending);
+
+    let ClaimOutcome::Ready(first) = g.claim(survivor) else {
+        panic!("surviving a request was promoted")
+    };
+    assert_eq!(g.release(first), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(second) = g.claim(peer) else {
+        panic!("peer request was promoted second")
+    };
+    assert_eq!(g.release(second), ReleaseOutcome::Released);
+}
+
+#[test]
+fn cancellation_preserves_each_survivors_virtual_arrival_floor() {
+    // `a0` arrives at virtual time 0 while `a` is quota-blocked. Serving b0
+    // advances global virtual time to 0.5 before survivor a1 arrives. Removing
+    // a0 must therefore rebuild a1 from its own 0.5 arrival floor, giving 1.5;
+    // it must not rewind a1 to 1.0. A later weight-2 b1 has finish 1.0 and must
+    // run first. This distinguishes exact debt removal from over-compaction.
+    let mut classes = BTreeMap::new();
+    classes.insert(TaskClass::new("a"), weighted_class(1).max_inflight(1));
+    classes.insert(TaskClass::new("b"), weighted_class(2));
+    classes.insert(TaskClass::new("fill"), fifo_class());
+    let g = Governor::new_unchecked(
+        PolicySet::new(
+            ResourceBudget::new().cpu_units(2).memory_units(1_000_000),
+            classes,
+        ),
+        Arc::new(ManualClock::new(1_000)),
+    );
+
+    let a_holder = admit_one(&g, "a", "a-holder");
+    let fill_holder = admit_one(&g, "fill", "fill-holder");
+    let (victim, _) = queue(&g, "a", "a0");
+    let (b0, _) = queue(&g, "b", "b0");
+
+    assert_eq!(g.release(fill_holder), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(b0_permit) = g.claim(b0) else {
+        panic!("b0 advances virtual time while a remains quota-blocked")
+    };
+
+    let (survivor, _) = queue(&g, "a", "a1");
+    g.abandon(victim);
+    let (peer, _) = queue(&g, "b", "b1");
+    assert_eq!(g.release(a_holder), ReleaseOutcome::Released);
+    assert!(
+        matches!(g.ticket_status(peer), ClaimOutcome::Ready(_)),
+        "b1 at finish 1.0 must precede a1 at finish 1.5"
+    );
+    assert_eq!(g.ticket_status(survivor), ClaimOutcome::Pending);
+
+    let ClaimOutcome::Ready(peer_permit) = g.claim(peer) else {
+        panic!("peer was promoted first")
+    };
+    assert_eq!(g.release(b0_permit), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(survivor_permit) = g.claim(survivor) else {
+        panic!("survivor was promoted after b0 released")
+    };
+    assert_eq!(g.release(peer_permit), ReleaseOutcome::Released);
+    assert_eq!(g.release(survivor_permit), ReleaseOutcome::Released);
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
+#[test]
 fn cancelling_from_the_middle_preserves_the_order_of_the_survivors() {
     // Removal must not reorder what is left, whichever position it happens at.
     // The survivors are the same class, so class names cannot tell them apart:

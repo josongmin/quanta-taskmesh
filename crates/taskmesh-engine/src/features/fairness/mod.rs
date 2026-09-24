@@ -4,4 +4,4 @@ pub mod retry_after;
 pub mod scheduler;
 
 pub use retry_after::compute as retry_after;
-pub use scheduler::{enqueue_tags, has_runnable, on_queue_changed, select};
+pub use scheduler::{enqueue_tags, has_runnable, on_request_served, on_unserved_removed, select};

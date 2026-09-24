@@ -55,10 +55,11 @@ pub fn enqueue_tags(
     policy: &ClassPolicy,
     cost_cpu_units: u32,
     enqueued_at_ms: u64,
-) -> (u128, u64) {
-    let finish_tag = match policy.fairness {
+) -> (u128, u128, u64) {
+    let (finish_tag, wfq_arrival_tag) = match policy.fairness {
         FairnessPolicy::WeightedFairQueue { weight, .. } => {
             let increment = wfq_increment(cost_cpu_units, weight);
+            let mut arrival = state.virtual_time;
             let base = {
                 let virtual_time = state.virtual_time;
                 let cstate = state.class_mut(class);
@@ -70,6 +71,7 @@ pub fn enqueue_tags(
                 // Rebasing keeps every *difference* between tags identical, so
                 // proportional service is preserved across the reset.
                 rebase_virtual_time(state);
+                arrival = state.virtual_time;
                 let virtual_time = state.virtual_time;
                 let cstate = state.class_mut(class);
                 cstate
@@ -78,15 +80,15 @@ pub fn enqueue_tags(
                     .saturating_add(increment)
             };
             state.class_mut(class).last_finish_tag = tag;
-            tag
+            (tag, arrival)
         }
-        _ => 0,
+        _ => (0, 0),
     };
     let deadline_ms = match policy.fairness {
         FairnessPolicy::DeadlineAware { slack_ms } => enqueued_at_ms.saturating_add(slack_ms),
         _ => u64::MAX,
     };
-    (finish_tag, deadline_ms)
+    (finish_tag, wfq_arrival_tag, deadline_ms)
 }
 
 /// The virtual-time increment one request of `cost_cpu_units` adds to a class of
@@ -105,8 +107,10 @@ fn rebase_virtual_time(state: &mut GovernedState) {
     state.virtual_time = 0;
     for cstate in state.classes.values_mut() {
         cstate.last_finish_tag = cstate.last_finish_tag.saturating_sub(origin);
+        cstate.last_served_finish_tag = cstate.last_served_finish_tag.saturating_sub(origin);
         for request in &mut cstate.queue {
             request.finish_tag = request.finish_tag.saturating_sub(origin);
+            request.wfq_arrival_tag = request.wfq_arrival_tag.saturating_sub(origin);
         }
     }
 }
@@ -162,8 +166,8 @@ mod tests {
     }
 }
 
-/// Re-derive a class's WFQ baseline after a queued request was removed without
-/// being served.
+/// Re-derive a class's WFQ tags after a queued request was removed without
+/// receiving service.
 ///
 /// A cancelled request never consumed service, so it must not leave virtual-time
 /// debt behind: a class that cancels ten requests would otherwise be pushed
@@ -175,21 +179,55 @@ mod tests {
 /// capacity-blocking does not, so a blocked-but-nonempty queue keeps its credit.
 ///
 /// Cost is `O(remaining queue)`, bounded by the class's `max_queue_depth`.
-pub fn on_queue_changed(state: &mut GovernedState, class: &TaskClass) {
+pub fn on_unserved_removed(state: &mut GovernedState, class: &TaskClass, policy: &ClassPolicy) {
     let virtual_time = state.virtual_time;
     let cstate = state.class_mut(class);
     if cstate.queue.is_empty() {
         cstate.last_finish_tag = virtual_time;
+        cstate.last_served_finish_tag = virtual_time;
         cstate.deficit = 0;
         return;
     }
-    let max_tag = cstate
+    if let FairnessPolicy::WeightedFairQueue { weight, .. } = policy.fairness {
+        let mut cursor = cstate.last_served_finish_tag;
+        for request in &mut cstate.queue {
+            let start = cursor.max(request.wfq_arrival_tag);
+            request.finish_tag =
+                start.saturating_add(wfq_increment(request.cost.cpu_units, weight));
+            cursor = request.finish_tag;
+        }
+        cstate.last_finish_tag = cursor.max(virtual_time);
+    } else {
+        cstate.last_finish_tag = cstate
+            .queue
+            .iter()
+            .map(|request| request.finish_tag)
+            .max()
+            .unwrap_or(virtual_time)
+            .max(virtual_time);
+    }
+}
+
+/// Record a request that left the queue because it received service. Its
+/// finish tag remains real debt; compacting survivors here would let a busy
+/// class erase service by dispatching.
+pub fn on_request_served(state: &mut GovernedState, class: &TaskClass, finish_tag: u128) {
+    let virtual_time = state.virtual_time;
+    let cstate = state.class_mut(class);
+    if cstate.queue.is_empty() {
+        cstate.last_finish_tag = virtual_time;
+        cstate.last_served_finish_tag = virtual_time;
+        cstate.deficit = 0;
+        return;
+    }
+    cstate.last_served_finish_tag = cstate.last_served_finish_tag.max(finish_tag);
+    cstate.last_finish_tag = cstate
         .queue
         .iter()
         .map(|request| request.finish_tag)
         .max()
-        .unwrap_or(virtual_time);
-    cstate.last_finish_tag = max_tag.max(virtual_time);
+        .unwrap_or(virtual_time)
+        .max(virtual_time);
 }
 
 /// A runnable class and the head request driving its dispatch key.

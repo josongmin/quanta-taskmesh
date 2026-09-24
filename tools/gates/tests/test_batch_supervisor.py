@@ -187,28 +187,33 @@ def test_escaped_descendant_cannot_hold_capture_pipes_past_deadline(
     tmp_path: Path, mode: str
 ) -> None:
     marker = tmp_path / "escaped.pid"
-    escaped = (
-        "from pathlib import Path; import os, signal, sys; "
-        "marker = Path(sys.argv[1]); pending = marker.with_suffix('.tmp'); "
-        "pending.write_text(str(os.getpid())); os.replace(pending, marker); "
-        "signal.pause()"
-    )
+    # Fork instead of spawning a second interpreter. The child first leaves the
+    # owned group and only then publishes its pid, so the fixture deterministically
+    # holds the inherited capture pipes before the supervisor's deadline.
     leader = (
-        "import os, subprocess, sys, time\n"
-        "marker, escaped = sys.argv[1:]\n"
-        "subprocess.Popen([sys.executable, '-c', escaped, marker], start_new_session=True)\n"
+        "from pathlib import Path\n"
+        "import os, signal, sys, time\n"
+        "marker = Path(sys.argv[1])\n"
+        "child = os.fork()\n"
+        "if child == 0:\n"
+        "    os.setsid()\n"
+        "    pending = marker.with_suffix('.tmp')\n"
+        "    pending.write_text(str(os.getpid()))\n"
+        "    os.replace(pending, marker)\n"
+        "    signal.pause()\n"
+        "    os._exit(0)\n"
         "deadline = time.monotonic() + 2\n"
-        "while not os.path.exists(marker) and time.monotonic() < deadline:\n"
+        "while not marker.exists() and time.monotonic() < deadline:\n"
         "    time.sleep(0.01)\n"
-        "sys.exit(0 if os.path.exists(marker) else 1)\n"
+        "signal.pause() if marker.exists() else sys.exit(1)\n"
     )
     wrapper = tmp_path / "wrapper.py"
     run = (
         "result = supervisor.run_process(argv, cwd=Path.cwd(), "
-        "env=os.environ.copy(), timeout_seconds=0.2)\n"
+        "env=os.environ.copy(), timeout_seconds=2.0)\n"
         if mode == "single"
         else "result = supervisor.run_process_batch([supervisor.SupervisedCommand("
-        "argv, Path.cwd(), os.environ.copy(), 0.2)])[0].process\n"
+        "argv, Path.cwd(), os.environ.copy(), 2.0)])[0].process\n"
     )
     wrapper.write_text(
         "import json, os, sys\n"
@@ -216,7 +221,7 @@ def test_escaped_descendant_cannot_hold_capture_pipes_past_deadline(
         "from pathlib import Path\n"
         "import tools.process_supervisor as supervisor\n"
         "supervisor.TERMINATION_GRACE_SECONDS = 0.1\n"
-        f"argv = [sys.executable, '-c', {leader!r}, sys.argv[1], {escaped!r}]\n"
+        f"argv = [sys.executable, '-c', {leader!r}, sys.argv[1]]\n"
         + run
         + "print(json.dumps({'returncode': result.returncode, "
         "'timed_out': result.timed_out, 'stderr': result.stderr}))\n",
@@ -228,11 +233,12 @@ def test_escaped_descendant_cannot_hold_capture_pipes_past_deadline(
             cwd=tmp_path,
             capture_output=True,
             text=True,
-            timeout=4,
+            timeout=8,
             check=False,
         )
         assert completed.returncode == 0, completed.stderr
         result = json.loads(completed.stdout)
+        assert marker.exists(), "escaped descendant never established the hostile fixture"
         assert result["timed_out"] is True
         assert "capture pipes remained open" in result["stderr"]
     finally:

@@ -39,18 +39,36 @@ fn duplicate_substrate_registration_rejects() {
     // Re-registering a built-in name ("cpu") as a deployment extra must be
     // rejected — additions can never shadow the canonical inventory.
     let dup = SubstrateRecord::new("cpu", SubstrateKind::CompetingExecution, Some("cpu"));
-    assert!(gov_with(vec![dup]).is_err());
+    let error = gov_with(vec![dup]).expect_err("a built-in substrate cannot be shadowed");
+    assert_eq!(
+        error,
+        GovernorError::PolicyViolation("duplicate substrate registration: cpu".into())
+    );
 }
 
 #[test]
 fn missing_capability_pool_rejects_unless_authority_only() {
     // CompetingExecution without a pool is invalid.
     let bad = SubstrateRecord::new("rogue", SubstrateKind::CompetingExecution, None::<&str>);
-    assert!(gov_with(vec![bad]).is_err());
+    let error = gov_with(vec![bad]).expect_err("an executing substrate requires a pool");
+    assert_eq!(
+        error,
+        GovernorError::PolicyViolation(
+            "substrate rogue requires a non-empty capability pool".into()
+        )
+    );
 
     // AuthorityOnly is allowed without a pool.
     let ok = SubstrateRecord::new("authority", SubstrateKind::AuthorityOnly, None::<&str>);
-    assert!(gov_with(vec![ok]).is_ok());
+    let governor = gov_with(vec![ok]).expect("authority-only substrates need no capacity pool");
+    assert!(
+        governor
+            .snapshot()
+            .substrates
+            .iter()
+            .any(|record| record.name.as_ref() == "authority"),
+        "the accepted authority-only substrate must enter the runtime inventory"
+    );
 }
 
 #[test]

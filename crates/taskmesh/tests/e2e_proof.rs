@@ -208,13 +208,18 @@ fn governance_invariants_via_governor() {
     // Deterministic reduce enforcement.
     let bad = TaskSpec::cpu(TaskClass::new("worker"))
         .fan_out_stage(TaskStage::new("merge"), SubstrateHint::SharedCpuExecutor);
-    assert!(Governor::validate_reduce(&bad).is_err());
+    assert_eq!(
+        Governor::validate_reduce(&bad),
+        Err(GovernorError::PolicyViolation(
+            "parallel stage merge requires a deterministic reduce policy".into()
+        ))
+    );
     let good = TaskSpec::cpu(TaskClass::new("worker")).reduce_stage(
         TaskStage::new("merge"),
         SubstrateHint::SharedCpuExecutor,
         DeterministicReducePolicy::keyed("doc_id"),
     );
-    assert!(Governor::validate_reduce(&good).is_ok());
+    assert_eq!(Governor::validate_reduce(&good), Ok(()));
 }
 
 /// Proof scenarios 10, 11: snapshot exposes class + substrate inventory; an

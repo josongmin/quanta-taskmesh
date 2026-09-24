@@ -139,6 +139,7 @@ async fn dropping_a_queued_submission_abandons_it_without_leak() {
     };
     // This submission must queue behind the occupied slot; we then drop it.
     let fut = rt.run_blocking(blk("c", "q"), || Ok::<i32, ()>(1));
+    // nosemgrep: taskmesh-test-is-err-without-error-check -- timeout has one error outcome; cleanup state is asserted below
     assert!(
         timeout(Duration::from_millis(60), fut).await.is_err(),
         "submission stays queued behind the held slot"

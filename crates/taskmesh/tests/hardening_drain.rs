@@ -736,6 +736,7 @@ async fn abandoning_an_unclaimed_promotion_is_a_custody_return_the_drain_hears()
     ));
     // Poll it into the queue, then stop polling it.
     let parked = tokio::time::timeout(Duration::from_millis(20), waiter.as_mut()).await;
+    // nosemgrep: taskmesh-test-is-err-without-error-check -- timeout has one error outcome; the queue snapshot is the oracle
     assert!(
         parked.is_err(),
         "the waiter must queue behind the held slot, got {parked:?}"

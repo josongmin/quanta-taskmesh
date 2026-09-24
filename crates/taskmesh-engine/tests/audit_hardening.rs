@@ -23,7 +23,12 @@ fn governor_new_rejects_invalid_policy() {
         ResourceBudget::new().cpu_units(4),
         classes(vec![("c", ClassPolicy::new().cpu_units(8))]),
     );
-    assert!(Governor::new(policy, Arc::new(ManualClock::new(0))).is_err());
+    let error = Governor::new(policy, Arc::new(ManualClock::new(0)))
+        .expect_err("a class larger than the global CPU budget must be rejected");
+    assert_eq!(
+        error,
+        GovernorError::PolicyViolation("class c exceeds global cpu budget".into())
+    );
 }
 
 #[test]
@@ -38,7 +43,14 @@ fn governor_new_rejects_mixed_tier_fairness() {
             ),
         ]),
     );
-    assert!(Governor::new(policy, Arc::new(ManualClock::new(0))).is_err());
+    let error = Governor::new(policy, Arc::new(ManualClock::new(0)))
+        .expect_err("mixed primary-tier fairness must be rejected");
+    assert_eq!(
+        error,
+        GovernorError::PolicyViolation(
+            "class z mixes a different fairness discipline within its scheduling tier; all classes in a tier must share one discipline".into()
+        )
+    );
 }
 
 #[test]
@@ -47,7 +59,13 @@ fn governor_new_accepts_valid_policy() {
         ResourceBudget::new().cpu_units(16),
         classes(vec![("c", ClassPolicy::new().cpu_units(1))]),
     );
-    assert!(Governor::new(policy, Arc::new(ManualClock::new(0))).is_ok());
+    let governor = Governor::new(policy, Arc::new(ManualClock::new(0)))
+        .expect("the bounded policy must construct a governor");
+    assert_eq!(
+        governor.snapshot().classes[&TaskClass::new("c")].cpu_units_held,
+        0,
+        "construction starts with no charged CPU capacity"
+    );
 }
 
 // ---- C: spec-shape validation (zero-stage, inconsistent per-stage class) ----
@@ -96,10 +114,14 @@ fn empty_capability_pool_name_is_rejected() {
         classes(vec![("c", ClassPolicy::new())]),
     )
     .with_substrates(vec![bad]);
-    assert!(
-        policy.is_err(),
-        "Some(\"\") pool must be rejected like None"
-    );
+    match policy {
+        Err(GovernorError::PolicyViolation(message)) => assert_eq!(
+            message, "substrate rogue requires a non-empty capability pool",
+            "Some(\"\") must report the empty capability pool"
+        ),
+        Err(other) => panic!("Some(\"\") returned the wrong error: {other}"),
+        Ok(_) => panic!("Some(\"\") pool must be rejected like None"),
+    }
 }
 
 // ---- B: reconcile downward promotes queued work ----------------------------

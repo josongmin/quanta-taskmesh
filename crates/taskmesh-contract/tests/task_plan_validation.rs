@@ -236,7 +236,12 @@ fn serde_rejects_missing_immediate_parent_and_invalid_provenance() {
         "scope":{"Child":{"parent_stage":"fanout","parent_awaits":true}},
         "stages":[{"class":"worker","stage":"io","substrate_hint":"AsyncIo","fan_out":false,"reduce_policy":null}]
     }"#;
-    assert!(serde_json::from_str::<TaskSpec>(child_without_parent).is_err());
+    let error = serde_json::from_str::<TaskSpec>(child_without_parent)
+        .expect_err("a child scope without its immediate parent identity must be rejected");
+    assert!(
+        error.to_string().contains("parent_operation_id"),
+        "the wire error must identify the missing parent operation: {error}"
+    );
     let error = serde_json::from_str::<PlanSource>(r#""source with spaces""#).unwrap_err();
     assert!(error.to_string().contains("invalid character"));
 }

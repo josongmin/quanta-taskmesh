@@ -32,6 +32,7 @@ async fn permit_released_when_run_future_is_cancelled() {
     // run_io over a future that never resolves; cancel it via an outer timeout.
     let never = rt.run_io(spec("hang"), std::future::pending::<Result<(), ()>>());
     let timed = tokio::time::timeout(Duration::from_millis(50), never).await;
+    // nosemgrep: taskmesh-test-is-err-without-error-check -- timeout has one error outcome; permit release is asserted below
     assert!(
         timed.is_err(),
         "the submission must be cancelled by timeout"
@@ -65,6 +66,7 @@ async fn cancellation_frees_capacity_for_the_next_request() {
     // Dropping the timed-out future is the cancellation under test; the
     // submissions themselves never complete (they are `pending`), so the
     // timeout must be what ends the wait.
+    // nosemgrep: taskmesh-test-is-err-without-error-check -- timeout has one error outcome; both released permits are asserted below
     assert!(
         tokio::time::timeout(Duration::from_millis(50), both)
             .await

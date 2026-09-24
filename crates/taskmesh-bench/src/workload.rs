@@ -879,9 +879,20 @@ mod tests {
         let parsed = trace_from_csv(text).expect("valid");
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed.as_slice()[1].class, "rank");
-        assert!(trace_from_csv("not_a_number,retrieval").is_err());
-        assert!(trace_from_csv("0.5").is_err()); // missing comma
-        assert!(trace_from_csv("0.5,").is_err()); // empty class
+        let bad_time = trace_from_csv("not_a_number,retrieval")
+            .expect_err("a non-numeric send time must be rejected");
+        assert!(
+            bad_time.starts_with("line 1: bad send_time \"not_a_number\":"),
+            "unexpected parse error: {bad_time}"
+        );
+        assert_eq!(
+            trace_from_csv("0.5").expect_err("a row without a comma must be rejected"),
+            "line 1: missing comma: \"0.5\""
+        );
+        assert_eq!(
+            trace_from_csv("0.5,").expect_err("an empty class must be rejected"),
+            "line 1: empty class"
+        );
         assert!(trace_from_csv("0.5,bad?class")
             .is_err_and(|error| error.starts_with("line 1: arrival 0: invalid class")));
         assert!(trace_from_csv("# header\n\nmissing")

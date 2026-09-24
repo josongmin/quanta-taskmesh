@@ -16,13 +16,21 @@ fn policy(resources: ResourceBudget, list: Vec<(&'static str, ClassPolicy)>) -> 
     PolicySet::new(resources, classes(list))
 }
 
+fn assert_policy_violation(policy: &PolicySet, expected: &str) {
+    let error = Governor::validate_policy(policy).expect_err(expected);
+    assert_eq!(
+        error,
+        GovernorError::PolicyViolation(expected.to_owned().into())
+    );
+}
+
 #[test]
 fn valid_minimal_config_passes() {
     let p = policy(
         ResourceBudget::new().cpu_units(16).memory_units(32),
         vec![("retrieval", ClassPolicy::new().cpu_units(1).memory_units(2))],
     );
-    assert!(Governor::validate_policy(&p).is_ok());
+    assert_eq!(Governor::validate_policy(&p), Ok(()));
 }
 
 #[test]
@@ -56,7 +64,7 @@ fn class_cpu_over_global_budget_fails() {
         ResourceBudget::new().cpu_units(4),
         vec![("c", ClassPolicy::new().cpu_units(8))],
     );
-    assert!(Governor::validate_policy(&p).is_err());
+    assert_policy_violation(&p, "class c exceeds global cpu budget");
 }
 
 #[test]
@@ -65,7 +73,7 @@ fn class_memory_over_global_budget_fails() {
         ResourceBudget::new().memory_units(4),
         vec![("c", ClassPolicy::new().memory_units(8))],
     );
-    assert!(Governor::validate_policy(&p).is_err());
+    assert_policy_violation(&p, "class c exceeds global memory budget");
 }
 
 #[test]
@@ -76,7 +84,7 @@ fn per_request_limit_overflow_fails() {
             .per_request_cpu_units(2),
         vec![("c", ClassPolicy::new().cpu_units(4))],
     );
-    assert!(Governor::validate_policy(&p).is_err());
+    assert_policy_violation(&p, "class c exceeds per-request cpu limit");
 }
 
 #[test]
@@ -131,7 +139,10 @@ fn measured_mode_requires_bytes_per_unit() {
                 .memory_permit_mode(MemoryPermitMode::Measured),
         )],
     );
-    assert!(Governor::validate_policy(&p).is_err());
+    assert_policy_violation(
+        &p,
+        "class c: measured/hybrid memory requires bytes_per_unit > 0",
+    );
 }
 
 #[test]
@@ -143,7 +154,7 @@ fn queueable_class_requires_queue_depth() {
             ClassPolicy::new().overflow_policy(OverflowPolicy::QueueWithinDepth),
         )],
     );
-    assert!(Governor::validate_policy(&p).is_err());
+    assert_policy_violation(&p, "class c is queueable but has max_queue_depth == 0");
 }
 
 #[test]
@@ -159,7 +170,7 @@ fn degrade_to_unknown_fallback_fails() {
                 }),
         )],
     );
-    assert!(Governor::validate_policy(&p).is_err());
+    assert_policy_violation(&p, "class c degrades to unknown fallback missing");
 }
 
 #[test]
@@ -178,7 +189,7 @@ fn degrade_to_present_fallback_passes() {
             ("light", ClassPolicy::new().memory_units(1)),
         ],
     );
-    assert!(Governor::validate_policy(&p).is_ok());
+    assert_eq!(Governor::validate_policy(&p), Ok(()));
 }
 
 #[test]
@@ -280,7 +291,10 @@ fn scavenger_fairness_requires_best_effort() {
             ClassPolicy::new().fairness(FairnessPolicy::BestEffortScavenger), // best_effort defaults false
         )],
     );
-    assert!(Governor::validate_policy(&p).is_err());
+    assert_policy_violation(
+        &p,
+        "class c uses BestEffortScavenger fairness but is not best_effort",
+    );
 
     let ok = policy(
         ResourceBudget::new(),
@@ -291,7 +305,7 @@ fn scavenger_fairness_requires_best_effort() {
                 .best_effort(true),
         )],
     );
-    assert!(Governor::validate_policy(&ok).is_ok());
+    assert_eq!(Governor::validate_policy(&ok), Ok(()));
 }
 
 #[test]
@@ -308,7 +322,10 @@ fn mixed_fairness_disciplines_in_a_tier_reject() {
             ),
         ],
     );
-    assert!(Governor::validate_policy(&p).is_err());
+    assert_policy_violation(
+        &p,
+        "class z mixes a different fairness discipline within its scheduling tier; all classes in a tier must share one discipline",
+    );
 }
 
 #[test]
@@ -333,7 +350,7 @@ fn same_discipline_different_weights_is_ok() {
             ),
         ],
     );
-    assert!(Governor::validate_policy(&p).is_ok());
+    assert_eq!(Governor::validate_policy(&p), Ok(()));
 }
 
 #[test]
@@ -354,7 +371,7 @@ fn different_discipline_across_tiers_is_ok() {
             ),
         ],
     );
-    assert!(Governor::validate_policy(&p).is_ok());
+    assert_eq!(Governor::validate_policy(&p), Ok(()));
 }
 
 /// The three `validate_policy` rejections the coverage report showed no test
@@ -398,8 +415,9 @@ fn a_weighted_fair_queue_weight_of_zero_is_rejected_not_coerced() {
             }),
         )],
     );
-    assert!(
-        Governor::validate_policy(&ok).is_ok(),
+    assert_eq!(
+        Governor::validate_policy(&ok),
+        Ok(()),
         "weight 1 is the smallest valid weight"
     );
 }
@@ -433,8 +451,9 @@ fn queueing_on_memory_overcommit_requires_a_queue_to_wait_in() {
                 .memory_overcommit_policy(MemoryOvercommitPolicy::Queue),
         )],
     );
-    assert!(
-        Governor::validate_policy(&ok).is_ok(),
+    assert_eq!(
+        Governor::validate_policy(&ok),
+        Ok(()),
         "depth 1 is enough to queue"
     );
 }

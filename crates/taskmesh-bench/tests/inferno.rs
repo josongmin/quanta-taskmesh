@@ -14,9 +14,9 @@ use rand::{Rng, SeedableRng};
 
 use taskmesh_bench::workload::{fixture, retrieval_policy, root_spec};
 use taskmesh_contract::{
-    AdmissionVerdict, ClassPolicy, DeterministicReducePolicy, MemoryOvercommitPolicy,
-    MemoryReleasePolicy, OverflowPolicy, RetryAfterPolicy, Snapshot, SubstrateHint, TaskClass,
-    TaskSpec, TaskStage,
+    AdmissionVerdict, ClassPolicy, DeterministicReducePolicy, GovernorError,
+    MemoryOvercommitPolicy, MemoryReleasePolicy, OverflowPolicy, RetryAfterPolicy, Snapshot,
+    SubstrateHint, TaskClass, TaskSpec, TaskStage,
 };
 use taskmesh_engine::{
     AdmissionDecision, ClaimOutcome, Governor, PermitId, ReconcileOutcome, ReleaseOutcome,
@@ -559,7 +559,12 @@ fn malformed_fanout_rejects_well_formed_admits() {
     let bad = TaskSpec::blocking(m.clone())
         .operation("bad")
         .fan_out_stage(TaskStage::new("map"), SubstrateHint::SharedCpuExecutor);
-    assert!(Governor::validate_reduce(&bad).is_err());
+    assert_eq!(
+        Governor::validate_reduce(&bad),
+        Err(GovernorError::PolicyViolation(
+            "parallel stage map requires a deterministic reduce policy".into()
+        ))
+    );
     match g.admit(&bad) {
         AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask) => {}
         o => panic!("malformed fan-out must reject as MalformedTask, got {o:?}"),
@@ -573,7 +578,7 @@ fn malformed_fanout_rejects_well_formed_admits() {
             SubstrateHint::SharedCpuExecutor,
             DeterministicReducePolicy::keyed("score"),
         );
-    assert!(Governor::validate_reduce(&good).is_ok());
+    assert_eq!(Governor::validate_reduce(&good), Ok(()));
     match g.admit(&good) {
         AdmissionDecision::Admitted { permit_id } => {
             assert_eq!(g.release(permit_id), ReleaseOutcome::Released);

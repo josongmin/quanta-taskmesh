@@ -374,13 +374,18 @@ fn composite_pipeline_attribution_recursion_and_reduce() {
     // Reduce enforcement: fan-out without a policy is unshippable.
     let bad = TaskSpec::cpu(cls("worker"))
         .fan_out_stage(TaskStage::new("merge"), SubstrateHint::SharedCpuExecutor);
-    assert!(Governor::validate_reduce(&bad).is_err());
+    assert_eq!(
+        Governor::validate_reduce(&bad),
+        Err(GovernorError::PolicyViolation(
+            "parallel stage merge requires a deterministic reduce policy".into()
+        ))
+    );
     let good = TaskSpec::cpu(cls("worker")).reduce_stage(
         TaskStage::new("merge"),
         SubstrateHint::SharedCpuExecutor,
         DeterministicReducePolicy::keyed("doc_id"),
     );
-    assert!(Governor::validate_reduce(&good).is_ok());
+    assert_eq!(Governor::validate_reduce(&good), Ok(()));
 
     // Releasing all children clears the root attribution.
     for p in permits {

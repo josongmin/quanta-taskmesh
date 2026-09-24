@@ -281,8 +281,21 @@ CASES: list[tuple[str, str, str, str, str]] = [
         "taskmesh-test-is-ok-without-value-check",
         "test-quality.yml",
         HOST_ITEST,
-        A + "    let r: Result<u8, ()> = Ok(1);\n    assert!(r.is_ok());\n}\n",
-        A + "    let r: Result<u8, ()> = Ok(1);\n    assert_eq!(r, Ok(1));\n}\n",
+        "fn result() -> Result<u8, ()> { Ok(1) }\n"
+        + A
+        + "    assert!(\n        result()\n            .is_ok()\n    );\n}\n",
+        "fn result() -> Result<u8, ()> { Ok(1) }\n" + A + "    assert_eq!(result(), Ok(1));\n}\n",
+    ),
+    (
+        "taskmesh-test-is-err-without-error-check",
+        "test-quality.yml",
+        HOST_ITEST,
+        'fn result() -> Result<u8, &\'static str> { Err("broken") }\n'
+        + A
+        + "    assert!(\n        result()\n            .is_err()\n    );\n}\n",
+        'fn result() -> Result<u8, &\'static str> { Err("broken") }\n'
+        + A
+        + '    assert_eq!(result(), Err("broken"));\n}\n',
     ),
     (
         "taskmesh-test-discards-fallible-let",

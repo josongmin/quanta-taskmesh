@@ -243,6 +243,7 @@ async fn an_accepted_cpu_job_gets_its_full_run_budget_when_the_worker_starts() {
         1,
         "the executor owns accepted custody before the worker starts"
     );
+    // nosemgrep: taskmesh-test-is-err-without-error-check -- timeout has one error outcome; later assertions prove custody
     assert!(
         tokio::time::timeout(Duration::from_millis(500), &mut submission)
             .await

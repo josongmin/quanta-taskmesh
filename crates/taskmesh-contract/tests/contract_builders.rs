@@ -101,9 +101,11 @@ fn only_awaited_child_of_declares_that_the_parent_waits() {
     // immediate-parent identity is ambiguous and rejected.
     let json = serde_json::to_string(&awaited.scope).expect("serializes");
     assert!(json.contains("\"parent_awaits\":true"), "{json}");
+    let error = serde_json::from_str::<TaskScope>(r#"{"Child":{"parent_stage":"fanout"}}"#)
+        .expect_err("legacy child scope without immediate-parent identity must reject");
     assert!(
-        serde_json::from_str::<TaskScope>(r#"{"Child":{"parent_stage":"fanout"}}"#).is_err(),
-        "legacy child scope without immediate-parent identity is ambiguous and must reject"
+        error.to_string().contains("parent_operation_id"),
+        "the wire error must identify the missing immediate parent: {error}"
     );
 }
 

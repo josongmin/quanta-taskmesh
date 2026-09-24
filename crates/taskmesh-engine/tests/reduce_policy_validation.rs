@@ -7,7 +7,12 @@ use taskmesh_engine::Governor;
 fn fan_out_without_reduce_policy_rejects() {
     let spec = TaskSpec::cpu(TaskClass::new("c"))
         .fan_out_stage(TaskStage::new("merge"), SubstrateHint::SharedCpuExecutor);
-    assert!(Governor::validate_reduce(&spec).is_err());
+    assert_eq!(
+        Governor::validate_reduce(&spec),
+        Err(GovernorError::PolicyViolation(
+            "parallel stage merge requires a deterministic reduce policy".into()
+        ))
+    );
 }
 
 #[test]
@@ -17,7 +22,7 @@ fn fan_out_with_complete_reduce_policy_passes() {
         SubstrateHint::SharedCpuExecutor,
         DeterministicReducePolicy::keyed("doc_id"),
     );
-    assert!(Governor::validate_reduce(&spec).is_ok());
+    assert_eq!(Governor::validate_reduce(&spec), Ok(()));
 }
 
 #[test]
@@ -27,14 +32,19 @@ fn fan_out_with_empty_sort_key_rejects() {
         SubstrateHint::SharedCpuExecutor,
         DeterministicReducePolicy::keyed("   "),
     );
-    assert!(Governor::validate_reduce(&spec).is_err());
+    assert_eq!(
+        Governor::validate_reduce(&spec),
+        Err(GovernorError::PolicyViolation(
+            "deterministic reduce requires a non-empty stable_sort_key".into()
+        ))
+    );
 }
 
 #[test]
 fn sequential_stages_need_no_reduce_policy() {
     let spec = TaskSpec::blocking(TaskClass::new("c"))
         .stage(TaskStage::new("rank"), SubstrateHint::SharedCpuExecutor);
-    assert!(Governor::validate_reduce(&spec).is_ok());
+    assert_eq!(Governor::validate_reduce(&spec), Ok(()));
 }
 
 // --- enforcement at the admission choke-point (not just the static helper) ---

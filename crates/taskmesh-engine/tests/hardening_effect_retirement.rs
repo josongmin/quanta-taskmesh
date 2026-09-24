@@ -363,7 +363,9 @@ fn claim_final_drop_panic_compensates_and_promotes_the_next_waiter() {
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         drop(governor.claim(bad_ticket));
     }));
-    assert!(panic.is_err(), "the first host panic remains observable");
+    let Err(_panic_payload) = panic else {
+        panic!("the first host panic must remain observable");
+    };
     assert_eq!(bad_dropped.load(Ordering::SeqCst), 1);
     assert_eq!(
         governor.claim(bad_ticket),
@@ -437,7 +439,9 @@ fn a_panicking_waker_does_not_starve_the_other_waiters() {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         assert_eq!(governor.release(holder), ReleaseOutcome::Released);
     }));
-    assert!(outcome.is_err(), "the host port's panic must surface");
+    let Err(_panic_payload) = outcome else {
+        panic!("the host port's panic must surface");
+    };
 
     // The first promoted request (bad) was granted; claim and release it so
     // the second (good) is promoted — its waker must run despite the earlier
@@ -523,7 +527,9 @@ fn every_waiter_in_one_pass_is_woken_even_if_an_earlier_one_panics() {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         assert_eq!(governor.release(big), ReleaseOutcome::Released);
     }));
-    assert!(outcome.is_err(), "the broken port's panic surfaces");
+    let Err(_panic_payload) = outcome else {
+        panic!("the broken port's panic must surface");
+    };
     assert_eq!(
         woken.load(Ordering::SeqCst),
         3,

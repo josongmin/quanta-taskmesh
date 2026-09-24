@@ -36,11 +36,21 @@ let out = runtime
 
 고급 규칙:
 
-1. `.stage(...)`는 adapter/runtime owner용; `.reduce_stage(...)`는 fan-out + 결정적 reduce용
+1. `TaskSpec`의 첫 stage만 한 번의 `run_*` 호출에서 실행된다. `.stage(...)`는 후속 작업을
+   선언하지만 host가 자동 순회하거나 용량을 선점하지 않는다. 후속 작업은 caller/adapter가
+   별도 `run_*` 호출로 제출하고 새 permit을 받아야 한다. `.reduce_stage(...)`는 fan-out과
+   결정적 reduce **정책을 선언**한다. validation은 정책의 존재와 형태를 검사할 뿐, branch를
+   생성하거나 개수를 제한하거나 결과를 합치지 않는다. 그 실행과 reducer는 caller/adapter 소유다.
+   direct `Governor::{admit, admit_waitable, admit_validated}`는 모든 선언 stage hint의
+   **서로 다른 capability pool**을 permit 하나에 예약한다. 명시적 resolved admission 메서드는
+   caller가 제공한 requirement를 사용한다. Tokio host `run_*`는 실제 첫 dispatch가 점유하는
+   role pool과 physical domain만 예약한다. 같은 multi-stage spec도 진입점에 따라 예약 범위가 다르다.
 2. `child_of(root_operation_id, parent_operation_id, parent_stage)`는 정확한 immediate parent와
    root attribution을 선언한다. parent가 결과를 기다리면 같은 3개 인자의
-   `awaited_child_of(...)`를 사용한다. 직접 parent가 전부 쥔 capacity의 cycle은
-   `AdmissionVerdict::NestedWaitCycle { held_by_root: HeldCapacity }`로 admission 전에 거절된다.
+   `awaited_child_of(...)`를 사용한다. 연속된 `parent_awaits` 선언의 exact ancestor chain이
+   전부 쥔 capacity의 cycle은 거절된다. enqueue/grant에서 관찰된 live parent permit generation을
+   고정하므로 release 뒤 같은 operation name을 재사용해도 기존 ancestry를 바꾸지 않는다.
+   결과는 `AdmissionVerdict::NestedWaitCycle { held_by_root: HeldCapacity }`이다.
    stranger/sibling blocker는 false cycle이 아니며, queued request는 promotion 때 재판정된다.
    기존 2인자 child builder는 source incompatible이다. legacy child JSON에
    `parent_operation_id`가 없으면 모호하므로 decode를 거부한다.
@@ -101,13 +111,38 @@ let out = runtime
    있고 `tokio::spawn` child도 caller runtime으로 이탈하지 않는다. caller future drop은 worker root와
    runtime-owned child를 함께 종료한다.
 10. shutdown은 `drain(timeout)` 뒤 handle drop이다 (D17). `TokioRuntime::drain`은 engine의 admission을
-    **닫고**(one-way; 이후 모든 제출 경로와 `governor()`를 직접 모는 embedder는 admission 전에
-    `Rejected(RuntimeUnavailable)`로 거절 — queue·계상·total 변화 없음) 모든 클래스의 `inflight == 0 &&
+    **닫고**(one-way; 이후 유효한 제출은 host 경로와 direct `governor()` 경로 모두
+    `Rejected(RuntimeUnavailable)`로 거절 — queue·계상·total 변화 없음; malformed spec이나
+    잘못된 explicit capability는 그 검증 오류가 먼저 반환될 수 있다) 모든 클래스의 `inflight == 0 &&
     queued == 0`을 engine gauge에서 기다린다. 이미 queue·admit된 작업은 취소하지 않는다. timeout이 먼저
     오면 `Err(NotDrained { classes: {class → {inflight, queued}}, elapsed })`이며 runtime은 draining으로
     남는다 — 이 보고는 종료 영수증이 아니다: 시작된 blocking 작업은 abort할 수 없으므로(D10) 그 worker는
     여전히 charged다. `is_draining()`은 engine의 `admission_closed()`를 그대로 읽는다. teardown은 여전히
     handle drop뿐이다.
+
+두 단계 실행 예시 (`runtime`은 위 Builder로 생성):
+
+```rust
+use taskmesh::{SubstrateHint, TaskStage};
+
+let io_spec = TaskSpec::io(TaskClass::new("retrieval"))
+    .operation("fetch:repo:123")
+    .stage(TaskStage::new("rank"), SubstrateHint::SharedCpuExecutor);
+let bytes = runtime
+    .run_io(io_spec, async { Ok::<_, std::convert::Infallible>(vec![1_u8, 2, 3]) })
+    .await?;
+
+// 위 stage 선언은 CPU 작업을 실행하거나 예약하지 않는다.
+let cpu_spec = TaskSpec::cpu(TaskClass::new("retrieval")).operation("rank:repo:123");
+let ranked = runtime
+    .run_cpu(cpu_spec, move || Ok::<_, std::convert::Infallible>(bytes.len()))
+    .await?;
+```
+
+첫 `run_io`는 클래스·자원 budget만 계상한다 (`AsyncIo`에는 별도 capability pool이 없다).
+두 번째 `run_cpu`는 새 permit에서 CPU role pool과 실제 executor의 physical domain을
+예약한다. 동일한 `io_spec`을 direct `Governor::admit`에 넘기면 선언된 CPU stage hint의
+pool을 첫 permit에서도 예약한다.
 
 타입 규칙:
 

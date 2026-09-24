@@ -21,7 +21,8 @@ The workspace manifest and release policy select `0.3.0`; this heading does not
 claim publication or qualification. The immutable compatibility baseline is the
 0.2.0 release commit `39bee682d7daa1efaf1c10993ba6221fd0a90871`
 (no tag). Final-SHA human API/wire/behavior adjudication, full generated mutation
-quality, and hosted exact-source release receipt remain required. See
+quality, and a clean exact-source qualification and release receipt remain required.
+The current operator path is local; hosted attestation remains a compatibility path. See
 `tools/release/release-policy.json` and `docs/release-checklist.md`.
 
 ### Breaking changes and migration
@@ -34,8 +35,12 @@ quality, and hosted exact-source release receipt remain required. See
   The child `TaskScope` JSON now requires `parent_operation_id`; old child
   payloads without it reject instead of guessing. Duplicate active
   `(root, operation)` and duplicate/conflicting stage descriptors reject
-  before admission. A declared wait cycle is assessed against all blockers
-  and re-assessed at promotion; unrelated siblings/strangers remain reversible.
+  before admission. A declared wait cycle follows exact parent identities
+  through consecutive awaited ancestors, so capacity split across that chain
+  rejects instead of queueing. A live parent permit generation is frozen at
+  enqueue or grant, so reusing an operation name cannot rewrite ancestry. It is
+  assessed against all blockers and re-assessed at promotion; unrelated
+  siblings/strangers remain reversible.
 - **Provenance API/wire (C01).** The `Copy` product enum `PlanSource` is now an
   opaque bounded, non-`Copy` value: use `PlanSource::new("consumer.key")?`
   or `PlanSource::INTERNAL`, not exhaustive product-variant matches. Legacy

@@ -19,8 +19,9 @@ but `serde`.
 1. `TaskSpec`
    - root operation id, exact immediate parent operation id for every child,
      stage descriptors (with `fan_out` + reduce policy)
-   - product-neutral bounded `PlanSource` string/reason; legacy product strings round-trip
-     during the 0.2 migration window, but the former `Copy` exhaustive enum is gone
+   - product-neutral bounded `PlanSource` string/reason; published legacy aliases
+     remain deprecated but accepted in 0.3 for source and wire compatibility.
+     The former `Copy` exhaustive enum is gone
 2. `ClassPolicy`
    - fairness, memory mode/release/overcommit, overflow, retry-after, checkpoint
 3. `AdmissionVerdict`
@@ -53,6 +54,16 @@ in — the admission lock included — so an `Admitted` that arrives after the
 budget expired is unwound, not started. `Duration::ZERO` keeps its
 "try, do not wait" meaning.
 
+Each `run_*` call dispatches one caller-supplied future or closure on the
+bootstrap (first) stage's substrate. The host resolves the actual dispatch and
+atomically reserves its semantic role pool and physical worker domain, where
+applicable. Later `stage` descriptors are validated but do not execute or
+reserve host capacity. The caller or adapter submits each later unit with a
+separate `run_*` call, which acquires its own permit. `reduce_stage` declares a
+fan-out stage and a deterministic reduce policy; Taskmesh validates the policy
+declaration but does not spawn branches, bound their count, or merge values.
+The caller or adapter owns that execution and reducer.
+
 ## Engine Highlights
 
 1. fail-closed class lookup (unknown/disabled reject, never default-admit)
@@ -66,6 +77,14 @@ budget expired is unwound, not started. `Duration::ZERO` keeps its
    Capability-pool occupancy is decided in the same transition — the engine is
    the single authority for physical *and* semantic capacity. Aggregates are
    exact (`u128`, checked comparisons); nothing saturates
+3a. direct `Governor::{admit, admit_waitable, admit_validated}` derives a
+    requirement set from every declared stage hint and reserves each distinct
+    named pool once for the permit. The explicitly resolved admission methods
+    use the requirements supplied by their caller instead.
+    Tokio host `run_*` uses resolved requirements for only its actual dispatch,
+    including its physical domain where applicable. These entry points have
+    different multi-stage reservation contracts; a later host submission must
+    obtain its own permit
 4. memory governance: estimated/measured/hybrid reconcile, overcommit, leak
    sweep. The ledger keeps `original_estimate` / `remaining_reservation` /
    `effective` apart: a reconcile never resurrects units a stage boundary
@@ -119,7 +138,8 @@ budget expired is unwound, not started. `Duration::ZERO` keeps its
    awaited-child cycles are checked against all current blockers at intake and
    again during promotion; independently releasable sibling/stranger capacity
    remains reversible. Undeclared waits cannot be inferred from a closure
-6. deterministic reduce enforcement for fan-out stages (rejected at admission)
+6. fan-out declarations without a deterministic reduce policy are rejected at
+   admission; result reduction remains the caller or adapter's work
 7. snapshot + substrate inventory SSOT (built-ins seeded at `PolicySet::new`, so
    every governor — direct or host-built — has an authoritative inventory)
 8. fairness homogeneity validated per tier at construction (no silent override)
@@ -222,8 +242,10 @@ The host enforces the declared contract at runtime:
   an executor (`retained_active` reports the rest). A downward
   `reconcile_memory` frees budget and promotes queued work.
 - **supported nesting is declared, not inferred.** A parent that awaits a child
-  on the same capability it holds can deadlock a bounded pool; bounded queues
-  are not deadlock avoidance, and the runtime does not inspect opaque closures
-  for wait graphs. Declared dependency cycles are out of scope (ADR 0003, D12).
+  on capacity held entirely by its consecutive awaited-ancestor chain can
+  deadlock a bounded pool. The engine rejects that capacity cycle as
+  `NestedWaitCycle` at intake and promotion. Other holders may release, so
+  independently held capacity remains queueable. The runtime cannot inspect
+  opaque closures or infer undeclared waits (ADR 0003, D12).
 - `checkpoint_policy` is host-inspected metadata (engine preserves, does not
   enforce).

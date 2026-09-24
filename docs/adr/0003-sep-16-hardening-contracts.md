@@ -444,9 +444,9 @@ spec 문자열을 빌려 allocation 없이 한다.
   드러냈다: `stack_size_bytes(u64::MAX)`가 "OS가 거절한다"에 의존했는데 debug-built `std`에서는
   spawn 안에서 overflow panic이 났다 → host가 `MAX_REQUESTED_STACK_BYTES`(16 GiB) 초과 요청을
   결정적으로 거절한다. 환경 의존 동작은 계약이 아니다.
-- CI `qualification` job이 clean checkout에서 `receipt.py collect`를 돌려 receipt of record를
-  artifact로 남긴다; verdict가 QUALIFIED가 아니면 job이 red다. local receipt는 증거지 자격이
-  아니다.
+- 0.2.0 당시에는 CI `qualification` job이 clean checkout에서 `receipt.py collect`를 돌려
+  receipt of record를 artifact로 남겼고, local receipt는 자격이 아니었다. 0.3 후보의
+  local exact-source authority는 문서 끝의 "SEP-21 후속 계약" D16을 따른다.
 - curated single-edit mutation inventory(105개; cargo-mutants score가 아님)의 모든 non-control
   entry는 `expect_message`를 가져야 하며
   runner가 이를 거부한다. 그 message는 named test *자신의* 출력 블록(libtest의
@@ -573,7 +573,7 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
   qualification, 배포/activation은 여기서 주장하지 않는다. consumer MSRV는 local
   1.81 toolchain에서 default+rayon PASS다.
 
-## SEP-21 후속 계약 (D12/D05/D02 보완, release 미승인)
+## SEP-21 후속 계약 (D12/D05/D02/D16 보완, release 미승인)
 
 이 절은 위 0.2.0 당시 결정을 소급 변경하지 않는다. SEP-21 후보 소스의 후속 계약이며,
 버전/호환성 승인은 `tools/release/adjudication.json`과 release receipt에 남는다.
@@ -581,9 +581,12 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
 - D12: `TaskScope::Child`는 exact `parent_operation_id`를 필수로 보관한다.
   `child_of`/`awaited_child_of`는 root, immediate parent operation, parent stage의
   3인자를 받는다. 구 child wire에 parent operation이 없으면 추정하지 않고 거부한다.
-  awaited-child가 실제 parent permit 때문에 전부 막히는지 모든 blocker를 보고 판단하며,
-  queue 중 새 cycle이 생기면 promotion에서 terminalize한다. sibling/stranger의 capacity는
-  별도 해제 가능하므로 cycle로 오판하지 않는다.
+  연속된 `parent_awaits: true` 선언을 exact parent identity로 따라가며, awaited-child가
+  그 ancestor chain의 permit 때문에 전부 막히는지 모든 blocker를 보고 판단한다.
+  enqueue/grant에서 관찰한 live parent permit generation을 내부 lineage로 고정해,
+  release 뒤 같은 operation name이 재사용되어도 기존 ancestor로 재결합하지 않는다.
+  queue 중 새 cycle이 생기면 같은 판정을 promotion에서 수행해 terminalize한다.
+  sibling/stranger의 capacity는 별도 해제 가능하므로 cycle로 오판하지 않는다.
 - D05: semantic class policy와 physical worker governance를 분리한다. executor가
   nonblocking submit, actual worker count, physical domain을 선언하지 못하면 build가
   거부한다. `physical.shared_blocking`/`physical.cpu`/`physical.dedicated`의 유한한
@@ -592,6 +595,10 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
 - D02: implicit `reconcile_memory`도 `ReconcileOutcome`을 반환한다. sequence가
   `u64::MAX`에 도달하면 `EpochExhausted`이며 해당 permit의 측정 갱신은 불가하다.
   held memory와 activity time은 그대로이고, capacity는 permit release로 반환된다.
+- D16: 0.2.0의 hosted-only qualification 규칙은 0.3 후보에 적용하지 않는다. 현재 operator
+  path는 clean local Linux checkout의 `just qualify-local`과, 같은 source에서 이를 재검증하는
+  `just release-local`이다. evaluator는 기존 hosted attestation도 compatibility path로 검증하며,
+  둘 모두 exact source와 complete required evidence 없이는 `QUALIFIED`가 될 수 없다.
 - H02 acquisition: cancel → absolute deadline → relative timeout을 하나의 handoff
   arbiter가 immediate/queued 양쪽에 적용한다. 상대 ZERO는 try-once일 뿐 만료된
   CompleteBy를 무시하지 않는다. cancel/drop/timeout 응답과 worker custody는 별개다.

@@ -184,7 +184,8 @@ queue 위치의 누적 tag가 아니라 실제 제공된 service cost만 baselin
 남은 queue tag를 즉시 재구축한다. 정상 head 서비스는 이미 canonical인 tail tag를
 보존해 lock 내부 `O(1)`로 끝낸다. 취소된 요청은 service debt를 남기지 않고,
 drain된 큐는 credit을 이월하지 않는다. `wfq_reprice_visits` count oracle은 head-only
-drain이 survivor를 방문하지 않는다는 상한을 고정한다.
+drain이 survivor를 방문하지 않는다는 상한을 고정하고, non-head 우회가 survivor 1개를
+재가격하는 양의 대조군으로 counter가 실제 일을 세는지도 검증한다.
 
 **근거.** 물리적으로 실행 불가능한 클래스를 고르면 그 뒤에 두 번째 scheduling queue가
 생기고 거기서 도착 순서가 클래스 fairness를 덮어쓴다. 취소 debt(TM16-014)와 idle
@@ -452,7 +453,7 @@ spec 문자열을 빌려 allocation 없이 한다.
 - 0.2.0 당시에는 CI `qualification` job이 clean checkout에서 `receipt.py collect`를 돌려
   receipt of record를 artifact로 남겼고, local receipt는 자격이 아니었다. 0.3 후보의
   local exact-source authority는 문서 끝의 "SEP-21 후속 계약" D16을 따른다.
-- curated single-edit mutation inventory(106개; cargo-mutants score가 아님)의 모든 non-control
+- curated single-edit mutation inventory(107개; cargo-mutants score가 아님)의 모든 non-control
   entry는 `expect_message`를 가져야 하며
   runner가 이를 거부한다. 그 message는 named test *자신의* 출력 블록(libtest의
   `---- name stdout ----`, pytest의 `___ name ___`/`FAILED …::name`)에서만 찾는다 — 다른
@@ -560,8 +561,8 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
   `crates/taskmesh/tests/hardening_*.rs`,
   `crates/taskmesh/src/runtime/claim_acquisition_tests.rs`,
   `crates/taskmesh-contract/tests/topology_validation.rs`.
-- `just mutants-critical`: curated 106 entries — 105 defect probes + 1 CONTROL_GREEN
-  (`tools/verification/mutations.json`; cargo runner 93, pytest runner 13; 각 entry는 named test와 named assertion
+- `just mutants-critical`: curated 107 entries — 106 defect probes + 1 CONTROL_GREEN
+  (`tools/verification/mutations.json`; cargo runner 94, pytest runner 13; 각 entry는 named test와 named assertion
   message로 kill된다). `just loom` 5/5, `just shuttle` 7/7 — production `Governor`.
 - `just tsan` CLEAN (engine 3 + host 12 test binaries — drain·nested wait 포함 — + the rayon adapter, macOS aarch64), `just coverage-report`
   REPORTED (lines/regions/functions/instantiations를 receipt에 기록하고 branch·MCDC 미수집은

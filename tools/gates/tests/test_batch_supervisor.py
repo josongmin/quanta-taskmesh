@@ -205,7 +205,9 @@ def test_escaped_descendant_cannot_hold_capture_pipes_past_deadline(
         "deadline = time.monotonic() + 2\n"
         "while not marker.exists() and time.monotonic() < deadline:\n"
         "    time.sleep(0.01)\n"
-        "signal.pause() if marker.exists() else sys.exit(1)\n"
+        "if not marker.exists():\n"
+        "    sys.exit(1)\n"
+        "signal.pause()\n"
     )
     wrapper = tmp_path / "wrapper.py"
     run = (
@@ -239,7 +241,15 @@ def test_escaped_descendant_cannot_hold_capture_pipes_past_deadline(
         assert completed.returncode == 0, completed.stderr
         result = json.loads(completed.stdout)
         assert marker.exists(), "escaped descendant never established the hostile fixture"
+        escaped_pid = int(marker.read_text(encoding="utf-8"))
+        try:
+            os.kill(escaped_pid, 0)
+        except ProcessLookupError as error:
+            raise AssertionError(
+                "escaped descendant was not alive when the supervisor returned"
+            ) from error
         assert result["timed_out"] is True
+        assert isinstance(result["returncode"], int) and result["returncode"] != 0
         assert "capture pipes remained open" in result["stderr"]
     finally:
         if marker.exists():

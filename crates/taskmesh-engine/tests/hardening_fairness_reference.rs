@@ -1914,10 +1914,16 @@ fn a_wfq_nonhead_candidate_excludes_the_blocked_prefix_from_its_service_tag() {
         panic!("peer waits for global CPU");
     };
 
+    let reprices_before = g.wfq_reprice_visits();
     assert_eq!(g.release(cpu_holder), ReleaseOutcome::Released);
     let ClaimOutcome::Ready(follower_permit) = g.claim(follower) else {
         panic!("the earlier equal-tag follower must promote first");
     };
+    assert_eq!(
+        g.wfq_reprice_visits() - reprices_before,
+        1,
+        "non-head WFQ service must report the one surviving tag it repriced"
+    );
     assert!(matches!(g.ticket_status(peer), ClaimOutcome::Pending));
     assert!(matches!(g.ticket_status(older), ClaimOutcome::Pending));
 
@@ -1931,6 +1937,7 @@ fn a_wfq_nonhead_candidate_excludes_the_blocked_prefix_from_its_service_tag() {
         panic!("older request promotes when its pool becomes free");
     };
     assert_eq!(g.release(older_permit), ReleaseOutcome::Released);
+    assert_eq!(g.snapshot().conservation_violation(), None);
 }
 
 #[test]
@@ -2019,6 +2026,7 @@ fn cancellation_after_cross_pool_service_does_not_reprice_an_older_head() {
         };
         assert_eq!(g.release(other_permit), ReleaseOutcome::Released);
         assert_eq!(g.release(follower_permit), ReleaseOutcome::Released);
+        assert_eq!(g.snapshot().conservation_violation(), None);
         first.0
     }
 

@@ -76,6 +76,18 @@
       "expect_message": "ordinary WFQ head service must be O(1)"
     },
     {
+      "id": "wfq-work-oracle-counts-nothing",
+      "finding": "TM16-014-proof",
+      "rationale": "The reprice-visit oracle proves that ordinary head service does no survivor work. An accessor stuck at zero satisfies that upper bound, so a non-head service with one survivor must also prove that the oracle counts real repricing work.",
+      "file": "crates/taskmesh-engine/src/engine/governor.rs",
+      "find": "            .map(|cstate| cstate.wfq_reprice_visits)",
+      "replace": "            .map(|_cstate| 0_u64)",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_fairness_reference",
+      "expect_failing_test": "a_wfq_nonhead_candidate_excludes_the_blocked_prefix_from_its_service_tag",
+      "expect_message": "non-head WFQ service must report the one surviving tag it repriced"
+    },
+    {
       "id": "cancellation-leaves-service-debt",
       "finding": "TM16-014",
       "rationale": "A cancelled request that never ran must not leave virtual-time debt; otherwise a class is punished for work it did not receive.",

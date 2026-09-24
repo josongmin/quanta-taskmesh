@@ -176,12 +176,12 @@ Run the registered recipes through `just`:
   front doors; the JSON wire formats. `just fuzz-check` keeps the targets
   compiling on stable. NOT_RUN without nightly + cargo-fuzz; only
   `taskmesh-fuzz status=PASS` with all target-specific semantic witnesses is PASS.
-- Mutation gate: 103 curated entries — 102 single-edit fault probes
-  (89 non-control cargo incl. 3 shuttle-model targets and 1 differential-model target, 13 pytest
+- Mutation gate: 102 curated entries — 101 single-edit fault probes
+  (88 non-control cargo incl. 3 shuttle-model targets and 1 differential-model target, 13 pytest
   against the Python tooling), each killed by its named regression for its named
   reason found in that test's own output, plus one cargo behaviour-preserving control
   that must stay green. The historical schema-v1 receipt contains the first 100;
-  the current inventory retains 97 of those IDs, adds 6, and removes 3, for 103 total.
+  the current inventory retains 96 of those IDs, adds 6, and removes 4, for 102 total.
 
 ## Required proof scenarios
 

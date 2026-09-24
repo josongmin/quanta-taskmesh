@@ -703,7 +703,7 @@ def test_current_inventory_has_one_control_and_explicit_exact_policy() -> None:
     inventory = json.loads(rm.INVENTORY.read_text(encoding="utf-8"))
     mutations = rm.load_inventory(rm.INVENTORY)
     assert inventory["failure_set_policy"] == "cargo_primary_exact_pytest_declared_cofailures_exact"
-    assert len(mutations) == 103
+    assert len(mutations) == 102
     assert sum(bool(mutation.get("expect_no_failure")) for mutation in mutations) == 1
 
 

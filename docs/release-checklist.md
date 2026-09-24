@@ -323,6 +323,11 @@ This repository ships a library; nothing here deploys it. The steps below are
 what a *consumer* owner runs, and they are gated on that owner's explicit
 approval — a green proof surface in this repository is not activation.
 
+The repository release receipt records `review`, `merge`,
+`consumer_qualification`, `deployment`, and `activation` as exactly `NOT_RUN`.
+Those states are proved by separate downstream artifacts; they never overwrite
+or upgrade the repository receipt.
+
 Staged rollout (per consumer, in this order):
 
 - [ ] Pre-flight the configuration the consumer will run, fail-closed, before

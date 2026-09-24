@@ -49,6 +49,13 @@ LOCAL_RELEASE_CHECKS = {
     "action_is_local",
     "action_source_matches",
 }
+DOWNSTREAM_STATES = {
+    "review": "NOT_RUN",
+    "merge": "NOT_RUN",
+    "consumer_qualification": "NOT_RUN",
+    "deployment": "NOT_RUN",
+    "activation": "NOT_RUN",
+}
 
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
@@ -891,14 +898,8 @@ def evaluate(value: object, *, root: Path = REPO, current: dict | None = None) -
     ):
         reasons.append("generated policy conflict disclosure missing")
     states = value.get("downstream_states")
-    if not isinstance(states, dict) or set(states) != {
-        "review",
-        "merge",
-        "consumer_qualification",
-        "deployment",
-        "activation",
-    }:
-        reasons.append("downstream state separation missing")
+    if not isinstance(states, dict) or states != DOWNSTREAM_STATES:
+        reasons.append("downstream states must exactly match the collected NOT_RUN states")
     stored = value.get("verdict")
     computed = {"status": "NOT_QUALIFIED" if reasons else "QUALIFIED", "reasons": reasons}
     if stored is not None and stored != computed:
@@ -960,10 +961,7 @@ def collect(
     value["policy_decision_required"] = (
         "generated REPORTED vs ordinary quality PASS must be adjudicated without waiver"
     )
-    value["downstream_states"] = {
-        name: "NOT_RUN"
-        for name in ("review", "merge", "consumer_qualification", "deployment", "activation")
-    }
+    value["downstream_states"] = DOWNSTREAM_STATES.copy()
     after = ordinary.source_identity()
     value["source_after"] = {
         field: after[field] for field in ("head", "tree", "paths_digest", "dirty")

@@ -306,6 +306,89 @@ def test_missing_release_evidence_is_never_qualified() -> None:
     assert any("semver" in reason for reason in verdict["reasons"])
 
 
+def test_release_accepts_only_collected_downstream_states() -> None:
+    value = {
+        "schema_version": 1,
+        "source": {"dirty": False},
+        "downstream_states": {
+            "review": "NOT_RUN",
+            "merge": "NOT_RUN",
+            "consumer_qualification": "NOT_RUN",
+            "deployment": "NOT_RUN",
+            "activation": "NOT_RUN",
+        },
+    }
+    reasons = receipt.evaluate(value, current=None)["reasons"]
+    assert not any("downstream states" in reason for reason in reasons)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["review", "merge", "consumer_qualification", "deployment", "activation"],
+)
+@pytest.mark.parametrize("bad", ["QUALIFIED", "PASS", None, {}, []])
+def test_release_rejects_mutated_downstream_state(field: str, bad: object) -> None:
+    states: dict[str, object] = {
+        "review": "NOT_RUN",
+        "merge": "NOT_RUN",
+        "consumer_qualification": "NOT_RUN",
+        "deployment": "NOT_RUN",
+        "activation": "NOT_RUN",
+    }
+    states[field] = bad
+    verdict = receipt.evaluate(
+        {"schema_version": 1, "source": {"dirty": False}, "downstream_states": states},
+        current=None,
+    )
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any("downstream states" in reason for reason in verdict["reasons"])
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["review", "merge", "consumer_qualification", "deployment", "activation"],
+)
+def test_release_rejects_missing_downstream_state(field: str) -> None:
+    states = {
+        "review": "NOT_RUN",
+        "merge": "NOT_RUN",
+        "consumer_qualification": "NOT_RUN",
+        "deployment": "NOT_RUN",
+        "activation": "NOT_RUN",
+    }
+    del states[field]
+    reasons = receipt.evaluate(
+        {"schema_version": 1, "source": {"dirty": False}, "downstream_states": states},
+        current=None,
+    )["reasons"]
+    assert any("downstream states" in reason for reason in reasons)
+
+
+@pytest.mark.parametrize("states", [None, [], "NOT_RUN", 0, {"review": "NOT_RUN"}])
+def test_release_rejects_malformed_downstream_states(states: object) -> None:
+    reasons = receipt.evaluate(
+        {"schema_version": 1, "source": {"dirty": False}, "downstream_states": states},
+        current=None,
+    )["reasons"]
+    assert any("downstream states" in reason for reason in reasons)
+
+
+def test_release_rejects_extra_downstream_state() -> None:
+    states = {
+        "review": "NOT_RUN",
+        "merge": "NOT_RUN",
+        "consumer_qualification": "NOT_RUN",
+        "deployment": "NOT_RUN",
+        "activation": "NOT_RUN",
+        "publication": "NOT_RUN",
+    }
+    reasons = receipt.evaluate(
+        {"schema_version": 1, "source": {"dirty": False}, "downstream_states": states},
+        current=None,
+    )["reasons"]
+    assert any("downstream states" in reason for reason in reasons)
+
+
 def test_required_raw_coverage_path_cannot_read_outside_root(tmp_path: Path, monkeypatch) -> None:
     required_path = tmp_path / "tools/release/release-required.json"
     required_path.parent.mkdir(parents=True)

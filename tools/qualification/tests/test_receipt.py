@@ -296,7 +296,13 @@ def passing_gate_results(required: list[str]) -> list[dict]:
     for result in results:
         if result["id"] in specs:
             spec = specs[result["id"]]
-            result["status_line"] = f"{spec['marker']} {spec['require']}"
+            status_line = f"{spec['marker']} {spec['require']}"
+            if result["id"] == "test":
+                status_line += (
+                    " runner=cargo runner_version=1.95.0"
+                    " fixture_runner=cargo cargo_version=1.95.0"
+                )
+            result["status_line"] = status_line
     return results
 
 

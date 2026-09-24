@@ -65,13 +65,26 @@ Run the registered recipes through `just`:
       clean checkout with no concurrent writers: source digests before and after the
       run cannot detect an edit restored between those observations.
 - [ ] `just gate` — fmt-check, strict clippy (3 passes), test, deny, semgrep
-      (real integration tests enrolled), architecture checker, py-lint, py-test,
-      allocation gate, gates-inventory parity. A self-reporting gate's final
+      (every present Rust file under `crates/*/tests/` enrolled), architecture
+      checker, py-lint, py-test, allocation gate, gates-inventory parity, and
+      stable fuzz-target Clippy. `gates-inventory` also checks the static
+      Cargo/Python/fuzz target-to-gate catalog and recipe selectors; that
+      discovery check does not prove execution. The `test` gate reports its
+      selected Cargo/nextest runner and version after both test commands pass.
+      A self-reporting gate's final
       marker line must have exactly one `status=` token matching its required
       verdict; conflicting or duplicated status tokens cannot produce PASS.
       Saved local and final receipts recheck a directly executed PASS row against
       that retained line. Hosted producer-import rows use their registered
       envelope and raw-artifact validation instead of a local status line.
+- [ ] Finding proof: each row in `tools/release/finding-proof-spec.json` runs
+      its named focused Cargo or pytest witness through
+      `tools/release/finding_proof.py`. Its `required_gate` names an additional
+      ordinary proof dependency that `tools/release/receipt.py` requires to
+      PASS; it does not name the witness's test executor. For example,
+      TM21-020 executes `rayon_smoke` as a focused Cargo test while also
+      requiring the related `test-rayon` feature gate. A Python IAI policy
+      witness executes through pytest and additionally requires `bench-iai`.
 - [ ] `just test-rayon` / `just doctest` / `just rustdoc` / `just bench-smoke`
 - [ ] `just mutants-critical` — curated single-edit inventory의 non-control 102개가
       KILLED이고 control 1개가 CONTROL_GREEN인지 확인한다. 이것은 cargo-mutants

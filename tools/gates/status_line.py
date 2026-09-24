@@ -28,7 +28,24 @@ def status_line_qualifies(gate: dict, stdout: str) -> bool:
     if verdict is None:
         return False
     status_tokens = [token for token in verdict.split() if token.startswith("status=")]
-    return status_tokens == [spec["require"]]
+    if status_tokens != [spec["require"]]:
+        return False
+    if gate.get("id") != "test":
+        return True
+    fields: dict[str, str] = {}
+    for token in verdict.split()[1:]:
+        if "=" not in token:
+            return False
+        key, value = token.split("=", 1)
+        if key in fields or not value:
+            return False
+        fields[key] = value
+    return (
+        set(fields)
+        == {"status", "runner", "runner_version", "fixture_runner", "cargo_version"}
+        and fields["runner"] in {"cargo", "nextest"}
+        and fields["fixture_runner"] == "cargo"
+    )
 
 
 def pass_status_line_problems(

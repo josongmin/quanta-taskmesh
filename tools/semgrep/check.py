@@ -12,14 +12,6 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 RULES = REPO / "tools" / "semgrep" / "rules"
 VERSION_FILE = REPO / "tools" / "semgrep" / "version.txt"
-ENROLLED_PATHS = (
-    "crates/taskmesh/tests/e2e_chaos.rs",
-    "crates/taskmesh/tests/hardening_deadline_custody.rs",
-    "crates/taskmesh-engine/tests/hardening_fairness_reference.rs",
-    "crates/taskmesh-engine/tests/prop_invariants.rs",
-    "crates/taskmesh-bench/tests/inferno.rs",
-    "crates/taskmesh-rayon/tests/rayon_smoke.rs",
-)
 REQUIRED_SEMGREP_VERSION = VERSION_FILE.read_text(encoding="utf-8").strip()
 if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", REQUIRED_SEMGREP_VERSION) is None:
     raise ValueError("tools/semgrep/version.txt must contain a pinned Semgrep version")
@@ -37,22 +29,32 @@ def semgrep_identity_problems(proc: subprocess.CompletedProcess[str]) -> list[st
 
 
 def target_set_problems(scanned: set[str], root: Path = REPO) -> list[str]:
-    """Reject a clean-looking scan that did not open the governed tests."""
-    problems: list[str] = []
+    """Require every present Rust test file under each crate to be scanned."""
     if not scanned:
         return ["semgrep reported no scanned paths"]
-    missing = sorted(path for path in ENROLLED_PATHS if path not in scanned)
-    if missing:
-        problems.append(f"enrolled integration tests were not scanned: {missing}")
+    scanned_relative: set[str] = set()
+    for path in scanned:
+        candidate = Path(path)
+        if candidate.is_absolute():
+            try:
+                candidate = candidate.relative_to(root)
+            except ValueError:
+                continue
+        scanned_relative.add(candidate.as_posix())
+
+    expected: set[str] = set()
     for crate_tests in sorted((root / "crates").glob("*/tests")):
         if not crate_tests.is_dir():
             continue
-        expected = {
-            str(path.relative_to(root)) for path in crate_tests.rglob("*.rs") if path.is_file()
-        }
-        if expected and not expected.intersection(scanned):
-            problems.append(f"no Rust file under {crate_tests.relative_to(root)} was scanned")
-    return problems
+        expected.update(
+            path.relative_to(root).as_posix()
+            for path in crate_tests.rglob("*.rs")
+            if path.is_file()
+        )
+    if not expected:
+        return ["no Rust test files found under crates/*/tests"]
+    missing = sorted(expected - scanned_relative)
+    return [f"Rust test files were not scanned: {missing}"] if missing else []
 
 
 def main() -> int:

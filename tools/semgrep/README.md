@@ -18,6 +18,9 @@ independently verifies that in-`src` test modules are declared under `#[cfg(test
 Scope of the test-quality rules (`test-quality.yml`): every `#[test] fn`, `#[tokio::test] async fn`,
 and `#[tokio::test(...)] async fn` body under `crates/`. Each rule has a fire/clean fixture in
 `tests/test_rules_fire.py`; a rule without one is not considered enforced.
+The gate compares Semgrep's scanned paths with every present Rust file under
+`crates/*/tests/`, including support modules. Omitting one file fails even if
+another file in the same crate's test tree was scanned.
 
 ```bash
 uv run python tools/semgrep/check.py

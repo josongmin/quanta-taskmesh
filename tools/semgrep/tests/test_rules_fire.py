@@ -460,22 +460,25 @@ def test_every_rule_has_a_fire_and_clean_fixture() -> None:
     assert not phantom, f"fixtures for rules that no longer exist: {phantom}"
 
 
-def test_scan_target_policy_accepts_the_current_enrollment_shape() -> None:
-    scanned = set(semgrep_check.ENROLLED_PATHS)
+def test_scan_target_policy_accepts_every_present_crate_test_file() -> None:
+    scanned: set[str] = set()
     for crate_tests in sorted((REPO / "crates").glob("*/tests")):
-        first = next(crate_tests.rglob("*.rs"), None)
-        if first is not None:
-            scanned.add(str(first.relative_to(REPO)))
+        scanned.update(path.relative_to(REPO).as_posix() for path in crate_tests.rglob("*.rs"))
     assert semgrep_check.target_set_problems(scanned) == []
 
 
-def test_scan_target_policy_rejects_empty_and_missing_enrollment() -> None:
+def test_scan_target_policy_rejects_empty_and_same_tree_omission() -> None:
     assert semgrep_check.target_set_problems(set()) == ["semgrep reported no scanned paths"]
-    scanned = set(semgrep_check.ENROLLED_PATHS)
-    missing = semgrep_check.ENROLLED_PATHS[0]
+    scanned = {
+        path.relative_to(REPO).as_posix()
+        for crate_tests in (REPO / "crates").glob("*/tests")
+        for path in crate_tests.rglob("*.rs")
+    }
+    missing = "crates/taskmesh-engine/tests/prop_invariants.rs"
+    assert missing in scanned
     scanned.remove(missing)
     problems = semgrep_check.target_set_problems(scanned)
-    assert any(missing in problem for problem in problems), problems
+    assert problems == [f"Rust test files were not scanned: ['{missing}']"]
 
 
 def test_scan_target_policy_rejects_an_unscanned_crate_test_tree(tmp_path: Path) -> None:
@@ -485,8 +488,8 @@ def test_scan_target_policy_rejects_an_unscanned_crate_test_tree(tmp_path: Path)
     second.parent.mkdir(parents=True)
     first.write_text("#[test]\nfn covered() {}\n", encoding="utf-8")
     second.write_text("#[test]\nfn missed() {}\n", encoding="utf-8")
-    scanned = {*semgrep_check.ENROLLED_PATHS, str(first.relative_to(tmp_path))}
+    scanned = {str(first.relative_to(tmp_path))}
 
     problems = semgrep_check.target_set_problems(scanned, root=tmp_path)
 
-    assert problems == ["no Rust file under crates/second/tests was scanned"]
+    assert problems == ["Rust test files were not scanned: ['crates/second/tests/missed.rs']"]

@@ -35,6 +35,8 @@ Fails closed on:
 - any hosted workflow trigger other than explicit `workflow_dispatch` (ordinary
   verification is local-only and must not consume runner minutes on push, pull
   request, or schedule).
+- a Cargo/pytest/fuzz test target with no declared gate executor, or a drifted
+  feature-only model/IAI target, fuzz producer target, or Justfile selector.
 
 Workflow invocations are read from the parsed YAML: every `run:` script of
 every step, whatever its shape (`- run: just x`, a `|` block, `cd d && just x`,
@@ -64,6 +66,11 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from tools.gates.parallel_policy import PARALLEL_GROUP_MEMBERS  # noqa: E402
+from tools.gates.target_catalog import (  # noqa: E402
+    RECIPE_FRAGMENTS,
+    catalog_digest,
+    source_catalog,
+)
 
 TIERS = {"fast", "matrix", "nightly", "release"}
 PLATFORMS = {"any", "linux", "macos"}
@@ -303,9 +310,14 @@ def untracked_recipe_scripts(recipe: str, tracked: set[str], text: str | None = 
 
 def self_report_markers(recipe: str, text: str | None = None, root: Path = REPO) -> set[str]:
     """The status-line markers printed by the scripts `just <recipe>` runs
-    (found by reading those scripts' sources). Empty for a recipe that runs
-    cargo/uv directly."""
+    or by its inline shell body. Comments do not establish a verdict."""
     markers: set[str] = set()
+    body = "\n".join(
+        line
+        for line in recipe_body(recipe, text).splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    markers.update(STATUS_MARKER.findall(body))
     for script in recipe_scripts(recipe, text):
         path = root / script
         if path.is_file():
@@ -785,11 +797,15 @@ def main() -> int:
             for recipe in inventory_recipes
             if recipe in recipes
         }
+        catalog_records, catalog_errors = source_catalog(
+            REPO, {recipe: recipe_body(recipe) for recipe in RECIPE_FRAGMENTS}
+        )
     except (
         OSError,
         json.JSONDecodeError,
         subprocess.CalledProcessError,
         RuntimeError,
+        ValueError,
         yaml.YAMLError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -808,6 +824,7 @@ def main() -> int:
         ci_leaves,
         nightly_leaves,
     )
+    problems.extend(catalog_errors)
     if problems:
         print("gate inventory FAILED:", file=sys.stderr)
         for problem in problems:
@@ -816,7 +833,8 @@ def main() -> int:
     print(
         f"gate inventory OK: {len(inventory['gates'])} gates, "
         f"{len(required['required'])} required, "
-        f"parity with {len(invocations)} workflow invocations"
+        f"parity with {len(invocations)} workflow invocations, "
+        f"{len(catalog_records)} discovered targets (catalog {catalog_digest(catalog_records)})"
     )
     return 0
 

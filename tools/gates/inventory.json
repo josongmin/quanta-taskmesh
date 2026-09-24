@@ -59,7 +59,8 @@
         "any"
       ],
       "prerequisites": [],
-      "workflow": "ci.yml"
+      "workflow": "ci.yml",
+      "status_line": {"marker": "taskmesh-test", "require": "status=PASS"}
     },
     {
       "id": "deny",

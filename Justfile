@@ -31,12 +31,17 @@ test:
     # so an unbounded process fan-out just trades elapsed time for contention.
     # A clean bootstrap without cargo-nextest retains the identical Cargo
     # selection rather than silently skipping the test gate.
-    if cargo nextest --version >/dev/null 2>&1; then \
+    set -euo pipefail; \
+    cargo_version="$(cargo --version)"; cargo_version="${cargo_version#cargo }"; cargo_version="${cargo_version%% *}"; \
+    if nextest_identity="$(cargo nextest --version 2>/dev/null)"; then \
+        runner=nextest; runner_version="${nextest_identity#cargo-nextest }"; runner_version="${runner_version%% *}"; \
         CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo nextest run --locked --workspace --exclude taskmesh-doc-examples --lib --tests --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
     else \
+        runner=cargo; runner_version="${cargo_version}"; \
         CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked --workspace --exclude taskmesh-doc-examples --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
-    fi
-    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked -p taskmesh-doc-examples --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"
+    fi; \
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked -p taskmesh-doc-examples --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
+    printf 'taskmesh-test status=PASS runner=%s runner_version=%s fixture_runner=cargo cargo_version=%s\n' "$runner" "$runner_version" "$cargo_version"
 
 # Laptop feedback excludes benchmark harness tests and the generated README/doc
 # fixture. Their correctness and buildability remain required by full `test`,

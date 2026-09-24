@@ -26,21 +26,20 @@
 //!
 //! # Event-driven wait
 //!
-//! Every host-owned return of custody pings a [`Notify`] the drain waits on: an
-//! [`ExecutionLease`](super::ExecutionLease) dropping, a queued ticket abandoned,
-//! and a promotion returned unstarted after its budget expired. The drain
-//! re-reads the gauges when something actually changed and never polls on an
-//! interval. Work admitted *outside* the host (an embedder driving
-//! `governor()` directly) is counted, because the gauges are the engine's, but
-//! its release does not ping; such work is seen when the timeout elapses and
-//! the drain takes its final look.
+//! Every engine transition that may return custody pings a [`Notify`] through
+//! the governor's settlement port. This covers host-owned leases and ticket
+//! guards as well as direct `release`, `abandon`, reclamation, and
+//! terminalization.
+//! The drain re-reads the authoritative gauges after each hint and never polls
+//! on an interval. This includes work admitted through `governor()` directly,
+//! so even an unbounded drain observes its final release.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use taskmesh_contract::{Snapshot, TaskClass};
+use taskmesh_contract::{SettlementWaker, Snapshot, TaskClass};
 #[cfg(doc)]
 use taskmesh_engine::Governor;
 use tokio::sync::Notify;
@@ -102,19 +101,25 @@ impl fmt::Display for NotDrained {
 
 impl std::error::Error for NotDrained {}
 
-/// Host-side drain state, shared by every clone of the runtime handle and by
-/// every lease and ticket guard the host issues.
+/// Host-side drain state, shared by every clone of the runtime handle and
+/// registered as the governor's settlement observer.
 ///
 /// The *decision* to refuse lives in the engine; this holds only what the host
 /// needs to wait efficiently: the wake-up, and a mirror of the closed flag
 /// that lets the release hot path skip the wake-up while nothing is draining.
 #[derive(Debug, Default)]
-pub(super) struct DrainSignal {
+pub struct DrainSignal {
     /// Mirror of the engine's closed flag, set by `drain` *before* its first
     /// look at the gauges and never cleared. Read only to gate `settled`.
     draining: AtomicBool,
-    /// Pinged when host-owned custody returns to the engine.
+    /// Pinged when an engine transition may have returned custody.
     settled: Notify,
+}
+
+impl SettlementWaker for DrainSignal {
+    fn wake(&self) {
+        self.settled();
+    }
 }
 
 impl DrainSignal {

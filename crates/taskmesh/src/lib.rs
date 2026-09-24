@@ -115,7 +115,8 @@ pub use taskmesh_contract::{
 pub mod ext {
     /// Driven ports: implement these to plug in a custom substrate or clock.
     pub use taskmesh_contract::{
-        Clock, CpuExecutor, ExecutorCapabilities, ManualClock, PermitWaker, SystemClock,
+        Clock, CpuExecutor, ExecutorCapabilities, ManualClock, PermitWaker, SettlementWaker,
+        SystemClock,
     };
 
     /// The default host CPU executor adapter (Tokio blocking pool).

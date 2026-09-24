@@ -200,6 +200,62 @@ async fn a_blocking_submission_without_a_stack_request_uses_the_blocking_pool() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn direct_and_host_multistage_admission_have_distinct_reservation_contracts() {
+    let rt = Builder::new()
+        .topology(TopologyConfig::new().cpu_fixed(1))
+        .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
+        .class_policy(
+            TaskClass::new("c"),
+            ClassPolicy::new().max_inflight(4).cpu_units(1),
+        )
+        .build()
+        .expect("runtime builds");
+    let staged = TaskSpec::io(TaskClass::new("c"))
+        .operation("fetch")
+        .stage(TaskStage::new("rank"), SubstrateHint::SharedCpuExecutor);
+
+    let (release, hold) = tokio::sync::oneshot::channel::<()>();
+    let host = rt.clone();
+    let host_spec = staged.clone();
+    let running = tokio::spawn(async move {
+        host.run_io(host_spec, async move {
+            let _released = hold.await;
+            Ok::<(), ()>(())
+        })
+        .await
+    });
+    wait_for("the host IO permit", || {
+        rt.snapshot().classes[&TaskClass::new("c")].inflight == 1
+    })
+    .await;
+    assert_eq!(
+        rt.snapshot().capabilities["cpu"].in_use,
+        0,
+        "the host reserves only the capability used by its first dispatch"
+    );
+    release.send(()).expect("host future still waiting");
+    running
+        .await
+        .expect("host task joins")
+        .expect("host IO completes");
+
+    let decision = rt.governor().admit(&staged.operation("direct-fetch"));
+    let ext::AdmissionDecision::Admitted { permit_id } = decision else {
+        panic!("direct multistage admission must succeed, got {decision:?}");
+    };
+    assert_eq!(
+        rt.snapshot().capabilities["cpu"].in_use,
+        1,
+        "direct admission reserves every distinct declared stage capability"
+    );
+    assert_eq!(
+        rt.governor().release(permit_id),
+        ext::ReleaseOutcome::Released
+    );
+    assert_eq!(rt.snapshot().capabilities["cpu"].in_use, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_requested_stack_async_path_shares_the_same_capability() {
     // The async large-stack entry point runs on the same dedicated-thread
     // dispatch, so it competes for the same pool. Two authorities over one pool

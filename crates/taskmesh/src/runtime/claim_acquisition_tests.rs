@@ -391,11 +391,7 @@ async fn a_lease_the_sweep_reclaimed_before_dispatch_refuses_to_advance_v1() {
     // the engine already handed to someone else, never double-release.
     let (runtime, clock, spec) = runtime();
     let permit = occupy(&runtime, &spec);
-    let mut lease = ExecutionLease::reserved(
-        Arc::clone(&runtime.governor),
-        Arc::clone(&runtime.drain),
-        permit,
-    );
+    let mut lease = ExecutionLease::reserved(Arc::clone(&runtime.governor), permit);
     clock.advance(11);
     assert_eq!(runtime.governor.reap_leaks_with(10).reclaimed_permits, 1);
     assert_accounting(&runtime, 0, 0);
@@ -419,11 +415,7 @@ async fn a_lease_the_sweep_reclaimed_before_dispatch_refuses_to_advance_v1() {
     // Control: once `Accepted`, the sweep leaves the lease alone and the drop
     // is the one release.
     let permit = occupy(&runtime, &spec);
-    let mut lease = ExecutionLease::reserved(
-        Arc::clone(&runtime.governor),
-        Arc::clone(&runtime.drain),
-        permit,
-    );
+    let mut lease = ExecutionLease::reserved(Arc::clone(&runtime.governor), permit);
     assert_eq!(lease.advance(ExecutionPhase::Accepted), Ok(()));
     clock.advance(11);
     let report = runtime.governor.reap_leaks_with(10);
@@ -437,11 +429,7 @@ async fn a_lease_the_sweep_reclaimed_before_dispatch_refuses_to_advance_v1() {
 async fn a_phase_that_does_not_advance_is_reported_not_ignored_v1() {
     let (runtime, _, spec) = runtime();
     let permit = occupy(&runtime, &spec);
-    let mut lease = ExecutionLease::reserved(
-        Arc::clone(&runtime.governor),
-        Arc::clone(&runtime.drain),
-        permit,
-    );
+    let mut lease = ExecutionLease::reserved(Arc::clone(&runtime.governor), permit);
     assert_eq!(lease.advance(ExecutionPhase::Running), Ok(()));
     // Backwards, and repeated: both are host programming errors and both are
     // said out loud, while the permit stays live and owned.
@@ -469,11 +457,7 @@ async fn a_lease_taken_through_ext_is_refused_not_run_v1() {
     // nothing; the permit belongs to whoever holds the token.
     let (runtime, _, spec) = runtime();
     let permit = occupy(&runtime, &spec);
-    let mut lease = ExecutionLease::reserved(
-        Arc::clone(&runtime.governor),
-        Arc::clone(&runtime.drain),
-        permit,
-    );
+    let mut lease = ExecutionLease::reserved(Arc::clone(&runtime.governor), permit);
     let AdvanceOutcome::Leased(taken) = runtime
         .governor
         .advance_phase(permit, ExecutionPhase::Accepted)

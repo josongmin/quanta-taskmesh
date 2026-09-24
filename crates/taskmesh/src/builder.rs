@@ -16,19 +16,19 @@
 //! or an unrepresentable slot count is a typed `Err` from [`Builder::build`],
 //! never a panic inside a clamp or a semaphore constructor.
 
-use std::collections::BTreeMap;
+use std::collections::{btree_map::Entry, BTreeMap};
 use std::sync::Arc;
 
 use taskmesh_contract::{
-    ClassPolicy, CpuExecutor, GovernorError, ResourceBudget, RuntimeConfig, SubstrateKind,
-    SubstrateRecord, TaskClass, TopologyConfig, TopologyError, PHYSICAL_CPU, PHYSICAL_DEDICATED,
-    PHYSICAL_SHARED_BLOCKING,
+    ClassPolicy, CpuExecutor, GovernorError, ResourceBudget, RuntimeConfig, SettlementWaker,
+    SubstrateKind, SubstrateRecord, TaskClass, TopologyConfig, TopologyError, PHYSICAL_CPU,
+    PHYSICAL_DEDICATED, PHYSICAL_SHARED_BLOCKING,
 };
 use taskmesh_engine::{Governor, PolicySet, SystemClock};
 
 #[cfg(not(feature = "rayon"))]
 use crate::executor::BlockingPoolCpuExecutor;
-use crate::runtime::TokioRuntime;
+use crate::runtime::{DrainSignal, TokioRuntime};
 
 /// Fluent builder for a [`TokioRuntime`]. Invalid configurations are rejected at
 /// [`Builder::build`], never deferred to a runtime admit path.
@@ -39,6 +39,7 @@ pub struct Builder {
     classes: BTreeMap<TaskClass, ClassPolicy>,
     substrates: Vec<SubstrateRecord>,
     capability_limits: BTreeMap<String, u32>,
+    registration_error: Option<GovernorError>,
     cpu_executor: Option<Arc<dyn CpuExecutor>>,
 }
 
@@ -50,6 +51,7 @@ impl std::fmt::Debug for Builder {
             .field("classes", &self.classes)
             .field("substrates", &self.substrates)
             .field("capability_limits", &self.capability_limits)
+            .field("registration_error", &self.registration_error)
             .field(
                 "cpu_executor",
                 &self.cpu_executor.as_ref().map(|cpu| cpu.capabilities()),
@@ -66,6 +68,7 @@ impl Default for Builder {
             classes: BTreeMap::new(),
             substrates: Vec::new(),
             capability_limits: BTreeMap::new(),
+            registration_error: None,
             cpu_executor: None,
         }
     }
@@ -86,8 +89,21 @@ impl Builder {
         self
     }
 
+    /// Register a class policy once. Repeating a class records a deterministic
+    /// error returned by [`Self::build`], even when both policies are equal.
     pub fn class_policy(mut self, class: TaskClass, policy: ClassPolicy) -> Self {
-        self.classes.insert(class, policy);
+        match self.classes.entry(class) {
+            Entry::Occupied(existing) => {
+                self.registration_error.get_or_insert_with(|| {
+                    GovernorError::PolicyViolation(
+                        format!("duplicate class policy registration: {}", existing.key()).into(),
+                    )
+                });
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(policy);
+            }
+        }
         self
     }
 
@@ -109,8 +125,24 @@ impl Builder {
 
     /// Declare capacity authority for an additional substrate pool. `0` is an
     /// explicit unbounded declaration; omission is rejected by the engine.
+    /// Repeating a pool records an error returned by [`Self::build`].
     pub fn capability_limit(mut self, pool: impl Into<String>, slots: u32) -> Self {
-        self.capability_limits.insert(pool.into(), slots);
+        match self.capability_limits.entry(pool.into()) {
+            Entry::Occupied(existing) => {
+                self.registration_error.get_or_insert_with(|| {
+                    GovernorError::PolicyViolation(
+                        format!(
+                            "duplicate capability limit registration: {}",
+                            existing.key()
+                        )
+                        .into(),
+                    )
+                });
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(slots);
+            }
+        }
         self
     }
 
@@ -122,9 +154,12 @@ impl Builder {
     }
 
     /// Validate and build. Returns a [`GovernorError`] for any impossible budget,
-    /// invalid topology, invalid memory scaling, misused degrade policy, or
-    /// duplicate substrate.
+    /// invalid topology, invalid memory scaling, misused degrade policy,
+    /// malformed class name, or duplicate class, substrate, or capability pool.
     pub fn build(self) -> Result<TokioRuntime, GovernorError> {
+        if let Some(error) = self.registration_error {
+            return Err(error);
+        }
         // Before anything is sized from it.
         self.topology.validate()?;
         let available = detected_parallelism();
@@ -216,9 +251,21 @@ impl Builder {
         // `Governor::new` validates the policy fail-closed (impossible budgets,
         // mixed-tier fairness, invalid memory scaling, misused degrade/queue,
         // and the completeness of the substrate registry itself).
-        let governor = Arc::new(Governor::new(policy, Arc::new(SystemClock))?);
+        let drain = Arc::new(DrainSignal::default());
+        // `Arc::clone` fixes the expected type before unsizing. The method form
+        // clones the concrete pointer and then coerces it to the driven port.
+        #[allow(
+            clippy::clone_on_ref_ptr,
+            reason = "Arc::clone cannot unsize concrete Arc<T> to Arc<dyn _>"
+        )]
+        let settlement_waker: Arc<dyn SettlementWaker> = drain.clone();
+        let governor = Arc::new(Governor::new_with_settlement_waker(
+            policy,
+            Arc::new(SystemClock),
+            settlement_waker,
+        )?);
 
-        Ok(TokioRuntime::new(config, governor, cpu))
+        Ok(TokioRuntime::new(config, governor, cpu, drain))
     }
 }
 

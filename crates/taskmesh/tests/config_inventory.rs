@@ -10,6 +10,52 @@ fn names(records: &[SubstrateRecord]) -> Vec<String> {
 }
 
 #[test]
+fn builder_rejects_malformed_class_policy_before_admission() {
+    let Err(GovernorError::PolicyViolation(message)) = Builder::new()
+        .class_policy(TaskClass::new("bad class"), ClassPolicy::new())
+        .build()
+    else {
+        panic!("policy key rejected at build");
+    };
+    assert!(message.contains("invalid policy class"), "{message}");
+}
+
+#[test]
+fn builder_rejects_duplicate_class_policy_even_when_values_match() {
+    let Err(GovernorError::PolicyViolation(message)) = Builder::new()
+        .class_policy(TaskClass::new("c"), ClassPolicy::new().max_inflight(1))
+        .class_policy(TaskClass::new("c"), ClassPolicy::new().max_inflight(1))
+        .build()
+    else {
+        panic!("duplicate class registration rejected at build");
+    };
+    assert!(
+        message.contains("duplicate class policy registration: c"),
+        "{message}"
+    );
+}
+
+#[test]
+fn duplicate_custom_capability_cannot_change_finite_limit_to_unbounded() {
+    let Err(GovernorError::PolicyViolation(message)) = Builder::new()
+        .substrate(SubstrateRecord::new(
+            "external-gpu",
+            SubstrateKind::CompetingExecution,
+            Some("external-gpu"),
+        ))
+        .capability_limit("external-gpu", 7)
+        .capability_limit("external-gpu", 0)
+        .build()
+    else {
+        panic!("duplicate capability registration rejected at build");
+    };
+    assert!(
+        message.contains("duplicate capability limit registration: external-gpu"),
+        "{message}"
+    );
+}
+
+#[test]
 fn config_carries_resolved_substrate_inventory() {
     let extra = SubstrateRecord::new(
         "external-gpu",

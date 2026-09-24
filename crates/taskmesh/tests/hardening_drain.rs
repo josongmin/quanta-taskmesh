@@ -19,9 +19,9 @@
 //!   `inflight == 1` and the work stays charged. The runtime stays draining and
 //!   a second drain after the worker ends succeeds.
 //! * **Event-driven.** The drain returns promptly when the last custody
-//!   returns — a lease released, or a promoted-but-unclaimed ticket abandoned —
-//!   not when its timeout elapses; and while it waits it sleeps, so a task
-//!   sharing its thread keeps running.
+//!   returns — including through direct governor release or abandon — not when
+//!   its timeout elapses; and while it waits it sleeps, so a task sharing its
+//!   thread keeps running.
 //! * **No admission after `is_draining()` is observable.** Submitters racing
 //!   the flag may be admitted before they saw it and are always refused after.
 //!
@@ -165,6 +165,135 @@ async fn an_idle_runtime_drains_at_once_and_stays_draining() {
     );
     assert!(rt.is_draining(), "drain must leave the runtime draining");
     assert_idle(&rt.snapshot(), "idle drain");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn direct_governor_release_wakes_finite_and_unbounded_drains() {
+    for timeout in [Duration::from_secs(30), Duration::MAX] {
+        let rt = drain_runtime(1);
+        let decision = rt
+            .governor()
+            .admit(&TaskSpec::io(class("c")).operation("direct-holder"));
+        let ext::AdmissionDecision::Admitted { permit_id } = decision else {
+            panic!("direct holder must admit, got {decision:?}");
+        };
+
+        let waiter = rt.clone();
+        let drain = tokio::spawn(async move { waiter.drain(timeout).await });
+        until_draining(&rt, "direct-release drain starts").await;
+        assert_eq!(
+            rt.governor().release(permit_id),
+            ext::ReleaseOutcome::Released
+        );
+
+        let report = bounded("direct release wakes drain", drain)
+            .await
+            .expect("drain task joins")
+            .expect("direct release settles the runtime");
+        assert_eq!(report.classes_drained, 2);
+        assert_idle(&rt.snapshot(), "after direct release");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn direct_governor_abandon_of_a_promoted_ticket_wakes_drain() {
+    let rt = drain_runtime(1);
+    let holder_decision = rt
+        .governor()
+        .admit(&TaskSpec::io(class("c")).operation("holder"));
+    let ext::AdmissionDecision::Admitted { permit_id: holder } = holder_decision else {
+        panic!("holder must admit, got {holder_decision:?}");
+    };
+    let queued_decision = rt
+        .governor()
+        .admit(&TaskSpec::io(class("c")).operation("queued"));
+    let ext::AdmissionDecision::Queued { ticket } = queued_decision else {
+        panic!("second request must queue, got {queued_decision:?}");
+    };
+
+    let waiter = rt.clone();
+    let drain = tokio::spawn(async move { waiter.drain(Duration::MAX).await });
+    until_draining(&rt, "direct-abandon drain starts").await;
+    assert_eq!(rt.governor().release(holder), ext::ReleaseOutcome::Released);
+    until_snapshot(&rt, "ticket is promoted", |snapshot| {
+        snapshot.classes[&class("c")].inflight == 1 && snapshot.classes[&class("c")].queued == 0
+    })
+    .await;
+    rt.governor().abandon(ticket);
+
+    bounded("direct abandon wakes drain", drain)
+        .await
+        .expect("drain task joins")
+        .expect("abandon returns the final custody");
+    assert_idle(&rt.snapshot(), "after direct abandon");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn direct_governor_leak_reap_wakes_an_unbounded_drain() {
+    let rt = Builder::new()
+        .topology(TopologyConfig::new().blocking_threads(1))
+        .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
+        .class_policy(
+            class("c"),
+            ClassPolicy::new()
+                .max_inflight(1)
+                .cpu_units(1)
+                .memory_units(1)
+                .memory_release_policy(MemoryReleasePolicy::LeakDetecting),
+        )
+        .build()
+        .expect("runtime builds");
+    let decision = rt
+        .governor()
+        .admit(&TaskSpec::io(class("c")).operation("stale-reservation"));
+    let ext::AdmissionDecision::Admitted { .. } = decision else {
+        panic!("direct reservation must admit, got {decision:?}");
+    };
+    // Staleness is strict (`last_touched + threshold < now`), so move beyond
+    // the millisecond in which admission sampled the system clock.
+    tokio::time::sleep(Duration::from_millis(2)).await;
+
+    let waiter = rt.clone();
+    let drain = tokio::spawn(async move { waiter.drain(Duration::MAX).await });
+    until_draining(&rt, "direct-reap drain starts").await;
+    let report = rt.governor().reap_leaks_with(0);
+    assert_eq!(report.reclaimed_permits, 1);
+
+    bounded("direct leak reap wakes drain", drain)
+        .await
+        .expect("drain task joins")
+        .expect("reap returned the final custody");
+    assert_idle(&rt.snapshot(), "after direct leak reap");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn release_racing_the_first_drain_snapshot_never_loses_a_wakeup() {
+    for iteration in 0..64 {
+        let rt = drain_runtime(1);
+        let decision = rt
+            .governor()
+            .admit(&TaskSpec::io(class("c")).operation(format!("racing-holder-{iteration}")));
+        let ext::AdmissionDecision::Admitted { permit_id } = decision else {
+            panic!("iteration {iteration}: holder must admit, got {decision:?}");
+        };
+
+        let releaser = rt.clone();
+        let release = tokio::spawn(async move {
+            while !releaser.is_draining() {
+                tokio::task::yield_now().await;
+            }
+            releaser.governor().release(permit_id)
+        });
+        bounded("release racing the first snapshot", rt.drain(Duration::MAX))
+            .await
+            .unwrap_or_else(|_| panic!("iteration {iteration}: drain remained parked"));
+        assert_eq!(
+            release.await.expect("release task joins"),
+            ext::ReleaseOutcome::Released,
+            "iteration {iteration}"
+        );
+        assert_idle(&rt.snapshot(), "after racing release");
+    }
 }
 
 // ---- once draining, every submission path is refused before admission ----

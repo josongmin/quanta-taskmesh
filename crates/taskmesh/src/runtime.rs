@@ -56,7 +56,7 @@ use crate::RuntimeConfig;
 mod claim_acquisition_tests;
 mod drain;
 
-use drain::DrainSignal;
+pub use drain::DrainSignal;
 pub use drain::{DrainReport, NotDrained, Outstanding};
 
 type BlockingJobV1<T, E> = Box<dyn FnOnce() -> Result<T, E> + Send + 'static>;
@@ -99,12 +99,13 @@ impl TokioRuntime {
         config: RuntimeConfig,
         governor: Arc<Governor>,
         cpu: Arc<dyn CpuExecutor>,
+        drain: Arc<DrainSignal>,
     ) -> Self {
         Self {
             config,
             governor,
             cpu,
-            drain: Arc::new(DrainSignal::default()),
+            drain,
         }
     }
 
@@ -174,7 +175,6 @@ impl TokioRuntime {
                 // can never linger or strand a promoted-but-unclaimed permit.
                 let mut guard = TicketGuard {
                     governor: Arc::clone(&self.governor),
-                    drain: Arc::clone(&self.drain),
                     ticket: Some(ticket),
                 };
                 let result = self.await_promotion(ticket, &waker, arbiter).await;
@@ -289,7 +289,6 @@ impl TokioRuntime {
     fn return_unstarted(&self, permit_id: PermitId) {
         drop(ExecutionLease::reserved(
             Arc::clone(&self.governor),
-            Arc::clone(&self.drain),
             permit_id,
         ));
     }
@@ -312,11 +311,7 @@ impl TokioRuntime {
             .acquire(plan, &arbiter)
             .await
             .map_err(RunError::Governor)?;
-        Ok(ExecutionLease::reserved(
-            Arc::clone(&self.governor),
-            Arc::clone(&self.drain),
-            permit,
-        ))
+        Ok(ExecutionLease::reserved(Arc::clone(&self.governor), permit))
     }
 
     /// Resolve the plan for one submission against its class policy.
@@ -1091,9 +1086,6 @@ async fn run_cancellable<T, E>(
 /// actually terminated.
 struct ExecutionLease {
     governor: Arc<Governor>,
-    /// Pinged on drop: custody is back with the engine, so a drain waiting on
-    /// this lease re-reads the gauges (D17).
-    drain: Arc<DrainSignal>,
     permit_id: PermitId,
     custody: Custody,
 }
@@ -1115,10 +1107,9 @@ enum Custody {
 
 impl ExecutionLease {
     /// A lease over a freshly granted, undispatched permit.
-    fn reserved(governor: Arc<Governor>, drain: Arc<DrainSignal>, permit_id: PermitId) -> Self {
+    fn reserved(governor: Arc<Governor>, permit_id: PermitId) -> Self {
         Self {
             governor,
-            drain,
             permit_id,
             custody: Custody::Reserved,
         }
@@ -1218,10 +1209,6 @@ impl Drop for ExecutionLease {
                 );
             }
         }
-        // Whichever way the permit went — released here, or already reclaimed
-        // by the sweep and disarmed — the engine no longer charges this lease,
-        // and a drain waiting for that fact must hear it now, not at timeout.
-        self.drain.settled();
     }
 }
 
@@ -1231,9 +1218,6 @@ impl Drop for ExecutionLease {
 /// is successfully claimed (ownership then passes to an [`ExecutionLease`]).
 struct TicketGuard {
     governor: Arc<Governor>,
-    /// Pinged after an abandon: the queued (or promoted-but-unclaimed) request
-    /// is no longer counted, and a drain may be waiting on that (D17).
-    drain: Arc<DrainSignal>,
     ticket: Option<u64>,
 }
 
@@ -1247,14 +1231,13 @@ impl Drop for TicketGuard {
     fn drop(&mut self) {
         if let Some(ticket) = self.ticket {
             self.governor.abandon(ticket);
-            self.drain.settled();
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DrainSignal, TicketGuard};
+    use super::TicketGuard;
     use std::sync::Arc;
     use taskmesh_contract::{ClassPolicy, OverflowPolicy, TaskClass, TaskSpec};
     use taskmesh_engine::{AdmissionDecision, ClaimOutcome, ReleaseOutcome};
@@ -1286,7 +1269,6 @@ mod tests {
         };
         let mut guard = TicketGuard {
             governor: Arc::clone(&runtime.governor),
-            drain: Arc::new(DrainSignal::default()),
             ticket: Some(ticket),
         };
         guard.disarm();

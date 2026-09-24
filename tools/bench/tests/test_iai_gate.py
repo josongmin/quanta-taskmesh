@@ -509,6 +509,20 @@ def test_a_runner_whose_version_cannot_be_read_says_so_instead_of_dying_silently
     assert not harness.baseline_manifest.exists()
 
 
+def test_multiline_gate_config_is_refused_before_benchmark(harness: Harness) -> None:
+    config_path = harness.root / "tools" / "bench" / "perf-gate.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["instruction_count_gate"]["bench"] = "iai_governance\nextra"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    proc = harness.run()
+
+    assert proc.returncode == 1
+    assert "bench must be a nonempty printable string" in proc.stderr
+    assert not harness.log.exists(), "invalid config must not invoke cargo"
+    assert not harness.baseline_manifest.exists()
+
+
 def test_the_runner_version_is_accepted_from_its_own_error_report(harness: Harness) -> None:
     # Not installed through cargo (no `cargo install --list` entry): the
     # runner's own usage error is the fallback and must be enough.

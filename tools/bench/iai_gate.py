@@ -12,6 +12,7 @@ Commands:
     iai_gate.py runner-version    # installed runner version, or exit 2 with a reason
     iai_gate.py fingerprint --runner X --valgrind V --rustc-file F   # prints it
     iai_gate.py config KEY                     # prints one instruction_count_gate value
+    iai_gate.py config-fields                  # prints the four shell gate fields once
 """
 
 from __future__ import annotations
@@ -46,6 +47,22 @@ _SELF_REPORT = re.compile(
 
 def gate_config() -> dict:
     return json.loads(CONFIG.read_text(encoding="utf-8"))["instruction_count_gate"]
+
+
+def shell_config_fields() -> tuple[str, str, str, str]:
+    """Return the shell gate's scalar fields as safe, line-delimited values."""
+    config = gate_config()
+    fields = ("bench", "iai_callgrind_runner", "regression")
+    values = []
+    for field in fields:
+        value = config[field]
+        if not isinstance(value, str) or not value.strip() or not value.isprintable():
+            raise ValueError(f"{field} must be a nonempty printable string")
+        values.append(value)
+    schema = config["measurement_schema"]
+    if type(schema) is not int or schema <= 0:
+        raise ValueError("measurement_schema must be a positive integer")
+    return (*values, str(schema))
 
 
 def runner_version_from_install_list(text: str) -> str | None:
@@ -442,6 +459,7 @@ def main(argv: list[str] | None = None) -> int:
     fp.add_argument("--root", type=Path, default=REPO)
     cfg = sub.add_parser("config")
     cfg.add_argument("key")
+    sub.add_parser("config-fields")
     baseline = sub.add_parser("validate-baseline")
     baseline.add_argument("--root", required=True, type=Path)
     baseline.add_argument("--fingerprint", required=True)
@@ -460,6 +478,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "config":
         value = gate_config()[args.key]
         print(" ".join(value) if isinstance(value, list) else value)
+        return 0
+    if args.command == "config-fields":
+        try:
+            print("\n".join(shell_config_fields()))
+        except (OSError, KeyError, ValueError, TypeError) as error:
+            print(f"bench-iai: invalid gate config: {error}", file=sys.stderr)
+            return 2
         return 0
     if args.command == "runner-version":
         version, explanation = detect_runner_version()

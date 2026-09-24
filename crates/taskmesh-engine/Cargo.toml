@@ -50,3 +50,21 @@ loom = { version = "0.7", optional = true }
 
 [target.'cfg(shuttle)'.dependencies]
 shuttle = { version = "0.7", optional = true }
+
+# Model-check targets are discovered only with their checker feature. The
+# synchronization seam also requires the matching --cfg, so a half-configured
+# checker build fails rather than reporting an empty passing test binary.
+[[test]]
+name = "loom_governance"
+path = "tests/loom_governance.rs"
+required-features = ["loom"]
+
+[[test]]
+name = "shuttle_governance"
+path = "tests/shuttle_governance.rs"
+required-features = ["shuttle"]
+
+[[test]]
+name = "model_replay_fixture"
+path = "tests/model_replay_fixture.rs"
+required-features = ["shuttle"]

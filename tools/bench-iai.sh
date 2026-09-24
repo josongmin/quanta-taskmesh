@@ -49,14 +49,19 @@ need() {
 need python3
 [[ -f "${HELPER}" ]] || fail "helper ${HELPER} is missing"
 
-read_cfg() {
-  python3 "${HELPER}" config "$1"
-}
-
-BENCH="$(read_cfg bench)"
-RUNNER_VERSION="$(read_cfg iai_callgrind_runner)"
-REGRESSION="$(read_cfg regression)"
-SCHEMA="$(read_cfg measurement_schema)"
+config_output="$(python3 "${HELPER}" config-fields)" || fail "could not read ${CONFIG}"
+config_values=()
+while IFS= read -r value; do
+  config_values+=("${value}")
+done <<< "${config_output}"
+[[ ${#config_values[@]} -eq 4 ]] || fail "expected four fields from ${CONFIG}"
+for value in "${config_values[@]}"; do
+  [[ -n "${value}" ]] || fail "empty field in ${CONFIG}"
+done
+BENCH="${config_values[0]}"
+RUNNER_VERSION="${config_values[1]}"
+REGRESSION="${config_values[2]}"
+SCHEMA="${config_values[3]}"
 
 case "$#:${1:-}" in
   0:) mode="run" ;;

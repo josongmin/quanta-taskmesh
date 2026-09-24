@@ -1864,6 +1864,152 @@ fn cancellation_preserves_each_survivors_virtual_arrival_floor() {
     assert_eq!(g.snapshot().conservation_violation(), None);
 }
 
+fn cross_pool_weighted_governor(weight_a: u32, weight_b: u32) -> Governor {
+    let mut classes = BTreeMap::new();
+    classes.insert(TaskClass::new("a"), weighted_class(weight_a));
+    classes.insert(TaskClass::new("b"), weighted_class(weight_b));
+    Governor::new(
+        PolicySet::new(
+            ResourceBudget::new().cpu_units(2).memory_units(1_000_000),
+            classes,
+        )
+        .with_capability_limits(BTreeMap::from([
+            ("large_stack".to_owned(), 1),
+            ("blocking".to_owned(), 2),
+        ]))
+        .expect("registered capability pools"),
+        Arc::new(ManualClock::new(1_000)),
+    )
+    .expect("valid weighted policy")
+}
+
+#[test]
+fn a_wfq_nonhead_candidate_excludes_the_blocked_prefix_from_its_service_tag() {
+    let g = cross_pool_weighted_governor(1, 1);
+    let AdmissionDecision::Admitted {
+        permit_id: pool_holder,
+    } = admit_on(&g, &spec("a", "pool-holder"), "large_stack")
+    else {
+        panic!("large-stack pool starts free");
+    };
+    let AdmissionDecision::Admitted {
+        permit_id: cpu_holder,
+    } = admit_on(&g, &spec("b", "cpu-holder"), "blocking")
+    else {
+        panic!("second CPU unit starts free");
+    };
+    let AdmissionDecision::Queued { ticket: older } =
+        admit_on(&g, &spec("a", "older"), "large_stack")
+    else {
+        panic!("older request waits for the occupied large-stack pool");
+    };
+    let AdmissionDecision::Queued { ticket: follower } =
+        admit_on(&g, &spec("a", "cross-pool-follower"), "blocking")
+    else {
+        panic!("follower waits for global CPU");
+    };
+    let AdmissionDecision::Queued { ticket: peer } =
+        admit_on(&g, &spec("b", "equal-weight-peer"), "blocking")
+    else {
+        panic!("peer waits for global CPU");
+    };
+
+    assert_eq!(g.release(cpu_holder), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(follower_permit) = g.claim(follower) else {
+        panic!("the earlier equal-tag follower must promote first");
+    };
+    assert!(matches!(g.ticket_status(peer), ClaimOutcome::Pending));
+    assert!(matches!(g.ticket_status(older), ClaimOutcome::Pending));
+
+    assert_eq!(g.release(follower_permit), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(peer_permit) = g.claim(peer) else {
+        panic!("peer promotes after the follower's service");
+    };
+    assert_eq!(g.release(peer_permit), ReleaseOutcome::Released);
+    assert_eq!(g.release(pool_holder), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(older_permit) = g.claim(older) else {
+        panic!("older request promotes when its pool becomes free");
+    };
+    assert_eq!(g.release(older_permit), ReleaseOutcome::Released);
+}
+
+#[test]
+fn cancellation_after_cross_pool_service_does_not_reprice_an_older_head() {
+    fn first_after_pool_release(cancel_unserved_follower: bool) -> &'static str {
+        let g = cross_pool_weighted_governor(1, 2);
+
+        let AdmissionDecision::Admitted {
+            permit_id: pool_holder,
+        } = admit_on(&g, &spec("a", "pool-holder"), "large_stack")
+        else {
+            panic!("large-stack pool starts free");
+        };
+        let AdmissionDecision::Admitted {
+            permit_id: cpu_holder,
+        } = admit_on(&g, &spec("b", "cpu-holder"), "blocking")
+        else {
+            panic!("second CPU unit starts free");
+        };
+        let AdmissionDecision::Queued { ticket: older } =
+            admit_on(&g, &spec("a", "older"), "large_stack")
+        else {
+            panic!("older request waits for the occupied large-stack pool");
+        };
+        let AdmissionDecision::Queued { ticket: follower } =
+            admit_on(&g, &spec("a", "cross-pool-follower"), "blocking")
+        else {
+            panic!("follower waits for global CPU");
+        };
+
+        assert_eq!(g.release(cpu_holder), ReleaseOutcome::Released);
+        let ClaimOutcome::Ready(follower_permit) = g.claim(follower) else {
+            panic!("runnable follower bypasses the capability-blocked head");
+        };
+        assert!(matches!(g.ticket_status(older), ClaimOutcome::Pending));
+
+        if cancel_unserved_follower {
+            let AdmissionDecision::Queued { ticket: victim } =
+                admit_on(&g, &spec("a", "cancelled-follower"), "blocking")
+            else {
+                panic!("victim waits while both CPU units are held");
+            };
+            g.abandon(victim);
+        }
+
+        let AdmissionDecision::Queued { ticket: peer } =
+            admit_on(&g, &spec("b", "weighted-peer"), "blocking")
+        else {
+            panic!("peer waits while both CPU units are held");
+        };
+        assert_eq!(g.release(pool_holder), ReleaseOutcome::Released);
+
+        let first = match (g.ticket_status(older), g.ticket_status(peer)) {
+            (ClaimOutcome::Ready(permit), ClaimOutcome::Pending) => ("a", older, permit),
+            (ClaimOutcome::Pending, ClaimOutcome::Ready(permit)) => ("b", peer, permit),
+            outcomes => panic!("exactly one request must be promoted: {outcomes:?}"),
+        };
+        let other = if first.1 == older { peer } else { older };
+        assert_eq!(g.release(first.2), ReleaseOutcome::Released);
+        let ClaimOutcome::Ready(other_permit) = g.claim(other) else {
+            panic!("the other request promotes after the first releases");
+        };
+        assert_eq!(g.release(other_permit), ReleaseOutcome::Released);
+        assert_eq!(g.release(follower_permit), ReleaseOutcome::Released);
+        first.0
+    }
+
+    let without_cancellation = first_after_pool_release(false);
+    let with_cancellation = first_after_pool_release(true);
+    assert_eq!(
+        with_cancellation, without_cancellation,
+        "removing an unrelated unserved follower must not reprice the older head"
+    );
+    assert_eq!(
+        without_cancellation, "b",
+        "the class already received one unit of service through its runnable follower"
+    );
+}
+
 #[test]
 fn cancelling_from_the_middle_preserves_the_order_of_the_survivors() {
     // Removal must not reorder what is left, whichever position it happens at.

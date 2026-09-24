@@ -24,7 +24,7 @@ use taskmesh_contract::{
     SubstrateKind, SubstrateRecord, TaskClass, TopologyConfig, TopologyError, PHYSICAL_CPU,
     PHYSICAL_DEDICATED, PHYSICAL_SHARED_BLOCKING,
 };
-use taskmesh_engine::{Governor, PolicySet, SystemClock};
+use taskmesh_engine::{Governor, PolicySet, SystemClock, BUILTIN_SUBSTRATES};
 
 #[cfg(not(feature = "rayon"))]
 use crate::executor::BlockingPoolCpuExecutor;
@@ -125,7 +125,9 @@ impl Builder {
 
     /// Declare capacity authority for an additional substrate pool. `0` is an
     /// explicit unbounded declaration; omission is rejected by the engine.
-    /// Repeating a pool records an error returned by [`Self::build`].
+    /// Repeating a pool records an error returned by [`Self::build`]. Built-in
+    /// semantic and physical pools are topology-owned and cannot be registered
+    /// here, including when their topology limit is unbounded.
     pub fn capability_limit(mut self, pool: impl Into<String>, slots: u32) -> Self {
         match self.capability_limits.entry(pool.into()) {
             Entry::Occupied(existing) => {
@@ -286,6 +288,11 @@ fn capability_limits(
     dedicated_workers: usize,
     mut limits: BTreeMap<String, u32>,
 ) -> Result<BTreeMap<String, u32>, GovernorError> {
+    if let Some(pool) = limits.keys().find(|pool| builder_owned_pool(pool.as_str())) {
+        return Err(GovernorError::PolicyViolation(
+            format!("capability limit for built-in pool {pool} cannot be overridden").into(),
+        ));
+    }
     let mut insert = |pool: &str, slots: usize| -> Result<(), GovernorError> {
         if slots == 0 {
             return Ok(());
@@ -313,6 +320,14 @@ fn capability_limits(
         insert(pool, slots)?;
     }
     Ok(limits)
+}
+
+fn builder_owned_pool(pool: &str) -> bool {
+    BUILTIN_SUBSTRATES.contains(&pool)
+        || matches!(
+            pool,
+            PHYSICAL_CPU | PHYSICAL_SHARED_BLOCKING | PHYSICAL_DEDICATED
+        )
 }
 
 fn physical_domain_record(domain: &'static str) -> SubstrateRecord {

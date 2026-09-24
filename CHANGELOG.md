@@ -418,7 +418,12 @@ The current operator path is local; hosted attestation remains a compatibility p
   `u32::MAX` times for admissible policies.
 - TM16-013: WFQ produced a zero virtual-time increment for large weights.
 - TM16-014 / TM16-037: WFQ cancelled-service debt and DRR idle credit let past
-  history decide the order of identical queue states.
+  history decide the order of identical queue states. Cross-pool WFQ followers
+  now charge only their actual service and immediately rebuild survivor tags,
+  so an unrelated cancellation cannot reorder an older blocked request.
+- `Builder::capability_limit` could override a topology-owned built-in pool when
+  its topology slot count was the unbounded `0` sentinel, leaving portable
+  config and the governor capacity ledger in disagreement.
 - TM16-015: requested-stack workers released their lease *after* sending the
   result, leaving a phantom `inflight` visible right after completion.
 - TM16-022: the CPU relative deadline started after `spawn` returned.

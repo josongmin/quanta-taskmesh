@@ -1,11 +1,13 @@
 # Taskmesh verification stages: 2026 audit and implementation plan
 
-Status: **W1 source fixes in the working tree; no test or CI qualification**.
+Status: **tracked implementation plan; W3 execution-denominator work, W4 hosted
+adoption, and W5 release qualification remain open**.
 Audit baseline: `main@e5aa4b63a1fedb3b416d33d1ea7ff364258002b5`, clean
-before this plan was created on 2026-09-24. The plan is untracked. W1 edits
-now touch the Semgrep checker/policy tests, weighted fairness property, and
-documentation; later waves remain proposals. No mutation campaign or receipt
-collector was run.
+before this plan was created on 2026-09-24. The initial draft was untracked and
+had no test or CI qualification. A later clean `main@934230d` produced a valid
+local macOS CI-profile gate receipt; that source-specific receipt does not
+qualify later edits, nightly campaigns, or release. No mutation campaign,
+nightly qualification, or release qualification was run for this plan.
 
 ## Decision
 
@@ -42,8 +44,8 @@ hand-maintained list of every Rust test function or pytest case.
 | CI is currently a local verification profile, not an automatic PR check. | `Justfile:282-286` writes clean-source macOS CI/nightly receipts. `.github/workflows/{ci,bench,release}.yml` are manual-only; `validate_inventory.py:33-37` forbids automatic events. The local pre-push hook checks an exact-HEAD receipt, but is not an independently enforced GitHub merge status. |
 | Hosted `ci.yml` is a full manual qualification workflow. | It contains curated and generated mutations, fuzz, modelcheck, and a full receipt collector in addition to fast/matrix jobs. Enabling `pull_request` on this file would launch the expensive producers. W4 needs a dedicated bounded PR workflow with exactly the 16 CI-profile gates; merely changing its trigger is invalid. |
 | The release witness's `required_gate` is a proof dependency, not its test executor. | `finding_proof.py:48-79` runs every witness with its own focused Cargo/pytest command; `tools/release/receipt.py:386` also requires the row's named ordinary gate to PASS. For example a Python IAI policy witness names `bench-iai`, while `py-test` runs its module. The code does not document the intended domain relationship, but TM21-020's `test-rayon` association cannot be called a false execution mapping from this field. Retract that claim from the earlier audit and document the two meanings. |
-| Baseline Semgrep enrollment was weaker than its full-test-tree wording. | The original `tools/semgrep/check.py` accepted one scanned Rust file per crate `tests/` tree plus six explicit paths. W1 now compares every present Rust test file to Semgrep's scanned paths and the policy fixture removes one file from a still-covered tree. The real Semgrep gate reported 133 files and zero findings; the pytest policy fixture has not been run. |
-| Baseline weighted fairness property proved repeatability but not complete drain. | The original `prop_invariants.rs` could return with tickets left while comparing two same-helper outputs. W1 now requires every admission to queue, every ticket to promote, and a zero queued/inflight snapshot. `fairness_weighted.rs` still independently checks exact order. The changed property has not been executed. |
+| Baseline Semgrep enrollment was weaker than its full-test-tree wording. | The original `tools/semgrep/check.py` accepted one scanned Rust file per crate `tests/` tree plus six explicit paths. W1 compares every present Rust test file to Semgrep's scanned paths and the policy fixture removes one file from a still-covered tree. The subsequent `934230d` CI-profile run executed both the real Semgrep gate and its pytest policy fixtures. |
+| Baseline weighted fairness property proved repeatability but not complete drain. | The original `prop_invariants.rs` could return with tickets left while comparing two same-helper outputs. W1 requires every admission to queue, every ticket to promote, and a zero queued/inflight snapshot. `fairness_weighted.rs` still independently checks exact order. The subsequent `934230d` CI-profile run executed the changed property. |
 | Runner/environment variability needs explicit disclosure. | `Justfile:27-39` chooses nextest if installed and falls back to Cargo with the same `--lib --tests` selection. The gate receipt records the `just test` result; the ordinary environment record contains rustc/Python/lock identity but no selected test-runner version. Treat this as a reproducibility/diagnostic improvement, not a demonstrated test omission. `deny` also declares a live advisory-network prerequisite in the inventory; record the advisory snapshot or report it as an external input. |
 | Existing proof limits are intentional. | `coverage-report` means a report was produced, not a coverage threshold. `bench-smoke` checks build/smoke, not latency. macOS skips Linux `bench-iai` as `SKIPPED_PLATFORM`; a platform-scoped result is not full Linux release qualification. The collector samples source before/after, so final runs need an exclusive checkout to exclude edit-and-restore. |
 
@@ -85,7 +87,7 @@ the table is an audit map of selection and evidence meaning.
 | `clippy` | required `ci` | Full multi-pass Rust production, test/example/bench, Rayon feature, doc fixture and bench harness lint; `clippy-core` in `dev` is narrower |
 | `test` | required `ci` | Default library + 72 integration targets and doc-fixture library; `test-core` in `dev` excludes bench and doc fixture |
 | `deny` | required `ci` | Dependency/license/advisory policy; live advisory input must be identified |
-| `semgrep` | `dev`; required `ci` | Real Rust scan + per-file test-tree enrollment in W1 working tree; pytest policy regression still unrun |
+| `semgrep` | `dev`; required `ci` | Real Rust scan + per-file test-tree enrollment; its pytest policy regression is owned by `py-test` |
 | `test-architecture` | `dev`; required `ci` | Crate/manifest boundary policy |
 | `py-lint` | required `ci` | Ruff over `tools/`; selected owner Ruff in local Python loop |
 | `py-test` | required `ci` | All tracked Python test modules and marks, including `qualification` and `slow` |
@@ -311,18 +313,19 @@ cheaper stage based on inspection counts alone: require measured cost, a
 preserved CI/deep authority, and a negative/semantic oracle where the test is
 claiming a production invariant.
 
-W1 has source changes only. Ruff and the real Semgrep scan passed on this
-working tree; focused Rust/pytest tests, clean-source `dev`/CI receipts, and
-W2-W5 remain open. Do not treat a static source edit or Semgrep PASS alone as
-the W1 acceptance evidence in the table above.
+W1 and the W3 static slice were tracked by `934230d`, whose clean-source local
+macOS CI-profile receipt passed all 16 required gates. That historical receipt
+does not qualify later source changes and does not establish nightly or release
+qualification. W3 execution-denominator work, W4 hosted adoption, and W5 full
+release qualification remain open.
 
-W3 static slice is now in the working tree: `gates-inventory` derives 113
+The W3 static slice makes `gates-inventory` derive 113
 Cargo/Python/fuzz target records and rejects unowned feature targets or
 missing declared recipe selectors. The `test` gate reports its selected
 runner/version, and saved PASS validation requires those fields. This does
 not establish compiled target selection, case execution, pytest collection,
-or a source-bound CI receipt. The W3 acceptance evidence above remains open;
-the catalog fixtures and execution-denominator work are the next owner tasks.
+or a reusable receipt for a different source. The remaining W3 acceptance
+evidence is the execution-denominator work below.
 
 ### W3 implementation contract
 

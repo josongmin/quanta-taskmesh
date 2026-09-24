@@ -72,7 +72,9 @@ The caller or adapter owns that execution and reducer.
    head froze at intake; there is no second scheduling queue behind the first.
    DRR walks its ring arithmetically (`O(classes)`, never `O(cost/quantum)`) and
    resets credit when a queue drains; WFQ keeps proportional share across the
-   whole accepted weight range and drops no service debt for cancelled work
+   whole accepted weight range, charges only work that actually received
+   service when a cross-pool follower overtakes a blocked head, and drops no
+   service debt for cancelled work
 3. permit admission/release inseparable from inflight + resource accounting.
    Capability-pool occupancy is decided in the same transition — the engine is
    the single authority for physical *and* semantic capacity. Aggregates are

@@ -32,12 +32,36 @@
       "finding": "TM16-037",
       "rationale": "Residual deficit carried across busy periods lets an intermittently-active class bank credit and then run its whole backlog ahead of a peer that was queued throughout.",
       "file": "crates/taskmesh-engine/src/features/fairness/scheduler.rs",
-      "find": "    if cstate.queue.is_empty() {\n        cstate.last_finish_tag = virtual_time;\n        cstate.last_served_finish_tag = virtual_time;\n        cstate.deficit = 0;\n        return;\n    }\n    cstate.last_served_finish_tag = cstate.last_served_finish_tag.max(finish_tag);",
-      "replace": "    if cstate.queue.is_empty() {\n        cstate.last_finish_tag = virtual_time;\n        cstate.last_served_finish_tag = virtual_time;\n        return;\n    }\n    cstate.last_served_finish_tag = cstate.last_served_finish_tag.max(finish_tag);",
+      "find": "    if cstate.queue.is_empty() {\n        cstate.last_finish_tag = virtual_time;\n        cstate.last_served_finish_tag = virtual_time;\n        cstate.deficit = 0;\n        return;\n    }\n    cstate.last_served_finish_tag = cstate.last_served_finish_tag.max(service_finish_tag);",
+      "replace": "    if cstate.queue.is_empty() {\n        cstate.last_finish_tag = virtual_time;\n        cstate.last_served_finish_tag = virtual_time;\n        return;\n    }\n    cstate.last_served_finish_tag = cstate.last_served_finish_tag.max(service_finish_tag);",
       "package": "taskmesh-engine",
       "test_target": "hardening_fairness_reference",
       "expect_failing_test": "an_idle_class_does_not_bank_credit_across_busy_periods",
       "expect_message": "idle history produced a burst"
+    },
+    {
+      "id": "wfq-nonhead-inherits-blocked-prefix-debt",
+      "finding": "TM16-014",
+      "rationale": "A runnable follower on a different capability pool is the class's next actual service. Using its original queued tag charges the still-blocked prefix before that work runs and can hand the freed slot to a later peer.",
+      "file": "crates/taskmesh-engine/src/features/fairness/scheduler.rs",
+      "find": "        let service_finish_tag = match policy.fairness {\n            FairnessPolicy::WeightedFairQueue { weight, .. } => cstate\n                .last_served_finish_tag\n                .max(head.wfq_arrival_tag)\n                .saturating_add(wfq_increment(head.cost.cpu_units, weight)),\n            _ => head.finish_tag,\n        };",
+      "replace": "        let service_finish_tag = head.finish_tag;",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_fairness_reference",
+      "expect_failing_test": "a_wfq_nonhead_candidate_excludes_the_blocked_prefix_from_its_service_tag",
+      "expect_message": "earlier equal-tag follower must promote first"
+    },
+    {
+      "id": "wfq-service-leaves-survivor-tags-stale",
+      "finding": "TM16-014",
+      "rationale": "Serving a nonhead changes the class's actual service baseline. If surviving tags are not rebuilt immediately, a later unrelated cancellation becomes the event that reprices them and can reverse cross-class order.",
+      "file": "crates/taskmesh-engine/src/features/fairness/scheduler.rs",
+      "find": "    cstate.last_served_finish_tag = cstate.last_served_finish_tag.max(service_finish_tag);\n    if let FairnessPolicy::WeightedFairQueue { weight, .. } = policy.fairness {\n        rebuild_wfq_queue(cstate, weight, virtual_time);\n    } else {",
+      "replace": "    cstate.last_served_finish_tag = cstate.last_served_finish_tag.max(service_finish_tag);\n    if let FairnessPolicy::WeightedFairQueue { .. } = policy.fairness {\n        cstate.last_finish_tag = cstate\n            .queue\n            .iter()\n            .map(|request| request.finish_tag)\n            .max()\n            .unwrap_or(virtual_time)\n            .max(virtual_time);\n    } else {",
+      "package": "taskmesh-engine",
+      "test_target": "hardening_fairness_reference",
+      "expect_failing_test": "cancellation_after_cross_pool_service_does_not_reprice_an_older_head",
+      "expect_message": "removing an unrelated unserved follower must not reprice the older head"
     },
     {
       "id": "cancellation-leaves-service-debt",
@@ -343,6 +367,18 @@
       "test_target": "hardening_executor_protocol",
       "expect_failing_test": "a_cpu_gate_wider_than_the_executor_declares_is_refused_at_build",
       "expect_message": "fewer declared workers than the gate must be refused"
+    },
+    {
+      "id": "builder-allows-topology-owned-capability-override",
+      "finding": "B4-config",
+      "rationale": "Caller capability limits are for additional substrates. If the builder stops recognizing its own semantic and physical pools, a zero topology sentinel can be silently replaced by a finite governor limit and the two configuration views disagree.",
+      "file": "crates/taskmesh/src/builder.rs",
+      "find": "fn builder_owned_pool(pool: &str) -> bool {\n    BUILTIN_SUBSTRATES.contains(&pool)\n        || matches!(\n            pool,\n            PHYSICAL_CPU | PHYSICAL_SHARED_BLOCKING | PHYSICAL_DEDICATED\n        )\n}",
+      "replace": "fn builder_owned_pool(_pool: &str) -> bool {\n    false\n}",
+      "package": "taskmesh",
+      "test_target": "config_inventory",
+      "expect_failing_test": "builder_owned_capability_pools_cannot_be_overridden",
+      "expect_message": "topology-owned pool blocking must reject caller capacity"
     },
     {
       "id": "unsupported-deadline-silently-dropped",

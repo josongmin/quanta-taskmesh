@@ -35,7 +35,7 @@
 
 use taskmesh_contract::{ClassPolicy, FairnessPolicy, TaskClass};
 
-use crate::engine::state::GovernedState;
+use crate::engine::state::{ClassState, GovernedState};
 use crate::features::admission::pending::{self, CapacityAssessment};
 use crate::shared::PolicySet;
 
@@ -189,14 +189,7 @@ pub fn on_unserved_removed(state: &mut GovernedState, class: &TaskClass, policy:
         return;
     }
     if let FairnessPolicy::WeightedFairQueue { weight, .. } = policy.fairness {
-        let mut cursor = cstate.last_served_finish_tag;
-        for request in &mut cstate.queue {
-            let start = cursor.max(request.wfq_arrival_tag);
-            request.finish_tag =
-                start.saturating_add(wfq_increment(request.cost.cpu_units, weight));
-            cursor = request.finish_tag;
-        }
-        cstate.last_finish_tag = cursor.max(virtual_time);
+        rebuild_wfq_queue(cstate, weight, virtual_time);
     } else {
         cstate.last_finish_tag = cstate
             .queue
@@ -208,10 +201,19 @@ pub fn on_unserved_removed(state: &mut GovernedState, class: &TaskClass, policy:
     }
 }
 
-/// Record a request that left the queue because it received service. Its
-/// finish tag remains real debt; compacting survivors here would let a busy
-/// class erase service by dispatching.
-pub fn on_request_served(state: &mut GovernedState, class: &TaskClass, finish_tag: u128) {
+/// Record a request that left the queue because it received service.
+///
+/// The service tag is computed from actual prior service, rather than from the
+/// request's original queue position. A request may overtake a head blocked on
+/// another capability pool; the skipped request is still unserved and must not
+/// be counted in the class baseline. Rebuilding the remaining queue immediately
+/// makes later cancellation a no-op for unrelated survivor ordering.
+pub fn on_request_served(
+    state: &mut GovernedState,
+    class: &TaskClass,
+    policy: &ClassPolicy,
+    service_finish_tag: u128,
+) {
     let virtual_time = state.virtual_time;
     let cstate = state.class_mut(class);
     if cstate.queue.is_empty() {
@@ -220,14 +222,28 @@ pub fn on_request_served(state: &mut GovernedState, class: &TaskClass, finish_ta
         cstate.deficit = 0;
         return;
     }
-    cstate.last_served_finish_tag = cstate.last_served_finish_tag.max(finish_tag);
-    cstate.last_finish_tag = cstate
-        .queue
-        .iter()
-        .map(|request| request.finish_tag)
-        .max()
-        .unwrap_or(virtual_time)
-        .max(virtual_time);
+    cstate.last_served_finish_tag = cstate.last_served_finish_tag.max(service_finish_tag);
+    if let FairnessPolicy::WeightedFairQueue { weight, .. } = policy.fairness {
+        rebuild_wfq_queue(cstate, weight, virtual_time);
+    } else {
+        cstate.last_finish_tag = cstate
+            .queue
+            .iter()
+            .map(|request| request.finish_tag)
+            .max()
+            .unwrap_or(virtual_time)
+            .max(virtual_time);
+    }
+}
+
+fn rebuild_wfq_queue(cstate: &mut ClassState, weight: u32, virtual_time: u128) {
+    let mut cursor = cstate.last_served_finish_tag;
+    for request in &mut cstate.queue {
+        let start = cursor.max(request.wfq_arrival_tag);
+        request.finish_tag = start.saturating_add(wfq_increment(request.cost.cpu_units, weight));
+        cursor = request.finish_tag;
+    }
+    cstate.last_finish_tag = cursor.max(virtual_time);
 }
 
 /// A runnable class and the head request driving its dispatch key.
@@ -246,6 +262,7 @@ struct Candidate {
 pub struct Selection {
     pub class: TaskClass,
     pub queue_index: usize,
+    pub service_finish_tag: u128,
 }
 
 /// Whether any class could be promoted right now. Pure: unlike [`select`] it
@@ -293,13 +310,13 @@ pub fn select(state: &mut GovernedState, policies: &PolicySet) -> Option<Selecti
             state.virtual_time = state.virtual_time.max(c.head_finish_tag);
         }
     }
-    let queue_index = candidates
+    let chosen = candidates
         .iter()
-        .find(|candidate| candidate.class == chosen_class)?
-        .queue_index;
+        .find(|candidate| candidate.class == chosen_class)?;
     Some(Selection {
         class: chosen_class,
-        queue_index,
+        queue_index: chosen.queue_index,
+        service_finish_tag: chosen.head_finish_tag,
     })
 }
 
@@ -318,13 +335,20 @@ fn runnable_candidates(state: &GovernedState, policies: &PolicySet) -> Vec<Candi
         }) else {
             continue;
         };
+        let service_finish_tag = match policy.fairness {
+            FairnessPolicy::WeightedFairQueue { weight, .. } => cstate
+                .last_served_finish_tag
+                .max(head.wfq_arrival_tag)
+                .saturating_add(wfq_increment(head.cost.cpu_units, weight)),
+            _ => head.finish_tag,
+        };
         out.push(Candidate {
             class: class.clone(),
             queue_index,
             fairness: policy.fairness,
             best_effort: policy.best_effort,
             head_seq: head.seq_no,
-            head_finish_tag: head.finish_tag,
+            head_finish_tag: service_finish_tag,
             head_deadline_ms: head.deadline_ms,
             head_cost_cpu: head.cost.cpu_units,
         });

@@ -56,6 +56,32 @@ fn duplicate_custom_capability_cannot_change_finite_limit_to_unbounded() {
 }
 
 #[test]
+fn builder_owned_capability_pools_cannot_be_overridden() {
+    for pool in [
+        "cpu",
+        "blocking",
+        "large_stack",
+        "maintenance",
+        "local_runtime",
+        "physical.cpu",
+        "physical.shared_blocking",
+        "physical.dedicated",
+    ] {
+        let Err(GovernorError::PolicyViolation(message)) =
+            Builder::new().capability_limit(pool, 1).build()
+        else {
+            panic!("topology-owned pool {pool} must reject caller capacity");
+        };
+        assert!(
+            message.contains(&format!(
+                "capability limit for built-in pool {pool} cannot be overridden"
+            )),
+            "{pool}: {message}"
+        );
+    }
+}
+
+#[test]
 fn config_carries_resolved_substrate_inventory() {
     let extra = SubstrateRecord::new(
         "external-gpu",

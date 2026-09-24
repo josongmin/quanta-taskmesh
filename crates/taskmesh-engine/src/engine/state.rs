@@ -78,8 +78,9 @@ pub struct ClassState {
     pub queue: VecDeque<PendingRequest>,
     /// WFQ: the finish tag of the most recently enqueued request.
     pub last_finish_tag: u128,
-    /// WFQ: finish tag of the last request that actually received service in
-    /// this busy period. Unserved removals rebuild from this baseline.
+    /// WFQ: virtual finish after the service actually received in this busy
+    /// period. This excludes skipped queued work when a request overtakes a
+    /// capability-blocked head. Queue rebuilds start from this baseline.
     pub last_served_finish_tag: u128,
     /// DRR: accumulated deficit, in the same unit domain as head cost.
     pub deficit: u128,

@@ -553,7 +553,11 @@ impl Governor {
             let Some(head) = state.class_mut(&class).queue.remove(selection.queue_index) else {
                 break;
             };
-            fairness::on_request_served(state, &class, head.finish_tag);
+            let policy = self
+                .policy
+                .class(&class)
+                .expect("queued class belongs to the validated policy");
+            fairness::on_request_served(state, &class, policy, selection.service_finish_tag);
             state.tickets.remove(&head.ticket);
             let permit_id = self.next_permit.fetch_add(1, Ordering::Relaxed);
             let parent_permit_id = head

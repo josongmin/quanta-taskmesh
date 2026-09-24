@@ -177,9 +177,12 @@ phase gauge, 누적 counter가 추가되고 held 필드의 폭과 wire 표현이
 
 ## D08 — fairness는 완전히 runnable한 후보만 고른다
 
-**선택.** scheduler 후보는 semantic capacity와 head가 intake에서 동결한 capability를
-**둘 다** 만족해야 한다. 클래스 내부는 strict FIFO를 유지한다. 취소된 요청은
-service debt를 남기지 않고, drain된 큐는 credit을 이월하지 않는다.
+**선택.** scheduler 후보는 semantic capacity와 intake에서 동결한 capability를
+**둘 다** 만족해야 한다. 클래스 내부는 FIFO이며, 유일한 추월은 앞 요청이 다른
+capability pool에 막혀 있고 뒤 요청의 pool은 runnable인 경우다. WFQ는 이때 원래
+queue 위치의 누적 tag가 아니라 실제 제공된 service cost만 baseline에 반영하고,
+남은 queue tag를 즉시 재구축한다. 취소된 요청은 service debt를 남기지 않고,
+drain된 큐는 credit을 이월하지 않는다.
 
 **근거.** 물리적으로 실행 불가능한 클래스를 고르면 그 뒤에 두 번째 scheduling queue가
 생기고 거기서 도착 순서가 클래스 fairness를 덮어쓴다. 취소 debt(TM16-014)와 idle

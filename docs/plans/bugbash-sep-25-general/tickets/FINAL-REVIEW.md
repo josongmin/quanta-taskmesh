@@ -2,7 +2,7 @@
 
 ## Verdict
 
-The 104-row static mapping validates on the current dirty tree. New compound fixtures provide candidate evidence for mixed-substrate overload, independent capacity saturation, staged blocker release, policy interactions, concurrent histories, split child lifetimes, and host/simulator accounting. The in-repository semantic audit retains H04's combined race and H16's failure-schedule replay as explicit residuals. Qualification remains open until one clean exact-source macOS CI-profile receipt passes after the final commit. D1–D9 human review and external ingress/planner/wire adoption remain OPEN under their external authorities.
+The 104-row static mapping validates on the current tree; this is structural evidence, not an execution receipt. New compound fixtures provide candidate evidence for mixed-substrate overload, independent capacity saturation, staged blocker release, policy interactions, concurrent histories, split child lifetimes, and host/simulator accounting. The in-repository semantic audit retains H04's combined race and H16's failure-schedule replay as explicit residuals. Qualification remains open until one clean exact-source macOS CI-profile receipt passes after the final commit. D1–D9 human review and external ingress/planner/wire adoption remain OPEN under their external authorities; the Semantica concurrent consumer test also fails on repeated root/operation identity.
 
 ## Classification
 
@@ -59,6 +59,7 @@ The 104-row static mapping validates on the current dirty tree. New compound fix
 | Owner | Required result | Stop condition |
 |---|---|---|
 | BG25-009/012 | Prove H04's combined four-way race and H16's failure-schedule persistence/replay on their authorized rail. | Separate deterministic cases do not prove the combined interleaving or replay clause. |
+| External consumer | Give independent Semantica root invocations unique Taskmesh operation identities and rerun the feature-specific concurrent consumer test. | The current test returns `RecursiveAdmission` for 39 callers before queue capacity is exercised; see `EXTERNAL-ADOPTION.md`. |
 | BG25-001/002/003 | Record human D1–D9 review and the actual deployment ingress, planner, and wire consumer call sites with owner-local execution evidence. | Library-local tests cannot close external adoption. |
 | BG25-011 | Record a quiet-host environment and baseline only if a latency or throughput qualification claim is required. | Simulator admission wait is not host latency; a first baseline is not a regression PASS. |
 | BG25-012 | Freeze all owners' changes, commit the final source, and generate/validate one clean final-HEAD macOS CI-profile receipt with durable artifact custody. | A receipt from any other HEAD/tree/path digest is invalid. |

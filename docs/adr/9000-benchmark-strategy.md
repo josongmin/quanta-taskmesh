@@ -6,6 +6,14 @@
 - 번호대: 9xxx = north-star / aspirational. 순차 결정이 아니라 "지향점"으로 둔다.
 - 선행: [0001 — Feature-sliced 헥사고날 아키텍처](0001-hexagonal-feature-sliced-architecture.md)
 
+> **현재 상태 (2026-09-26):** 이 문서는 Proposed 북극성 및 2026-06-04 시점의
+> 구현 스냅샷이다. 아래 "구현됨" 목록과 성능 수치를 현재 HEAD의 자격 증거로
+> 사용하지 않는다. 현행 allocation gate 설정은 **8 alloc/op**이고,
+> `loadgen::simulate`는 시작한 요청의 가상 admission wait를 raw 기록하며,
+> `.github/workflows/bench.yml`은 수동 전용이다. 실제 Tokio host의 지속 부하
+> 지연·goodput은 아직 자격화되지 않았다. 소스 감사와 정정/구현 순서는
+> [Taskmesh 벤치 계획](../plans/sep-25-taskmesh-benchmark/tickets/README.md)을 따른다.
+
 ## Context
 
 `taskmesh`는 모든 task 앞단에 끼는 governed execution control-plane이다. 따라서

@@ -37,7 +37,7 @@ primitive, IO, 시계, 메모리 측정 같은 부작용과 섞이면 결정성�
 | `taskmesh-contract` | 어휘 + 모든 port trait. 헥사곤 경계 그 자체 | serde |
 | `taskmesh-engine` | 순수 거버넌스 core (full hexagonal) | contract, parking_lot |
 | `taskmesh` | host facade. tokio 어댑터 + Builder (semi-hexagonal) | contract, engine, tokio |
-| `taskmesh-rayon` | rayon Executor 어댑터 | contract, rayon |
+| `taskmesh-rayon` | rayon `CpuExecutor` 어댑터 | contract, rayon |
 
 Untrusted JSON bytes ingress는 host facade의 opt-in 어댑터로 둔다.
 따라서 `taskmesh`에만 `serde`/`serde_json` 직접 의존을 허용한다.
@@ -53,7 +53,7 @@ Untrusted JSON bytes ingress는 host facade의 opt-in 어댑터로 둔다.
 ### 2. 모든 port trait은 `taskmesh-contract`에 둔다
 
 - Driving port: `Runtime` (`run_io/run_blocking/run_cpu/run_local`)
-- Driven port: `CpuExecutor`, `Clock`, `PermitWaker`
+- Driven port: `CpuExecutor`, `Clock`, `PermitWaker`, `SettlementWaker`
 
 contract가 단일 경계를 정의하므로 엔진은 경계 왼쪽 안, 어댑터는 오른쪽 밖에 위치한다.
 의존 화살표는 항상 contract/engine 안쪽으로만 향한다.
@@ -68,6 +68,8 @@ contract가 단일 경계를 정의하므로 엔진은 경계 왼쪽 안, 어댑
 >   push 방식이 결정성·단순성에서 우월하다.
 > - `PermitWaker`(driven)를 추가: 큐잉된 admission이 promotion 시 깨어나도록
 >   host가 tokio `Notify`로 구현. 엔진은 런타임 무지 상태를 유지한다.
+> - `SettlementWaker`(driven)를 추가: custody 감소 가능성을 host에 통지한다.
+>   통지는 idle 판정이 아니며 host가 authoritative snapshot을 다시 읽는다.
 
 ### 3. 의존 그래프 (순환 불가)
 
@@ -81,7 +83,7 @@ contract가 단일 경계를 정의하므로 엔진은 경계 왼쪽 안, 어댑
 ```
 
 tokio와 rayon은 서로를 모르고, 엔진은 tokio를 모른다. rayon은 contract의
-`Executor` port만 구현하므로 host와 완전히 독립적이다.
+`CpuExecutor` port만 구현하므로 host와 완전히 독립적이다.
 
 ### 4. 엔진 내부: feature slice × 헥사고날
 
@@ -100,44 +102,38 @@ vertical slice(모듈)로 둔다. 각 slice는 `domain`(순수 규칙) / `servic
 `engine/governor.rs`가 composition root로서 port를 보유하고 각 slice service에
 위임한다. 공유 가변 상태는 `engine/state.rs`(`Mutex<GovernedState>`)에 격리한다.
 
-### 5. 디렉토리 구조
+### 5. 구현된 소스 경계
 
 ```
 crates/
 ├── taskmesh-contract/src/
-│   ├── lib.rs                  # 평면 re-export
-│   ├── task/{spec,identity}.rs
-│   ├── policy/{class_policy,fairness,memory,reduce,flow}.rs
-│   ├── resource/  topology/
-│   ├── verdict.rs  snapshot.rs  config.rs
-│   ├── runtime.rs              # DRIVING port: Runtime
-│   └── ports/{executor,clock,memory_probe}.rs   # DRIVEN ports
+│   ├── lib.rs                  # 공개 re-export
+│   ├── runtime.rs              # driving port: Runtime
+│   └── ports.rs                # driven ports
 ├── taskmesh-engine/src/
-│   ├── lib.rs
 │   ├── engine/{governor,state}.rs               # composition root
-│   ├── shared/{permit,seq}.rs                   # 크로스-슬라이스 커널
-│   └── features/
-│       ├── admission/{domain,service}.rs
-│       ├── fairness/{domain,queue,retry_after,service}.rs
-│       ├── memory/{domain,leak_sweep,service}.rs
-│       ├── composite/{domain,reduce,service}.rs
-│       └── inventory/{domain,service}.rs
+│   └── features/{admission,fairness,memory,composite,inventory}/
 ├── taskmesh/src/                                # package name = taskmesh
-│   ├── lib.rs  builder.rs  runtime.rs
-│   ├── executor/{mod,tokio_exec,cancel}.rs      # tokio = Executor 구현
-│   └── adapters/{clock,memory_probe}.rs         # core port 바인딩
-└── taskmesh-rayon/src/{lib,rayon_exec}.rs
+│   ├── lib.rs  builder.rs  runtime.rs  ingress.rs
+│   ├── executor/{mod,tokio_exec,cancel}.rs      # Tokio CPU 어댑터
+│   └── adapters/permit_waker.rs
+└── taskmesh-rayon/src/lib.rs
 ```
+
+초안의 `domain`/`service` 개별 파일과 `MemoryProbe` 파일 경로는 채택된
+디렉토리 구조가 아니다. 메모리 측정값은 host가 `Governor::reconcile_memory`로
+전달한다.
 
 ## Consequences
 
 ### 긍정
 
-- 거버넌스 `domain`은 tokio/IO를 import하지 않으므로 결정성·단위테스트가 쉽다.
-  시계·메모리 측정은 전부 port 뒤로 빠진다(`Clock`, `MemoryProbe`).
+- 거버넌스 규칙은 tokio/IO를 import하지 않으므로 결정성·단위테스트가 쉽다.
+  시계는 `Clock` port로 주입하고 메모리 측정값은 host 입력으로 받는다.
 - executor 교체가 구조적으로 자유롭다. rayon은 tokio 비의존 어댑터로 plug-in되고,
   순환 의존이 발생할 수 없다.
-- feature slice가 티켓(T03~T08)에 1:1로 대응하여 작업 경계가 명확하다.
+- admission/fairness/memory/composite/inventory를 엔진 내부 slice로 두어
+  작업 경계를 드러낸다.
 - public 타입 이름이 그대로이므로 downstream은 import 경로만 무변 영향
   (`taskmesh::*` 평면 유지) → public naming drift 0.
 

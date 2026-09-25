@@ -85,6 +85,16 @@ fan-out stage and a deterministic reduce policy; Taskmesh validates the policy
 declaration but does not spawn branches, bound their count, or merge values.
 The caller or adapter owns that execution and reducer.
 
+Child lifetime follows the run path, not the stage declaration. For `run_io`,
+an ambient `tokio::spawn` is caller-runtime work outside the root permit:
+root completion, panic, or caller drop releases only the root lease, and
+`TokioRuntime::drain` does not wait for that detached child. For `run_local`,
+`LocalSet::run_until(root)` ends with the root; an unawaited `spawn_local` child
+is dropped with that LocalSet rather than being reported as governed work.
+Callers needing child completion must await or otherwise own it explicitly.
+The requested-stack owned-runtime path has different teardown custody, as
+described below; these rules do not weaken its live-worker lease fence.
+
 ## Engine Highlights
 
 1. fail-closed class lookup (unknown/disabled reject, never default-admit)

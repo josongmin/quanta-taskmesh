@@ -41,6 +41,11 @@ let out = runtime
    별도 `run_*` 호출로 제출하고 새 permit을 받아야 한다. `.reduce_stage(...)`는 fan-out과
    결정적 reduce **정책을 선언**한다. validation은 정책의 존재와 형태를 검사할 뿐, branch를
    생성하거나 개수를 제한하거나 결과를 합치지 않는다. 그 실행과 reducer는 caller/adapter 소유다.
+   child lifetime은 run path에 따른다. `run_io` 안의 ambient `tokio::spawn`은 root permit 밖의
+   caller-runtime 작업이므로 root 완료·panic·caller drop과 `TokioRuntime::drain`이 그 child의
+   완료를 보장하지 않는다. `run_local`의 unawaited `spawn_local` child는 root의
+   `LocalSet::run_until` 종료와 함께 drop된다. child completion이 필요하면 caller가 명시적으로
+   await/소유해야 한다. requested-stack owned-runtime teardown custody는 아래 별도 규칙이다.
    direct `Governor::{admit, admit_waitable, admit_validated}`는 모든 선언 stage hint의
    **서로 다른 capability pool**을 permit 하나에 예약한다. 명시적 resolved admission 메서드는
    caller가 제공한 requirement를 사용한다. Tokio host `run_*`는 실제 첫 dispatch가 점유하는

@@ -41,6 +41,12 @@ Taskmesh가 실행하는 bootstrap root와 caller가 소유하는 later stage, r
 - Host root-child fixture, local-runtime fixture, public docs examples.
 - Detached work를 기다리는 sleep 기반 테스트 대신 explicit channel을 사용한다.
 
+## 현재 증거 범위 (2026-09-25)
+
+- `hardening_root_child_scope` 5개 focused case와 target Clippy가 통과했다. 후속 stage/reducer의 비실행과 별도 caller submission, ambient Tokio child의 root/drain 외부 생존, local child의 LocalSet 종료 시 drop, root panic/abort의 root lease 반환을 channel로 고정한다.
+- 두 공개 계약 문서에 `run_io` ambient child와 `run_local` unawaited child의 상이한 lifetime을 명시했다. requested-stack owned-runtime child custody는 별도 기존 계약으로 유지한다.
+- 이 결과는 임의 detached child를 Taskmesh가 추적한다는 증거가 아니다. BG25-012의 selector·exact-source CI-profile 증거 전에는 전체 완료로 승격하지 않는다.
+
 ## 인계 및 중단 조건
 
 - 임의 child 추적을 기존 `run_*`에 암묵적으로 추가하지 않는다.

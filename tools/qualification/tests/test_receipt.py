@@ -300,7 +300,10 @@ def passing_gate_results(required: list[str]) -> list[dict]:
             status_line = f"{spec['marker']} {spec['require']}"
             if result["id"] == "test":
                 status_line += (
-                    " runner=cargo runner_version=1.95.0 fixture_runner=cargo cargo_version=1.95.0"
+                    " runner=nextest runner_version=0.9.104 targets=1 selected=1 passed=1"
+                    + " catalog_digest=" + "a" * 64
+                    + " selection_digest=" + "b" * 64
+                    + " execution_digest=" + "b" * 64
                 )
             result["status_line"] = status_line
     return results

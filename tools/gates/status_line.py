@@ -42,9 +42,21 @@ def status_line_qualifies(gate: dict, stdout: str) -> bool:
         fields[key] = value
     return (
         set(fields)
-        == {"status", "runner", "runner_version", "fixture_runner", "cargo_version"}
-        and fields["runner"] in {"cargo", "nextest"}
-        and fields["fixture_runner"] == "cargo"
+        == {
+            "status", "runner", "runner_version", "targets", "selected", "passed",
+            "catalog_digest", "selection_digest", "execution_digest",
+        }
+        and fields["runner"] == "nextest"
+        and fields["runner_version"] == "0.9.104"
+        and fields["targets"].isdigit()
+        and fields["selected"].isdigit()
+        and fields["passed"] == fields["selected"]
+        and int(fields["targets"]) > 0
+        and int(fields["selected"]) > 0
+        and all(
+            len(fields[key]) == 64 and all(char in "0123456789abcdef" for char in fields[key])
+            for key in ("catalog_digest", "selection_digest", "execution_digest")
+        )
     )
 
 

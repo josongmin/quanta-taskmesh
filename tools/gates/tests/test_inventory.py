@@ -1528,8 +1528,13 @@ def test_generated_mutation_timeout_is_bounded_and_inventory_owned() -> None:
 
 def test_doc_fixture_cannot_feature_unify_default_workspace_validation() -> None:
     test_body = vi.recipe_body("test")
-    assert test_body.count("--workspace --exclude taskmesh-doc-examples") == 2
-    assert "cargo test --locked -p taskmesh-doc-examples" in test_body
+    assert "tools/gates/execute_rust_tests.py" in test_body
+    from tools.gates.execute_rust_tests import SELECTORS
+
+    assert SELECTORS == (
+        ("--workspace", "--exclude", "taskmesh-doc-examples", "--lib", "--tests"),
+        ("-p", "taskmesh-doc-examples", "--lib", "--tests"),
+    )
 
     clippy_body = vi.recipe_body("clippy")
     assert clippy_body.count("--exclude taskmesh-doc-examples") == 2

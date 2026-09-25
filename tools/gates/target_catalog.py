@@ -16,9 +16,7 @@ MODEL_FEATURES = {
 }
 RECIPE_FRAGMENTS = {
     "test": (
-        "cargo nextest run --locked --workspace --exclude taskmesh-doc-examples --lib --tests",
-        "cargo test --locked --workspace --exclude taskmesh-doc-examples --lib --tests",
-        "cargo test --locked -p taskmesh-doc-examples --lib --tests",
+        "uv run python tools/gates/execute_rust_tests.py",
     ),
     "test-rayon": (
         "cargo test --locked -p taskmesh --features rayon --lib",
@@ -29,7 +27,7 @@ RECIPE_FRAGMENTS = {
         "cargo test --locked --workspace --exclude taskmesh-doc-examples --doc",
         "cargo test --locked -p taskmesh --features rayon --doc",
     ),
-    "py-test": ("pytest tools -q",),
+    "py-test": ("pytest tools -q --strict-markers",),
     "bench-smoke": ("cargo bench --locked -p taskmesh-bench -- --test",),
     "bench-iai": ("bash tools/bench-iai.sh",),
     "modelcheck": ("tools/modelcheck/run.py all",),

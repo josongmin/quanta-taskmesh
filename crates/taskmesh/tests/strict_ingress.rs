@@ -215,6 +215,45 @@ fn task_limits_reject_before_typed_decode_or_stage_allocation() {
 }
 
 #[test]
+fn zero_duplicate_and_many_stages_have_distinct_strict_ingress_verdicts() {
+    use taskmesh_contract::TaskPlanError;
+
+    let mut zero = task();
+    zero["stages"] = json!([]);
+    zero.as_object_mut().unwrap().remove("blocking_dispatch");
+    assert_eq!(
+        parse(&zero, StrictIngressLimits::default()),
+        Err(StrictIngressError::TaskPlan(TaskPlanError::NoStages))
+    );
+
+    let mut duplicate = task();
+    let first = duplicate["stages"][0].clone();
+    duplicate["stages"].as_array_mut().unwrap().push(first);
+    assert_eq!(
+        parse(&duplicate, StrictIngressLimits::default()),
+        Err(StrictIngressError::TaskPlan(
+            TaskPlanError::DuplicateStage {
+                stage: TaskStage::new("blocking"),
+            }
+        ))
+    );
+
+    let mut many = task();
+    let stages = many["stages"].as_array_mut().unwrap();
+    for index in 1..=StrictIngressLimits::default().max_stages {
+        let mut stage = stages[0].clone();
+        stage["stage"] = json!(format!("stage-{index}"));
+        stages.push(stage);
+    }
+    assert_eq!(
+        parse(&many, StrictIngressLimits::default()),
+        Err(StrictIngressError::StageLimit {
+            max: StrictIngressLimits::default().max_stages,
+        })
+    );
+}
+
+#[test]
 fn duplicate_and_unknown_keys_reject_at_every_nested_boundary() {
     let bytes = serde_json::to_vec(&task()).unwrap();
     let text = String::from_utf8(bytes).unwrap();

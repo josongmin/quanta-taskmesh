@@ -153,6 +153,14 @@ fn identifiers_reject_empty_whitespace_oversize_and_noncanonical_characters() {
 
 #[test]
 fn identifier_maximum_is_inclusive_and_field_display_is_exact() {
+    let below_maximum = "x".repeat(MAX_TASK_IDENTIFIER_LEN - 1);
+    assert_eq!(
+        PlanSource::new(below_maximum)
+            .expect("one byte below the maximum is valid")
+            .as_str()
+            .len(),
+        MAX_TASK_IDENTIFIER_LEN - 1
+    );
     let maximum = "x".repeat(MAX_TASK_IDENTIFIER_LEN);
     assert_eq!(
         PlanSource::new(maximum)

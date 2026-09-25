@@ -2059,6 +2059,16 @@
       "gate": "test",
       "source": [
         "crates/taskmesh-contract/tests/task_plan_validation.rs"
+      ],
+      "supporting_cases": [
+        {
+          "target": "crates/taskmesh-contract/tests/task_plan_validation.rs",
+          "case": "identifiers_reject_empty_whitespace_oversize_and_noncanonical_characters"
+        },
+        {
+          "target": "crates/taskmesh-contract/tests/task_plan_validation.rs",
+          "case": "class_identifiers_reject_nul_non_ascii_and_over_limit_values"
+        }
       ]
     },
     {
@@ -2075,6 +2085,12 @@
       "gate": "test",
       "source": [
         "crates/taskmesh/tests/strict_ingress.rs"
+      ],
+      "supporting_cases": [
+        {
+          "target": "crates/taskmesh/tests/strict_ingress.rs",
+          "case": "zero_duplicate_and_many_stages_have_distinct_strict_ingress_verdicts"
+        }
       ]
     },
     {

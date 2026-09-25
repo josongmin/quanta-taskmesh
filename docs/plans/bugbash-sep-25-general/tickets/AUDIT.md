@@ -4,7 +4,7 @@
 
 - The original audit was frozen at `76559c4`; its receipt remains historical evidence for that source only.
 - Executor authority fixes are recorded in `bf03efc` and `3e57f1a`. Deadline response and centralized runtime-context preflight are recorded in `74a18f7`.
-- `just dev` passed after `74a18f7`'s source changes: 496/496 tests, Semgrep 0 findings, crate-boundary check, and gate-inventory validation. The exact final commit still requires a fresh `verify-macos-ci` receipt.
+- `just dev` passed after `74a18f7`'s source changes: 496/496 tests, Semgrep 0 findings, crate-boundary check, and gate-inventory validation. The completed fixes were then rerun through `verify-macos-ci`; the generated receipt remains valid only while its clean source HEAD, tree, and digest match the checkout.
 - No new model-check, TSan, fuzz-campaign, coverage, or mutation claim is made by this audit. `fuzz-check` only compiles/lints fuzz targets; `bench-gate` is an allocation gate; focused or `dev` results are not release qualification.
 - The 104-case static matrix classifies 51 K, 34 P, and 19 G. K means a core observable has a direct fixture, not that every cross-product or nightly proof is complete.
 

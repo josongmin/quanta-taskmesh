@@ -147,7 +147,7 @@ async fn global_budget_cross_class_contention_makes_progress() {
             .await
     });
     tokio::select! {
-        _ = wait_for_class_state(&rt, "gamma", 0, 1) => {}
+        () = wait_for_class_state(&rt, "gamma", 0, 1) => {}
         result = &mut gamma_started_rx => {
             panic!("gamma started before global CPU capacity was released: {result:?}");
         }

@@ -98,9 +98,9 @@ dev-rust-tests package *consumers:
     cargo fmt --package {{package}} --check
     packages=({{package}} {{consumers}}); args=(); for package in "${packages[@]}"; do args+=(-p "$package"); done; CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked "${args[@]}" --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"
 
-# Gate inventory (H16-018): the Justfile, the manual fallback workflows, and the
-# required set must agree. The validator also rejects automatic hosted triggers,
-# so a push, pull request, or schedule cannot silently start spending minutes.
+# Gate inventory (H16-018): the Justfile, hosted workflows, and required set
+# must agree. Only the bounded pr-ci workflow has automatic hosted triggers;
+# the full manual workflow and all deep producers remain dispatch-only.
 gates-inventory:
     uv run python tools/gates/validate_inventory.py
 

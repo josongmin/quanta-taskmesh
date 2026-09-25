@@ -1,7 +1,7 @@
 # Taskmesh verification stages: 2026 audit and implementation plan
 
-Status: **tracked implementation plan; W3 execution-denominator work, W4 hosted
-adoption, and W5 release qualification remain open**.
+Status: **W3 execution-denominator implementation under final qualification;
+W4 bounded PR workflow under hosted trial; W5 release qualification open**.
 Audit baseline: `main@e5aa4b63a1fedb3b416d33d1ea7ff364258002b5`, clean
 before this plan was created on 2026-09-24. The initial draft was untracked and
 had no test or CI qualification. A later clean `main@934230d` produced a valid
@@ -23,11 +23,11 @@ Execution location, trigger, and proof strength are independent dimensions:
 | `nightly` | Seven expensive proof gates on an isolated clean source | Separate deep-proof receipt; a subset or interruption is not qualified |
 | `release` | All 23 ordinary required gates, plus release-only semver, finding, raw-artifact, and human adjudication requirements | Full release receipt and explicit decision |
 
-`nightly` is a cost/profile name, **not a schedule**. The current workflows are
-`workflow_dispatch`-only and the inventory validator rejects automatic hosted
-triggers. Keep that policy until runner capacity, cadence, and the desired merge
-gate have been decided. A scheduled subset must carry a different receipt/profile
-name and must not satisfy the full `nightly` or `release` requirement.
+`nightly` is a cost/profile name, **not a schedule**. The full qualification
+workflows remain `workflow_dispatch`-only. The separate bounded `pr-ci.yml`
+candidate has automatic PR and main triggers; its hosted trial and merge-gate
+decision are distinct from source implementation. A scheduled subset must carry
+a different receipt/profile name and must not satisfy full `nightly` or `release`.
 
 The existing `Justfile` is the command authority; `tools/gates/inventory.json`
 records gate metadata, and independently authored `tools/gates/required.json`
@@ -319,13 +319,16 @@ does not qualify later source changes and does not establish nightly or release
 qualification. W3 execution-denominator work, W4 hosted adoption, and W5 full
 release qualification remain open.
 
-The W3 static slice makes `gates-inventory` derive 113
-Cargo/Python/fuzz target records and rejects unowned feature targets or
-missing declared recipe selectors. The `test` gate reports its selected
-runner/version, and saved PASS validation requires those fields. This does
-not establish compiled target selection, case execution, pytest collection,
-or a reusable receipt for a different source. The remaining W3 acceptance
-evidence is the execution-denominator work below.
+The W3 static slice made `gates-inventory` derive Cargo/Python/fuzz target
+records and reject unowned feature targets or missing declared selectors. The
+execution candidate adds `execute_rust_tests.py` and `execute_py_tests.py`:
+Nextest JSON listing is compared with per-case execution, and pytest collection
+is compared with call outcomes while skips/xfails stay exclusions. The local
+gate receipt embeds both reports and rejects missing, stale, or inconsistent
+selection, command, catalog, and execution fields. Focused clean runs observed
+94 Rust targets and 631/631 cases, then 24 Python modules and 734/734 cases;
+those are candidate-source observations, not qualification of later edits.
+The final exact-source CI receipt remains the W3 closure gate.
 
 ### W3 implementation contract
 
@@ -369,12 +372,11 @@ evidence is the execution-denominator work below.
 
 ### W4 hosted rollout boundary
 
-The current workflow validator intentionally rejects `pull_request`,
-`push`, and `schedule`. The existing `ci.yml` includes full expensive
-qualification producers, so enabling PR events there violates the stage
-contract. W4 first adds a dedicated 16-gate PR workflow and changes the
-validator to allow automatic triggers **only** for that bounded workflow while
-checking its required-gate membership. The manual full workflow stays manual.
+The workflow validator admits automatic `pull_request` and main `push` only
+for `pr-ci.yml`, whose single bounded job invokes the required CI profile and
+validates an exact-SHA receipt. The existing `ci.yml` and deep producers stay
+manual. This is a source candidate until a non-required hosted trial proves
+the job on a PR and main; merely passing local YAML checks is not hosted proof.
 After W0 records CI cost and runner capacity, start with a non-required trial
 of the 16-gate workflow, measure queue and median/p95 wall time, then make one
 aggregate exact-SHA PR result required. Keep full CI membership on every PR;

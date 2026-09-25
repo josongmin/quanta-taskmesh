@@ -128,3 +128,27 @@ fn multi_pool_head_fences_shared_b_but_independent_c_makes_progress() {
     }
     assert_eq!(drained.conservation_violation(), None);
 }
+
+#[test]
+fn repeated_stage_hint_reserves_one_capability_slot_per_permit() {
+    let g = governor();
+    let duplicate_b = TaskSpec::blocking(class("c"))
+        .operation("same-pool-twice")
+        .stage(TaskStage::new("later-b"), SubstrateHint::BlockingPool);
+    let AdmissionDecision::Admitted { permit_id } = g.admit(&duplicate_b) else {
+        panic!("one free blocking slot satisfies both stage hints");
+    };
+    assert_eq!(g.snapshot().capabilities["blocking"].in_use, 1);
+    assert_eq!(
+        g.permit_ledger(permit_id)
+            .expect("live permit")
+            .capabilities
+            .iter()
+            .count(),
+        1,
+        "duplicate hints are one requirement, not two reservations"
+    );
+    assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
+    assert_eq!(g.snapshot().capabilities["blocking"].in_use, 0);
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}

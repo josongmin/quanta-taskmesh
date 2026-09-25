@@ -19,6 +19,13 @@ passed 16/16 at the same HEAD. The downloaded Linux receipt validated against
 that source (Rust 632/632; pytest 748/748). This source is superseded by any
 subsequent integration commit; repeat exact-HEAD qualification after changes.
 
+Clean `2a2f9bd` and `bca879a` each passed a separate macOS 16/16 CI-profile
+receipt before integration. The clean Semantica `1bc28dc` × Taskmesh
+`bca879a` manual consumer comparison passed 2/2 with immutable source and
+artifact identities in the [adoption ledger](EXTERNAL-ADOPTION.md). These
+historical receipts do not qualify the later merged source or establish
+deployment-owner acceptance.
+
 2026-09-26 source audit at clean `0588d26847ba575f1c059f8d86a37d8420ea5589`: H12's old wording expected a typed response from a dropped caller and new admission after the one-way drain; the active checklist now states the valid pre-drain queue order. A new `host_open_loop::terminal_caller_keeps_worker_charged_through_pre_drain_queue` fixture exercises deadline, cancel, and caller drop against the pre-drain queue and worker-custody order. It passed focused 1/1 and `just dev` 558/558 on the candidate tree; BG25-012 still needs a committed clean-HEAD CI receipt. No product-code violation was confirmed. H28's existing bounded burst comparison is a valid narrow CI fixture; its broader measurement requirement is a separate performance qualification. A05's existing input-derived ledger case is now included in `scenario-evidence.json`; no new A05 test or product patch is pending. These are evidence/qualification actions, not reopened archived implementation tickets. The 16/16 CI receipt validated at the audit HEAD does not qualify the changed tree.
 
 The 104-row `scenario-evidence.json` is static selection provenance. Historic

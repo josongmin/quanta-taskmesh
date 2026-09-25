@@ -357,6 +357,12 @@ matrix's ten explicit selectors to Nextest selection and execution. A focused
 candidate run selected seven distinct targets and passed 33 cases; this is
 owner-local evidence until the final committed HEAD passes the CI profile.
 
+The parallel clean candidates `2a2f9bd` and its documentation successor
+`bca879a` separately passed 16/16 macOS CI-profile gates. Their durable
+receipts are under `/Users/songmin/.codex/artifacts/taskmesh-ss-2a2f9bd/` and
+`/Users/songmin/.codex/artifacts/taskmesh-ss-bca879a/`. They establish those
+specific source states only; the combined main source has its own receipt.
+
 ### W3 implementation contract
 
 1. `target_catalog.py` computes a source-bound catalog from root and fuzz

@@ -218,7 +218,8 @@
         "any"
       ],
       "prerequisites": [],
-      "workflow": "ci.yml"
+      "workflow": "ci.yml",
+      "status_line": {"marker": "taskmesh-test-rayon", "require": "status=PASS"}
     },
     {
       "id": "doctest",

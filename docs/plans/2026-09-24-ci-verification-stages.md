@@ -343,6 +343,20 @@ the fixture now constructs an explicit local action. These receipts qualify
 only their named commits. One passing trial is not a median/p95 or main-push
 proof, and the check is not yet required by a branch rule.
 
+The later [PR #3](https://github.com/josongmin/quanta-taskmesh/pull/3) merged
+with the committed H12 follow-up at clean `f26f2fff91b1424451d269dc5abca7e5a7b36978`.
+Its local macOS CI receipt passed 16/16, and the automatic
+[main-push run](https://github.com/josongmin/quanta-taskmesh/actions/runs/36162385719)
+passed 16/16 at that exact HEAD. The downloaded Linux receipt revalidated with
+Rust 632/632 and pytest 748/748. This closes the main-push trial, while the
+required branch rule, deployed Semantica adoption, and deep release proof remain
+separate decisions. Later source changes need fresh receipts.
+
+The subsequent integration candidate additionally binds the `test-rayon`
+matrix's ten explicit selectors to Nextest selection and execution. A focused
+candidate run selected seven distinct targets and passed 33 cases; this is
+owner-local evidence until the final committed HEAD passes the CI profile.
+
 ### W3 implementation contract
 
 1. `target_catalog.py` computes a source-bound catalog from root and fuzz

@@ -114,7 +114,12 @@ def test_wedged_model_process_times_out_and_is_reaped(tmp_path: Path) -> None:
 
 def test_parent_signal_reaps_owned_model_command(tmp_path: Path) -> None:
     marker = tmp_path / "model-child.pid"
-    child = "import os, signal, sys; open(sys.argv[1], 'w').write(str(os.getpid())); signal.pause()"
+    child = (
+        "import os, signal, sys; from pathlib import Path; "
+        "p = sys.argv[1]; tmp = p + '.tmp'; "
+        "Path(tmp).write_text(str(os.getpid())); "
+        "os.replace(tmp, p); signal.pause()"
+    )
     wrapper = tmp_path / "model_wrapper.py"
     wrapper.write_text(
         f"import sys\nsys.path.insert(0, {str(MODULE_PATH.parents[2])!r})\n"

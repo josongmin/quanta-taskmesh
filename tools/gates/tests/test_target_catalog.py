@@ -74,6 +74,20 @@ def test_new_feature_required_test_without_executor_fails_closed() -> None:
     )
 
 
+def test_registered_rayon_matrix_target_cannot_disappear() -> None:
+    meta = copy.deepcopy(inputs()[0])
+    package = next(package for package in meta["packages"] if package["name"] == "taskmesh")
+    package["targets"] = [
+        target for target in package["targets"]
+        if target["name"] != "hardening_executor_authority"
+    ]
+    _, problems = catalog_with(root_metadata=meta)
+    assert any(
+        "test-rayon: missing or disabled taskmesh/test/hardening_executor_authority" in problem
+        for problem in problems
+    )
+
+
 def test_new_fuzz_bin_requires_producer_registration() -> None:
     meta = copy.deepcopy(inputs()[1])
     package = next(package for package in meta["packages"] if package["name"] == "taskmesh-fuzz")

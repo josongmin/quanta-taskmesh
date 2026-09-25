@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -30,7 +31,7 @@ def status_line_qualifies(gate: dict, stdout: str) -> bool:
     status_tokens = [token for token in verdict.split() if token.startswith("status=")]
     if status_tokens != [spec["require"]]:
         return False
-    if gate.get("id") not in {"test", "py-test"}:
+    if gate.get("id") not in {"test", "py-test", "test-rayon"}:
         return True
     fields: dict[str, str] = {}
     for token in verdict.split()[1:]:
@@ -66,6 +67,35 @@ def status_line_qualifies(gate: dict, stdout: str) -> bool:
                 for key in ("catalog_digest", "selection_digest", "execution_digest")
             )
         )
+    if gate.get("id") == "test-rayon":
+        expected = {
+            "status", "schema_version", "runner", "runner_version", "catalog_digest",
+            "selection_digest", "execution_digest", "commands_digest", "targets", "cases",
+            "summary_digest",
+        }
+        if set(fields) != expected or fields["schema_version"] != "1":
+            return False
+        if fields["runner"] != "nextest" or fields["runner_version"] != "0.9.104":
+            return False
+        if not all(fields[key].isdigit() and int(fields[key]) > 0 for key in ("targets", "cases")):
+            return False
+        digests = (
+            "catalog_digest", "selection_digest", "execution_digest", "commands_digest",
+            "summary_digest",
+        )
+        if not all(
+            len(fields[key]) == 64 and all(char in "0123456789abcdef" for char in fields[key])
+            for key in digests
+        ) or fields["selection_digest"] != fields["execution_digest"]:
+            return False
+        summary = {
+            key: int(value) if key in {"schema_version", "targets", "cases"} else value
+            for key, value in fields.items() if key not in {"status", "summary_digest"}
+        }
+        actual_digest = hashlib.sha256(
+            json.dumps(summary, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        return fields["summary_digest"] == actual_digest
     return (
         set(fields)
         == {

@@ -12,6 +12,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parents[3]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 MANIFEST = ROOT / "scenario-evidence.json"
 PLAN = ROOT / "plan.json"
 CHECKLIST = REPO / "docs/misc/tmp-engine-checklist-sep-25.md"
@@ -126,6 +128,10 @@ def recipe_executes_test(body: str, target: str, case: str, package: str) -> boo
             continue
         while tokens and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
             tokens.pop(0)
+        if tokens == ["python3", "tools/gates/rust_test_evidence.py", "--rayon"]:
+            from tools.gates.target_catalog import RAYON_SCOPES
+
+            return (package, "test", target, case) in RAYON_SCOPES
         if tokens[:2] != ["cargo", "test"]:
             continue
         if any(token in {"&&", "||", ";", "|", "&"} for token in tokens):

@@ -138,16 +138,7 @@ lint-rules: semgrep test-architecture prompt-check
 # Feature-matrix drift: the `rayon` feature auto-wires the default CPU executor
 # on a cfg-gated path that default-feature builds never compile.
 test-rayon:
-    cargo test --locked -p taskmesh --features rayon --lib
-    cargo test --locked -p taskmesh --features rayon --test hardening_executor_authority rayon_cpu_domain_is_separate_and_observable -- --exact
-    cargo test --locked -p taskmesh --features rayon --test e2e_scenarios rayon_cpu_soak_results_correct_and_drains -- --exact
-    cargo test --locked -p taskmesh --features rayon --test hardening_dispatch_resolution direct_and_host_multistage_admission_have_distinct_reservation_contracts -- --exact
-    cargo test --locked -p taskmesh --features rayon --test runtime_cpu_executor the_cpu_gate_and_the_rayon_pool_are_sized_from_one_answer -- --exact
-    cargo test --locked -p taskmesh-rayon --test rayon_smoke the_adapter_declares_what_it_can_honestly_promise -- --exact
-    cargo test --locked -p taskmesh-contract --test contract_roundtrip task_spec_roundtrips -- --exact
-    cargo test --locked -p taskmesh-contract --test contract_roundtrip runtime_config_roundtrips_pretty -- --exact
-    cargo test --locked -p taskmesh-contract --test contract_roundtrip snapshot_roundtrips -- --exact
-    cargo test --locked -p taskmesh-contract --test contract_roundtrip legacy_plan_source_strings_decode_and_reencode_exactly -- --exact
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" python3 tools/gates/rust_test_evidence.py --rayon
 
 doctest:
     cargo test --locked --workspace --exclude taskmesh-doc-examples --doc

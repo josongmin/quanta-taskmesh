@@ -2,6 +2,11 @@
 
 This ledger separates a discovered Rust consumer from deployment acceptance. The source observation below is pinned to the consumer checkout and must be refreshed before a final adoption claim.
 
+2026-09-26 최신 HEAD 관찰: 공유 Semantica checkout은
+`597838158e6c0de4230dc01ca27f52758d1186db`이며 다른 경로의 미커밋 변경이
+있다. 이 관찰은 HEAD만 확인했고 governance 호출 경로, 실제 배포 소스,
+현재 Taskmesh `main`과의 고정 페어 소비자 실행은 재검증하지 않았다.
+
 2026-09-26 범위 확인: 사용자는 이번 감사의 Taskmesh 소비자를 Semantica로 특정했다. 현재 Semantica 공유 checkout HEAD `ed5bc5a47feda3550d6da00a46c9ca5ae4900026`에는 governance 밖 경로의 미커밋 변경이 있다. `0384053` 대비 `governance/` 및 `taskmesh_query_async_support_contract.rs`의 커밋 소스 변경은 없고, `quanta-runtime/Cargo.toml` 변경은 보안 어댑터 의존성 이름과 feature 참조 및 주석에 한정된다. 현재 governance adapter는 Rust에서 root `TaskSpec`을 생성해 `TokioRuntime`의 typed API로 제출한다. `packages/`, `apps/`, `crates/`의 Rust/TypeScript/Python 텍스트 검색에서 `parse_task_spec`, `parse_runtime_config`, `awaited_child_of`, `parent_stage` 호출은 확인되지 않았다. 이 범위 확인은 배포 바이너리의 source SHA, 모든 호출자의 부재, D1–D9의 적용 불가 승인 또는 현재 Taskmesh PR HEAD와의 소비자 테스트를 증명하지 않는다.
 
 2026-09-25 재감사: Semantica의 공유 checkout HEAD `038405343fe50ebc1216dbc52de9148a4cb52710`에는 다른 경로의 미커밋 변경이 있다. 같은 HEAD의 분리된 clean checkout에서 QBC run `20260925T131235.134873Z-a517eb9b83f2`가 governance contract test 2/2를 실행해 exit 0이었다. 이 실행은 `da5356b` 비교로 기록됐지만 영수증의 `command_cwd_v1`는 `semantica-taskmesh-consumer-2555aca`이고, Cargo path dependency는 변경 가능한 공유 `quanta-taskmesh` checkout을 가리킨다. 영수증에는 Taskmesh dependency SHA가 없으며 `source_snapshot_digest`도 앞선 `2555aca` 실행과 동일하다. 따라서 이 영수증만으로 실제 빌드된 Taskmesh commit을 확정할 수 없다. 권한 역시 `manual_invocation_comparison_only`이므로 최종 Taskmesh source/owner/deployment qualification은 OPEN이다. 영수증은 `/Users/songmin/.codex/artifacts/taskmesh-bugbash-sep25-da5356b/semantica-consumer/receipt.json`에 보관했다. 확인한 `packages/`, `apps/`, `crates/` 범위에서 `parse_task_spec`, `parse_runtime_config`, `awaited_child_of`, `parent_stage` 호출은 발견되지 않았다. 이 검색은 배포 topology나 다른 소비자의 부재 증거가 아니다.

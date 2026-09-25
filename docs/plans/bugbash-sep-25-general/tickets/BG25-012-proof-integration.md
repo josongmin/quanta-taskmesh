@@ -10,6 +10,7 @@
 ## 2026-09-25 재감사 잔여
 
 - **통합 증거:** `scenario-evidence.json`의 여섯 과장된 oracle과 B27 destructor-panic fixture는 `605070d`에 커밋했다. B27 focused 1/1, plan validator 12 tickets, scenario validator 104 rows가 PASS였다. `a23dcda`에서 `just dev` 554/554 및 macOS CI profile 16/16 required gates PASS를 확인하고 영수증의 HEAD/tree/path digest를 재검증했다. 이 사실은 그 commit에만 유효하다.
+- **추가 의미 대조:** H15는 `CpuExecutor::spawn`의 반환값 거부가 표현 불가능하므로 oracle을 실제 panic/drop/caller-drop 경계로 좁히고 별도 case 두 개를 연결했다. H20은 대표 case가 정상 결과·task error를 다루므로 deadline·panic teardown case 두 개를 보조 근거로 연결했다. H33은 raw 누락과 strict 누락·오타를 분리해 보조 case를 연결했고, H34는 실행 예산 `RunFor`를 응답 기한 `CompleteBy`의 증거로 쓰지 않도록 범위를 좁혔다. 이 매핑 변경은 `a23dcda` 영수증 밖이다.
 - **현재 HEAD 판정:** tracked 문서는 영수증을 내장하거나 실행 자격을 스스로 선언하지 않으므로 `RECEIPT_REQUIRED`를 유지한다. 최종 커밋의 `just dev` → `just verify-macos-ci` 결과와 `uv run python tools/gates/run.py --validate-receipt target/verification/macos-gates.json --expected-head "$(git rev-parse HEAD)"`가 모두 PASS이고, source before/after가 clean·동일한 경우에만 외부 CI-profile 자격이 성립한다. 영수증 사본은 저장소 밖에 보관한다. 104 `MAPPED`는 정적 후보이며 CI 영수증과도 의미상 동치가 아니다.
 - **별도 범위:** 외부 D1–D9 채택은 BG25-001~003; full nightly/modelcheck·TSan·fuzz·mutation 및 release는 명시적 자격 요청이 있을 때만 실행한다. 의도적으로 꺼진 hosted workflow를 이 티켓의 미완료 게이트로 세지 않는다.
 

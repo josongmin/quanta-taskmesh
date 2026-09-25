@@ -1556,12 +1556,22 @@
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H15",
       "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
       "case": "a_caller_that_leaves_while_the_job_is_accepted_but_not_started_keeps_it_charged",
-      "oracle": "executor가 `spawn`에서 panic/거부/closure 유기; caller가 accepted 뒤 즉시 사라짐",
+      "oracle": "`CpuExecutor::spawn` panic 또는 accepted closure drop과, 별도 accepted job의 caller drop을 구분; 현재 trait에는 결과값으로 거부하는 경로가 없음",
       "feature": "default",
       "platform": "any",
       "gate": "test",
       "source": [
         "crates/taskmesh/tests/hardening_executor_protocol.rs"
+      ],
+      "supporting_cases": [
+        {
+          "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
+          "case": "an_executor_that_panics_after_accepting_does_not_run_the_job_twice"
+        },
+        {
+          "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
+          "case": "an_executor_that_drops_an_accepted_job_reports_abandonment_and_refunds_custody"
+        }
       ]
     },
     {
@@ -1693,6 +1703,16 @@
       "gate": "test",
       "source": [
         "crates/taskmesh/tests/hardening_deadline_custody.rs"
+      ],
+      "supporting_cases": [
+        {
+          "target": "crates/taskmesh/tests/hardening_deadline_custody.rs",
+          "case": "a_deadline_answer_is_not_delayed_by_a_blocking_child_teardown"
+        },
+        {
+          "target": "crates/taskmesh/tests/hardening_deadline_custody.rs",
+          "case": "a_panic_answer_is_not_delayed_by_a_blocking_child_teardown"
+        }
       ]
     },
     {
@@ -1909,12 +1929,18 @@
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H33",
       "target": "crates/taskmesh/tests/strict_ingress.rs",
       "case": "missing_raw_await_flag_queues_but_strict_declared_wait_rejects_the_cycle",
-      "oracle": "JSON child의 `parent_awaits` 누락/오타로 false가 된 상태에서 실제 parent가 child 결과를 기다리고 단일 class/pool slot을 점유",
+      "oracle": "raw JSON child의 `parent_awaits` 누락은 false로 decode되어 parent 보유 중 queue됨; strict ingress는 누락·오타를 각각 거부하고 명시적 true의 cycle은 거절",
       "feature": "default",
       "platform": "any",
       "gate": "test",
       "source": [
         "crates/taskmesh/tests/strict_ingress.rs"
+      ],
+      "supporting_cases": [
+        {
+          "target": "crates/taskmesh/tests/strict_ingress.rs",
+          "case": "child_wait_and_blocking_dispatch_are_explicit"
+        }
       ]
     },
     {
@@ -1925,7 +1951,7 @@
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H34",
       "target": "crates/taskmesh/tests/hardening_deadline_custody.rs",
       "case": "complete_by_discards_success_and_task_error_when_teardown_misses_the_response_deadline",
-      "oracle": "requested-stack async root는 `RunFor`/`CompleteBy` 전에 정상 완료했으나 owned runtime의 `spawn_blocking` child가 오래 살아 있음",
+      "oracle": "requested-stack async root가 `CompleteBy` 전에 정상 `Ok` 또는 task `Err`를 준비했으나 owned runtime의 `spawn_blocking` child가 deadline을 넘어 살아 있음; `RunFor`는 별도 실행 예산",
       "feature": "default",
       "platform": "any",
       "gate": "test",

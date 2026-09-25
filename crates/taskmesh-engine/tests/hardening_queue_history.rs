@@ -65,7 +65,15 @@ fn release_promotion_reap_claim_and_abandon_form_one_finite_history() {
         other => panic!("second must queue: {other:?}"),
     };
 
+    let before_clock = governor.snapshot();
     clock.advance(100);
+    assert_eq!(governor.ticket_status(first), ClaimOutcome::Pending);
+    assert_eq!(governor.ticket_status(second), ClaimOutcome::Pending);
+    assert_eq!(
+        governor.snapshot(),
+        before_clock,
+        "clock advance and ticket reads alone cannot transition the ledger"
+    );
     let retained = governor.reap_leaks_with(10);
     assert_eq!(
         (retained.reclaimed_permits, retained.retained_active),
@@ -98,7 +106,17 @@ fn release_promotion_reap_claim_and_abandon_form_one_finite_history() {
         (1, 0)
     );
 
+    let before_second_clock = governor.snapshot();
     clock.advance(100);
+    assert!(matches!(
+        governor.ticket_status(first),
+        ClaimOutcome::Ready(_)
+    ));
+    assert_eq!(
+        governor.snapshot(),
+        before_second_clock,
+        "the promoted ticket stays ready until a governor transition"
+    );
     let reaped = governor.reap_leaks_with(10);
     assert_eq!((reaped.reclaimed_permits, reaped.retained_active), (1, 0));
     assert_eq!(

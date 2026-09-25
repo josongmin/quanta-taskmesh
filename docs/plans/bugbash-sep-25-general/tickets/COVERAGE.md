@@ -17,3 +17,5 @@ Every P/G scenario in the 104-case audit has exactly one primary ticket. Existin
 | **Total** | A 2 + B 10 + H 26 + D 15 | **53** |
 
 BG25-001 owns cross-cutting decisions; BG25-012 owns evidence integration. Neither owns scenario IDs.
+
+`scenario-evidence.json` retains all 104 rows, their historical K/P/G origin, the exact selected test case, feature/platform selector, gate, source path, and current status. `validate_scenario_evidence.py` rejects missing IDs, duplicate ownership, nonexistent cases, uninventoried gates, and summary drift. Current deterministic status is 104 PASS; nightly qualification remains separately recorded as NOT_RUN.

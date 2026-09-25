@@ -1,7 +1,6 @@
 # BG25-006 — deadline response와 worker custody
 
-- 상태: PLANNED
-- 구현 상태: PARTIAL — H34와 runtime-context preflight 완료 (`74a18f7`); 나머지 결합 oracle은 미완료
+- 상태: IMPLEMENTED
 - 우선순위: P0
 - 선행: BG25-001 D6, BG25-005
 - 소유: host/runtime owner; engine lease 변경은 engine owner
@@ -21,7 +20,7 @@ caller response, root completion, owned-runtime teardown, blocking child termina
 
 - `crates/taskmesh/src/runtime.rs`, 조건부 `execution_plan.rs`
 - tests: `hardening_deadline_custody.rs`, `deadline_cancel.rs`, `hardening_drain.rs`, `runtime_cpu_executor.rs`
-- 신규 response timeline fixture 후보
+- `host_open_loop.rs` response/custody ledger
 - public deadline/custody docs
 
 ## 작업 계획
@@ -52,7 +51,7 @@ caller response, root completion, owned-runtime teardown, blocking child termina
 - H34: requested-stack `CompleteBy`에서 teardown이 deadline을 넘으면 준비된 `Ok`/task `Err`를 폐기하고 `DeadlineExceeded`를 반환한다. worker는 실제 teardown까지 lease를 보유한다.
 - Tokio timer/local service가 필요한 경로는 permit/ticket 전에 typed preflight를 수행한다. pre-cancel/expired deadline처럼 이미 결정된 계약 verdict는 host prerequisite보다 먼저 반환한다.
 - `hardening_deadline_custody`와 `hardening_executor_protocol`의 default/Rayon focused control 및 `just dev`가 통과했다.
-- D05, D15, H11, H12, H19, H20, H31의 기존 개별 fixture는 유지된다. 이 티켓이 요구하는 단일 독립 event ledger 결합 증거는 아직 추가되지 않았으므로 전체 COMPLETE로 표시하지 않는다.
+- D05, D15, H11, H12, H19, H20, H31의 개별 fixture에 `host_open_loop::caller_terminal_response_and_worker_custody_are_separate_ledgers`의 결합 ledger를 추가했다.
 
 ## 인계 및 중단 조건
 

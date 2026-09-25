@@ -191,3 +191,26 @@ fn a_snapshot_reports_the_violating_class_by_name() {
     };
     assert_eq!(snapshot.conservation_violation(), None);
 }
+
+#[test]
+fn held_resources_require_live_ledger_evidence_not_wire_arithmetic() {
+    let mut classes = BTreeMap::new();
+    classes.insert(
+        TaskClass::new("wire-only"),
+        ClassSnapshot {
+            cpu_units_held: 1,
+            memory_units_held: 1,
+            ..ClassSnapshot::default()
+        },
+    );
+    let snapshot = Snapshot {
+        classes,
+        ..Snapshot::default()
+    };
+
+    assert_eq!(
+        snapshot.conservation_violation(),
+        None,
+        "a wire snapshot has no per-permit ledger from which to recompute held resources"
+    );
+}

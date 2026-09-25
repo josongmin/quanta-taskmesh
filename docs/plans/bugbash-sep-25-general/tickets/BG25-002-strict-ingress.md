@@ -1,6 +1,6 @@
 # BG25-002 — bounded strict ingress
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED
 - 우선순위: P0
 - 선행: BG25-001 D1–D3
 - 소유: contract/ingress owner, host integration owner
@@ -18,9 +18,9 @@ Raw DTO 호환성을 유지하면서 untrusted bytes를 execution/config authori
 
 ## 변경 파일
 
-- 신규 후보 `crates/taskmesh/src/ingress.rs`
+- `crates/taskmesh/src/ingress.rs`
 - `crates/taskmesh/src/{lib,builder,execution_plan}.rs`, `crates/taskmesh/Cargo.toml`, 필요 시 `Cargo.lock`
-- fixture 후보 `crates/taskmesh/tests/{strict_ingress,strict_ingress_host}.rs`
+- `crates/taskmesh/tests/strict_ingress.rs`
 - raw control: `crates/taskmesh-contract/tests/{contract_roundtrip,task_plan_validation}.rs`
 - 공개 문서 두 파일
 

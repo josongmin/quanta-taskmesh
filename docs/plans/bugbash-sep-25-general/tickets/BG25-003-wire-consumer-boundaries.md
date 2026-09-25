@@ -1,6 +1,6 @@
 # BG25-003 — wire·consumer·오류 경계
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED
 - 우선순위: P1
 - 선행: BG25-001 D9
 - 소유: contract/consumer owner
@@ -19,7 +19,7 @@
 
 - `crates/taskmesh-contract/src/{task,validation,snapshot,verdict}.rs`
 - `crates/taskmesh-engine/src/engine/governor.rs` rustdoc; precedence 변경은 계약 승인 시에만
-- tests: `contract_roundtrip.rs`, `snapshot_oracle.rs`, `error_surface.rs`, 신규 consumer-negative fixture 후보
+- tests: `contract_roundtrip.rs`, `snapshot_oracle.rs`, `error_surface.rs`
 - `docs/taskmesh-{library-spec,external-interface}.md`
 
 ## 작업 계획

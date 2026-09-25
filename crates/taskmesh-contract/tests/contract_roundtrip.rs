@@ -159,3 +159,20 @@ fn exact_resource_aggregates_cross_the_wire_as_decimal_strings() {
     assert_eq!(back.cpu_units_held, u128::MAX);
     assert_eq!(back.memory_units_held, u128::MAX - 1);
 }
+
+#[test]
+fn future_wire_variants_fail_closed_and_snapshot_versions_stay_explicit() {
+    let future_verdict = r#"{"FutureAdmissionMode":{}}"#;
+    let future_terminal = r#"{"FutureTerminalReason":{}}"#;
+    assert!(serde_json::from_str::<AdmissionVerdict>(future_verdict).is_err());
+    assert!(serde_json::from_str::<TerminalReason>(future_terminal).is_err());
+
+    let mut snapshot = Snapshot::default();
+    snapshot.schema_version = SNAPSHOT_SCHEMA_VERSION + 1;
+    let wire = serde_json::to_string(&snapshot).expect("future snapshot serializes");
+    let decoded: Snapshot = serde_json::from_str(&wire).expect("snapshot envelope decodes");
+    assert_ne!(
+        decoded.schema_version, SNAPSHOT_SCHEMA_VERSION,
+        "consumers must reject or negotiate a schema version before using the payload"
+    );
+}

@@ -1,6 +1,6 @@
 # BG25-007 — stage 선언과 root/child lifetime
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED
 - 우선순위: P1
 - 선행: BG25-001, BG25-006
 - 소유: host/runtime owner, API docs owner
@@ -20,7 +20,7 @@ Taskmesh가 실행하는 bootstrap root와 caller가 소유하는 later stage, r
 
 - 문서: `docs/taskmesh-library-spec.md`, `docs/taskmesh-external-interface.md`
 - 필요 시 `crates/taskmesh/src/runtime.rs` rustdoc/API
-- 신규 host fixture 후보 `crates/taskmesh/tests/hardening_root_child_scope.rs`
+- `crates/taskmesh/tests/hardening_root_child_scope.rs`
 - existing `e2e_scenarios.rs`, `runtime_local.rs`, `hardening_dispatch_resolution.rs`
 
 ## 작업 계획

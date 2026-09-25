@@ -1,6 +1,6 @@
 # BG25-011 — simulator and real-host load evidence
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED
 - 우선순위: P1
 - 선행: BG25-005, BG25-006, BG25-008
 - 소유: benchmark owner; host fixture has host owner

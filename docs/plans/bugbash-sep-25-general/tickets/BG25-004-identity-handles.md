@@ -20,7 +20,7 @@
 
 - `crates/taskmesh-engine/src/{shared/mod,engine/governor,engine/state}.rs`
 - public re-export와 host use-site: `crates/taskmesh-engine/src/lib.rs`, `crates/taskmesh/src/runtime.rs`
-- tests: 기존 `hardening_child_scope.rs`, `hardening_lease_token.rs`; 신규 `cross_governor_ids.rs` 후보
+- tests: `hardening_child_scope.rs`, `hardening_lease_token.rs`, `identity_authority.rs`
 - public docs and migration notes
 
 ## 작업 계획

@@ -1,6 +1,6 @@
-# Required decisions
+# Accepted decisions
 
-These are proposals until BG25-001 records acceptance, compatibility impact, and consumer ownership.
+BG25-001 accepts these library contracts and compatibility boundaries. External adoption remains owned by each deployment or consumer.
 
 | Decision | Proposed contract | Compatibility boundary |
 |---|---|---|

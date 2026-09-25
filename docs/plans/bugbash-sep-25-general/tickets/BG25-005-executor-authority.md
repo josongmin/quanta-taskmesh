@@ -1,7 +1,6 @@
 # BG25-005 — executor descriptor와 worker authority
 
-- 상태: PLANNED
-- 구현 상태: COMPLETE (`bf03efc`, `3e57f1a`, `0b608c3`)
+- 상태: IMPLEMENTED
 - 우선순위: P0
 - 선행: BG25-001 D7–D8
 - 소유: host/executor owner
@@ -22,7 +21,7 @@ Builder가 검증한 executor descriptor를 runtime의 단일 불변 authority�
 - `crates/taskmesh/src/{builder,runtime}.rs`
 - `crates/taskmesh-contract/src/ports.rs` rustdoc/타입은 API 결정 시
 - `crates/taskmesh/src/executor/tokio_exec.rs`, `crates/taskmesh-rayon/src/lib.rs`
-- tests: `hardening_executor_{protocol,authority}.rs`, `runtime_cpu_executor.rs`, 신규 descriptor-snapshot fixture 후보
+- tests: `hardening_executor_{protocol,authority}.rs`, `runtime_cpu_executor.rs`
 
 ## 작업 계획
 

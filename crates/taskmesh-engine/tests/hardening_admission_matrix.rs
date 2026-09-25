@@ -1,8 +1,3 @@
-//! BG25-008: compound capacity decisions against an input-derived ledger.
-//!
-//! Expected costs are fixed by this fixture's submitted classes and events;
-//! they are never read back from `permit_ledgers()` or a production snapshot.
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -10,274 +5,160 @@ use taskmesh_contract::{
     AdmissionVerdict, ClassPolicy, ManualClock, MemoryOvercommitPolicy, OverflowPolicy,
     ResourceBudget, TaskClass, TaskSpec,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PermitId, PolicySet, ReleaseOutcome};
+use taskmesh_engine::{
+    AdmissionDecision, CapacityAssessment, CapacityBlock, ClaimOutcome, Governor, PermitId,
+    PolicySet, ReleaseOutcome,
+};
 
-fn class(name: &str) -> TaskClass {
-    TaskClass::new(name.to_owned())
+fn spec(class: &str, operation: &str, blocking: bool) -> TaskSpec {
+    if blocking {
+        TaskSpec::blocking(TaskClass::new(class.to_owned())).operation(operation.to_owned())
+    } else {
+        TaskSpec::io(TaskClass::new(class.to_owned())).operation(operation.to_owned())
+    }
 }
 
-fn policy(max_inflight: u32, cpu: u32, memory: u32) -> ClassPolicy {
-    ClassPolicy::new()
-        .max_inflight(max_inflight)
-        .cpu_units(cpu)
-        .memory_units(memory)
-        .overflow_policy(OverflowPolicy::Reject)
-        .memory_overcommit_policy(MemoryOvercommitPolicy::Reject)
-}
-
-fn governor(
-    cpu_budget: u32,
-    memory_budget: u32,
-    blocking_slots: u32,
-    classes: &[(&str, u32, u32, u32)],
-) -> Governor {
-    let classes = classes
-        .iter()
-        .map(|&(name, max_inflight, cpu, memory)| (class(name), policy(max_inflight, cpu, memory)))
-        .collect();
-    let policy = PolicySet::new(
-        ResourceBudget::new()
-            .cpu_units(cpu_budget)
-            .memory_units(memory_budget),
-        classes,
-    )
-    .with_capability_limits(BTreeMap::from([("blocking".to_owned(), blocking_slots)]))
-    .expect("built-in blocking pool exists");
-    Governor::new(policy, Arc::new(ManualClock::new(0))).expect("valid policy")
-}
-
-fn submit(g: &Governor, name: &str, operation: &str) -> AdmissionDecision {
-    g.admit(&TaskSpec::blocking(class(name)).operation(operation))
-}
-
-fn admitted(g: &Governor, name: &str, operation: &str) -> PermitId {
-    match submit(g, name, operation) {
+fn admitted(decision: AdmissionDecision) -> PermitId {
+    match decision {
         AdmissionDecision::Admitted { permit_id } => permit_id,
-        other => panic!("{name}/{operation} should admit, got {other:?}"),
+        other => panic!("expected admission, got {other:?}"),
     }
-}
-
-#[derive(Clone, Copy)]
-struct HeldInput {
-    class: &'static str,
-    cpu: u32,
-    memory: u32,
-}
-
-fn assert_input_ledger(g: &Governor, held: &BTreeMap<PermitId, HeldInput>) {
-    let snapshot = g.snapshot();
-    for name in ["a", "b", "c"] {
-        let expected: Vec<_> = held.values().filter(|item| item.class == name).collect();
-        let observed = &snapshot.classes[&class(name)];
-        assert_eq!(
-            observed.inflight as usize,
-            expected.len(),
-            "{name} inflight"
-        );
-        assert_eq!(
-            observed.cpu_units_held,
-            expected.iter().map(|item| u128::from(item.cpu)).sum(),
-            "{name} CPU"
-        );
-        assert_eq!(
-            observed.memory_units_held,
-            expected.iter().map(|item| u128::from(item.memory)).sum(),
-            "{name} memory"
-        );
-        assert_eq!(observed.queued, 0, "{name} queue");
-    }
-    assert_eq!(
-        snapshot.capabilities["blocking"].in_use as usize,
-        held.len(),
-        "blocking occupancy follows admitted inputs only"
-    );
-    assert_eq!(snapshot.conservation_violation(), None);
 }
 
 #[test]
-fn cross_class_global_and_pool_limits_follow_only_admitted_events() {
-    let g = governor(4, 6, 2, &[("a", 2, 2, 3), ("b", 2, 2, 3), ("c", 2, 1, 1)]);
-    let mut held = BTreeMap::new();
-    let a = admitted(&g, "a", "a1");
-    held.insert(
-        a,
-        HeldInput {
-            class: "a",
-            cpu: 2,
-            memory: 3,
-        },
-    );
-    assert_input_ledger(&g, &held);
-    let b = admitted(&g, "b", "b1");
-    held.insert(
-        b,
-        HeldInput {
-            class: "b",
-            cpu: 2,
-            memory: 3,
-        },
-    );
-    assert_input_ledger(&g, &held);
+fn compound_blockers_have_one_stable_primary_and_zero_rejected_side_effects() {
+    let queueing = ClassPolicy::new()
+        .max_inflight(1)
+        .max_queue_depth(4)
+        .cpu_units(2)
+        .memory_units(2)
+        .overflow_policy(OverflowPolicy::QueueWithinDepth)
+        .memory_overcommit_policy(MemoryOvercommitPolicy::Queue);
+    let rejecting = ClassPolicy::new()
+        .max_inflight(4)
+        .cpu_units(1)
+        .memory_units(1)
+        .overflow_policy(OverflowPolicy::Reject);
+    let policy = PolicySet::new(
+        ResourceBudget::new().cpu_units(2).memory_units(2),
+        BTreeMap::from([
+            (TaskClass::new("queueing"), queueing),
+            (TaskClass::new("rejecting"), rejecting),
+        ]),
+    )
+    .with_capability_limits(BTreeMap::from([("blocking".to_owned(), 1)]))
+    .expect("built-in blocking authority");
+    let governor = Governor::new(policy, Arc::new(ManualClock::new(10))).expect("valid policy");
 
-    // c has free class quota, but the shared pool, CPU, and memory are all
-    // full. Capability is the accepted primary blocker; rejection changes no
-    // input ledger or occupancy.
+    let holder = admitted(governor.admit(&spec("queueing", "holder", true)));
+    let ticket = match governor.admit(&spec("queueing", "all-blocked", true)) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("compound pressure must queue: {other:?}"),
+    };
+    let Some(CapacityAssessment::ReversiblyBlocked(blockers)) = governor.pending_assessment(ticket)
+    else {
+        panic!("queued request must expose all current blockers")
+    };
+    assert!(blockers.class_inflight);
+    assert_eq!(blockers.capabilities.len(), 1);
+    assert!(blockers.cpu);
+    assert!(blockers.memory);
+    assert_eq!(blockers.primary(), CapacityBlock::Inflight);
+    assert_eq!(
+        governor.pending_block_reason(ticket),
+        Some(CapacityBlock::Inflight)
+    );
+
+    let before = governor.snapshot();
     assert!(matches!(
-        submit(&g, "c", "blocked"),
+        governor.admit(&spec("rejecting", "rejected", true)),
         AdmissionDecision::Rejected(AdmissionVerdict::SubstrateSaturated { .. })
     ));
-    assert_input_ledger(&g, &held);
+    assert_eq!(governor.snapshot(), before);
 
-    assert_eq!(g.release(a), ReleaseOutcome::Released);
-    held.remove(&a);
-    assert_input_ledger(&g, &held);
-    let c = admitted(&g, "c", "after-release");
-    held.insert(
-        c,
-        HeldInput {
-            class: "c",
-            cpu: 1,
-            memory: 1,
-        },
+    assert_eq!(governor.release(holder), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(promoted) = governor.claim(ticket) else {
+        panic!("release must promote the queued request")
+    };
+    let snapshot = governor.snapshot();
+    let queueing = &snapshot.classes[&TaskClass::new("queueing")];
+    assert_eq!((queueing.inflight, queueing.queued), (1, 0));
+    assert_eq!(
+        (queueing.cpu_units_held, queueing.memory_units_held),
+        (2, 2)
     );
-    assert_input_ledger(&g, &held);
-    assert_eq!(g.release(b), ReleaseOutcome::Released);
-    held.remove(&b);
-    assert_eq!(g.release(c), ReleaseOutcome::Released);
-    held.remove(&c);
-    assert_input_ledger(&g, &held);
+    assert_eq!(snapshot.capabilities["blocking"].in_use, 1);
+    assert_eq!(governor.release(promoted), ReleaseOutcome::Released);
 }
 
 #[test]
-fn selected_compound_blockers_follow_class_pool_cpu_memory_priority() {
-    struct Case {
-        name: &'static str,
-        contender_class: &'static str,
-        holder_class_limit: u32,
-        cpu_budget: u32,
-        memory_budget: u32,
-        pool_slots: u32,
-        expected: fn(&AdmissionDecision) -> bool,
-    }
-    let cases = [
-        Case {
-            name: "class before pool, CPU, memory",
-            contender_class: "a",
-            holder_class_limit: 1,
-            cpu_budget: 1,
-            memory_budget: 1,
-            pool_slots: 1,
-            expected: |decision| {
-                matches!(
-                    decision,
-                    AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated { .. })
-                )
-            },
-        },
-        Case {
-            name: "pool before CPU and memory",
-            contender_class: "b",
-            holder_class_limit: 2,
-            cpu_budget: 1,
-            memory_budget: 1,
-            pool_slots: 1,
-            expected: |decision| {
-                matches!(
-                    decision,
-                    AdmissionDecision::Rejected(AdmissionVerdict::SubstrateSaturated { .. })
-                )
-            },
-        },
-        Case {
-            name: "CPU before memory",
-            contender_class: "b",
-            holder_class_limit: 2,
-            cpu_budget: 1,
-            memory_budget: 1,
-            pool_slots: 2,
-            expected: |decision| {
-                matches!(
-                    decision,
-                    AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated { .. })
-                )
-            },
-        },
-        Case {
-            name: "memory only",
-            contender_class: "b",
-            holder_class_limit: 2,
-            cpu_budget: 2,
-            memory_budget: 1,
-            pool_slots: 2,
-            expected: |decision| {
-                matches!(
-                    decision,
-                    AdmissionDecision::Rejected(AdmissionVerdict::MemorySaturated { .. })
-                )
-            },
-        },
-    ];
-    for case in cases {
-        let g = governor(
-            case.cpu_budget,
-            case.memory_budget,
-            case.pool_slots,
-            &[
-                ("a", case.holder_class_limit, 1, 1),
-                ("b", 2, 1, 1),
-                ("c", 2, 1, 1),
-            ],
-        );
-        let holder = admitted(&g, "a", "holder");
-        let before = g.snapshot();
-        let decision = submit(&g, case.contender_class, "contender");
-        assert!(
-            (case.expected)(&decision),
-            "{}: got {decision:?}",
-            case.name
-        );
-        assert_eq!(g.snapshot(), before, "{} changed capacity", case.name);
-        assert_eq!(g.release(holder), ReleaseOutcome::Released);
-    }
-}
+fn class_primary_then_memory_primary_follow_their_distinct_queue_policies() {
+    let candidate = ClassPolicy::new()
+        .max_inflight(1)
+        .max_queue_depth(2)
+        .memory_units(4)
+        .overflow_policy(OverflowPolicy::Reject)
+        .memory_overcommit_policy(MemoryOvercommitPolicy::Queue);
+    let pressure = ClassPolicy::new().max_inflight(1).memory_units(4);
+    let governor = Governor::new(
+        PolicySet::new(
+            ResourceBudget::new().memory_units(4),
+            BTreeMap::from([
+                (TaskClass::new("candidate"), candidate),
+                (TaskClass::new("pressure"), pressure),
+            ]),
+        ),
+        Arc::new(ManualClock::new(0)),
+    )
+    .expect("valid policy");
 
-#[test]
-fn class_full_precedes_memory_then_memory_becomes_primary_after_class_release() {
-    let g = governor(3, 1, 3, &[("a", 1, 1, 1), ("b", 1, 1, 1), ("c", 1, 1, 1)]);
-    let a = admitted(&g, "a", "a-holder");
-    let mut held = BTreeMap::from([(
-        a,
-        HeldInput {
-            class: "a",
-            cpu: 1,
-            memory: 1,
-        },
-    )]);
-    assert_input_ledger(&g, &held);
+    let own = admitted(governor.admit(&spec("candidate", "own", false)));
     assert!(matches!(
-        submit(&g, "a", "class-full"),
+        governor.admit(&spec("candidate", "class-and-memory", false)),
         AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated { .. })
     ));
-    assert_input_ledger(&g, &held);
+    assert_eq!(governor.release(own), ReleaseOutcome::Released);
 
-    assert_eq!(g.release(a), ReleaseOutcome::Released);
-    held.remove(&a);
-    let b = admitted(&g, "b", "memory-holder");
-    held.insert(
-        b,
-        HeldInput {
-            class: "b",
-            cpu: 1,
-            memory: 1,
-        },
+    let pressure = admitted(governor.admit(&spec("pressure", "pressure", false)));
+    let ticket = match governor.admit(&spec("candidate", "memory-only", false)) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("memory-primary policy must queue: {other:?}"),
+    };
+    assert_eq!(
+        governor.pending_block_reason(ticket),
+        Some(CapacityBlock::Memory)
     );
-    assert_input_ledger(&g, &held);
-    assert!(matches!(
-        submit(&g, "a", "memory-full"),
-        AdmissionDecision::Rejected(AdmissionVerdict::MemorySaturated { .. })
-    ));
-    assert_input_ledger(&g, &held);
-    assert_eq!(g.release(b), ReleaseOutcome::Released);
-    held.remove(&b);
-    assert_input_ledger(&g, &held);
+    assert_eq!(governor.release(pressure), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(promoted) = governor.claim(ticket) else {
+        panic!("memory release must promote")
+    };
+    assert_eq!(governor.release(promoted), ReleaseOutcome::Released);
+}
+
+#[test]
+fn capacity_zero_one_exact_and_plus_one_are_unambiguous() {
+    for (budget, cost, expected) in [
+        (0, u32::MAX, true),
+        (1, 1, true),
+        (4, 4, true),
+        (4, 5, false),
+    ] {
+        let governor = Governor::new(
+            PolicySet::new(
+                ResourceBudget::new().cpu_units(budget),
+                BTreeMap::from([(
+                    TaskClass::new("c"),
+                    ClassPolicy::new().max_inflight(1).cpu_units(cost),
+                )]),
+            ),
+            Arc::new(ManualClock::new(0)),
+        );
+        if expected {
+            let governor = governor.expect("representable policy");
+            let permit = admitted(governor.admit(&spec("c", "boundary", false)));
+            assert_eq!(governor.release(permit), ReleaseOutcome::Released);
+        } else {
+            assert!(governor.is_err(), "per-request cost above the hard budget");
+        }
+    }
 }

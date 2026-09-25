@@ -135,3 +135,41 @@ fn simulation_is_deterministic_for_a_seed() {
     assert_eq!(a.2, b.2, "p999 must be identical");
     assert_eq!(a.4, b.4, "SimResult must be identical");
 }
+
+#[test]
+fn multiclass_multiseed_population_has_no_unaccounted_request() {
+    let classes = ["retrieval", "rank", "index"];
+    for seed in [1_u64, 7, 42, 0xC0FFEE] {
+        let cfg = WorkloadConfig {
+            classes: classes.into_iter().map(str::to_owned).collect(),
+            lambda: 120_000.0,
+            zipf_exponent: 1.1,
+            count: 3_000,
+            seed,
+        };
+        let arrivals = generate(&cfg).expect("valid multiclass schedule");
+        for class in classes {
+            assert!(
+                arrivals
+                    .as_slice()
+                    .iter()
+                    .any(|arrival| arrival.class == class),
+                "seed {seed} must exercise {class}"
+            );
+        }
+        let fixture = fixture(
+            vec![
+                ("retrieval", retrieval_policy(8, 32)),
+                ("rank", retrieval_policy(4, 16)),
+                ("index", retrieval_policy(2, 8)),
+            ],
+            14,
+            0,
+        );
+        let (latency, result) = simulate(&fixture, &arrivals, 200_000).expect("bounded simulation");
+        assert!(result.is_conserved(), "seed {seed}: {result:?}");
+        assert_eq!(latency.len(), result.started() as u64);
+        assert!(result.max_queue_observed <= 32 + 16 + 8);
+        assert_eq!(result.leftover_queued, 0);
+    }
+}

@@ -2,7 +2,7 @@
 
 ## Verdict
 
-The packet remains implementable without treating all 53 incomplete scenarios as defects. Implementation has started, and production changes remain limited to reproduced contract failures.
+The packet is implemented. Production changes are limited to reproduced contract failures; proof-only gaps were closed with independent deterministic fixtures.
 
 ## Classification
 
@@ -12,10 +12,10 @@ The packet remains implementable without treating all 53 incomplete scenarios as
 | Resolved structural defect | BG25-005 H30/B25/H27 | `bf03efc`, `3e57f1a`, and `0b608c3` freeze executor authority and its runtime prerequisite, preflight Tokio-backed dispatch including explicitly installed built-ins, and prove aggregate shared-executor bounds. |
 | Resolved deadline defect | BG25-006 H34 | `74a18f7` enforces `CompleteBy` at caller response while retaining worker custody through teardown. |
 | Resolved contract mismatch | BG25-003 D17 | `1c7b8ac` aligns closed-admission rustdoc with actual preflight precedence and adds an exact no-side-effect fixture. |
-| Partial library boundary | BG25-002 | Bounded strict host parser and fixtures exist; external untrusted-byte caller/adoption remains unidentified and must not be inferred. |
-| Authority migration | BG25-004 B28 | Reproduce collision, choose semver path, then introduce owner-bound handles. |
-| Proof-first | BG25-008, 009, 010 | Do not edit production source unless the independent oracle finds a mismatch. |
-| Measurement/evidence | BG25-011, 012 | Do not alter runtime semantics to make metrics or gates pass. |
+| Strict ingress | BG25-002 | Additive bounded strict task/config entrypoints preserve raw DTO compatibility. External deployment adoption remains an ownership fact outside this repository. |
+| Authority migration | BG25-004 B28 | Governor-bound opaque permit/ticket handles reject foreign same-sequence operations and fail closed on exhaustion. |
+| Proof-first | BG25-008, 009, 010 | Independent admission, queue-history, and memory-ledger oracles found no additional production mismatch. |
+| Measurement/evidence | BG25-011, 012 | Host and simulator accounting plus the validated 104-row manifest close deterministic evidence without changing runtime semantics for metrics. |
 
 ## SOLID and minimality checks
 
@@ -43,13 +43,12 @@ The packet remains implementable without treating all 53 incomplete scenarios as
 - Existing K fixtures remain baselines; tickets target missing combinations instead of duplicating them.
 - Current receipt and nightly limitations are stated without upgrading historical proof.
 
-## Current open boundary
+## Current qualification boundary
 
-- BG25-004 raw identity handles still require an API/semver choice before source changes.
-- BG25-002 strict ingress still requires the actual external bytes owner and compatibility boundary.
-- BG25-006 remains partial until its independent combined event-ledger oracle covers D05, D15, H11, H12, H19, H20, and H31 together.
-- BG25-008/009/010 and BG25-011 remain proof or measurement work. They are not confirmed source defects without a failing independent oracle.
+- The library strict ingress exists; deployment owners must explicitly call it at their untrusted byte boundary.
+- Parent-plan stage membership and detached structured concurrency remain outside the engine contract by D4 and the root-child lifetime fixtures.
+- Nightly modelcheck, TSan, fuzz, coverage, IAI, and mutation are NOT_RUN pending explicit authorization.
 
-## Remaining external dependencies
+## External adoption boundary
 
-The plan cannot close deployment-level strict ingress, parent-plan membership, or downstream wire compatibility until the actual external owner and source are identified. Those rows remain OPEN; library-local fixtures must not be promoted to adoption evidence.
+The library contract is closed. Deployment owners still choose their bytes ingress call site, validate parent-plan membership before submission, and negotiate downstream wire versions. The evidence manifest proves the library behavior and does not claim deployment adoption.

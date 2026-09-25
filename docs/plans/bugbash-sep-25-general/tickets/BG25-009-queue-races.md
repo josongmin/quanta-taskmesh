@@ -1,6 +1,6 @@
 # BG25-009 — queue·fairness·waker·drain histories
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED
 - 우선순위: P1
 - 선행: BG25-001, BG25-008
 - 소유: engine/scheduler owner; drain host owner
@@ -18,8 +18,8 @@
 
 ## 변경 파일
 
-- 신규 engine fixture 후보 `hardening_queue_history.rs`
-- 신규 host fixture 후보 `hardening_drain_multiwait.rs`
+- engine fixture `hardening_queue_history.rs`
+- host fixture `hardening_drain.rs`
 - 기존 `hardening_{fairness_reference,effect_retirement}.rs`, `pending_resolver.rs`, `differential_model.rs`
 - 재현 시 `engine/governor.rs`, fairness/admission state; model changes require producer manifest update
 

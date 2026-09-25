@@ -1,6 +1,6 @@
 # BG25-010 — combined memory ledger and snapshot oracle
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED
 - 우선순위: P1
 - 선행: BG25-008, BG25-009
 - 소유: engine/memory owner, contract snapshot owner
@@ -17,7 +17,7 @@ stage release, measured/hybrid reconcile, promotion, clock activity, leak sweep�
 
 ## 변경 파일
 
-- 신규 `crates/taskmesh-engine/tests/hardening_memory_ledger.rs` 후보
+- `crates/taskmesh-engine/tests/hardening_memory_ledger.rs`
 - `hardening_memory_epochs.rs`, `hardening_snapshot_projection.rs`
 - `crates/taskmesh-contract/tests/snapshot_oracle.rs`
 - 재현 시 `features/memory/mod.rs`, `engine/{governor,state}.rs`, snapshot docs

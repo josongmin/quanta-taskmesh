@@ -30,6 +30,19 @@ fn valid_child_preserves_immediate_parent_identity() {
 }
 
 #[test]
+fn parent_stage_membership_is_explicitly_outside_a_child_plan() {
+    let child = TaskSpec::cpu(TaskClass::new("worker"))
+        .awaited_child_of("root-1", "parent-2", TaskStage::new("not-in-child-plan"))
+        .operation("child-3")
+        .validate()
+        .expect("the child plan validates identity shape, not a separate parent plan");
+    assert!(matches!(
+        &child.as_spec().scope,
+        TaskScope::Child { parent_stage, .. } if parent_stage.as_str() == "not-in-child-plan"
+    ));
+}
+
+#[test]
 fn zero_stage_is_rejected() {
     let mut raw = root();
     raw.stages.clear();

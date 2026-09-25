@@ -1,6 +1,6 @@
 # BG25-012 — scenario evidence and exact-source gate integration
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED
 - 우선순위: P1
 - 선행: BG25-002–BG25-011
 - 소유: integration/CI owner
@@ -11,14 +11,14 @@
 
 ## 근거
 
-- Existing CI-profile receipt is 16/16 PASS and reports 561 tests for the audit HEAD, but current checkout is dirty with untracked docs.
+- The historical CI-profile receipt is source-bound to its older audit HEAD and is not reused for this implementation.
 - `test-rayon` executes host lib plus one focused integration test.
 - `fuzz-check` compiles/lints; `bench-gate` is allocation-only.
 - no current modelcheck/TSan/fuzz/mutation receipt exists.
 
 ## 변경 파일
 
-- 신규 `scenario-evidence.json` and its validator/tests
+- `scenario-evidence.json` and `validate_scenario_evidence.py`
 - `Justfile`, `tools/gates/{inventory,required}.json`, gate tests and target catalog
 - only if policy approves: `.github/workflows/**`
 - `docs/release-checklist.md` and final ticket statuses
@@ -42,7 +42,7 @@
 
 ## 검증
 
-- Run `python3 validate_plan.py` and the new scenario-evidence validator.
+- Run `python3 validate_plan.py` and `python3 validate_scenario_evidence.py`.
 - Execute changed gate/tooling owner tests, actual test collection, and clean `just verify-macos-ci`.
 - Validate saved receipt again after the run; do not use a receipt from another HEAD.
 

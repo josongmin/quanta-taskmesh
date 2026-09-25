@@ -74,7 +74,7 @@ def check_links(path: Path) -> None:
 
 def main() -> None:
     data = json.loads((ROOT / "plan.json").read_text())
-    if data.get("schema_version") != 1 or data.get("status") != "PLANNED":
+    if data.get("schema_version") != 1 or data.get("status") != "IMPLEMENTED":
         fail("unexpected schema/status")
     tickets = data["tickets"]
     by_id = {ticket["id"]: ticket for ticket in tickets}
@@ -102,7 +102,7 @@ def main() -> None:
         if not path.is_file():
             fail(f"missing ticket: {path}")
         text = path.read_text()
-        if not text.startswith(f"# {ticket['id']} ") or "상태: PLANNED" not in text:
+        if not text.startswith(f"# {ticket['id']} ") or "상태: IMPLEMENTED" not in text:
             fail(f"heading/status mismatch: {ticket['id']}")
         for section in SECTIONS:
             if not re.search(rf"^{re.escape(section)}(?:\s|$)", text, re.M):

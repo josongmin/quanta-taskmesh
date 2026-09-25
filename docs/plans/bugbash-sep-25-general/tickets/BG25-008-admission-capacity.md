@@ -1,6 +1,6 @@
 # BG25-008 — compound admission과 capacity authority
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED
 - 우선순위: P1
 - 선행: BG25-001, BG25-005
 - 소유: engine/admission owner; host capacity fixture는 host owner
@@ -18,8 +18,9 @@ class, capability, CPU, measured memory, tier/fallback이 동시에 충돌할 �
 
 ## 변경 파일
 
-- fixture 우선: 신규 `crates/taskmesh-engine/tests/hardening_admission_matrix.rs`
-- host fixture 후보 `crates/taskmesh/tests/hardening_admission_host_capacity.rs`
+- blocker/policy boundary fixture: `crates/taskmesh-engine/tests/hardening_admission_matrix.rs`
+- independent input-ledger fixture: `crates/taskmesh-engine/tests/hardening_admission_ledger.rs`
+- host overload fixture `crates/taskmesh/tests/host_open_loop.rs`
 - 재현 시에만 `features/admission/{mod,pending}.rs`, `engine/{governor,state}.rs`
 - policy/spec docs if precedence changes
 
@@ -46,11 +47,12 @@ class, capability, CPU, measured memory, tier/fallback이 동시에 충돌할 �
 - Engine matrix + focused host capacity fixture.
 - Assertions include closure count, queue depth, per-class/global held, and every capability occupancy.
 
-## 현재 증거 범위 (2026-09-25)
+## 구현 증거 (2026-09-25)
 
-- `hardening_admission_matrix` 3개 focused case와 target Clippy가 통과했다. 입력 이벤트에서 독립 계산한 class CPU/memory, inflight, blocking-pool occupancy를 교차 class admit/release마다 비교한다.
-- class/pool/CPU/memory의 대표 compound primary blocker와 class-full 해소 후 memory-primary 전환을 검증했다. 이 범위에서 새 운영 코드 결함은 관측되지 않았다.
-- measured overcommit/fallback, 실제 host executor occupancy·closure count, 0/1/exact/+1 전체 필드 표, BG25-012 selector·exact-source receipt는 여전히 OPEN이다. 이 focused proof를 티켓 전체 완료로 승격하지 않는다.
+- `hardening_admission_matrix`는 compound blocker 전체 집합, primary precedence, queue-policy 전환, rejected side-effect 0, 0/1/exact/+1 경계를 검증한다.
+- `hardening_admission_ledger`는 입력 이벤트에서 독립 계산한 class CPU/memory, inflight, blocking-pool occupancy를 cross-class admit/release마다 대조한다.
+- `host_open_loop`는 실제 host 응답과 worker custody ledger를 분리해 closure, queue, execution accounting을 검증한다.
+- 이 oracle들에서 추가 production mismatch는 관측되지 않았다. 최종 자격은 BG25-012의 clean exact-source receipt에 종속된다.
 
 ## 인계 및 중단 조건
 

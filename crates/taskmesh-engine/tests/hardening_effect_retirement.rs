@@ -111,9 +111,10 @@ impl SettlementWaker for ReentrantPanickingSettlementWaker {
             .expect("settlement port is attached before transitions");
         assert_eq!(governor.snapshot().conservation_violation(), None);
         self.wakes.fetch_add(1, Ordering::SeqCst);
-        if self.panic_on_next_wake.swap(false, Ordering::SeqCst) {
-            panic!("settlement callback failed after re-entering governor");
-        }
+        assert!(
+            !self.panic_on_next_wake.swap(false, Ordering::SeqCst),
+            "settlement callback failed after re-entering governor"
+        );
     }
 }
 

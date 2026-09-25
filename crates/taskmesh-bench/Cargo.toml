@@ -17,6 +17,10 @@ taskmesh = { path = "../taskmesh" }
 rand = { workspace = true }
 rand_distr = { workspace = true }
 hdrhistogram = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio-util = { workspace = true }
 # Instruction-count track (ADR 9000 / P2). Optional: requires valgrind + the
 # matching iai-callgrind-runner, so it is gated behind the `iai` feature and only
 # runs on the Linux CI runner. The default build (incl. macOS dev) never needs it.
@@ -28,7 +32,6 @@ iai = ["dep:iai-callgrind"]
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["async_tokio"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
 # Industry-standard middleware baseline (ADR 9000 / P9).
 tower = { version = "0.5", features = ["limit", "util"] }
 

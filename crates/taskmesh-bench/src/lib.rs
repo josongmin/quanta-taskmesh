@@ -7,6 +7,8 @@
 //! metrics (P5), and a seeded Poisson/Zipf workload generator (P4) shared with
 //! proof fixtures.
 
+pub mod host_load;
+pub mod host_scenarios;
 pub mod loadgen;
 pub mod metrics;
 pub mod workload;

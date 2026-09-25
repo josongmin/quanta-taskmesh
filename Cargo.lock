@@ -1278,10 +1278,13 @@ dependencies = [
  "iai-callgrind",
  "rand 0.8.6",
  "rand_distr",
+ "serde",
+ "serde_json",
  "taskmesh",
  "taskmesh-contract",
  "taskmesh-engine",
  "tokio",
+ "tokio-util",
  "tower",
 ]
 

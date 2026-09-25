@@ -1611,6 +1611,20 @@
       "gate": "test",
       "source": [
         "crates/taskmesh-bench/tests/hellgate.rs"
+      ],
+      "supporting_cases": [
+        {
+          "target": "crates/taskmesh-bench/tests/hellgate.rs",
+          "case": "invariants_hold_across_seeds_and_regimes"
+        },
+        {
+          "target": "crates/taskmesh-bench/tests/hellgate.rs",
+          "case": "overload_fails_closed_not_unbounded"
+        },
+        {
+          "target": "crates/taskmesh-bench/tests/hellgate.rs",
+          "case": "undersaturation_has_no_backpressure"
+        }
       ]
     },
     {

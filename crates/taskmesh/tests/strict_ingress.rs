@@ -240,7 +240,7 @@ fn duplicate_and_unknown_keys_reject_at_every_nested_boundary() {
         })
     );
     let mut unknown_root = task();
-    unknown_root["stack_size_byte"] = json!(123456);
+    unknown_root["stack_size_byte"] = json!(123_456);
     assert_eq!(
         parse(&unknown_root, StrictIngressLimits::default()),
         Err(StrictIngressError::UnknownKey {

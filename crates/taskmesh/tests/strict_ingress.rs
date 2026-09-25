@@ -311,6 +311,39 @@ fn zero_duplicate_and_many_stages_have_distinct_strict_ingress_verdicts() {
 }
 
 #[test]
+fn empty_stages_respect_the_exact_sequence_depth_boundary() {
+    use taskmesh_contract::TaskPlanError;
+
+    let mut value = task();
+    value["stages"] = json!([]);
+    value.as_object_mut().unwrap().remove("blocking_dispatch");
+
+    // The root object is depth 1 and its stages sequence is depth 2. An
+    // empty sequence at the limit is scanned before plan validation, while a
+    // sequence beyond the limit must be rejected even without any elements.
+    assert_eq!(
+        parse(
+            &value,
+            StrictIngressLimits {
+                max_depth: 1,
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Err(StrictIngressError::DepthLimit { max: 1 })
+    );
+    assert_eq!(
+        parse(
+            &value,
+            StrictIngressLimits {
+                max_depth: 2,
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Err(StrictIngressError::TaskPlan(TaskPlanError::NoStages))
+    );
+}
+
+#[test]
 fn duplicate_and_unknown_keys_reject_at_every_nested_boundary() {
     let bytes = serde_json::to_vec(&task()).unwrap();
     let text = String::from_utf8(bytes).unwrap();

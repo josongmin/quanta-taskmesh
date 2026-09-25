@@ -198,7 +198,10 @@ fn ownership_transfers_exactly_once_across_claim_abandon_release_orders() {
             }
             "abandon" => {
                 // Abandon while still queued: the holder keeps its permit.
-                let _ = g.abandon(ticket);
+                assert_eq!(
+                    g.abandon(ticket),
+                    taskmesh_engine::AbandonOutcome::Abandoned
+                );
                 assert_eq!(g.snapshot().classes[&class].queued, 0);
                 assert_eq!(g.snapshot().classes[&class].inflight, 1);
                 assert_eq!(g.release(holder), ReleaseOutcome::Released);
@@ -210,14 +213,17 @@ fn ownership_transfers_exactly_once_across_claim_abandon_release_orders() {
                 };
                 // Abandoning an already-claimed ticket must not release the
                 // permit the caller now owns.
-                let _ = g.abandon(ticket);
+                assert_eq!(g.abandon(ticket), taskmesh_engine::AbandonOutcome::Invalid);
                 assert_eq!(g.snapshot().classes[&class].inflight, 1);
                 assert_eq!(g.release(permit), ReleaseOutcome::Released);
             }
             _ => {
                 assert_eq!(g.release(holder), ReleaseOutcome::Released);
                 // Abandon after promotion releases the promoted permit.
-                let _ = g.abandon(ticket);
+                assert_eq!(
+                    g.abandon(ticket),
+                    taskmesh_engine::AbandonOutcome::Abandoned
+                );
             }
         }
 

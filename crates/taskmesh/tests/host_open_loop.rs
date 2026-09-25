@@ -44,7 +44,7 @@ async fn offered_terminal_unanswered_and_execution_counts_close_exactly() {
         holder_runtime
             .run_blocking(blocking("holder"), move || {
                 holder_executed.fetch_add(1, Ordering::SeqCst);
-                let _ = started_tx.send(());
+                started_tx.send(()).expect("test waits for holder start");
                 release_rx.recv().expect("test releases holder");
                 Ok::<_, ()>(0_usize)
             })

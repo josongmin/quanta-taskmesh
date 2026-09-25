@@ -92,7 +92,10 @@ fn an_abandoned_queued_child_frees_its_recursion_slot() {
     // Attribution starts at grant, not at queue: nothing is charged yet.
     assert!(g.root_attribution("R").is_none());
 
-    let _ = g.abandon(ticket);
+    assert_eq!(
+        g.abandon(ticket),
+        taskmesh_engine::AbandonOutcome::Abandoned
+    );
     // The slot is free again: the same child can be queued afresh.
     let again = queue(&g, &child("R", "map"));
     assert!(matches!(g.ticket_status(again), ClaimOutcome::Pending));
@@ -157,28 +160,24 @@ fn a_promoted_child_that_is_reclaimed_gives_back_slot_and_attribution() {
 
 #[test]
 fn a_permit_handle_from_another_governor_frees_nothing_here() {
-    // Ids are per governor and both start at 1, so a handle from `other` is
-    // numerically identical to a live permit in `g`. Presenting it to `g` is a
-    // caller bug: it must be reported as unknown... except it cannot be told
-    // apart by value. What *is* guaranteed: the other governor's own release
-    // never touches `g`, and `g`'s accounting only moves for `g`'s releases.
+    // Local sequences start at 1, but the opaque authority component prevents
+    // a foreign handle from aliasing a live permit in `g`.
     let (g, _) = governor(4);
     let (other, _) = governor(4);
     let mine = admit(&g, &root("mine"));
     let theirs = admit(&other, &root("theirs"));
-    assert_eq!(mine, theirs, "the collision this test is about");
+    assert_eq!(mine.sequence(), theirs.sequence());
+    assert_ne!(mine, theirs);
 
-    // Releasing `theirs` on its own governor leaves `g` untouched.
+    assert_eq!(g.release(theirs), ReleaseOutcome::UnknownPermit);
+    assert_eq!(g.snapshot().classes[&TaskClass::new("worker")].inflight, 1);
     assert_eq!(other.release(theirs), ReleaseOutcome::Released);
     assert_eq!(g.snapshot().classes[&TaskClass::new("worker")].inflight, 1);
     assert_eq!(
         other.snapshot().classes[&TaskClass::new("worker")].inflight,
         0
     );
-    // A second presentation of the foreign handle to its own governor is
-    // reported, not absorbed.
     assert_eq!(other.release(theirs), ReleaseOutcome::UnknownPermit);
-    // And `g` still owns exactly its own permit.
     assert_eq!(g.release(mine), ReleaseOutcome::Released);
     assert_eq!(g.release(mine), ReleaseOutcome::UnknownPermit);
     assert_eq!(g.snapshot().conservation_violation(), None);

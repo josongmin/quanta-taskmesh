@@ -518,7 +518,9 @@ fn raw_dto_compatibility_is_not_redefined_by_strict_ingress() {
 fn missing_raw_await_flag_queues_but_strict_declared_wait_rejects_the_cycle() {
     use std::collections::BTreeMap;
     use std::sync::Arc;
-    use taskmesh::ext::{AdmissionDecision, Governor, ManualClock, PolicySet, ReleaseOutcome};
+    use taskmesh::ext::{
+        AbandonOutcome, AdmissionDecision, Governor, ManualClock, PolicySet, ReleaseOutcome,
+    };
     use taskmesh::{AdmissionVerdict, OverflowPolicy, TaskStage};
 
     let class = TaskClass::new("c");
@@ -563,7 +565,7 @@ fn missing_raw_await_flag_queues_but_strict_declared_wait_rejects_the_cycle() {
         parse(&input, StrictIngressLimits::default()),
         Err(StrictIngressError::Decode(_))
     ));
-    governor.abandon(ticket);
+    assert_eq!(governor.abandon(ticket), AbandonOutcome::Abandoned);
 
     input["scope"]["Child"]["parent_awaits"] = json!(true);
     let declared = parse(&input, StrictIngressLimits::default()).unwrap();

@@ -126,7 +126,7 @@ impl Governor {
                 std::sync::atomic::Ordering::Relaxed,
                 |current| current.checked_add(1),
             )
-            .map_err(|_| GovernorError::IdentityAuthorityExhausted)?;
+            .map_err(|_exhausted| GovernorError::IdentityAuthorityExhausted)?;
         Ok(Self {
             authority,
             policy,

@@ -158,7 +158,13 @@ fn capacity_zero_one_exact_and_plus_one_are_unambiguous() {
             let permit = admitted(governor.admit(&spec("c", "boundary", false)));
             assert_eq!(governor.release(permit), ReleaseOutcome::Released);
         } else {
-            assert!(governor.is_err(), "per-request cost above the hard budget");
+            let Err(taskmesh_contract::GovernorError::PolicyViolation(message)) = governor else {
+                panic!("per-request cost above the hard budget must be a policy violation");
+            };
+            assert!(
+                message.contains("exceeds global cpu budget"),
+                "the failure must name the exceeded hard budget: {message}"
+            );
         }
     }
 }

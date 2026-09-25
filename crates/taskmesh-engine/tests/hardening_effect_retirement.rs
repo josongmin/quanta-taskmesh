@@ -128,7 +128,10 @@ fn abandoning_a_queued_request_retires_its_waker_outside_the_lock() {
 
     let abandoning = Arc::clone(&governor);
     with_deadline("abandon with a re-entrant waker destructor", move || {
-        let _ = abandoning.abandon(ticket);
+        assert_eq!(
+            abandoning.abandon(ticket),
+            taskmesh_engine::AbandonOutcome::Abandoned
+        );
     });
 
     assert_eq!(entered.load(Ordering::SeqCst), 1, "the destructor ran");

@@ -123,7 +123,7 @@ fn fuzz_conservation_and_caps_under_adversarial_churn() {
                 2 => {
                     if !pending.is_empty() {
                         let t = pending.swap_remove(rng.gen_range(0..pending.len()));
-                        let _ = g.abandon(t);
+                        assert_eq!(g.abandon(t), taskmesh_engine::AbandonOutcome::Abandoned);
                     }
                 }
                 3 => drain_promotions(g, &mut pending, &mut held),
@@ -185,7 +185,7 @@ fn fuzz_conservation_and_caps_under_adversarial_churn() {
                 break;
             }
             if let Some(t) = pending.pop() {
-                let _ = g.abandon(t);
+                assert_eq!(g.abandon(t), taskmesh_engine::AbandonOutcome::Abandoned);
             } else if let Some(p) = held.pop() {
                 assert_eq!(g.release(p), ReleaseOutcome::Released);
             }

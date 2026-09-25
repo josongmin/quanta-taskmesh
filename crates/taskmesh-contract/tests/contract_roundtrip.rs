@@ -164,8 +164,12 @@ fn exact_resource_aggregates_cross_the_wire_as_decimal_strings() {
 fn future_wire_variants_fail_closed_and_snapshot_versions_stay_explicit() {
     let future_verdict = r#"{"FutureAdmissionMode":{}}"#;
     let future_terminal = r#"{"FutureTerminalReason":{}}"#;
-    assert!(serde_json::from_str::<AdmissionVerdict>(future_verdict).is_err());
-    assert!(serde_json::from_str::<TerminalReason>(future_terminal).is_err());
+    let verdict_error = serde_json::from_str::<AdmissionVerdict>(future_verdict)
+        .expect_err("an unknown admission variant must fail closed");
+    assert!(verdict_error.to_string().contains("unknown variant"));
+    let terminal_error = serde_json::from_str::<TerminalReason>(future_terminal)
+        .expect_err("an unknown terminal variant must fail closed");
+    assert!(terminal_error.to_string().contains("unknown variant"));
 
     let mut snapshot = Snapshot::default();
     snapshot.schema_version = SNAPSHOT_SCHEMA_VERSION + 1;

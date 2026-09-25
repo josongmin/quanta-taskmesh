@@ -219,7 +219,10 @@ async fn direct_governor_abandon_of_a_promoted_ticket_wakes_drain() {
         snapshot.classes[&class("c")].inflight == 1 && snapshot.classes[&class("c")].queued == 0
     })
     .await;
-    let _ = rt.governor().abandon(ticket);
+    assert_eq!(
+        rt.governor().abandon(ticket),
+        ext::AbandonOutcome::Abandoned
+    );
 
     bounded("direct abandon wakes drain", drain)
         .await

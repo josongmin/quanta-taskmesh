@@ -19,7 +19,7 @@
 mod harness;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use harness::*;
@@ -185,6 +185,31 @@ fn queue_one(g: &Governor, class: &str, op: &str) -> Ticket {
     }
 }
 
+struct RecordingWaker {
+    class: String,
+    order: Arc<Mutex<Vec<String>>>,
+}
+
+impl taskmesh_contract::PermitWaker for RecordingWaker {
+    fn wake(&self) {
+        self.order
+            .lock()
+            .expect("promotion order lock")
+            .push(self.class.clone());
+    }
+}
+
+fn queue_recorded(g: &Governor, class: &str, op: &str, order: &Arc<Mutex<Vec<String>>>) -> Ticket {
+    let waker: Arc<dyn taskmesh_contract::PermitWaker> = Arc::new(RecordingWaker {
+        class: class.to_string(),
+        order: Arc::clone(order),
+    });
+    match g.admit_waitable(&spec(class, op), waker) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("expected a queued ticket, got {other:?}"),
+    }
+}
+
 /// Release `holder` and report which class the freed unit went to.
 fn serve_next(
     g: &Governor,
@@ -298,10 +323,11 @@ fn drr_selection_matches_the_reference_for_heterogeneous_costs() {
 
     let holder = admit_one(&g, "holder", "holder");
     let mut tickets: Vec<(Ticket, String)> = Vec::new();
+    let promotion_order = Arc::new(Mutex::new(Vec::new()));
     for round in 0..per_class {
         for (name, _, cost) in &classes {
             tickets.push((
-                queue_one(&g, name, &format!("{name}{round}")),
+                queue_recorded(&g, name, &format!("{name}{round}"), &promotion_order),
                 (*name).to_string(),
             ));
             reference.enqueue(name, u64::from(*cost));
@@ -310,20 +336,18 @@ fn drr_selection_matches_the_reference_for_heterogeneous_costs() {
 
     // One release frees exactly the backlog's total cost.
     assert_eq!(g.release(holder), ReleaseOutcome::Released);
-    let mut promoted: Vec<(PermitId, String)> = tickets
+    let promoted = tickets
         .iter()
-        .filter_map(|(ticket, class)| match g.ticket_status(*ticket) {
-            ClaimOutcome::Ready(permit) => Some((permit, class.clone())),
-            _ => None,
-        })
-        .collect();
-    promoted.sort_by_key(|(permit, _)| *permit);
+        .filter(|(ticket, _)| matches!(g.ticket_status(*ticket), ClaimOutcome::Ready(_)))
+        .count();
     assert_eq!(
-        promoted.len(),
-        queued_total,
+        promoted, queued_total,
         "every queued request fits the freed budget, so all of them are promoted"
     );
-    let observed: Vec<String> = promoted.iter().map(|(_, class)| class.clone()).collect();
+    let observed = promotion_order
+        .lock()
+        .expect("promotion order lock")
+        .clone();
     let expected: Vec<String> = (0..queued_total)
         .map(|_| reference.select().expect("the reference still has work"))
         .collect();
@@ -485,11 +509,12 @@ fn drr_order_is_exact_across_the_promotion_budget_boundary() {
 
     let holder = admit_one(&g, "holder", "holder");
     let mut tickets: Vec<(Ticket, String)> = Vec::new();
+    let promotion_order = Arc::new(Mutex::new(Vec::new()));
     let per_class = usize::try_from(total).expect("small") / classes.len() + 1;
     for round in 0..per_class {
         for (name, _) in &classes {
             tickets.push((
-                queue_one(&g, name, &format!("{name}{round}")),
+                queue_recorded(&g, name, &format!("{name}{round}"), &promotion_order),
                 (*name).to_string(),
             ));
             reference.enqueue(name, 1);
@@ -504,22 +529,19 @@ fn drr_order_is_exact_across_the_promotion_budget_boundary() {
     // One release: `total` units come free and are handed out in passes.
     assert_eq!(g.release(holder), ReleaseOutcome::Released);
 
-    // Promotion order is recovered from the permit ids: the engine assigns them
-    // in grant order.
-    let mut promoted: Vec<(PermitId, String)> = tickets
+    let promoted = tickets
         .iter()
-        .filter_map(|(ticket, class)| match g.ticket_status(*ticket) {
-            ClaimOutcome::Ready(permit) => Some((permit, class.clone())),
-            _ => None,
-        })
-        .collect();
-    promoted.sort_by_key(|(permit, _)| *permit);
+        .filter(|(ticket, _)| matches!(g.ticket_status(*ticket), ClaimOutcome::Ready(_)))
+        .count();
     assert_eq!(
-        promoted.len(),
+        promoted,
         usize::try_from(total).expect("small"),
         "every freed unit is used: the passes continue past the budget"
     );
-    let observed: Vec<String> = promoted.into_iter().map(|(_, class)| class).collect();
+    let observed = promotion_order
+        .lock()
+        .expect("promotion order lock")
+        .clone();
     let expected: Vec<String> = (0..total)
         .map(|_| reference.select().expect("reference has work"))
         .collect();
@@ -561,7 +583,10 @@ impl taskmesh_contract::PermitWaker for AbandoningHeadWaker {
         let Some((head, follower)) = self.tickets.lock().expect("lock").take() else {
             return;
         };
-        let _ = self.governor.abandon(head);
+        assert_eq!(
+            self.governor.abandon(head),
+            taskmesh_engine::AbandonOutcome::Abandoned
+        );
         *self.follower_before_return.lock().expect("lock") =
             Some(self.governor.ticket_status(follower));
     }
@@ -1771,7 +1796,10 @@ fn cancelled_requests_leave_no_virtual_time_debt() {
     let filler = admit_filler(&g);
     for i in 0..10 {
         let (ticket, _) = queue(&g, "a", &format!("cancelled{i}"));
-        let _ = g.abandon(ticket);
+        assert_eq!(
+            g.abandon(ticket),
+            taskmesh_engine::AbandonOutcome::Abandoned
+        );
     }
     let tickets = vec![queue(&g, "a", "real-a"), queue(&g, "b", "real-b")];
     assert_eq!(g.release(filler), ReleaseOutcome::Released);
@@ -1795,7 +1823,10 @@ fn cancelling_a_wfq_head_removes_its_debt_from_live_survivors() {
     let (survivor, _) = queue(&g, "a", "a1");
     let (peer, _) = queue(&g, "b", "b0");
 
-    let _ = g.abandon(cancelled);
+    assert_eq!(
+        g.abandon(cancelled),
+        taskmesh_engine::AbandonOutcome::Abandoned
+    );
     assert_eq!(g.release(filler), ReleaseOutcome::Released);
     assert!(
         matches!(g.ticket_status(survivor), ClaimOutcome::Ready(_)),
@@ -1843,7 +1874,10 @@ fn cancellation_preserves_each_survivors_virtual_arrival_floor() {
     };
 
     let (survivor, _) = queue(&g, "a", "a1");
-    let _ = g.abandon(victim);
+    assert_eq!(
+        g.abandon(victim),
+        taskmesh_engine::AbandonOutcome::Abandoned
+    );
     let (peer, _) = queue(&g, "b", "b1");
     assert_eq!(g.release(a_holder), ReleaseOutcome::Released);
     assert!(
@@ -2004,7 +2038,10 @@ fn cancellation_after_cross_pool_service_does_not_reprice_an_older_head() {
             else {
                 panic!("victim waits while both CPU units are held");
             };
-            let _ = g.abandon(victim);
+            assert_eq!(
+                g.abandon(victim),
+                taskmesh_engine::AbandonOutcome::Abandoned
+            );
         }
 
         let AdmissionDecision::Queued { ticket: peer } =
@@ -2052,7 +2089,10 @@ fn cancelling_from_the_middle_preserves_the_order_of_the_survivors() {
         let g = contended(vec![("a", weighted_class(1)), ("b", weighted_class(1))]);
         let filler = admit_filler(&g);
         let queued: Vec<Ticket> = (0..4).map(|i| queue(&g, "a", &format!("a{i}")).0).collect();
-        let _ = g.abandon(queued[victim]);
+        assert_eq!(
+            g.abandon(queued[victim]),
+            taskmesh_engine::AbandonOutcome::Abandoned
+        );
         let expected: Vec<Ticket> = queued
             .iter()
             .copied()

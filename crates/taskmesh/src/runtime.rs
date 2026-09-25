@@ -41,7 +41,8 @@ use taskmesh_contract::{
     SubstrateHint, TaskSpec, TopologyError,
 };
 use taskmesh_engine::{
-    AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId, ReleaseOutcome, Ticket,
+    AbandonOutcome, AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId,
+    ReleaseOutcome, Ticket,
 };
 use tokio::sync::oneshot;
 use tokio::time::Instant;
@@ -1319,7 +1320,11 @@ impl TicketGuard {
 impl Drop for TicketGuard {
     fn drop(&mut self) {
         if let Some(ticket) = self.ticket {
-            let _ = self.governor.abandon(ticket);
+            match self.governor.abandon(ticket) {
+                AbandonOutcome::Abandoned
+                | AbandonOutcome::TerminalDiscarded
+                | AbandonOutcome::Invalid => {}
+            }
         }
     }
 }

@@ -48,8 +48,8 @@ use taskmesh_contract::{
     OverflowPolicy, ResourceBudget, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
-    AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, LeakSweepReport, PermitId, PolicySet,
-    ReleaseOutcome, TerminalReason, Ticket,
+    AbandonOutcome, AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, LeakSweepReport,
+    PermitId, PolicySet, ReleaseOutcome, TerminalReason, Ticket,
 };
 
 // ---- the reference model ----------------------------------------------------
@@ -297,19 +297,22 @@ impl Model {
     /// The waiter gives up: a queued request leaves the queue, a promoted one
     /// gives its permit back. Either way the ticket is gone and whatever was
     /// freed is promoted.
-    fn abandon(&mut self, ticket: ModelTicket) {
+    fn abandon(&mut self, ticket: ModelTicket) -> AbandonOutcome {
         match self.tickets.remove(&ticket) {
             Some(TicketState::Queued(_)) => {
                 for queue in &mut self.queues {
                     queue.retain(|request| request.ticket != ticket);
                 }
                 self.promote();
+                AbandonOutcome::Abandoned
             }
             Some(TicketState::Ready(permit)) => {
                 self.live.remove(&permit);
                 self.promote();
+                AbandonOutcome::Abandoned
             }
-            Some(TicketState::Terminal(_)) | None => {}
+            Some(TicketState::Terminal(_)) => AbandonOutcome::TerminalDiscarded,
+            None => AbandonOutcome::Invalid,
         }
     }
 
@@ -685,8 +688,8 @@ fn check_agreement(
 }
 
 fn abandon_both(g: &Governor, model: &mut Model, binding: &Binding, model_ticket: ModelTicket) {
-    let _ = g.abandon(binding.engine_ticket(model_ticket));
-    model.abandon(model_ticket);
+    let expected = model.abandon(model_ticket);
+    assert_eq!(g.abandon(binding.engine_ticket(model_ticket)), expected);
 }
 
 fn release_both(

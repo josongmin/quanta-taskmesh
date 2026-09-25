@@ -298,6 +298,9 @@ fn queue_diagnostics_name_what_a_request_is_waiting_on() {
     );
 
     // Once it stops being queued, there is no pending view to read.
-    let _ = g.abandon(ticket);
+    assert_eq!(
+        g.abandon(ticket),
+        taskmesh_engine::AbandonOutcome::Abandoned
+    );
     assert!(g.pending_view(ticket).is_none());
 }

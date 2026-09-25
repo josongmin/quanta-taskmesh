@@ -168,7 +168,10 @@ async fn invalid_ticket_without_deadline_returns_instead_of_parking_v1() {
         }
     );
     assert_accounting(&subject, 0, 0);
-    let _ = foreign.governor.abandon(ticket);
+    assert_eq!(
+        foreign.governor.abandon(ticket),
+        taskmesh_engine::AbandonOutcome::Abandoned
+    );
     assert_eq!(foreign.governor.release(holder), ReleaseOutcome::Released);
 }
 
@@ -367,7 +370,11 @@ async fn timeout_last_chance_claim_preserves_reclaimed_terminal_reason_v1() {
             reason: taskmesh_contract::TerminalReason::Reclaimed,
         }
     );
-    let _ = runtime.governor.abandon(ticket);
+    assert_eq!(
+        runtime.governor.abandon(ticket),
+        taskmesh_engine::AbandonOutcome::Invalid,
+        "await_promotion consumed the retained terminal outcome"
+    );
     assert_accounting(&runtime, 0, 0);
 }
 
@@ -381,7 +388,10 @@ async fn timeout_last_chance_claim_reports_invalid_instead_of_generic_timeout_v1
     let arbiter = arbiter(&opts);
     let mut waiter = Box::pin(runtime.await_promotion(ticket, &waker, &arbiter));
     park(waiter.as_mut()).await;
-    let _ = runtime.governor.abandon(ticket);
+    assert_eq!(
+        runtime.governor.abandon(ticket),
+        taskmesh_engine::AbandonOutcome::Abandoned
+    );
     let error = finish(waiter).await.expect_err("invalid beats timeout");
     assert_eq!(
         error,

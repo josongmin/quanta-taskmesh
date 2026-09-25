@@ -215,24 +215,22 @@ fn a_forged_token_is_refused_and_changes_nothing() {
 
 #[test]
 fn a_token_from_another_governor_is_not_this_permits_lease() {
-    // Two governors hand out the same sequential permit ids. A token minted by
-    // one must not release the other's permit that happens to share the id:
-    // nonces are drawn process-wide, so the proofs differ even where ids agree.
+    // Two governors hand out the same local sequence, but both the permit and
+    // lease token remain bound to the issuing governor authority.
     let (a, _) = gov();
     let (b, _) = gov();
     let on_a = admit(&a, "a");
     let on_b = admit(&b, "b");
-    assert_eq!(on_a, on_b, "fresh governors issue the same first permit id");
+    assert_eq!(on_a.sequence(), on_b.sequence());
+    assert_ne!(on_a, on_b);
     let lease_a = lease(&a, on_a, ExecutionPhase::Running);
     let lease_b = lease(&b, on_b, ExecutionPhase::Running);
 
     let before = observe(&b);
     assert_eq!(
         b.release_leased(lease_a),
-        ReleaseOutcome::HeldByLease {
-            phase: ExecutionPhase::Running
-        },
-        "another governor's lease for the same permit id must not release this permit"
+        ReleaseOutcome::UnknownPermit,
+        "another governor's lease must not resolve to this governor's permit"
     );
     assert_eq!(observe(&b), before);
     assert_eq!(b.release_leased(lease_b), ReleaseOutcome::Released);

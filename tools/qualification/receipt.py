@@ -655,6 +655,22 @@ def evaluate(receipt: object, current: dict | None, *, artifact_root: Path | Non
     reasons.extend(
         pass_status_line_problems(valid_gate_results, INVENTORY, allow_imported_producers=True)
     )
+    # The combined receipt is independently re-opened for release decisions.
+    # Recheck the embedded case denominator instead of trusting a PASS line
+    # that was emitted by the earlier gate runner.
+    from tools.gates.execution_evidence import REPORTS, report_problems
+
+    execution_source = {**source, "isolated_checkout": False}
+    for result in valid_gate_results:
+        if result.get("id") in REPORTS and result.get("status") == "PASS":
+            reasons.extend(
+                report_problems(
+                    result["id"],
+                    result.get("execution"),
+                    result.get("status_line"),
+                    execution_source,
+                )
+            )
     computed_summary = summarize_gate_results(valid_gate_results)
     if gates.get("schema_version") != GATE_SCHEMA_VERSION:
         reasons.append(

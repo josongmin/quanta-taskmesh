@@ -595,6 +595,17 @@ def test_final_receipt_rejects_changed_executed_cases() -> None:
     )
 
 
+def test_final_receipt_rejects_malformed_pytest_markers() -> None:
+    value = qualified_receipt()
+    result = next(item for item in value["gates"]["results"] if item["id"] == "py-test")
+    result["execution"]["qualification"] = [{}]
+    verdict = receipt.evaluate(value, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any(
+        "py-test: marked-case denominator mismatch" in reason for reason in verdict["reasons"]
+    )
+
+
 @pytest.mark.parametrize("exit_code", [1, None, False, "0"])
 def test_local_pass_sidecar_cannot_hide_runner_failure(exit_code: object) -> None:
     value = local_qualified_receipt()

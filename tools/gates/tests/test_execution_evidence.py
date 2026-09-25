@@ -96,6 +96,11 @@ def test_pytest_report_rejects_all_excluded_and_module_drift(monkeypatch) -> Non
     assert any("module or command" in problem for problem in evidence.report_problems(
         "py-test", tampered, line, source
     ))
+    tampered = copy.deepcopy(report)
+    tampered["slow"] = [{}]
+    assert any("marked-case denominator" in problem for problem in evidence.report_problems(
+        "py-test", tampered, line, source
+    ))
 
 
 def test_successful_process_without_execution_report_is_not_a_pass(tmp_path, monkeypatch) -> None:
@@ -133,3 +138,12 @@ def test_saved_pass_without_execution_report_is_invalid() -> None:
     }
     problems = gate_run.local_receipt_problems(receipt, source, {"test"}, {}, "macos")
     assert any("execution report is missing" in problem for problem in problems)
+
+
+def test_catalog_failure_invalidates_report_instead_of_raising(monkeypatch) -> None:
+    def unavailable(_root, _recipes):
+        raise subprocess.CalledProcessError(101, ["cargo", "metadata"])
+
+    monkeypatch.setattr(evidence, "source_catalog", unavailable)
+    problems = evidence.report_problems("test", {}, "taskmesh-test status=PASS", {})
+    assert any("catalog unavailable" in problem for problem in problems)

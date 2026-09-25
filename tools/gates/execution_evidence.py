@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 from tools.gates.execute_rust_tests import SELECTORS
@@ -59,7 +60,7 @@ def report_problems(
     recipes = {name: recipe_body(name) for name in RECIPE_FRAGMENTS}
     try:
         records, catalog_problems = source_catalog(root, recipes)
-    except (OSError, ValueError, KeyError) as exc:
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
         return [*problems, f"{gate_id}: catalog unavailable: {exc}"]
     if catalog_problems:
         problems.append(f"{gate_id}: catalog invalid: {catalog_problems}")
@@ -173,6 +174,9 @@ def report_problems(
         if (
             not isinstance(slow, list)
             or not isinstance(qualification, list)
+            or not all(isinstance(name, str) for name in slow + qualification)
+            or slow != sorted(set(slow))
+            or qualification != sorted(set(qualification))
             or not set(slow + qualification) <= set(selected)
         ):
             problems.append("py-test: marked-case denominator mismatch")

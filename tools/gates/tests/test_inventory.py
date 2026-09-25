@@ -310,6 +310,68 @@ def test_pr_ci_rejects_path_filters_skipped_job_and_deep_profile(tmp_path: Path)
     assert any("deep or unbounded" in problem for problem in problems)
 
 
+def test_pr_ci_rejects_echoed_gate_commands_and_unbound_head(tmp_path: Path) -> None:
+    path = tmp_path / "pr-ci.yml"
+    document = vi.yaml.safe_load((vi.WORKFLOWS / "pr-ci.yml").read_text())
+    invalid = copy.deepcopy(document)
+    gate = next(
+        step
+        for step in invalid["jobs"]["required"]["steps"]
+        if "tools/gates/run.py --profile ci" in step.get("run", "")
+    )
+    gate["run"] = (
+        "\n".join(
+            f"echo {line}" if line and not line.startswith(" ") else line
+            for line in gate["run"].splitlines()
+        )
+        + "\nmkdir -p target/verification\nprintf '{}' > target/verification/pr-ci-gates.json\n"
+    )
+    assert any(
+        "gate command" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
+
+    invalid = copy.deepcopy(document)
+    gate = next(
+        step
+        for step in invalid["jobs"]["required"]["steps"]
+        if "tools/gates/run.py --profile ci" in step.get("run", "")
+    )
+    gate["env"]["EXPECTED_SHA"] = "${{ github.sha }}"
+    assert any(
+        "EXPECTED_SHA" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
+
+    invalid = copy.deepcopy(document)
+    invalid["defaults"] = {"run": {"shell": "bash {0}"}}
+    assert any(
+        "fail-fast" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
+
+
+def test_pr_ci_receipt_handoff_fails_if_missing_or_rewritten(tmp_path: Path) -> None:
+    path = tmp_path / "pr-ci.yml"
+    document = vi.yaml.safe_load((vi.WORKFLOWS / "pr-ci.yml").read_text())
+    invalid = copy.deepcopy(document)
+    upload = invalid["jobs"]["required"]["steps"][-1]
+    upload["with"]["if-no-files-found"] = "warn"
+    assert any(
+        "missing artifact" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
+
+    invalid = copy.deepcopy(document)
+    invalid["jobs"]["required"]["steps"].insert(
+        -1, {"run": "echo '{}' > target/verification/pr-ci-gates.json"}
+    )
+    assert any(
+        "receipt handoff" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
+
+
 def test_trigger_guard_handles_pyyaml_boolean_on_key(tmp_path: Path) -> None:
     path = tmp_path / "ci.yml"
     document = vi.yaml.safe_load("on:\n  workflow_dispatch:\n")

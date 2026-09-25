@@ -507,6 +507,19 @@ def workflow_trigger_problems(path: Path, document: object) -> list[str]:
     return []
 
 
+# Keep this execution step exact: substring checks accepted echoed commands
+# and could certify a green job that never ran the gates.
+PR_CI_GATE_SCRIPT = (
+    'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"\n'
+    "uv run python tools/gates/run.py --profile ci --require-clean-source \\\n"
+    "  --receipt target/verification/pr-ci-gates.json\n"
+    "uv run python tools/gates/run.py \\\n"
+    "  --validate-receipt target/verification/pr-ci-gates.json \\\n"
+    '  --expected-head "$EXPECTED_SHA"\n'
+)
+PR_CI_EVENT_SHA = "${{ github.event.pull_request.head.sha || github.sha }}"
+
+
 def pr_ci_contract_problems(path: Path, document: object, required: dict) -> list[str]:
     """The automatic job is one unskippable exact-SHA CI-profile verdict."""
     if not isinstance(document, dict):
@@ -523,6 +536,8 @@ def pr_ci_contract_problems(path: Path, document: object, required: dict) -> lis
         return [*problems, "pr-ci.yml: required job is malformed"]
     if "if" in job or job.get("continue-on-error") or job.get("runs-on") != "ubuntu-latest":
         problems.append("pr-ci.yml: required job may not be conditional or masked")
+    if "defaults" in document or "defaults" in job:
+        problems.append("pr-ci.yml: gate shell must retain the default fail-fast behavior")
     timeout = job.get("timeout-minutes")
     if type(timeout) is not int or not 1 <= timeout <= 90:
         problems.append("pr-ci.yml: required job needs a bounded 90-minute timeout")
@@ -542,11 +557,7 @@ def pr_ci_contract_problems(path: Path, document: object, required: dict) -> lis
         for step in steps
         if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/checkout@")
     ]
-    if (
-        len(checkouts) != 1
-        or checkouts[0].get("with", {}).get("ref")
-        != "${{ github.event.pull_request.head.sha || github.sha }}"
-    ):
+    if len(checkouts) != 1 or checkouts[0].get("with", {}).get("ref") != PR_CI_EVENT_SHA:
         problems.append("pr-ci.yml: checkout must pin the event head SHA")
     runs = [str(step.get("run", "")) for step in steps if isinstance(step, dict)]
     gate_steps = [
@@ -567,16 +578,10 @@ def pr_ci_contract_problems(path: Path, document: object, required: dict) -> lis
             or "exit 0" in gate_run
         ):
             problems.append("pr-ci.yml: aggregate gate step must be unskippable and fail-capable")
-        required_fragments = (
-            "--profile ci --require-clean-source",
-            "--receipt target/verification/pr-ci-gates.json",
-            "--validate-receipt target/verification/pr-ci-gates.json",
-            "--expected-head",
-            "git rev-parse HEAD",
-            "EXPECTED_SHA",
-        )
-        if any(fragment not in gate_run for fragment in required_fragments):
-            problems.append("pr-ci.yml: source-bound gate run or receipt validation is missing")
+        if gate_run != PR_CI_GATE_SCRIPT or gate_step.get("shell") is not None:
+            problems.append("pr-ci.yml: gate command must be the exact fail-fast CI recipe")
+        if gate_step.get("env") != {"EXPECTED_SHA": PR_CI_EVENT_SHA}:
+            problems.append("pr-ci.yml: EXPECTED_SHA must bind the checked-out event head")
     if any("--profile nightly" in run or "--required" in run or "--all" in run for run in runs):
         problems.append("pr-ci.yml: deep or unbounded gate selector is forbidden")
     artifacts = [
@@ -591,6 +596,16 @@ def pr_ci_contract_problems(path: Path, document: object, required: dict) -> lis
         or artifacts[0].get("with", {}).get("path") != "target/verification/pr-ci-gates.json"
     ):
         problems.append("pr-ci.yml: always upload the exact gate receipt")
+    if len(artifacts) == 1:
+        if artifacts[0].get("with", {}).get("if-no-files-found") != "error":
+            problems.append("pr-ci.yml: missing artifact must fail the job")
+        if (
+            len(gate_steps) != 1
+            or len(steps) < 2
+            or steps[-1] is not artifacts[0]
+            or steps[-2] is not gate_steps[0]
+        ):
+            problems.append("pr-ci.yml: receipt handoff must immediately follow the gate run")
     return problems
 
 

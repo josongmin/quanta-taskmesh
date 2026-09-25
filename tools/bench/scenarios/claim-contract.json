@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "status": "blocked_pending_measurement_contract",
+  "claim_population": "single-process Taskmesh public API on a declared host, feature set, topology and finite work body",
+  "claims": [
+    {
+      "id": "governor-named-operation-cost",
+      "status": "blocked_pending_exact_source_receipt",
+      "scope": "named admit/reject/claim/release/snapshot fixture only",
+      "primary_metric": "nanoseconds per completed operation; allocation and instruction counts reported separately",
+      "denominator": "asserted completed operations in the named fixture",
+      "denial_conditions": [
+        "operation did not reach the declared state",
+        "source, toolchain or fixture identity differs from the baseline",
+        "timed setup differs between compared variants"
+      ]
+    },
+    {
+      "id": "public-host-slo-capacity",
+      "status": "blocked_pending_slo_and_calibration",
+      "scope": "default-feature run_io, run_blocking and run_cpu only until each other public path has its own receipt",
+      "primary_metric": "per-class/path SLO-goodput per injection-window second",
+      "denominator": "all intended arrivals in each class/path injection cohort",
+      "slo_ms": null,
+      "minimum_completion_fraction": null,
+      "denial_conditions": [
+        "no predeclared application SLO or minimum completion fraction",
+        "not_submitted or unanswered offers",
+        "generator saturation, observer distortion or missing measured calibration",
+        "unsettled queue, worker custody or failed exact correctness oracle",
+        "thin tail population or incompatible repeated runs"
+      ]
+    },
+    {
+      "id": "named-industry-peer-comparison",
+      "status": "blocked_pending_equivalent_peer_and_independent_rerun",
+      "scope": "only the predeclared semantic intersection with each named maintained peer",
+      "primary_metric": "per-class/path SLO-goodput and resource efficiency across one common absolute rate grid",
+      "denominator": "all intended arrivals at each common rate point",
+      "denial_conditions": [
+        "no semantically equivalent peer or representative H7 profile",
+        "rate grid, SLO or exclusions chosen after measured candidates",
+        "missing counterexamples, run-level uncertainty or independent rerun"
+      ]
+    }
+  ],
+  "study_design": {
+    "rate_grid": {
+      "status": "unfrozen_pending_pilot",
+      "selection_rule": "pilot every candidate on the same host, then freeze one absolute grid spanning all observed knees before measured comparisons",
+      "absolute_rates_per_second": []
+    },
+    "run_policy": {
+      "warmup_seconds": null,
+      "measurement_seconds": null,
+      "repetitions_per_rate": null,
+      "order": "balanced_or_randomized_baseline_candidate_pairs_with_fresh_runtimes",
+      "exclusions": [
+        "source or binary changed during run",
+        "scenario, feature, topology or host fingerprint mismatch",
+        "missing, duplicate or impossible raw event",
+        "generator-limited or observer-distorted point",
+        "failed correctness oracle or residual custody"
+      ]
+    },
+    "minimum_detectable_effect_fraction": null,
+    "quantile_precision_target": null
+  },
+  "comparators": {
+    "mechanism_controls": [
+      "raw Tokio on the same runtime and work body",
+      "capacity-only semaphore on the same runtime and work body",
+      "Tower concurrency limit/load shed on the same runtime and work body"
+    ],
+    "eligible_industry_peers": [],
+    "inclusion_rule": "same public work body, admission and bounded queue, cancellation/deadline, caller terminal, worker custody and drain contract; otherwise restrict claim to the documented intersection",
+    "semantic_equivalence": {
+      "raw_tokio": "mechanism control only: no Taskmesh class, bounded admission, typed rejection or worker-custody contract",
+      "semaphore": "capacity-only control: queue, class policy, deadline and lifecycle semantics require separate matching proof",
+      "tower": "middleware control: contract intersection must be established before any peer claim"
+    }
+  },
+  "consumer_profile": {
+    "status": "blocked_missing_provenance",
+    "source_identity": null,
+    "privacy_safe_transformation": null,
+    "frozen_trace_sha256": null
+  }
+}

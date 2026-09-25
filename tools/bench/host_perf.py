@@ -16,6 +16,7 @@ import os
 import platform
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any, Optional
@@ -117,6 +118,29 @@ def parse_object(data: bytes, name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ReceiptError(f"{name}: root must be an object")
     return value
+
+
+def validate_with_rust(scenario_bytes: bytes, raw_bytes: bytes) -> None:
+    """Use the runner's typed scenario, raw ledger and Builder rules."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="taskmesh-host-receipt-") as temp_dir:
+            raw_path = Path(temp_dir) / "raw.json"
+            raw_path.write_bytes(raw_bytes)
+            result = subprocess.run(
+                [
+                    "cargo", "run", "--locked", "--quiet", "-p", "taskmesh-bench",
+                    "--example", "host_scenario_validate", "--", "--raw", str(raw_path),
+                ],
+                cwd=REPO,
+                input=scenario_bytes,
+                capture_output=True,
+                check=False,
+            )
+    except OSError as error:
+        raise ReceiptError(f"Rust scenario preflight unavailable: {error}") from error
+    if result.returncode != 0 or not result.stdout.startswith(b"SCENARIO_VALID id="):
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise ReceiptError(f"Rust scenario preflight failed: {detail[:1000]}")
 
 
 def exact_keys(value: dict[str, Any], keys: set[str], name: str) -> None:
@@ -523,6 +547,7 @@ def make_summary(
     calibration: dict[str, Any],
     p99_min_samples: int,
 ) -> dict[str, Any]:
+    validate_with_rust(scenario_bytes, raw_bytes)
     validate_identity(identity)
     if not isinstance(calibration, dict):
         raise ReceiptError("calibration must be an object")
@@ -566,7 +591,7 @@ def verify_receipt(
     scenario_bytes: bytes,
     summary_bytes: bytes,
     expected_identity: Optional[dict[str, Any]] = None,
-    require_performance: bool = True,
+    require_performance: bool = False,
 ) -> dict[str, Any]:
     summary = parse_object(summary_bytes, "summary")
     exact_keys(
@@ -613,6 +638,10 @@ def verify_receipt(
             for population in metrics["success_latency_by_class_path"].values()
         ):
             raise ReceiptError("unsupported per-class/path p99 population")
+        # The current booleans are caller assertions, not measured null-work,
+        # A/A and observer-on/off receipts. Fail closed until those artifacts
+        # have a versioned contract and independent verification.
+        raise ReceiptError("measured calibration artifact is required for performance")
     return summary
 
 
@@ -625,6 +654,7 @@ def main() -> int:
     parser.add_argument("--feature", action="append", default=[])
     parser.add_argument("--calibration", type=Path)
     parser.add_argument("--p99-min-samples", type=int, default=10_000)
+    parser.add_argument("--require-performance", action="store_true")
     args = parser.parse_args()
     try:
         raw_bytes = args.raw.read_bytes()
@@ -643,8 +673,11 @@ def main() -> int:
             args.summary.write_bytes(json.dumps(summary, indent=2, sort_keys=True).encode() + b"\n")
             print(f"STRUCTURALLY_VALID summary={args.summary} performance=UNQUALIFIED")
         else:
-            summary = verify_receipt(raw_bytes, scenario_bytes, args.summary.read_bytes(), identity)
-            print(f"STRUCTURALLY_ADMISSIBLE_UNQUALIFIED raw_sha256={summary['raw_sha256']}")
+            summary = verify_receipt(
+                raw_bytes, scenario_bytes, args.summary.read_bytes(), identity,
+                require_performance=args.require_performance,
+            )
+            print(f"STRUCTURALLY_VALID performance=UNQUALIFIED raw_sha256={summary['raw_sha256']}")
     except (OSError, subprocess.CalledProcessError, ReceiptError) as error:
         print(f"host receipt rejected: {error}", file=sys.stderr)
         return 1

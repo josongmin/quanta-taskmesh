@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "status": "PLANNED",
+  "audit_head": "76559c483bdd1d6b0b5226f7c5b5591b919afae9",
+  "audit_tree": "215a968630e9f0675bfd1e42f0919bd2047bded2",
+  "checklist": "../../../misc/tmp-engine-checklist-sep-25.md",
+  "tickets": [
+    {"id":"BG25-001","file":"BG25-001-contract-boundaries.md","priority":"P0","mode":"decision","owner":"contract-api","depends_on":[],"scenarios":[]},
+    {"id":"BG25-002","file":"BG25-002-strict-ingress.md","priority":"P0","mode":"conditional-implementation","owner":"contract-ingress","depends_on":["BG25-001"],"scenarios":["D04","D21","D22","D25","H33"]},
+    {"id":"BG25-003","file":"BG25-003-wire-consumer-boundaries.md","priority":"P1","mode":"contract-proof","owner":"contract-consumer","depends_on":["BG25-001"],"scenarios":["B18","B24","D03","D13","D14","D17","D23"]},
+    {"id":"BG25-004","file":"BG25-004-identity-handles.md","priority":"P1","mode":"authority-migration","owner":"contract-engine","depends_on":["BG25-001"],"scenarios":["B21","B22","B28","H18"]},
+    {"id":"BG25-005","file":"BG25-005-executor-authority.md","priority":"P0","mode":"confirmed-defect","owner":"host-executor","depends_on":["BG25-001"],"scenarios":["B25","H15","H27","H30","D16"]},
+    {"id":"BG25-006","file":"BG25-006-deadline-custody.md","priority":"P0","mode":"conditional-implementation","owner":"host-runtime","depends_on":["BG25-001","BG25-005"],"scenarios":["D05","D15","H11","H12","H19","H20","H31","H34"]},
+    {"id":"BG25-007","file":"BG25-007-root-child-lifetime.md","priority":"P1","mode":"contract-proof","owner":"host-runtime","depends_on":["BG25-001","BG25-006"],"scenarios":["A11","H21","H35"]},
+    {"id":"BG25-008","file":"BG25-008-admission-capacity.md","priority":"P1","mode":"proof-first","owner":"engine-admission","depends_on":["BG25-001","BG25-005"],"scenarios":["A05","B05","B20","H01","H02","H07","H32","D01"]},
+    {"id":"BG25-009","file":"BG25-009-queue-races.md","priority":"P1","mode":"proof-first","owner":"engine-scheduler","depends_on":["BG25-001","BG25-008"],"scenarios":["B23","B27","H04","H06","H13","H14","H16","H25","D19"]},
+    {"id":"BG25-010","file":"BG25-010-memory-ledger.md","priority":"P1","mode":"proof-first","owner":"engine-memory","depends_on":["BG25-008","BG25-009"],"scenarios":["H10","D20"]},
+    {"id":"BG25-011","file":"BG25-011-load-evidence.md","priority":"P1","mode":"evidence","owner":"bench-host","depends_on":["BG25-005","BG25-006","BG25-008"],"scenarios":["H17","H28"]},
+    {"id":"BG25-012","file":"BG25-012-proof-integration.md","priority":"P1","mode":"integration","owner":"integration-ci","depends_on":["BG25-002","BG25-003","BG25-004","BG25-005","BG25-006","BG25-007","BG25-008","BG25-009","BG25-010","BG25-011"],"scenarios":[]}
+  ]
+}

@@ -1,0 +1,49 @@
+# BG25-004 — identity·parent plan·owner-bound handle
+
+- 상태: PLANNED
+- 우선순위: P1
+- 선행: BG25-001 D4–D5
+- 소유: contract/API owner → engine owner → consumer owner
+
+## 목적
+
+동일 root-operation 재사용, parent-stage membership 책임, cross-Governor raw ID 충돌을 명시하고 최종적으로 authority-bound handles를 제공한다.
+
+## 근거
+
+- `PermitId`/`Ticket`은 `u64`; 각 Governor의 counter는 1부터 시작한다.
+- raw transition API는 local map에서 숫자로 조회한다.
+- 기존 foreign test는 충돌 값을 상대 Governor API에 직접 제출하지 않는다.
+- engine은 다른 요청의 full parent plan registry를 보유하지 않는다.
+
+## 변경 파일
+
+- `crates/taskmesh-engine/src/{shared/mod,engine/governor,engine/state}.rs`
+- public re-export와 host use-site: `crates/taskmesh-engine/src/lib.rs`, `crates/taskmesh/src/runtime.rs`
+- tests: 기존 `hardening_child_scope.rs`, `hardening_lease_token.rs`; 신규 `cross_governor_ids.rs` 후보
+- public docs and migration notes
+
+## 작업 계획
+
+1. 두 Governor가 같은 permit/ticket 숫자를 발급하는 control을 만든다.
+2. foreign raw release/advance/claim/abandon의 현행 local effect를 각각 재현한다.
+3. Governor authority + local sequence를 private하게 가진 handle과 telemetry ID를 분리한다.
+4. parent membership은 외부 planner owner와 fixture를 지정한다.
+5. public facade와 MSRV consumer를 migration한다.
+
+## DoD
+
+- `BG25-004-B21`: class/stage/queued 상태와 무관하게 같은 live `(root, operation)`은 side-effect 0으로 거절되고 terminal 뒤 재사용된다.
+- `BG25-004-B22`: 현재 non-membership behavior가 고정되고 목표 planner는 Governor 호출 전에 없는 stage를 거절한다.
+- `BG25-004-B28`: 네 raw API의 충돌이 재현되고 목표 handle은 foreign state/callback 0의 typed reject를 보장한다.
+- `BG25-004-H18`: public import 경로에서 raw/validated wire, host/direct multi-stage reservation, default/Rayon owned/shared 선언을 확인한다.
+
+## 검증
+
+- Engine identity tests, host public-surface tests, Rayon feature tests, consumer-MSRV.
+- Counter exhaustion/wrap은 ID 재사용이 아니라 typed exhaustion으로 판정한다.
+
+## 인계 및 중단 조건
+
+- Breaking handle/outcome change는 BG25-001의 semver 결정 전 적용하지 않는다.
+- 새 handle을 숫자/문자열로 재구성 가능하게 만들지 않는다.

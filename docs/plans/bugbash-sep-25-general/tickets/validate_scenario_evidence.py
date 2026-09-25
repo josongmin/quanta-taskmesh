@@ -110,6 +110,32 @@ def recipe_executes_test(body: str, target: str, case: str) -> bool:
     return False
 
 
+def evidence_cases(row: dict[str, object], scenario: str) -> list[tuple[str, str]]:
+    target = row.get("target")
+    case = row.get("case")
+    if not isinstance(target, str) or not isinstance(case, str) or not case.strip():
+        fail(f"{scenario}: target and case must be non-empty strings")
+    entries = [(target, case)]
+    supporting = row.get("supporting_cases", [])
+    if not isinstance(supporting, list):
+        fail(f"{scenario}: supporting_cases must be a list")
+    for entry in supporting:
+        if not isinstance(entry, dict) or set(entry) != {"target", "case"}:
+            fail(f"{scenario}: each supporting case needs exactly target and case")
+        support_target = entry["target"]
+        support_case = entry["case"]
+        if (
+            not isinstance(support_target, str)
+            or not isinstance(support_case, str)
+            or not support_case.strip()
+        ):
+            fail(f"{scenario}: supporting target and case must be non-empty strings")
+        entries.append((support_target, support_case))
+    if len(set(entries)) != len(entries):
+        fail(f"{scenario}: duplicate primary/supporting test case")
+    return entries
+
+
 def validate_nightly(nightly: object) -> None:
     if not isinstance(nightly, list) or not all(isinstance(row, dict) for row in nightly):
         fail("nightly qualification inventory must be a list of objects")
@@ -135,11 +161,11 @@ def validate_nightly(nightly: object) -> None:
 def main() -> None:
     data = json.loads(MANIFEST.read_text(encoding="utf-8"))
     plan = json.loads(PLAN.read_text(encoding="utf-8"))
-    if data.get("schema_version") != 2:
-        fail("scenario evidence schema_version must be 2")
+    if data.get("schema_version") != 3:
+        fail("scenario evidence schema_version must be 3")
     expected_semantics = {
         "MAPPED": (
-            "static candidate mapping only: the named target and test case exist; "
+            "static candidate mapping only: every named target and test case exists; "
             "semantic sufficiency and execution are not asserted"
         ),
         "OPEN": "the scenario has no accepted implementation or oracle yet",
@@ -189,10 +215,13 @@ def main() -> None:
         "gate",
         "source",
     }
+    optional = {"supporting_cases"}
     for row in rows:
         scenario = row["id"]
-        if set(row) != required:
-            fail(f"{scenario}: unknown or missing fields: {sorted(set(row) ^ required)}")
+        fields = set(row)
+        if not required.issubset(fields) or fields - required - optional:
+            drift = (required - fields) | (fields - required - optional)
+            fail(f"{scenario}: unknown or missing fields: {sorted(drift)}")
         if row["origin"] not in VALID_ORIGIN:
             fail(f"{scenario}: invalid origin {row['origin']!r}")
         if row["status"] not in VALID_STATUS:
@@ -212,27 +241,32 @@ def main() -> None:
             fail(f"{scenario}: unsupported feature/platform selector")
         if row["gate"] not in known_gates:
             fail(f"{scenario}: selecting gate {row['gate']!r} is not inventoried")
-        if not isinstance(row["target"], str):
-            fail(f"{scenario}: target must be a repository-relative path")
-        target = repository_file(row["target"], f"{scenario}: target")
-        if row["feature"] == "rayon":
-            if row["gate"] != "test-rayon" or not recipe_executes_test(
-                rayon_recipe, Path(row["target"]).stem, row["case"]
-            ):
-                fail(f"{scenario}: rayon selector is not executed by test-rayon")
+        cases = evidence_cases(row, scenario)
         sources = row["source"]
-        if not isinstance(sources, list) or not sources or row["target"] not in sources:
-            fail(f"{scenario}: source must include its target")
+        evidence_targets = {target for target, _case in cases}
+        if (
+            not isinstance(sources, list)
+            or not sources
+            or not evidence_targets.issubset(set(sources))
+        ):
+            fail(f"{scenario}: source must include every evidence target")
         for source in sources:
             if not isinstance(source, str):
                 fail(f"{scenario}: source paths must be strings")
             repository_file(source, f"{scenario}: source")
         if row["status"] == "MAPPED":
-            if not test_case_exists(target, row["case"]):
-                fail(
-                    f"{scenario}: MAPPED target/case does not exist: "
-                    f"{row['target']}::{row['case']}"
-                )
+            for case_target, case_name in cases:
+                target = repository_file(case_target, f"{scenario}: target")
+                if not test_case_exists(target, case_name):
+                    fail(
+                        f"{scenario}: MAPPED target/case does not exist: "
+                        f"{case_target}::{case_name}"
+                    )
+                if row["feature"] == "rayon" and (
+                    row["gate"] != "test-rayon"
+                    or not recipe_executes_test(rayon_recipe, Path(case_target).stem, case_name)
+                ):
+                    fail(f"{scenario}: rayon selector is not executed by test-rayon")
 
     expected_origins = {"K": 51, "P": 34, "G": 19}
     if dict(origins) != expected_origins or data.get("origin_counts") != expected_origins:

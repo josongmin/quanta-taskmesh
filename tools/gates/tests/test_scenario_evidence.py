@@ -109,3 +109,33 @@ def test_recipe_selector_requires_an_executed_exact_cargo_test() -> None:
         f"cargo test {selector} || true\n",
     ):
         assert not VALIDATE.recipe_executes_test(body, "sample", "exact_case")
+
+
+def test_evidence_cases_are_exact_nonduplicated_pairs() -> None:
+    row = {
+        "target": "tests/primary.rs",
+        "case": "primary",
+        "supporting_cases": [{"target": "tests/support.rs", "case": "support"}],
+    }
+    assert VALIDATE.evidence_cases(row, "H00") == [
+        ("tests/primary.rs", "primary"),
+        ("tests/support.rs", "support"),
+    ]
+    with pytest.raises(ValueError, match="duplicate"):
+        VALIDATE.evidence_cases(
+            {
+                **row,
+                "supporting_cases": [{"target": "tests/primary.rs", "case": "primary"}],
+            },
+            "H00",
+        )
+    with pytest.raises(ValueError, match="exactly target and case"):
+        VALIDATE.evidence_cases(
+            {
+                **row,
+                "supporting_cases": [
+                    {"target": "tests/support.rs", "case": "support", "claim": "forged"}
+                ],
+            },
+            "H00",
+        )

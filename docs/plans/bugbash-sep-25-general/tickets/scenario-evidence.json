@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "scenario_count": 104,
   "origin_counts": {
     "K": 51,
@@ -844,13 +844,27 @@
       "owner_ticket": "BG25-009",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H06",
       "target": "crates/taskmesh-engine/tests/hardening_fairness_reference.rs",
-      "case": "cancelling_from_the_middle_preserves_the_order_of_the_survivors",
+      "case": "drr_selection_matches_the_reference_for_heterogeneous_costs",
       "oracle": "WFQ/DRR의 불균일 weight·cost와 중간 취소·cross-pool follower 선행",
       "feature": "default",
       "platform": "any",
       "gate": "test",
       "source": [
         "crates/taskmesh-engine/tests/hardening_fairness_reference.rs"
+      ],
+      "supporting_cases": [
+        {
+          "target": "crates/taskmesh-engine/tests/hardening_fairness_reference.rs",
+          "case": "a_wfq_nonhead_candidate_excludes_the_blocked_prefix_from_its_service_tag"
+        },
+        {
+          "target": "crates/taskmesh-engine/tests/hardening_fairness_reference.rs",
+          "case": "cancellation_after_cross_pool_service_does_not_reprice_an_older_head"
+        },
+        {
+          "target": "crates/taskmesh-engine/tests/hardening_fairness_reference.rs",
+          "case": "cancelling_from_the_middle_preserves_the_order_of_the_survivors"
+        }
       ]
     },
     {
@@ -859,14 +873,14 @@
       "status": "MAPPED",
       "owner_ticket": "BG25-008",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H07",
-      "target": "crates/taskmesh-engine/tests/fairness_best_effort.rs",
-      "case": "the_whole_primary_tier_precedes_the_whole_best_effort_tier",
+      "target": "crates/taskmesh-engine/tests/hardening_policy_interactions.rs",
+      "case": "primary_scavenger_memory_fallback_and_drop_best_effort_keep_their_contracts",
       "oracle": "primary tier 포화, best-effort scavenger와 memory fallback이 함께 경쟁",
       "feature": "default",
       "platform": "any",
       "gate": "test",
       "source": [
-        "crates/taskmesh-engine/tests/fairness_best_effort.rs"
+        "crates/taskmesh-engine/tests/hardening_policy_interactions.rs"
       ]
     },
     {
@@ -1003,14 +1017,14 @@
       "status": "MAPPED",
       "owner_ticket": "BG25-009",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H16",
-      "target": "crates/taskmesh-engine/tests/differential_model.rs",
-      "case": "engine_agrees_with_the_reference_model",
+      "target": "crates/taskmesh-engine/tests/hardening_concurrent_history.rs",
+      "case": "two_thread_admit_release_and_reap_match_a_quiescent_reference_ledger",
       "oracle": "실제 Governor의 짧은 상태 기계 시퀀스를 두 스레드가 교차 실행",
       "feature": "default",
       "platform": "any",
       "gate": "test",
       "source": [
-        "crates/taskmesh-engine/tests/differential_model.rs"
+        "crates/taskmesh-engine/tests/hardening_concurrent_history.rs"
       ]
     },
     {
@@ -1323,14 +1337,14 @@
       "status": "MAPPED",
       "owner_ticket": "BG25-008",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D01",
-      "target": "crates/taskmesh-engine/tests/hardening_admission_matrix.rs",
-      "case": "capacity_zero_one_exact_and_plus_one_are_unambiguous",
+      "target": "crates/taskmesh-engine/tests/hardening_policy_interactions.rs",
+      "case": "zero_one_exact_and_plus_one_are_distinct_for_every_capacity_kind",
       "oracle": "quota/depth/pool/budget이 0, 1, 정확히 한계, 한계+1",
       "feature": "default",
       "platform": "any",
       "gate": "test",
       "source": [
-        "crates/taskmesh-engine/tests/hardening_admission_matrix.rs"
+        "crates/taskmesh-engine/tests/hardening_policy_interactions.rs"
       ]
     },
     {
@@ -1719,7 +1733,7 @@
     }
   ],
   "status_semantics": {
-    "MAPPED": "static candidate mapping only: the named target and test case exist; semantic sufficiency and execution are not asserted",
+    "MAPPED": "static candidate mapping only: every named target and test case exists; semantic sufficiency and execution are not asserted",
     "OPEN": "the scenario has no accepted implementation or oracle yet",
     "NOT_RUN": "the selected execution proof was not run",
     "OUT_OF_SCOPE": "the scenario is outside the accepted product boundary"

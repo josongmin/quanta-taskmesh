@@ -163,10 +163,13 @@ pool을 첫 permit에서도 예약한다.
    `#[must_use]`다 (버리면 그 permit은 sweep도 회수하지 않는 영구 charged 상태).
 5. `CpuExecutor::capabilities()`(default 구현 제공)로 adapter가 보장하는 것을 선언한다. host는 선언
    이상을 가정하지 않으며, 공유 pool의 ambient 작업을 제한한다고 주장하지 않는다. 선언은 load-bearing이다:
-   `declared_workers`가 topology의 `cpu` gate보다 작으면 `Builder::build`가
-   `TopologyError::ExecutorDeclaresFewerWorkers`로 거절하고, `TokioRuntime::executor_capabilities()`가
-   선언을 노출한다. `RayonCpuExecutor`는 pool의 실제 thread 수와 exclusivity(`with_pool`은 shared)를,
-   `BlockingPoolCpuExecutor`는 worker 수 unknown·shared·non-blocking submit을 선언한다.
+   `declared_workers`가 topology가 resolve한 physical domain worker 수와 다르면 `Builder::build`가
+   `TopologyError::ExecutorWorkerCountMismatch`로 거절한다. 검증된 선언은 build 시 동결되며 dispatch,
+   debug, `TokioRuntime::executor_capabilities()`가 같은 snapshot을 사용한다. 기본 Tokio blocking/CPU
+   dispatch는 permit 발급 전에 active Tokio context를 검사하고 없으면 typed `WorkerUnavailable`을 반환한다.
+   `RayonCpuExecutor`는 pool의 실제 thread 수와 exclusivity(`with_pool`은 shared)를 선언한다.
+   `BlockingPoolCpuExecutor`는 resolved Taskmesh shared-domain 제출 한도·shared·non-blocking
+   submit을 선언하며 ambient Tokio pool 전체 크기를 주장하지 않는다.
 6. 클래스 내부는 도착 순서다(D08): runnable한 head가 promotion pass를 기다리는 동안 새 도착은
    `CapacityBlock::QueuedBehind`로 queue된다. 유일한 추월은 head가 다른 capability pool에 막힌 경우다.
 7. 동시성 모델 검사(`just loom`/`just shuttle`)는 production `Governor`를 checker의 mutex/atomics 위에

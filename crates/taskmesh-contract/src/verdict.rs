@@ -226,8 +226,9 @@ pub enum GovernorError {
     LeaseReclaimed {
         permit_id: u64,
     },
-    /// The host could not create the worker the plan needed (a dedicated thread
-    /// or a worker-local runtime). The job never started.
+    /// The host prerequisite or worker the plan needed was unavailable (for
+    /// example, no active Tokio context, a dedicated thread creation failure,
+    /// or a worker-local runtime creation failure). The job never started.
     WorkerUnavailable {
         context: Cow<'static, str>,
         detail: String,

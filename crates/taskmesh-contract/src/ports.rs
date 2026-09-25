@@ -87,7 +87,8 @@ pub trait CpuExecutor: Send + Sync {
     /// The default is [`ExecutorCapabilities::legacy`] so old adapters remain
     /// source-compatible. The host rejects that profile at installation: an
     /// executor must explicitly declare nonblocking submission, its finite
-    /// worker count, and its registered physical domain.
+    /// worker count, and its registered physical domain. Once accepted, the
+    /// host freezes this value and does not query the adapter during dispatch.
     fn capabilities(&self) -> ExecutorCapabilities {
         ExecutorCapabilities::legacy()
     }
@@ -95,10 +96,12 @@ pub trait CpuExecutor: Send + Sync {
 
 /// The declared guarantees of a [`CpuExecutor`] adapter.
 ///
-/// These are *declarations*, not measurements. The host validates them at build
-/// time and rejects incomplete or inconsistent adapters. `exclusive_pool=false`
-/// remains observable: taskmesh bounds its own atomic submissions to the shared
-/// physical domain but does not claim authority over ambient users.
+/// These are *declarations*, not measurements. The host reads and validates the
+/// declaration once at build time, then freezes that accepted value for runtime
+/// planning and observability. It rejects incomplete or inconsistent adapters.
+/// `exclusive_pool=false` remains observable: taskmesh bounds its own atomic
+/// submissions to the shared physical domain but does not claim authority over
+/// ambient users.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ExecutorCapabilities {
@@ -108,14 +111,17 @@ pub struct ExecutorCapabilities {
     /// completion timestamps rather than by when `spawn` returned. The host
     /// rejects `false` at installation.
     pub nonblocking_submit: bool,
-    /// Worker threads the adapter owns, when it knows. `None` means unknown, and
-    /// unknown is never upgraded to a capacity guarantee.
+    /// Finite Taskmesh submission capacity declared for this physical domain.
+    /// For an exclusive pool this is its worker count. For a shared pool this is
+    /// Taskmesh's own admission bound, not a claim about ambient pool users.
+    /// `None` means unknown and is never upgraded to a capacity guarantee.
     pub declared_workers: Option<u32>,
     /// The adapter's pool runs taskmesh work only. When `false`, ambient users
     /// share it and taskmesh governs only its own submissions.
     pub exclusive_pool: bool,
     /// Registered physical-domain capability this executor occupies. The host
-    /// resolves this once at build/preflight time; promotion never reparses it.
+    /// resolves and freezes this once at build time; submission and promotion
+    /// never query the adapter again.
     pub physical_domain: Option<&'static str>,
 }
 

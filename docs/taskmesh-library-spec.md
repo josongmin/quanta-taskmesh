@@ -124,8 +124,12 @@ The caller or adapter owns that execution and reducer.
    lease the leak sweep reclaimed before dispatch → `LeaseReclaimed`
 4g. `CpuExecutor::capabilities()` is load-bearing: `Builder::build` refuses an
    adapter whose declaration is blocking/legacy, whose physical domain or worker
-   count is unknown, or whose declared count differs from the actual executor.
-   `TokioRuntime::executor_capabilities()` exposes the installed declaration.
+   count is unknown, or whose declared count differs from the resolved physical
+   domain capacity.
+   The accepted declaration is frozen at build; dispatch planning, runtime debug,
+   and `TokioRuntime::executor_capabilities()` all use that same snapshot.
+   Default Tokio-backed blocking and CPU dispatch checks for an active Tokio
+   context before admission and returns typed `WorkerUnavailable` when absent.
    `physical.shared_blocking`, `physical.cpu`, and `physical.dedicated` are
    finite engine-governed domains; CPU fallback, blocking and maintenance work
    sharing one executor consume the same physical bound. Rayon `try_new` and

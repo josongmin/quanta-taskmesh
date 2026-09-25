@@ -613,6 +613,194 @@ impl CpuExecutor for LegacyExecutor {
     }
 }
 
+/// An adversarial adapter whose declaration changes after installation.
+/// Runtime behavior must use the exact declaration the builder accepted.
+struct MutatingDescriptorExecutor {
+    capability_reads: Arc<AtomicUsize>,
+}
+
+impl CpuExecutor for MutatingDescriptorExecutor {
+    fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
+        std::thread::spawn(work);
+    }
+
+    fn capabilities(&self) -> ExecutorCapabilities {
+        if self.capability_reads.fetch_add(1, Ordering::SeqCst) == 0 {
+            ExecutorCapabilities::legacy()
+                .nonblocking_submit(true)
+                .declared_workers(1)
+                .exclusive_pool(true)
+                .physical_domain(PHYSICAL_CPU)
+        } else {
+            // If the runtime re-queries this port, the old implementation could
+            // panic in dispatch planning and expose a descriptor it never built.
+            ExecutorCapabilities::legacy()
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_validated_executor_descriptor_is_frozen_for_every_runtime_use() {
+    let capability_reads = Arc::new(AtomicUsize::new(0));
+    let class = TaskClass::new("c");
+    let builder = Builder::new()
+        .topology(TopologyConfig::new().cpu_fixed(1).large_stack_slots(1))
+        .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
+        .class_policy(
+            class.clone(),
+            ClassPolicy::new().max_inflight(8).cpu_units(1),
+        )
+        .cpu_executor(Arc::new(MutatingDescriptorExecutor {
+            capability_reads: Arc::clone(&capability_reads),
+        }));
+    let builder_debug = format!("{builder:?}");
+    assert!(builder_debug.contains("cpu_executor_installed: true"));
+    assert_eq!(
+        capability_reads.load(Ordering::SeqCst),
+        0,
+        "debug formatting cannot consume an unvalidated adapter declaration"
+    );
+    let rt = builder
+        .build()
+        .expect("the first, complete declaration builds");
+
+    let expected = ExecutorCapabilities::legacy()
+        .nonblocking_submit(true)
+        .declared_workers(1)
+        .exclusive_pool(true)
+        .physical_domain(PHYSICAL_CPU);
+    assert_eq!(capability_reads.load(Ordering::SeqCst), 1);
+    assert_eq!(rt.executor_capabilities(), expected);
+    let debug = format!("{rt:?}");
+    assert!(debug.contains("physical.cpu"), "{debug}");
+
+    let io = rt
+        .run_io(
+            TaskSpec::io(class.clone()).operation("descriptor-io"),
+            async { Ok::<_, ()>(1) },
+        )
+        .await
+        .expect("I/O planning uses the frozen descriptor");
+    let blocking = rt
+        .run_blocking(
+            TaskSpec::blocking(class.clone()).operation("descriptor-blocking"),
+            || Ok::<_, ()>(2),
+        )
+        .await
+        .expect("blocking planning uses the frozen descriptor");
+    let cpu = rt
+        .run_cpu(
+            TaskSpec::cpu(class.clone()).operation("descriptor-cpu"),
+            || Ok::<_, ()>(3),
+        )
+        .await
+        .expect("CPU planning uses the frozen descriptor");
+    let stacked = rt
+        .run_async_with_requested_stack(
+            TaskSpec::base(class, SubstrateHint::LargeStackCapability)
+                .operation("descriptor-stack")
+                .stack_size_bytes(STACK),
+            || async { Ok::<_, ()>(4) },
+        )
+        .await
+        .expect("requested-stack planning uses the frozen descriptor");
+
+    assert_eq!((io, blocking, cpu, stacked), (1, 2, 3, 4));
+    assert_eq!(
+        capability_reads.load(Ordering::SeqCst),
+        1,
+        "build is the only descriptor authority"
+    );
+}
+
+fn poll_once_without_tokio<F: std::future::Future + ?Sized>(
+    future: std::pin::Pin<&mut F>,
+) -> std::task::Poll<F::Output> {
+    struct NoopWake;
+    impl std::task::Wake for NoopWake {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    let waker = std::task::Waker::from(Arc::new(NoopWake));
+    let mut context = std::task::Context::from_waker(&waker);
+    future.poll(&mut context)
+}
+
+#[test]
+fn default_tokio_dispatch_without_a_runtime_is_rejected_before_admission() {
+    let class = TaskClass::new("c");
+    let rt = runtime_for(class.clone());
+    let before = rt.snapshot();
+    let blocking_ran = Arc::new(AtomicUsize::new(0));
+    let ran = Arc::clone(&blocking_ran);
+    let mut blocking = Box::pin(rt.run_blocking(
+        TaskSpec::blocking(class.clone()).operation("outside-tokio-blocking"),
+        move || {
+            ran.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, ()>(())
+        },
+    ));
+    assert_eq!(
+        poll_once_without_tokio(blocking.as_mut()),
+        std::task::Poll::Ready(Err(RunError::Governor(GovernorError::WorkerUnavailable {
+            context: "blocking worker".into(),
+            detail: "an active Tokio runtime context is required before admission".into(),
+        })))
+    );
+    assert_eq!(blocking_ran.load(Ordering::SeqCst), 0);
+    assert_eq!(rt.snapshot(), before, "failed preflight cannot admit work");
+
+    #[cfg(not(feature = "rayon"))]
+    {
+        let cpu_ran = Arc::new(AtomicUsize::new(0));
+        let ran = Arc::clone(&cpu_ran);
+        let mut cpu = Box::pin(rt.run_cpu(
+            TaskSpec::cpu(class).operation("outside-tokio-cpu"),
+            move || {
+                ran.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, ()>(())
+            },
+        ));
+        assert_eq!(
+            poll_once_without_tokio(cpu.as_mut()),
+            std::task::Poll::Ready(Err(RunError::Governor(GovernorError::WorkerUnavailable {
+                context: "cpu executor".into(),
+                detail: "an active Tokio runtime context is required before admission".into(),
+            })))
+        );
+        assert_eq!(cpu_ran.load(Ordering::SeqCst), 0);
+        assert_eq!(rt.snapshot(), before, "failed preflight cannot admit work");
+    }
+}
+
+#[test]
+fn tokio_context_is_checked_when_the_dispatch_future_is_polled() {
+    let class = TaskClass::new("c");
+    let rt = runtime_for(class.clone());
+    // Construct both futures outside Tokio. They are valid because the runtime
+    // requirement applies to execution, when the future is polled.
+    let blocking = rt.run_blocking_with(
+        TaskSpec::blocking(class.clone()).operation("poll-inside-blocking"),
+        SubmitOptions::unbounded(),
+        || Ok::<_, ()>(1),
+    );
+    #[cfg(not(feature = "rayon"))]
+    let cpu = rt.run_cpu_with(
+        TaskSpec::cpu(class).operation("poll-inside-cpu"),
+        SubmitOptions::unbounded(),
+        || Ok::<_, ()>(2),
+    );
+    let host = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test Tokio runtime");
+    host.block_on(async {
+        assert_eq!(blocking.await.expect("blocking dispatch"), 1);
+        #[cfg(not(feature = "rayon"))]
+        assert_eq!(cpu.await.expect("CPU dispatch"), 2);
+    });
+}
+
 #[test]
 fn a_cpu_gate_wider_than_the_executor_declares_is_refused_at_build() {
     // The topology asks for 4 workers; the adapter says it has 2. Building

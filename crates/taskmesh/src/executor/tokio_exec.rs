@@ -27,9 +27,9 @@ impl CpuExecutor for BlockingPoolCpuExecutor {
 
     /// What this adapter can honestly say (D05): `spawn_blocking` returns
     /// without running the job inline; the pool is Tokio's, shared with every
-    /// other `spawn_blocking` user on the runtime, and its thread cap is a
-    /// property of that runtime this adapter cannot see — so the worker count
-    /// stays *unknown* rather than guessed.
+    /// other `spawn_blocking` user on the runtime. The declared worker count is
+    /// the builder-resolved Taskmesh bound on submissions to that shared domain;
+    /// it does not claim that Tokio's ambient pool has the same size.
     fn capabilities(&self) -> ExecutorCapabilities {
         ExecutorCapabilities::legacy()
             .nonblocking_submit(true)

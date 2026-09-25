@@ -37,8 +37,8 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use taskmesh_contract::{
-    CpuExecutor, ExecutionPhase, GovernorError, RunError, Runtime, Snapshot, SubstrateHint,
-    TaskSpec,
+    CpuExecutor, ExecutionPhase, ExecutorCapabilities, GovernorError, RunError, Runtime, Snapshot,
+    SubstrateHint, TaskSpec, TopologyError,
 };
 use taskmesh_engine::{
     AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId, ReleaseOutcome,
@@ -75,6 +75,12 @@ pub struct TokioRuntime {
     pub(crate) config: RuntimeConfig,
     pub(crate) governor: Arc<Governor>,
     cpu: Arc<dyn CpuExecutor>,
+    /// The exact declaration accepted by `Builder::build`. Adapters are ports,
+    /// not mutable runtime policy authorities, so dispatch never re-queries it.
+    cpu_capabilities: ExecutorCapabilities,
+    /// Whether the installed CPU adapter is Taskmesh's built-in Tokio adapter.
+    /// Custom executors own their submission environment.
+    cpu_requires_tokio_context: bool,
     /// The drain's wake-up (D17), shared with every lease this handle issues.
     /// The refusal itself is the engine's (`Governor::close_admission`).
     drain: Arc<DrainSignal>,
@@ -87,10 +93,16 @@ impl std::fmt::Debug for TokioRuntime {
         f.debug_struct("TokioRuntime")
             .field("config", &self.config)
             .field("governor", &self.governor)
-            .field("cpu_executor", &self.cpu.capabilities())
+            .field("cpu_executor", &self.cpu_capabilities)
+            .field(
+                "cpu_requires_tokio_context",
+                &self.cpu_requires_tokio_context,
+            )
             .field("draining", &self.is_draining())
             .field("drain", &self.drain)
-            .finish()
+            // `cpu_executor` above is the validated summary of the otherwise
+            // non-Debug trait object stored in `cpu`.
+            .finish_non_exhaustive()
     }
 }
 
@@ -99,12 +111,16 @@ impl TokioRuntime {
         config: RuntimeConfig,
         governor: Arc<Governor>,
         cpu: Arc<dyn CpuExecutor>,
+        cpu_capabilities: ExecutorCapabilities,
+        cpu_requires_tokio_context: bool,
         drain: Arc<DrainSignal>,
     ) -> Self {
         Self {
             config,
             governor,
             cpu,
+            cpu_capabilities,
+            cpu_requires_tokio_context,
             drain,
         }
     }
@@ -123,12 +139,11 @@ impl TokioRuntime {
         &self.governor
     }
 
-    /// What the installed CPU executor declared about itself (D05). The builder
-    /// already refused a `cpu` gate wider than `declared_workers`; the rest is
-    /// surfaced so an operator can see whether the pool is exclusive and whether
-    /// submission is non-blocking, instead of assuming either.
-    pub fn executor_capabilities(&self) -> taskmesh_contract::ExecutorCapabilities {
-        self.cpu.capabilities()
+    /// The CPU executor declaration accepted and frozen by the builder (D05).
+    /// It is surfaced so an operator can see whether the pool is exclusive and
+    /// whether submission is non-blocking, instead of assuming either.
+    pub fn executor_capabilities(&self) -> ExecutorCapabilities {
+        self.cpu_capabilities
     }
 
     // ---- acquire/release core --------------------------------------------
@@ -323,11 +338,12 @@ impl TokioRuntime {
         dispatch: DispatchKind,
     ) -> Result<ValidatedDispatchPlan, GovernorError> {
         let policy = self.config.classes.get(&spec.class);
-        let cpu_physical_domain = self
-            .cpu
-            .capabilities()
-            .physical_domain
-            .expect("builder validates executor physical domain");
+        let cpu_physical_domain =
+            self.cpu_capabilities
+                .physical_domain
+                .ok_or(GovernorError::InvalidTopology(
+                    TopologyError::ExecutorPhysicalDomainUnknown,
+                ))?;
         ValidatedDispatchPlan::preflight(
             spec,
             opts,
@@ -393,6 +409,9 @@ impl TokioRuntime {
         };
         let boxed_job: BlockingJobV1<T, E> = Box::new(job);
         Box::pin(async move {
+            if plan.dispatch == DispatchKind::BlockingPool {
+                require_tokio_context_v1("blocking worker").map_err(RunError::Governor)?;
+            }
             let lease = self.acquire_execution_lease(&opts, &plan).await?;
             match plan.dispatch {
                 DispatchKind::DedicatedStackThread => {
@@ -723,6 +742,9 @@ impl TokioRuntime {
             Ok(plan) => plan,
             Err(error) => return Err(RunError::Governor(error)),
         };
+        if self.cpu_requires_tokio_context {
+            require_tokio_context_v1("cpu executor").map_err(RunError::Governor)?;
+        }
         let cpu = Arc::clone(&self.cpu);
         let lease = self.acquire_execution_lease(&opts, &plan).await?;
         let (started_tx, started_rx) = oneshot::channel();
@@ -977,6 +999,18 @@ fn worker_unavailable_v1<E>(context: &'static str, error: &std::io::Error) -> Ru
         context: context.into(),
         detail: error.to_string(),
     })
+}
+
+/// Reject Tokio-backed dispatch before admission when polling has no Tokio
+/// runtime context. This keeps a missing host prerequisite typed and leaves no
+/// permit, ticket, or worker closure behind.
+fn require_tokio_context_v1(context: &'static str) -> Result<(), GovernorError> {
+    tokio::runtime::Handle::try_current()
+        .map(|_handle| ())
+        .map_err(|_no_runtime| GovernorError::WorkerUnavailable {
+            context: context.into(),
+            detail: "an active Tokio runtime context is required before admission".into(),
+        })
 }
 
 impl Runtime for TokioRuntime {

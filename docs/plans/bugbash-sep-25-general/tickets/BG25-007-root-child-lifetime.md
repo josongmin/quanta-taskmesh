@@ -1,6 +1,8 @@
 # BG25-007 — stage 선언과 root/child lifetime
 
-- 상태: IMPLEMENTED
+- 구현 상태: IMPLEMENTED
+- 증명 상태: STATIC_MAPPED
+- 외부 상태: NOT_APPLICABLE
 - 우선순위: P1
 - 선행: BG25-001, BG25-006
 - 소유: host/runtime owner, API docs owner

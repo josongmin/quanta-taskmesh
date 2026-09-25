@@ -23,6 +23,8 @@ MODES = {
     "evidence",
     "integration",
 }
+PROOF_STATUSES = {"STATIC_MAPPED", "REVIEW_REQUIRED", "RECEIPT_REQUIRED"}
+EXTERNAL_STATUSES = {"OPEN", "NOT_APPLICABLE"}
 
 
 def fail(message: str) -> None:
@@ -74,8 +76,17 @@ def check_links(path: Path) -> None:
 
 def main() -> None:
     data = json.loads((ROOT / "plan.json").read_text())
-    if data.get("schema_version") != 1 or data.get("status") != "IMPLEMENTED":
-        fail("unexpected schema/status")
+    if data.get("schema_version") != 1:
+        fail("unexpected schema")
+    expected_plan_status = {
+        "status": "PARTIAL",
+        "implementation_status": "IMPLEMENTED",
+        "qualification_status": "RECEIPT_REQUIRED",
+        "external_status": "OPEN",
+    }
+    for field, expected_value in expected_plan_status.items():
+        if data.get(field) != expected_value:
+            fail(f"unexpected plan {field}: {data.get(field)!r}")
     tickets = data["tickets"]
     by_id = {ticket["id"]: ticket for ticket in tickets}
     if len(tickets) != 12 or len(by_id) != 12:
@@ -96,13 +107,26 @@ def main() -> None:
             fail(f"invalid priority: {ticket['id']}")
         if ticket.get("mode") not in MODES:
             fail(f"invalid execution mode: {ticket['id']}")
+        if ticket.get("implementation_status") != "IMPLEMENTED":
+            fail(f"invalid implementation status: {ticket['id']}")
+        if ticket.get("proof_status") not in PROOF_STATUSES:
+            fail(f"invalid proof status: {ticket['id']}")
+        if ticket.get("external_status") not in EXTERNAL_STATUSES:
+            fail(f"invalid external status: {ticket['id']}")
         if not ticket.get("owner"):
             fail(f"missing owner: {ticket['id']}")
         path = ROOT / ticket["file"]
         if not path.is_file():
             fail(f"missing ticket: {path}")
         text = path.read_text()
-        if not text.startswith(f"# {ticket['id']} ") or "상태: IMPLEMENTED" not in text:
+        expected_status_lines = (
+            f"- 구현 상태: {ticket['implementation_status']}",
+            f"- 증명 상태: {ticket['proof_status']}",
+            f"- 외부 상태: {ticket['external_status']}",
+        )
+        if not text.startswith(f"# {ticket['id']} ") or any(
+            line not in text for line in expected_status_lines
+        ):
             fail(f"heading/status mismatch: {ticket['id']}")
         for section in SECTIONS:
             if not re.search(rf"^{re.escape(section)}(?:\s|$)", text, re.M):
@@ -133,6 +157,16 @@ def main() -> None:
     expected_final = set(by_id) - {"BG25-001", "BG25-012"}
     if set(by_id["BG25-012"]["depends_on"]) != expected_final:
         fail("integration ticket must depend on every implementation ticket")
+    if by_id["BG25-001"]["proof_status"] != "REVIEW_REQUIRED":
+        fail("contract decision ticket must retain explicit review authority")
+    if by_id["BG25-012"]["proof_status"] != "RECEIPT_REQUIRED":
+        fail("integration ticket must not self-assert execution qualification")
+    expected_external_open = {"BG25-001", "BG25-002", "BG25-003"}
+    actual_external_open = {
+        ticket["id"] for ticket in tickets if ticket["external_status"] == "OPEN"
+    }
+    if actual_external_open != expected_external_open:
+        fail(f"external ownership boundary drift: {sorted(actual_external_open)}")
     coverage = (ROOT / "COVERAGE.md").read_text()
     commands = (ROOT / "COMMANDS.md").read_text()
     for ticket in tickets:

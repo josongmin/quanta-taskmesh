@@ -1,6 +1,8 @@
 # BG25-008 — compound admission과 capacity authority
 
-- 상태: IMPLEMENTED
+- 구현 상태: IMPLEMENTED
+- 증명 상태: STATIC_MAPPED
+- 외부 상태: NOT_APPLICABLE
 - 우선순위: P1
 - 선행: BG25-001, BG25-005
 - 소유: engine/admission owner; host capacity fixture는 host owner

@@ -1,6 +1,8 @@
 # BG25-003 — wire·consumer·오류 경계
 
-- 상태: IMPLEMENTED
+- 구현 상태: IMPLEMENTED
+- 증명 상태: STATIC_MAPPED
+- 외부 상태: OPEN
 - 우선순위: P1
 - 선행: BG25-001 D9
 - 소유: contract/consumer owner

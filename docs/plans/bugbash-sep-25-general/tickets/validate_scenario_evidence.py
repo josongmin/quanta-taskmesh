@@ -14,7 +14,7 @@ REPO = ROOT.parents[3]
 MANIFEST = ROOT / "scenario-evidence.json"
 PLAN = ROOT / "plan.json"
 CHECKLIST = REPO / "docs/misc/tmp-engine-checklist-sep-25.md"
-VALID_STATUS = {"PASS", "OPEN", "NOT_RUN", "OUT_OF_SCOPE"}
+VALID_STATUS = {"MAPPED", "OPEN", "NOT_RUN", "OUT_OF_SCOPE"}
 VALID_ORIGIN = {"K", "P", "G"}
 NIGHTLY_GATES = {
     "modelcheck",
@@ -41,11 +41,30 @@ def test_case_exists(path: Path, case: str) -> bool:
     return declaration.search(text) is not None
 
 
+def recipe_body(justfile: str, recipe: str) -> str:
+    match = re.search(
+        rf"^{re.escape(recipe)}:\s*\n(?P<body>(?:^[ \t]+.*\n?)*)",
+        justfile,
+        re.M,
+    )
+    if match is None:
+        fail(f"missing Just recipe {recipe!r}")
+    return match.group("body")
+
+
 def main() -> None:
     data = json.loads(MANIFEST.read_text(encoding="utf-8"))
     plan = json.loads(PLAN.read_text(encoding="utf-8"))
-    if data.get("schema_version") != 1:
-        fail("scenario evidence schema_version must be 1")
+    if data.get("schema_version") != 2:
+        fail("scenario evidence schema_version must be 2")
+    expected_semantics = {
+        "MAPPED": "static candidate mapping only: the named target and test case exist; semantic sufficiency and execution are not asserted",
+        "OPEN": "the scenario has no accepted implementation or oracle yet",
+        "NOT_RUN": "the selected execution proof was not run",
+        "OUT_OF_SCOPE": "the scenario is outside the accepted product boundary",
+    }
+    if data.get("status_semantics") != expected_semantics:
+        fail("status semantics must keep static coverage separate from execution")
     rows = data.get("scenarios")
     if not isinstance(rows, list):
         fail("scenarios must be a list")
@@ -70,6 +89,8 @@ def main() -> None:
     statuses = Counter()
     inventory = json.loads((REPO / "tools/gates/inventory.json").read_text())
     known_gates = {gate["id"] for gate in inventory["gates"]}
+    justfile = (REPO / "Justfile").read_text(encoding="utf-8")
+    rayon_recipe = recipe_body(justfile, "test-rayon")
 
     required = {
         "id",
@@ -108,16 +129,25 @@ def main() -> None:
             fail(f"{scenario}: unsupported feature/platform selector")
         if row["gate"] not in known_gates:
             fail(f"{scenario}: selecting gate {row['gate']!r} is not inventoried")
+        if row["feature"] == "rayon":
+            selector = (
+                f"--test {Path(row['target']).stem} {row['case']} -- --exact"
+            )
+            if row["gate"] != "test-rayon" or selector not in rayon_recipe:
+                fail(f"{scenario}: rayon selector is not executed by test-rayon")
         sources = row["source"]
         if not isinstance(sources, list) or not sources or row["target"] not in sources:
             fail(f"{scenario}: source must include its target")
         for source in sources:
             if not isinstance(source, str) or not (REPO / source).is_file():
                 fail(f"{scenario}: missing source {source!r}")
-        if row["status"] == "PASS":
+        if row["status"] == "MAPPED":
             target = REPO / row["target"]
             if not target.is_file() or not test_case_exists(target, row["case"]):
-                fail(f"{scenario}: PASS target/case does not exist: {row['target']}::{row['case']}")
+                fail(
+                    f"{scenario}: MAPPED target/case does not exist: "
+                    f"{row['target']}::{row['case']}"
+                )
 
     expected_origins = {"K": 51, "P": 34, "G": 19}
     if dict(origins) != expected_origins or data.get("origin_counts") != expected_origins:
@@ -136,8 +166,8 @@ def main() -> None:
         fail("unexecuted nightly gates must remain explicit NOT_RUN entries with reasons")
 
     print(
-        "scenario evidence PASS: 104 unique rows; "
-        "origins K=51 P=34 G=19; targets/cases/sources/gates valid"
+        "scenario mapping PASS: 104 unique MAPPED rows; "
+        "origins K=51 P=34 G=19; targets/cases/sources/gates valid; execution not asserted"
     )
 
 

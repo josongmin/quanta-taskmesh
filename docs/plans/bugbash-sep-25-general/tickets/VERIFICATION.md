@@ -29,16 +29,15 @@ BG25-012 adds `scenario-evidence.json` with one row for every one of the 104 aud
 - independent oracle summary
 - required feature/platform
 - selecting gate
-- source HEAD/tree/path digest
-- status: OPEN, PASS, NOT_RUN, or OUT_OF_SCOPE with reason
+- static status: MAPPED, OPEN, NOT_RUN, or OUT_OF_SCOPE
 
-PASS is invalid if the target/case does not exist, is filtered out, is feature-disabled, or the receipt is bound to another source. A previously K row cannot disappear merely because no implementation ticket owned it.
+MAPPED means only that a candidate target/case exists. It does not assert semantic sufficiency, collection, execution, or a passing result. Exact HEAD/tree/path digest and gate PASS/FAIL/NOT_RUN live only in the generated CI receipt. A previously K row cannot disappear merely because no implementation ticket owned it.
 
 ## Current baseline
 
 - Historical receipts remain valid only for their recorded HEAD/tree/path digest.
-- `test-architecture` runs both the plan validator and 104-row evidence validator, so mapping drift fails the normal CI profile.
+- `test-architecture` runs both the plan validator and 104-row mapping validator, so cardinality, ownership, missing-case, inventory, and explicit Rayon-selector drift fail the normal CI profile.
 - A final clean `verify-macos-ci` receipt must bind the committed implementation HEAD and an unchanged tree.
 - No nightly/modelcheck/TSan/fuzz/coverage/IAI/mutation qualification is inferred from deterministic or CI-profile success.
 
-The plan validator checks document mapping only. Its PASS is not product verification.
+Both plan validators check static mapping only. Their PASS is not scenario execution or product qualification.

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "IMPLEMENTED",
+  "status": "PARTIAL",
   "audit_head": "76559c483bdd1d6b0b5226f7c5b5591b919afae9",
   "audit_tree": "215a968630e9f0675bfd1e42f0919bd2047bded2",
   "checklist": "../../../misc/tmp-engine-checklist-sep-25.md",
@@ -12,7 +12,10 @@
       "mode": "decision",
       "owner": "contract-api",
       "depends_on": [],
-      "scenarios": []
+      "scenarios": [],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "REVIEW_REQUIRED",
+      "external_status": "OPEN"
     },
     {
       "id": "BG25-002",
@@ -29,7 +32,10 @@
         "D22",
         "D25",
         "H33"
-      ]
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "OPEN"
     },
     {
       "id": "BG25-003",
@@ -48,7 +54,10 @@
         "D14",
         "D17",
         "D23"
-      ]
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "OPEN"
     },
     {
       "id": "BG25-004",
@@ -64,7 +73,10 @@
         "B22",
         "B28",
         "H18"
-      ]
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
     },
     {
       "id": "BG25-005",
@@ -81,7 +93,10 @@
         "H27",
         "H30",
         "D16"
-      ]
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
     },
     {
       "id": "BG25-006",
@@ -102,7 +117,10 @@
         "H20",
         "H31",
         "H34"
-      ]
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
     },
     {
       "id": "BG25-007",
@@ -118,7 +136,10 @@
         "A11",
         "H21",
         "H35"
-      ]
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
     },
     {
       "id": "BG25-008",
@@ -139,7 +160,10 @@
         "H07",
         "H32",
         "D01"
-      ]
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
     },
     {
       "id": "BG25-009",
@@ -161,7 +185,10 @@
         "H16",
         "H25",
         "D19"
-      ]
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
     },
     {
       "id": "BG25-010",
@@ -176,7 +203,10 @@
       "scenarios": [
         "H10",
         "D20"
-      ]
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
     },
     {
       "id": "BG25-011",
@@ -192,7 +222,10 @@
       "scenarios": [
         "H17",
         "H28"
-      ]
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
     },
     {
       "id": "BG25-012",
@@ -212,7 +245,13 @@
         "BG25-010",
         "BG25-011"
       ],
-      "scenarios": []
+      "scenarios": [],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "RECEIPT_REQUIRED",
+      "external_status": "NOT_APPLICABLE"
     }
-  ]
+  ],
+  "implementation_status": "IMPLEMENTED",
+  "qualification_status": "RECEIPT_REQUIRED",
+  "external_status": "OPEN"
 }

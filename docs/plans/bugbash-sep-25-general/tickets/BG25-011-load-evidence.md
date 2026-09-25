@@ -1,6 +1,8 @@
 # BG25-011 — simulator and real-host load evidence
 
-- 상태: IMPLEMENTED
+- 구현 상태: IMPLEMENTED
+- 증명 상태: STATIC_MAPPED
+- 외부 상태: NOT_APPLICABLE
 - 우선순위: P1
 - 선행: BG25-005, BG25-006, BG25-008
 - 소유: benchmark owner; host fixture has host owner

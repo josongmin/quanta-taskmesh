@@ -1,6 +1,6 @@
 # Bugbash Sep-25 general — final resolution plan
 
-- Status: **IMPLEMENTED**. Production fixes, deterministic fixtures, and the 104-row evidence manifest are committed together; qualification remains source-bound to the final clean CI receipt.
+- Status: **PARTIAL** overall. Repository implementation is complete; exact-source CI qualification, D1–D9 human contract review, and external ingress/wire adoption remain separate authorities. The 104-row manifest is a static candidate map, not an execution receipt.
 - Audit source: `76559c483bdd1d6b0b5226f7c5b5591b919afae9`, tree `215a968630e9f0675bfd1e42f0919bd2047bded2`. Implementation incorporated the later strict-ingress and cross-Governor reproduction history before final source-bound proof.
 - Scenario source: [104-case audit](../../../misc/tmp-engine-checklist-sep-25.md). Its static result is K 51 / P 34 / G 19; all 53 P/G scenarios are assigned exactly once here.
 - Predecessor: `docs/plans/sep-25-engine-coverage/tickets/` is an untracked draft. This directory is the final bugbash execution packet; do not execute both as separate plans.
@@ -37,4 +37,4 @@
 
 ## Completion boundary
 
-A ticket closes only when its accepted contract, implementation, deterministic regression, selected gate, and exact-source owner-local result are recorded. The packet closes only after BG25-012 inventories all 104 scenarios, preserves the 51 existing K baselines, resolves the 53 assigned P/G rows, and produces a clean unchanged-HEAD CI-profile receipt. Nightly/modelcheck/TSan/fuzz/mutation remain separate explicit-cost proof and are not implied by CI-profile completion.
+A ticket's implementation can complete independently of proof and external adoption. The packet remains partial until BG25-012 inventories all 104 scenarios, preserves the 51 existing K baselines, maps the 53 assigned P/G rows, and a clean unchanged-HEAD CI-profile receipt proves the selected gates. D1–D9 human review and external deployment adoption remain explicit open states. Nightly/modelcheck/TSan/fuzz/mutation remain separate explicit-cost proof and are not implied by CI-profile completion.

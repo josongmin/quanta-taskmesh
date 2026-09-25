@@ -1,6 +1,8 @@
 # BG25-002 — bounded strict ingress
 
-- 상태: IMPLEMENTED
+- 구현 상태: IMPLEMENTED
+- 증명 상태: STATIC_MAPPED
+- 외부 상태: OPEN
 - 우선순위: P0
 - 선행: BG25-001 D1–D3
 - 소유: contract/ingress owner, host integration owner

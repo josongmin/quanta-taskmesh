@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "scenario_count": 104,
   "origin_counts": {
     "K": 51,
@@ -7,13 +7,13 @@
     "G": 19
   },
   "status_summary": {
-    "PASS": 104,
+    "MAPPED": 104,
     "OPEN": 0,
     "NOT_RUN": 0,
     "OUT_OF_SCOPE": 0
   },
   "qualification": {
-    "ci_profile": "requires clean unchanged-HEAD verify-macos-ci receipt",
+    "ci_profile": "execution status comes only from a clean unchanged-HEAD verify-macos-ci receipt; this manifest does not assert execution",
     "nightly": [
       {
         "gate": "modelcheck",
@@ -56,7 +56,7 @@
     {
       "id": "A01",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A01",
       "target": "crates/taskmesh/tests/runtime_io.rs",
@@ -72,7 +72,7 @@
     {
       "id": "A02",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A02",
       "target": "crates/taskmesh/tests/e2e_scenarios.rs",
@@ -88,7 +88,7 @@
     {
       "id": "A03",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A03",
       "target": "crates/taskmesh/tests/runtime_cpu_executor.rs",
@@ -104,7 +104,7 @@
     {
       "id": "A04",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A04",
       "target": "crates/taskmesh-engine/tests/admission_queue.rs",
@@ -120,7 +120,7 @@
     {
       "id": "A05",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-008",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A05",
       "target": "crates/taskmesh/tests/e2e_chaos.rs",
@@ -136,7 +136,7 @@
     {
       "id": "A06",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A06",
       "target": "crates/taskmesh/tests/hardening_dispatch_resolution.rs",
@@ -152,7 +152,7 @@
     {
       "id": "A07",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A07",
       "target": "crates/taskmesh-engine/tests/retry_after.rs",
@@ -168,7 +168,7 @@
     {
       "id": "A08",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A08",
       "target": "crates/taskmesh-engine/tests/memory_modes.rs",
@@ -184,7 +184,7 @@
     {
       "id": "A09",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A09",
       "target": "crates/taskmesh-engine/tests/leak_sweep.rs",
@@ -200,7 +200,7 @@
     {
       "id": "A10",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A10",
       "target": "crates/taskmesh-engine/tests/composite_root_attribution.rs",
@@ -216,7 +216,7 @@
     {
       "id": "A11",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-007",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A11",
       "target": "crates/taskmesh/tests/hardening_dispatch_resolution.rs",
@@ -232,7 +232,7 @@
     {
       "id": "A12",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A12",
       "target": "crates/taskmesh-engine/tests/hardening_fairness_reference.rs",
@@ -248,7 +248,7 @@
     {
       "id": "A13",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A13",
       "target": "crates/taskmesh/tests/hardening_drain.rs",
@@ -264,7 +264,7 @@
     {
       "id": "A14",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A14",
       "target": "crates/taskmesh/tests/hardening_consumer_surface.rs",
@@ -280,7 +280,7 @@
     {
       "id": "A15",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A15",
       "target": "crates/taskmesh/tests/runtime_cpu_executor.rs",
@@ -296,7 +296,7 @@
     {
       "id": "A16",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A16",
       "target": "crates/taskmesh-engine/tests/substrate_inventory.rs",
@@ -312,7 +312,7 @@
     {
       "id": "B01",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B01",
       "target": "crates/taskmesh/tests/config_inventory.rs",
@@ -328,7 +328,7 @@
     {
       "id": "B02",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B02",
       "target": "crates/taskmesh-contract/tests/task_plan_validation.rs",
@@ -344,7 +344,7 @@
     {
       "id": "B03",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B03",
       "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
@@ -360,7 +360,7 @@
     {
       "id": "B04",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B04",
       "target": "crates/taskmesh-engine/tests/config_validation.rs",
@@ -376,7 +376,7 @@
     {
       "id": "B05",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-008",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B05",
       "target": "crates/taskmesh-engine/tests/hardening_admission_matrix.rs",
@@ -392,7 +392,7 @@
     {
       "id": "B06",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B06",
       "target": "crates/taskmesh-engine/tests/admission_queue.rs",
@@ -408,7 +408,7 @@
     {
       "id": "B07",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B07",
       "target": "crates/taskmesh/tests/cancellation_policy.rs",
@@ -424,7 +424,7 @@
     {
       "id": "B08",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B08",
       "target": "crates/taskmesh/tests/runtime_cancel_timeout.rs",
@@ -440,7 +440,7 @@
     {
       "id": "B09",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B09",
       "target": "crates/taskmesh/tests/deadline_cancel.rs",
@@ -456,7 +456,7 @@
     {
       "id": "B10",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B10",
       "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
@@ -472,7 +472,7 @@
     {
       "id": "B11",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B11",
       "target": "crates/taskmesh-engine/tests/hardening_lease_token.rs",
@@ -488,7 +488,7 @@
     {
       "id": "B12",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B12",
       "target": "crates/taskmesh-engine/tests/hardening_lifecycle.rs",
@@ -504,7 +504,7 @@
     {
       "id": "B13",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B13",
       "target": "crates/taskmesh-engine/tests/hardening_memory_epochs.rs",
@@ -520,7 +520,7 @@
     {
       "id": "B14",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B14",
       "target": "crates/taskmesh-bench/tests/inferno.rs",
@@ -536,7 +536,7 @@
     {
       "id": "B15",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B15",
       "target": "crates/taskmesh-engine/tests/hardening_memory_epochs.rs",
@@ -552,7 +552,7 @@
     {
       "id": "B16",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B16",
       "target": "crates/taskmesh-engine/tests/substrate_inventory.rs",
@@ -568,7 +568,7 @@
     {
       "id": "B17",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B17",
       "target": "crates/taskmesh/tests/hardening_drain.rs",
@@ -584,7 +584,7 @@
     {
       "id": "B18",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-003",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B18",
       "target": "crates/taskmesh-contract/tests/contract_roundtrip.rs",
@@ -600,7 +600,7 @@
     {
       "id": "B19",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B19",
       "target": "crates/taskmesh-contract/tests/task_plan_validation.rs",
@@ -616,7 +616,7 @@
     {
       "id": "B20",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-008",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B20",
       "target": "crates/taskmesh-engine/tests/hardening_admission_matrix.rs",
@@ -632,7 +632,7 @@
     {
       "id": "B21",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-004",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B21",
       "target": "crates/taskmesh-engine/tests/pending_resolver.rs",
@@ -648,7 +648,7 @@
     {
       "id": "B22",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-004",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B22",
       "target": "crates/taskmesh-contract/tests/task_plan_validation.rs",
@@ -664,7 +664,7 @@
     {
       "id": "B23",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-009",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B23",
       "target": "crates/taskmesh-engine/tests/hardening_queue_history.rs",
@@ -680,7 +680,7 @@
     {
       "id": "B24",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-003",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B24",
       "target": "crates/taskmesh-engine/tests/provenance_preservation.rs",
@@ -696,7 +696,7 @@
     {
       "id": "B25",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-005",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B25",
       "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
@@ -712,7 +712,7 @@
     {
       "id": "B26",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B26",
       "target": "crates/taskmesh-engine/tests/config_validation.rs",
@@ -728,7 +728,7 @@
     {
       "id": "B27",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-009",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B27",
       "target": "crates/taskmesh-engine/tests/hardening_effect_retirement.rs",
@@ -744,7 +744,7 @@
     {
       "id": "B28",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-004",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B28",
       "target": "crates/taskmesh-engine/tests/identity_authority.rs",
@@ -760,7 +760,7 @@
     {
       "id": "H01",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-008",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H01",
       "target": "crates/taskmesh/tests/e2e_scenarios.rs",
@@ -776,7 +776,7 @@
     {
       "id": "H02",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-008",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H02",
       "target": "crates/taskmesh/tests/hardening_executor_authority.rs",
@@ -792,7 +792,7 @@
     {
       "id": "H03",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H03",
       "target": "crates/taskmesh/tests/hardening_executor_authority.rs",
@@ -808,7 +808,7 @@
     {
       "id": "H04",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-009",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H04",
       "target": "crates/taskmesh-engine/tests/hardening_queue_history.rs",
@@ -824,7 +824,7 @@
     {
       "id": "H05",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H05",
       "target": "crates/taskmesh-engine/tests/hardening_effect_retirement.rs",
@@ -840,7 +840,7 @@
     {
       "id": "H06",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-009",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H06",
       "target": "crates/taskmesh-engine/tests/hardening_fairness_reference.rs",
@@ -856,7 +856,7 @@
     {
       "id": "H07",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-008",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H07",
       "target": "crates/taskmesh-engine/tests/fairness_best_effort.rs",
@@ -872,7 +872,7 @@
     {
       "id": "H08",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H08",
       "target": "crates/taskmesh-engine/tests/hardening_nested_wait.rs",
@@ -888,7 +888,7 @@
     {
       "id": "H09",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H09",
       "target": "crates/taskmesh-engine/tests/hardening_nested_wait.rs",
@@ -904,7 +904,7 @@
     {
       "id": "H10",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-010",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H10",
       "target": "crates/taskmesh-engine/tests/hardening_memory_ledger.rs",
@@ -920,7 +920,7 @@
     {
       "id": "H11",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-006",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H11",
       "target": "crates/taskmesh/tests/hardening_deadline_custody.rs",
@@ -936,7 +936,7 @@
     {
       "id": "H12",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-006",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H12",
       "target": "crates/taskmesh/tests/host_open_loop.rs",
@@ -952,7 +952,7 @@
     {
       "id": "H13",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-009",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H13",
       "target": "crates/taskmesh/tests/hardening_drain.rs",
@@ -968,7 +968,7 @@
     {
       "id": "H14",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-009",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H14",
       "target": "crates/taskmesh-engine/tests/hardening_effect_retirement.rs",
@@ -984,7 +984,7 @@
     {
       "id": "H15",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-005",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H15",
       "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
@@ -1000,7 +1000,7 @@
     {
       "id": "H16",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-009",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H16",
       "target": "crates/taskmesh-engine/tests/differential_model.rs",
@@ -1016,7 +1016,7 @@
     {
       "id": "H17",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-011",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H17",
       "target": "crates/taskmesh-bench/tests/hellgate.rs",
@@ -1032,7 +1032,7 @@
     {
       "id": "H18",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-004",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H18",
       "target": "crates/taskmesh/tests/e2e_scenarios.rs",
@@ -1048,7 +1048,7 @@
     {
       "id": "H19",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-006",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H19",
       "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
@@ -1064,7 +1064,7 @@
     {
       "id": "H20",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-006",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H20",
       "target": "crates/taskmesh/tests/hardening_deadline_custody.rs",
@@ -1080,7 +1080,7 @@
     {
       "id": "H21",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-007",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H21",
       "target": "crates/taskmesh/tests/hardening_root_child_scope.rs",
@@ -1096,7 +1096,7 @@
     {
       "id": "H22",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H22",
       "target": "crates/taskmesh-engine/tests/hardening_close_admission.rs",
@@ -1112,7 +1112,7 @@
     {
       "id": "H23",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H23",
       "target": "crates/taskmesh-engine/tests/pending_resolver.rs",
@@ -1128,7 +1128,7 @@
     {
       "id": "H24",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H24",
       "target": "crates/taskmesh-engine/tests/hardening_nested_wait.rs",
@@ -1144,7 +1144,7 @@
     {
       "id": "H25",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-009",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H25",
       "target": "crates/taskmesh-engine/tests/hardening_admission_matrix.rs",
@@ -1160,7 +1160,7 @@
     {
       "id": "H26",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H26",
       "target": "crates/taskmesh-engine/tests/hardening_fairness_reference.rs",
@@ -1176,7 +1176,7 @@
     {
       "id": "H27",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-005",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H27",
       "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
@@ -1192,7 +1192,7 @@
     {
       "id": "H28",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-011",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H28",
       "target": "crates/taskmesh/tests/host_open_loop.rs",
@@ -1208,7 +1208,7 @@
     {
       "id": "H29",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H29",
       "target": "crates/taskmesh-engine/tests/hardening_effect_retirement.rs",
@@ -1224,7 +1224,7 @@
     {
       "id": "H30",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-005",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H30",
       "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
@@ -1240,7 +1240,7 @@
     {
       "id": "H31",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-006",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H31",
       "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
@@ -1256,7 +1256,7 @@
     {
       "id": "H32",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-008",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H32",
       "target": "crates/taskmesh-engine/tests/hardening_admission_matrix.rs",
@@ -1272,7 +1272,7 @@
     {
       "id": "H33",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-002",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H33",
       "target": "crates/taskmesh/tests/strict_ingress.rs",
@@ -1288,7 +1288,7 @@
     {
       "id": "H34",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-006",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H34",
       "target": "crates/taskmesh/tests/hardening_deadline_custody.rs",
@@ -1304,7 +1304,7 @@
     {
       "id": "H35",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-007",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H35",
       "target": "crates/taskmesh/tests/hardening_root_child_scope.rs",
@@ -1320,7 +1320,7 @@
     {
       "id": "D01",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-008",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D01",
       "target": "crates/taskmesh-engine/tests/hardening_admission_matrix.rs",
@@ -1336,7 +1336,7 @@
     {
       "id": "D02",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D02",
       "target": "crates/taskmesh-engine/tests/hardening_exact_accounting.rs",
@@ -1352,7 +1352,7 @@
     {
       "id": "D03",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-003",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D03",
       "target": "crates/taskmesh-contract/tests/task_plan_validation.rs",
@@ -1368,7 +1368,7 @@
     {
       "id": "D04",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-002",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D04",
       "target": "crates/taskmesh/tests/strict_ingress.rs",
@@ -1384,7 +1384,7 @@
     {
       "id": "D05",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-006",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D05",
       "target": "crates/taskmesh/tests/deadline_cancel.rs",
@@ -1400,7 +1400,7 @@
     {
       "id": "D06",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D06",
       "target": "crates/taskmesh-engine/tests/hardening_memory_epochs.rs",
@@ -1416,7 +1416,7 @@
     {
       "id": "D07",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D07",
       "target": "crates/taskmesh-engine/tests/leak_sweep.rs",
@@ -1432,7 +1432,7 @@
     {
       "id": "D08",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D08",
       "target": "crates/taskmesh-engine/tests/hardening_fairness_reference.rs",
@@ -1448,7 +1448,7 @@
     {
       "id": "D09",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D09",
       "target": "crates/taskmesh-engine/tests/hardening_fairness_reference.rs",
@@ -1464,7 +1464,7 @@
     {
       "id": "D10",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D10",
       "target": "crates/taskmesh-engine/tests/hardening_lifecycle.rs",
@@ -1480,7 +1480,7 @@
     {
       "id": "D11",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D11",
       "target": "crates/taskmesh-engine/tests/pending_resolver.rs",
@@ -1496,7 +1496,7 @@
     {
       "id": "D12",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D12",
       "target": "crates/taskmesh-engine/tests/hardening_exact_accounting.rs",
@@ -1512,7 +1512,7 @@
     {
       "id": "D13",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-003",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D13",
       "target": "crates/taskmesh-contract/tests/contract_roundtrip.rs",
@@ -1528,7 +1528,7 @@
     {
       "id": "D14",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-003",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D14",
       "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
@@ -1544,7 +1544,7 @@
     {
       "id": "D15",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-006",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D15",
       "target": "crates/taskmesh/tests/runtime_cpu_executor.rs",
@@ -1560,7 +1560,7 @@
     {
       "id": "D16",
       "origin": "P",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-005",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D16",
       "target": "crates/taskmesh/tests/config_inventory.rs",
@@ -1576,7 +1576,7 @@
     {
       "id": "D17",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-003",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D17",
       "target": "crates/taskmesh-engine/tests/hardening_close_admission.rs",
@@ -1592,7 +1592,7 @@
     {
       "id": "D18",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D18",
       "target": "crates/taskmesh-engine/tests/substrate_inventory.rs",
@@ -1608,7 +1608,7 @@
     {
       "id": "D19",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-009",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D19",
       "target": "crates/taskmesh-engine/tests/hardening_queue_history.rs",
@@ -1624,7 +1624,7 @@
     {
       "id": "D20",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-010",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D20",
       "target": "crates/taskmesh-contract/tests/snapshot_oracle.rs",
@@ -1640,7 +1640,7 @@
     {
       "id": "D21",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-002",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D21",
       "target": "crates/taskmesh/tests/strict_ingress.rs",
@@ -1656,7 +1656,7 @@
     {
       "id": "D22",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-002",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D22",
       "target": "crates/taskmesh/tests/strict_ingress.rs",
@@ -1672,7 +1672,7 @@
     {
       "id": "D23",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-003",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D23",
       "target": "crates/taskmesh-contract/tests/contract_roundtrip.rs",
@@ -1688,7 +1688,7 @@
     {
       "id": "D24",
       "origin": "K",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D24",
       "target": "crates/taskmesh-engine/tests/hardening_snapshot_projection.rs",
@@ -1704,7 +1704,7 @@
     {
       "id": "D25",
       "origin": "G",
-      "status": "PASS",
+      "status": "MAPPED",
       "owner_ticket": "BG25-002",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::D25",
       "target": "crates/taskmesh/tests/strict_ingress.rs",
@@ -1717,5 +1717,11 @@
         "crates/taskmesh/tests/strict_ingress.rs"
       ]
     }
-  ]
+  ],
+  "status_semantics": {
+    "MAPPED": "static candidate mapping only: the named target and test case exist; semantic sufficiency and execution are not asserted",
+    "OPEN": "the scenario has no accepted implementation or oracle yet",
+    "NOT_RUN": "the selected execution proof was not run",
+    "OUT_OF_SCOPE": "the scenario is outside the accepted product boundary"
+  }
 }

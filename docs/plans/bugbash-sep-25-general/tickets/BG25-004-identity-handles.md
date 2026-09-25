@@ -1,6 +1,8 @@
 # BG25-004 — identity·parent plan·owner-bound handle
 
-- 상태: IMPLEMENTED — qualification pending
+- 구현 상태: IMPLEMENTED
+- 증명 상태: STATIC_MAPPED
+- 외부 상태: NOT_APPLICABLE — qualification pending
 - 우선순위: P1
 - 선행: BG25-001 D4–D5
 - 소유: contract/API owner → engine owner → consumer owner

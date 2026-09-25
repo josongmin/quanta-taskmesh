@@ -2,7 +2,7 @@
 
 ## Verdict
 
-The packet is implemented. Production changes are limited to reproduced contract failures; proof-only gaps were closed with independent deterministic fixtures.
+Repository implementation is complete. The overall packet remains partial until exact-source CI proof, D1–D9 human review, and external ingress/wire adoption are supplied by their respective authorities.
 
 ## Classification
 
@@ -15,7 +15,7 @@ The packet is implemented. Production changes are limited to reproduced contract
 | Strict ingress | BG25-002 | Additive bounded strict task/config entrypoints preserve raw DTO compatibility. External deployment adoption remains an ownership fact outside this repository. |
 | Authority migration | BG25-004 B28 | Governor-bound opaque permit/ticket handles reject foreign same-sequence operations and fail closed on exhaustion. |
 | Proof-first | BG25-008, 009, 010 | Independent admission, queue-history, and memory-ledger oracles found no additional production mismatch. |
-| Measurement/evidence | BG25-011, 012 | Host and simulator accounting plus the validated 104-row manifest close deterministic evidence without changing runtime semantics for metrics. |
+| Measurement/evidence | BG25-011, 012 | Host and simulator accounting have deterministic fixtures. The validated 104-row manifest is a static candidate map; execution status comes from a separate exact-source receipt. |
 
 ## SOLID and minimality checks
 
@@ -51,4 +51,4 @@ The packet is implemented. Production changes are limited to reproduced contract
 
 ## External adoption boundary
 
-The library contract is closed. Deployment owners still choose their bytes ingress call site, validate parent-plan membership before submission, and negotiate downstream wire versions. The evidence manifest proves the library behavior and does not claim deployment adoption.
+The repository library implementation is complete. Deployment owners still choose their bytes ingress call site, validate parent-plan membership before submission, and negotiate downstream wire versions. The manifest records candidate evidence locations and does not prove semantic sufficiency, execution, or deployment adoption.

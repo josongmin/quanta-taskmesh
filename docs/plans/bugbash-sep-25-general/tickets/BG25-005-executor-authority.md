@@ -1,6 +1,8 @@
 # BG25-005 — executor descriptor와 worker authority
 
-- 상태: IMPLEMENTED
+- 구현 상태: IMPLEMENTED
+- 증명 상태: STATIC_MAPPED
+- 외부 상태: NOT_APPLICABLE
 - 우선순위: P0
 - 선행: BG25-001 D7–D8
 - 소유: host/executor owner

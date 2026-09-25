@@ -1,6 +1,8 @@
 # BG25-006 — deadline response와 worker custody
 
-- 상태: IMPLEMENTED
+- 구현 상태: IMPLEMENTED
+- 증명 상태: STATIC_MAPPED
+- 외부 상태: NOT_APPLICABLE
 - 우선순위: P0
 - 선행: BG25-001 D6, BG25-005
 - 소유: host/runtime owner; engine lease 변경은 engine owner

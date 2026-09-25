@@ -1,6 +1,8 @@
 # BG25-012 — scenario evidence and exact-source gate integration
 
-- 상태: IMPLEMENTED
+- 구현 상태: IMPLEMENTED
+- 증명 상태: RECEIPT_REQUIRED
+- 외부 상태: NOT_APPLICABLE
 - 우선순위: P1
 - 선행: BG25-002–BG25-011
 - 소유: integration/CI owner
@@ -34,10 +36,10 @@
 
 ## DoD
 
-- Every 104 scenario row is PASS, OPEN, NOT_RUN, or OUT_OF_SCOPE with evidence; no fabricated PASS and no dropped K baseline.
+- Every one of the 104 scenario rows is MAPPED, OPEN, NOT_RUN, or OUT_OF_SCOPE; MAPPED asserts only a candidate target/case exists, so the tracked file cannot fabricate an execution PASS.
 - Every completed implementation ticket has an actually selected deterministic test and accepted contract reference.
 - Gate inventory, required set, recipes, test catalog, and documentation agree.
-- A clean unchanged-HEAD CI-profile receipt passes and binds HEAD/tree/path digest.
+- A clean unchanged-HEAD CI-profile receipt separately records gate execution and binds HEAD/tree/path digest; it is never copied into the tracked static map.
 - Nightly/release status is reported separately and never inferred from CI profile.
 
 ## 검증

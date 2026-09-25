@@ -1,6 +1,8 @@
 # BG25-001 — 계약과 신뢰 경계 고정
 
-- 상태: IMPLEMENTED
+- 구현 상태: IMPLEMENTED
+- 증명 상태: REVIEW_REQUIRED
+- 외부 상태: OPEN
 - 우선순위: P0
 - 선행: 없음
 - 소유: contract/API 통합 owner

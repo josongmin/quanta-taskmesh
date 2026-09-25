@@ -7,6 +7,12 @@
 - 선행: BG25-001 D1–D3
 - 소유: contract/ingress owner, host integration owner
 
+## 2026-09-25 재감사 잔여
+
+- **저장소 코드:** strict parser와 D04/D21/D22/D25/H33 회귀가 존재하고 직전 clean HEAD `da5356b`의 기본 `test` 게이트가 PASS였다. 새 확정 결함 없음.
+- **필수 외부 인계:** 배포 bytes 입력이 실제 있다면 그 진입점에서 `parse_task_spec`/`parse_runtime_config`를 호출하고 raw DTO 우회가 없는지 배포 owner가 증명한다. Semantica의 확인된 governance 경로는 typed Rust builder이며, 이 경로에 bytes ingress가 있다는 증거는 없다. 해당하지 않으면 배포 topology 근거와 함께 N/A로 판정한다.
+- **완료 조건:** 외부 저장소·호출점·owner·입력 오타/중복/상한의 owner-local 결과와 source-bound consumer receipt. 없으면 외부 상태 OPEN; BG25-012가 문서 변경 후 CI 영수증을 재발행한다.
+
 ## 목적
 
 Raw DTO 호환성을 유지하면서 untrusted bytes를 execution/config authority로 승격하는 단일 strict ingress를 만든다. parsing 전 byte cap, decode 중 depth/stage cap, 모든 중첩 unknown/duplicate key, 명시적 wait와 blocking dispatch를 fail closed로 처리한다.

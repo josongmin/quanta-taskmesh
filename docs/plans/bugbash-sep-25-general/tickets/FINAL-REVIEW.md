@@ -2,7 +2,18 @@
 
 ## Verdict
 
-The 104-row static mapping validates on the current tree; this is structural evidence, not an execution receipt. New compound fixtures provide candidate evidence for mixed-substrate overload, independent capacity saturation, staged blocker release, policy interactions, concurrent histories, split child lifetimes, and host/simulator accounting. The in-repository semantic audit now has a bounded combined H04 race fixture and a focused Governor schedule persistence/replay fixture for H16. The full nightly modelcheck profile has not run. The macOS CI profile passed at committed, clean HEAD `2555aca6711575449ffe5496e2665bb341ea7c45`; its receipt is valid only for that source and must be reissued after any tracked edit. D1–D9 human review and external ingress/planner/wire adoption remain OPEN under their external authorities. The repaired Semantica concurrent consumer test passes 2/2 on clean Semantica `0384053` against clean Taskmesh `2555aca`; its QBC invocation has manual comparison authority rather than owner/deployment qualification.
+The 104-row static mapping validates on the current tree; this is structural evidence, not an execution receipt. The in-repository semantic audit has bounded compound fixtures for overload, capacity, policy, concurrency, child lifetime, and host/simulator accounting. Clean committed Taskmesh HEAD `da5356b253fc69450e98869a2c94e4a3e770747e` received a validated macOS CI-profile receipt at 2026-09-25 13:12 UTC: 16/16 required gates PASS, required NOT_RUN/FAIL 0, unchanged HEAD/tree/path digest. The `test` gate ran 625/625 tests with 0 skipped; `py-test` ran 722/722. This qualifies that exact source only. The current tracked documentation and test changes require another clean-HEAD receipt after integration. D1–D9 deployment review and external ingress/planner/wire adoption remain OPEN. Full nightly modelcheck, TSan, fuzz, coverage, IAI, mutation, and release qualification have not run. Semantica's clean 2/2 focused consumer comparison was also rerun against Taskmesh `da5356b`; its QBC invocation has manual comparison authority, not owner/deployment qualification.
+
+## 2026-09-25 final residual audit
+
+| Priority | Owner | Remaining action and DoD | Evidence boundary |
+|---|---|---|---|
+| Required for this updated tree | BG25-012 integrator | The B27 panic fixture and six narrowed scenario oracles are committed at `605070d`; focused B27 1/1 and both plan validators passed. Review and commit the remaining tracked ticket documents. Run `just dev`, then `just verify-macos-ci`, and validate the receipt with `--expected-head <final-full-SHA>`. Require 16 applicable required gates PASS, no required NOT_RUN/FAIL, unchanged HEAD/tree/path digest, and durable receipt custody. | The validated `da5356b` receipt predates these tracked edits. Do not copy its PASS to the new tree. |
+| Required for deployment adoption | Product/consumer owner with BG25-001–003 | Review D1–D9 against each deployed Taskmesh consumer. Identify the exact bytes ingress, child planner, classifier, serialized wire consumer, and deadline/executor assumptions or record a source-backed N/A for each absent boundary. Run consumer fixtures against final Taskmesh source and obtain owner/deployment qualification. | Semantica's scoped typed-builder path and clean focused 2/2 test do not prove deployment approval or exhaust all consumers. |
+| Required only for nightly/release claim | BG25-009/012 and release owner | On explicit high-cost authorization, run all registered source-bound modelcheck, TSan, fuzz, coverage, IAI, and mutation producers as applicable; validate complete raw receipts and release checklist/semver/adjudication separately. | Bounded deterministic CI and focused Shuttle replay do not cover the full nightly state space. |
+| Required only for performance claim | BG25-011 benchmark owner | Capture a quiet-host baseline with same source/toolchain/features/workload/seed/warmup and exact response/worker denominators before claiming latency or throughput improvement/regression. | Current host/simulator correctness tests and `bench-smoke` are not performance qualification. |
+
+No additional reachable production defect is established by this audit. `scenario-evidence.json` remains a static target/case map; CI PASS shows selected cases ran, while external product semantics and exhaustive interleavings retain the boundaries above. Hosted GitHub CI is intentionally disabled by the repository's local-first policy, so its absence is not counted as a regression.
 
 ## Classification
 
@@ -54,15 +65,12 @@ The 104-row static mapping validates on the current tree; this is structural evi
 - Parent-plan stage membership and detached structured concurrency remain outside the engine contract by D4 and the root-child lifetime fixtures.
 - Nightly modelcheck, TSan, fuzz, coverage, IAI, and mutation are NOT_RUN pending explicit authorization.
 
-## Remaining work, in order
+## Remaining work order
 
-| Owner | Required result | Stop condition |
-|---|---|---|
-| BG25-009/012 | Run and validate the complete source-bound nightly modelcheck producer when high-cost qualification is authorized. | Focused Governor replay does not prove that every registered Loom/Shuttle model completed. |
-| External consumer | Obtain owner/deployment qualification for the repaired Semantica path and resolve D1–D9 against actual deployment boundaries. | Clean QBC 2/2 is focused execution with manual comparison authority; broad lib-test is independently blocked by unrelated `E0432`; see `EXTERNAL-ADOPTION.md`. |
-| BG25-001/002/003 | Record human D1–D9 review and the actual deployment ingress, planner, and wire consumer call sites with owner-local execution evidence. | Library-local tests cannot close external adoption. |
-| BG25-011 | Record a quiet-host environment and baseline only if a latency or throughput qualification claim is required. | Simulator admission wait is not host latency; a first baseline is not a regression PASS. |
-| BG25-012 | After the final tracked edit, reissue and validate the clean exact-HEAD macOS CI-profile receipt; retain durable artifact custody. | The `3ac3ac4` receipt passed, but cannot qualify a later HEAD/tree/path digest. |
+1. BG25-012: stop writers, integrate these document changes, and reissue the clean exact-HEAD macOS CI receipt.
+2. BG25-001–003 and deployment owners: decide D1–D9 applicability for each real consumer and obtain owner/deployment evidence. The Semantica focused 2/2 comparison is a lead, not deployment qualification.
+3. BG25-009/012 and release owner: run the full nightly/release producers only when that qualification is requested.
+4. BG25-011: measure a quiet-host baseline only when making a performance claim.
 
 ## External adoption boundary
 

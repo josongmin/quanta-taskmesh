@@ -7,6 +7,12 @@
 - 선행: BG25-001, BG25-005
 - 소유: engine/admission owner; host capacity fixture는 host owner
 
+## 2026-09-25 재감사 잔여
+
+- **저장소 코드:** A05/B05/B20/H01/H02/H07/H32/D01의 bounded capacity·policy fixture가 직전 clean HEAD `da5356b`의 `test` 게이트에서 PASS였다. 새 확정 결함 없음.
+- **증거 한계:** 유한한 대표 조합과 독립 원장의 판정이며 모든 class×substrate 상태공간의 소진 증거는 아니다. 새 counterexample이 없으면 pool topology를 늘리거나 scheduler를 수정하지 않는다.
+- **남은 증거:** 문서 변경 후 clean exact-source CI 재검증은 BG25-012가 소유한다.
+
 ## 목적
 
 class, capability, CPU, measured memory, tier/fallback이 동시에 충돌할 때 원자성, blocker priority, boundedness를 independent event ledger로 증명한다.

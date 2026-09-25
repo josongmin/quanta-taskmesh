@@ -7,6 +7,12 @@
 - 선행: BG25-001, BG25-008
 - 소유: engine/scheduler owner; drain host owner
 
+## 2026-09-25 재감사 잔여
+
+- **결정적 회귀:** B23/B27/H04/H06/H13/H14/H16/H25/D19의 유한 fixture는 직전 clean HEAD `da5356b`의 `test` 게이트에서 PASS였다. 새 확정 production 결함 없음.
+- **조건부 고비용 증거:** focused Shuttle 실패 schedule 저장·재생은 전체 modelcheck가 아니다. release 또는 고비용 qualification을 요청하면 `tools/modelcheck/producer-manifest.json`의 전 생산자를 clean source에서 실행하고 source-bound receipt·seed·explored bound를 판정한다. 중단·부분 출력은 PASS가 아니다.
+- **남은 기본 증거:** B27 malformed/waker panic fixture는 `605070d`에 커밋했고 focused Nextest 1/1이 통과했다. 해당 변경은 `da5356b` 영수증 밖이므로 최종 clean HEAD의 CI 영수증이 필요하다. BG25-012가 통합을 소유한다. full modelcheck 미실행을 ordinary CI 실패로 분류하지 않는다.
+
 ## 목적
 
 기존 단일 fairness/effect 테스트를 넘어 release, promotion, claim, abandon, timeout, sweep, cancellation, continuation, drain을 선형화 가능한 bounded histories로 검증한다.

@@ -7,6 +7,12 @@
 - 선행: BG25-001 D6, BG25-005
 - 소유: host/runtime owner; engine lease 변경은 engine owner
 
+## 2026-09-25 재감사 잔여
+
+- **저장소 코드:** `CompleteBy` 응답과 worker custody 분리, D05/D15/H11/H12/H19/H20/H31/H34 회귀가 직전 clean HEAD `da5356b`의 `test` 게이트에서 PASS였다. 새 확정 결함 없음.
+- **외부 계약:** 실제 consumer가 늦은 정상 성공을 기대하는지는 BG25-001의 D6 호환성 검토로 추적한다. 그 증거 없이 응답 계약을 다시 변경하지 않는다.
+- **남은 증거:** 문서 변경 후 clean exact-source CI 재검증은 BG25-012가 소유한다.
+
 ## 목적
 
 caller response, root completion, owned-runtime teardown, blocking child termination, lease release, drain을 독립 사건으로 만든다. `RunFor`와 `CompleteBy`를 섞지 않고 정상 `Ok`와 task `Err` 모두 같은 response arbiter를 사용한다.

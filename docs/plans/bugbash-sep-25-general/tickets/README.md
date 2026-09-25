@@ -1,6 +1,6 @@
 # Bugbash Sep-25 general — final resolution plan
 
-- Status: **PARTIAL** overall. The 104-row structural validator passes and the in-repository semantic audit has explicit residuals; a clean exact-source CI-profile receipt is required after the final commit. D1–D9 human review and external ingress/planner/wire adoption remain OPEN. The manifest is a static candidate map, not an execution receipt.
+- Status: **PARTIAL** overall. BG25-001–012의 저장소 구현은 완료됐고 104행 정적 매핑은 통과했다. Clean HEAD `da5356b253fc69450e98869a2c94e4a3e770747e`의 macOS CI profile 16/16 PASS 영수증도 검증됐다. 현재 tracked 문서·테스트 변경은 그 영수증의 source 범위를 벗어나므로 최종 clean HEAD에서 재발행한다. D1–D9 사람 검토·외부 채택은 OPEN이고 nightly/release는 미실행이다. [최종 재감사](FINAL-REVIEW.md)를 참조한다.
 - Audit source: `76559c483bdd1d6b0b5226f7c5b5591b919afae9`, tree `215a968630e9f0675bfd1e42f0919bd2047bded2`. Implementation incorporated the later strict-ingress and cross-Governor reproduction history before final source-bound proof.
 - Scenario source: [104-case audit](../../../misc/tmp-engine-checklist-sep-25.md). Its static result is K 51 / P 34 / G 19; all 53 P/G scenarios are assigned exactly once here.
 - Predecessor: `docs/plans/sep-25-engine-coverage/tickets/` is a tracked superseded draft. This directory is the final bugbash execution packet; do not execute both as separate plans.
@@ -38,4 +38,4 @@
 
 ## Completion boundary
 
-A ticket's implementation can complete independently of proof and external adoption. BG25-012 has inventoried all 104 scenarios, preserved the 51 K baselines, and mapped the 53 P/G rows to declared test cases and explicit supporting cases. The validator rejects ignored or feature-disabled cases and verifies exact Rayon selectors; it does not execute tests. Qualification requires a clean unchanged-HEAD macOS CI-profile receipt for the final commit. D1–D9 human review and external deployment adoption remain explicit open states. Nightly/modelcheck/TSan/fuzz/mutation remain separate explicit-cost proof and are not implied by CI-profile completion.
+A ticket's implementation can complete independently of proof and external adoption. BG25-012 has inventoried all 104 scenarios, preserved the 51 K baselines, and mapped the 53 P/G rows to declared test cases and explicit supporting cases. The validator rejects ignored or feature-disabled cases and verifies exact Rayon selectors; it does not execute tests. `da5356b`의 clean macOS CI receipt는 16 required gates PASS를 증명했지만 이후 tracked 문서 변경을 포함하지 않는다. BG25-012는 최종 clean HEAD 재발행을 소유한다. D1–D9 외부 채택은 OPEN이다. Nightly/modelcheck/TSan/fuzz/mutation은 별도 요청과 증거가 필요하다.

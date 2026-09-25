@@ -7,6 +7,12 @@
 - 선행: BG25-001 D9
 - 소유: contract/consumer owner
 
+## 2026-09-25 재감사 잔여
+
+- **저장소 코드:** B18/B24/D03/D13/D14/D17/D23의 library-side fixture가 CI `test`에서 실행됐다. 새 확정 결함 없음.
+- **필수 외부 인계:** classifier가 provenance의 사실성을 어디서 보장하는지, serialized Snapshot/enum을 읽는 소비자가 있는지 배포 owner가 확인한다. 실제 wire가 있으면 unknown version/variant의 실패·협상 경로를 그 소비자의 fixture와 receipt로 입증한다. 없으면 확인한 topology를 근거로 N/A를 기록한다.
+- **증거 경계:** raw roundtrip과 library consumer fixture만으로 외부 classifier·wire adoption을 닫지 않는다. 문서 변경 후 CI 재검증은 BG25-012가 소유한다.
+
 ## 목적
 
 식별자, provenance, legacy alias, Snapshot version, enum evolution, close/preflight precedence를 consumer가 오해하지 않도록 현재 동작과 목표 오류 계약을 고정한다.

@@ -38,7 +38,7 @@ MAPPED means that candidate test declarations exist, are not ignored or disabled
 - Historical receipts remain valid only for their recorded HEAD/tree/path digest and never qualify later source.
 - The current source adds fail-closed mapping validation, executable Rayon selectors, bounded async fixtures, and direct compound oracles for overload, capacity, policy, concurrency, child lifetime, and host/simulator accounting.
 - `test-architecture` runs both the plan validator and 104-row mapping validator, so cardinality, ownership, missing-case, inventory, and exact Rayon recipe-selector drift fail the normal CI profile.
-- A final clean `verify-macos-ci` receipt must bind the committed final HEAD and an unchanged tree.
+- Clean `da5356b`의 `verify-macos-ci` receipt는 16/16 필수 gate PASS이며 `--validate-receipt --expected-head`로 재검증됐다. 이후 tracked 문서·테스트 변경은 포함하지 않는다. 최종 변경이 커밋된 뒤 새 clean HEAD의 receipt를 다시 발행해야 한다.
 - No nightly/modelcheck/TSan/fuzz/coverage/IAI/mutation qualification is inferred from deterministic or CI-profile success.
 
 Both plan validators check static mapping only. Their PASS is not scenario execution or product qualification.

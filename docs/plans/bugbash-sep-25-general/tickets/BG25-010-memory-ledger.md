@@ -7,6 +7,12 @@
 - 선행: BG25-008, BG25-009
 - 소유: engine/memory owner, contract snapshot owner
 
+## 2026-09-25 재감사 잔여
+
+- **저장소 코드:** H10/D20의 stage·reconcile·snapshot 독립 원장 fixture가 직전 clean HEAD `da5356b`의 `test` 게이트에서 PASS였다. 새 확정 결함 없음.
+- **증거 한계:** snapshot helper의 자체 등식은 독립 held 원장이 아니다. 새 memory production 패치는 input-derived ledger의 결정적 반례가 있을 때만 연다.
+- **남은 증거:** 문서 변경 후 clean exact-source CI 재검증은 BG25-012가 소유한다.
+
 ## 목적
 
 stage release, measured/hybrid reconcile, promotion, clock activity, leak sweep를 하나의 input-derived memory ledger로 검증하고 Snapshot helper의 제한을 명시한다.

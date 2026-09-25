@@ -7,6 +7,12 @@
 - 선행: 없음
 - 소유: contract/API 통합 owner
 
+## 2026-09-25 재감사 잔여
+
+- **저장소 코드:** 새 확정 결함 없음. D1–D9 라이브러리 계약은 수용됐고 직전 clean HEAD `da5356b`의 `doctest`·`rustdoc`·`consumer-msrv` 게이트가 PASS였다.
+- **필수 외부 인계:** 배포 owner가 D1–D9별 실제 진입점, 해당/비해당 근거, 호환성·migration 결정을 검토하고 서명한다. 범위는 [EXTERNAL-ADOPTION](EXTERNAL-ADOPTION.md)의 Semantica 후보와 아직 미확인인 다른 배포 소비자다. 담당 저장소·호출점·owner·그 저장소의 source-bound 결과가 없으면 OPEN이다.
+- **증거 경계:** 이 문서 변경 후 `da5356b` 영수증은 새 tree를 검증하지 않는다. 최종 재검증은 BG25-012가 소유한다.
+
 ## 목적
 
 [DECISIONS](DECISIONS.md)의 D1–D9를 실제 consumer와 대조해 승인한다. raw DTO, strict ingress, direct Governor API, Tokio host, external planner, wire consumer의 보장을 분리하고 후속 티켓이 서로 다른 의미의 안전·완료·소유권을 구현하지 않게 한다.

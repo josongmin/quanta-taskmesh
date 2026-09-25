@@ -7,6 +7,12 @@
 - 선행: BG25-001, BG25-006
 - 소유: host/runtime owner, API docs owner
 
+## 2026-09-25 재감사 잔여
+
+- **저장소 코드:** A11/H21/H35의 root·detached child 경계 fixture가 직전 clean HEAD `da5356b`의 `test` 게이트에서 PASS였다. 새 확정 결함 없음.
+- **계약 한계:** 임의 ambient Tokio child와 미대기 `spawn_local` child는 engine의 structured-concurrency 소유물이 아니다. 제품이 이를 소유해야 한다는 새 요구가 생길 때만 별도 API 설계를 연다.
+- **남은 증거:** 문서 변경 후 clean exact-source CI 재검증은 BG25-012가 소유한다.
+
 ## 목적
 
 Taskmesh가 실행하는 bootstrap root와 caller가 소유하는 later stage, reducer, detached child의 lifetime 경계를 fixture와 공개 계약으로 고정한다.

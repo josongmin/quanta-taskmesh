@@ -2,6 +2,8 @@
 
 This ledger separates a discovered Rust consumer from deployment acceptance. The source observation below is pinned to the consumer checkout and must be refreshed before a final adoption claim.
 
+2026-09-25 재감사: Semantica의 공유 checkout HEAD `038405343fe50ebc1216dbc52de9148a4cb52710`에는 다른 경로의 미커밋 변경이 있다. 분리한 clean checkout의 같은 HEAD에서 governance contract test 2/2를 Taskmesh `da5356b253fc69450e98869a2c94e4a3e770747e` 상대로 재실행했다. QBC run `20260925T131235.134873Z-a517eb9b83f2`는 exit 0이지만 `manual_invocation_comparison_only` 권한이므로 owner/deployment qualification은 OPEN이다. 영수증은 `/Users/songmin/.codex/artifacts/taskmesh-bugbash-sep25-da5356b/semantica-consumer/receipt.json`에 보관했다. 확인한 `packages/`, `apps/`, `crates/` 범위에서 `parse_task_spec`, `parse_runtime_config`, `awaited_child_of`, `parent_stage` 호출은 발견되지 않았다. 이 검색은 배포 topology나 다른 소비자의 부재 증거가 아니다.
+
 ## Semantica CodeGraph V2 candidate
 
 - Consumer checkout observation at `/Users/songmin/Documents/code-new/semantica-codegraph-v2` HEAD `3708db5a3ddfc3487008839a64e1c731417b9520` on 2026-09-25. The named governance source and focused contract test were clean; unrelated paths remained dirty. This does not qualify a deployed binary.

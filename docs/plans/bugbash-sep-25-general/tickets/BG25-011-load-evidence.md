@@ -7,6 +7,12 @@
 - 선행: BG25-005, BG25-006, BG25-008
 - 소유: benchmark owner; host fixture has host owner
 
+## 2026-09-25 재감사 잔여
+
+- **정확성:** H17/H28의 simulator·실제 host 모집단 fixture가 직전 clean HEAD `da5356b`의 `test`·`bench-smoke` 게이트에서 PASS였다. 새 확정 결함 없음.
+- **조건부 성능 증거:** latency/throughput 개선·회귀를 주장할 때만 동일 source·toolchain·feature·workload·seed·quiet-host baseline과 응답/worker 분모를 기록한다. 현 baseline 부재는 정확성 실패가 아니다.
+- **남은 기본 증거:** 문서 변경 후 clean exact-source CI 재검증은 BG25-012가 소유한다.
+
 ## 목적
 
 Simulator admission-wait metrics와 실제 public host의 end-to-end response/custody를 분리하고 각 모집단의 denominator를 보존한다.

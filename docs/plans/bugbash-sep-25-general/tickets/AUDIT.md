@@ -2,6 +2,7 @@
 
 ## Source and evidence state
 
+- Final re-audit at clean committed `da5356b253fc69450e98869a2c94e4a3e770747e` verified `target/verification/macos-gates.json`: macOS CI profile 16/16 required PASS, 0 required NOT_RUN/FAIL, stable HEAD/tree/path digest. Subsequent tracked ticket edits require a new receipt; the plan and 104-row validators still prove static structure only.
 - The original audit was frozen at `76559c4`; its receipt remains historical evidence for that source only. Current qualification is regenerated only after the implementation is committed and the source is clean.
 - Executor authority fixes are recorded in `bf03efc`, `3e57f1a`, and `0b608c3`. Deadline response and centralized runtime-context preflight are recorded in `74a18f7`.
 - `just dev` passed after `74a18f7`'s source changes: 496/496 tests, Semgrep 0 findings, crate-boundary check, and gate-inventory validation. The completed fixes were then rerun through `verify-macos-ci`; the generated receipt remains valid only while its clean source HEAD, tree, and digest match the checkout.

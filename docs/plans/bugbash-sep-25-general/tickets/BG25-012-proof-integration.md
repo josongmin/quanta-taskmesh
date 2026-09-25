@@ -7,6 +7,12 @@
 - 선행: BG25-002–BG25-011
 - 소유: integration/CI owner
 
+## 2026-09-25 재감사 잔여
+
+- **직전 clean source:** `da5356b253fc69450e98869a2c94e4a3e770747e`의 `target/verification/macos-gates.json`을 `--validate-receipt --expected-head`로 재검증했다. macOS CI profile 필수 16/16 PASS, required NOT_RUN/FAIL 0, HEAD/tree/path digest 전후 일치. 이는 해당 commit에만 유효하다.
+- **필수 마지막 단계:** `scenario-evidence.json`과 `hardening_effect_retirement.rs`는 `605070d`에 별도 커밋했고 B27 focused 1/1 및 두 plan validator가 PASS였다. 남은 tracked 티켓 문서를 검토·커밋해 clean HEAD를 고정한 뒤 `just dev`와 `just verify-macos-ci`를 다시 실행하고 저장된 영수증을 그 HEAD로 재검증한다. 그 전까지 `RECEIPT_REQUIRED`를 유지한다. 104 `MAPPED`는 정적 후보이며 새 영수증과도 의미상 동치가 아니다.
+- **별도 범위:** 외부 D1–D9 채택은 BG25-001~003; full nightly/modelcheck·TSan·fuzz·mutation 및 release는 명시적 자격 요청이 있을 때만 실행한다. 의도적으로 꺼진 hosted workflow를 이 티켓의 미완료 게이트로 세지 않는다.
+
 ## 목적
 
 전체 104개 audit scenario의 contract와 fixture를 actual test discovery, feature/platform selectors, gate inventory, and exact-source receipts에 연결한다. 파일 존재나 coverage percentage를 closure로 사용하지 않는다. 51개 기존 K는 regression baseline으로 보존하고 53개 P/G는 owner ticket과 연결한다.

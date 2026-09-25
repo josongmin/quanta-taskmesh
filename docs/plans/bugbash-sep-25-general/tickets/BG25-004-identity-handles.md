@@ -7,6 +7,12 @@
 - 선행: BG25-001 D4–D5
 - 소유: contract/API owner → engine owner → consumer owner
 
+## 2026-09-25 재감사 잔여
+
+- **저장소 코드:** opaque Governor-bound permit/ticket과 foreign same-sequence 거절은 구현됐고 직전 clean HEAD `da5356b`의 `test`·`consumer-msrv`·`test-rayon` 게이트가 PASS였다. 새 확정 결함 없음.
+- **외부 경계:** B22 parent-plan membership과 다른 배포 소비자의 API migration은 BG25-001의 외부 ledger에서 OPEN이다. 이 티켓의 `NOT_APPLICABLE`은 외부 일이 없다는 뜻이 아니라 외부 채택의 주 owner가 아님을 뜻한다.
+- **재개 조건:** 실제 consumer가 raw 숫자 ID 또는 undeclared parent stage를 쓰는 근거가 나오면 해당 consumer 경로와 semver 결정을 추가한다. 이 티켓만 다시 구현하지 않는다.
+
 ## 목적
 
 동일 root-operation 재사용, parent-stage membership 책임, cross-Governor raw ID 충돌을 명시하고 최종적으로 authority-bound handles를 제공한다.

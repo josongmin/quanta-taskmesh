@@ -7,6 +7,12 @@
 - 선행: BG25-001 D7–D8
 - 소유: host/executor owner
 
+## 2026-09-25 재감사 잔여
+
+- **저장소 코드:** H30/B25/H27의 구조 수정과 관련 fixture가 직전 clean HEAD `da5356b`의 `test`·`test-rayon` 게이트에서 PASS였다. 새 확정 결함 없음.
+- **계약 한계:** 공유 executor의 전역 물리 상한은 외부 공유 authority 없이 주장하지 않는다. 실제 adapter가 고정 descriptor를 어기는 반례가 나오면 해당 adapter owner에게 인계한다.
+- **남은 증거:** 문서 변경 후 clean exact-source CI 재검증은 BG25-012에만 배정한다.
+
 ## 목적
 
 Builder가 검증한 executor descriptor를 runtime의 단일 불변 authority로 동결하고 Tokio context, shared executor, closure custody 경계를 명확히 한다.

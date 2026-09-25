@@ -66,6 +66,7 @@ def selected_cases(value: object) -> tuple[set[tuple[str, str, str]], set[str]]:
         cases = suite.get("testcases")
         if not isinstance(cases, dict):
             raise ValueError(f"{identity}: missing testcases")
+        case_prefix = f"{package}::{target}" if kind == "lib" else binary_id
         for name, case in cases.items():
             if not isinstance(case, dict) or not isinstance(name, str):
                 raise ValueError(f"{identity}: malformed testcase")
@@ -73,7 +74,7 @@ def selected_cases(value: object) -> tuple[set[tuple[str, str, str]], set[str]]:
             if not isinstance(match, dict):
                 raise ValueError(f"{identity}: missing filter status")
             if case.get("ignored") is False and match.get("status") == "matches":
-                selected.add(f"{binary_id}${name}")
+                selected.add(f"{case_prefix}${name}")
     if value.get("test-count") != len(selected):
         raise ValueError("nextest test-count differs from selected nonignored cases")
     return targets, selected
@@ -155,7 +156,10 @@ def main() -> None:
         if started != cases or completed != cases:
             raise ValueError(
                 f"Nextest execution differs from selection: selected={len(cases)} "
-                f"started={len(started)} passed={len(completed)}"
+                f"started={len(started)} passed={len(completed)} "
+                f"missing_start={sorted(cases - started)[:5]} "
+                f"extra_start={sorted(started - cases)[:5]} "
+                f"missing_pass={sorted(cases - completed)[:5]}"
             )
         passed.update(completed)
         commands.append({

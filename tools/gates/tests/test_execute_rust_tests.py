@@ -46,6 +46,14 @@ def test_list_count_must_match_selected_denominator() -> None:
         selected_cases(value)
 
 
+def test_library_case_uses_nextest_execution_name() -> None:
+    value = listed({"runs": {"ignored": False, "filter-match": {"status": "matches"}}})
+    suite = value["rust-suites"]["pkg::target"]
+    suite.update({"kind": "lib", "binary-id": "pkg", "binary-name": "pkg_lib"})
+    _, cases = selected_cases(value)
+    assert cases == {"pkg::pkg_lib$runs"}
+
+
 def test_execution_requires_started_and_ok_for_every_case() -> None:
     lines = '\n'.join([
         '{"type":"suite","event":"started","test_count":1}',

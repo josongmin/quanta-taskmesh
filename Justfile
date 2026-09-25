@@ -68,7 +68,7 @@ py-lint:
     uv run ruff check tools
 
 py-test:
-    uv run pytest tools -q --strict-markers
+    uv run python tools/gates/execute_py_tests.py
 
 prompt-check:
     uv run python tools/pm/check.py

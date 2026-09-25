@@ -30,7 +30,7 @@ def status_line_qualifies(gate: dict, stdout: str) -> bool:
     status_tokens = [token for token in verdict.split() if token.startswith("status=")]
     if status_tokens != [spec["require"]]:
         return False
-    if gate.get("id") != "test":
+    if gate.get("id") not in {"test", "py-test"}:
         return True
     fields: dict[str, str] = {}
     for token in verdict.split()[1:]:
@@ -40,19 +40,38 @@ def status_line_qualifies(gate: dict, stdout: str) -> bool:
         if key in fields or not value:
             return False
         fields[key] = value
-    return (
-        set(fields)
-        == {
+    if gate.get("id") == "test":
+        return (
+            set(fields) == {
             "status", "runner", "runner_version", "targets", "selected", "passed",
             "catalog_digest", "selection_digest", "execution_digest",
+            }
+            and fields["runner"] == "nextest"
+            and fields["runner_version"] == "0.9.104"
+            and fields["targets"].isdigit()
+            and fields["selected"].isdigit()
+            and fields["passed"] == fields["selected"]
+            and int(fields["targets"]) > 0
+            and int(fields["selected"]) > 0
+            and all(
+                len(fields[key]) == 64 and all(char in "0123456789abcdef" for char in fields[key])
+                for key in ("catalog_digest", "selection_digest", "execution_digest")
+            )
+        )
+    return (
+        set(fields) == {
+            "status", "runner", "runner_version", "modules", "selected", "passed",
+            "excluded", "slow", "qualification", "catalog_digest", "selection_digest",
+            "execution_digest",
         }
-        and fields["runner"] == "nextest"
-        and fields["runner_version"] == "0.9.104"
-        and fields["targets"].isdigit()
-        and fields["selected"].isdigit()
-        and fields["passed"] == fields["selected"]
-        and int(fields["targets"]) > 0
+        and fields["runner"] == "pytest"
+        and all(fields[key].isdigit() for key in (
+            "modules", "selected", "passed", "excluded", "slow", "qualification"
+        ))
+        and int(fields["modules"]) > 0
         and int(fields["selected"]) > 0
+        and int(fields["passed"]) > 0
+        and int(fields["passed"]) + int(fields["excluded"]) == int(fields["selected"])
         and all(
             len(fields[key]) == 64 and all(char in "0123456789abcdef" for char in fields[key])
             for key in ("catalog_digest", "selection_digest", "execution_digest")

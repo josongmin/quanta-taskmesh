@@ -305,6 +305,14 @@ def passing_gate_results(required: list[str]) -> list[dict]:
                     + " selection_digest=" + "b" * 64
                     + " execution_digest=" + "b" * 64
                 )
+            if result["id"] == "py-test":
+                status_line += (
+                    " runner=pytest runner_version=8.4.0 modules=1 selected=1 passed=1"
+                    " excluded=0 slow=0 qualification=0"
+                    + " catalog_digest=" + "a" * 64
+                    + " selection_digest=" + "b" * 64
+                    + " execution_digest=" + "b" * 64
+                )
             result["status_line"] = status_line
     return results
 

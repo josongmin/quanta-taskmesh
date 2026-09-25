@@ -27,7 +27,7 @@ RECIPE_FRAGMENTS = {
         "cargo test --locked --workspace --exclude taskmesh-doc-examples --doc",
         "cargo test --locked -p taskmesh --features rayon --doc",
     ),
-    "py-test": ("pytest tools -q --strict-markers",),
+    "py-test": ("uv run python tools/gates/execute_py_tests.py",),
     "bench-smoke": ("cargo bench --locked -p taskmesh-bench -- --test",),
     "bench-iai": ("bash tools/bench-iai.sh",),
     "modelcheck": ("tools/modelcheck/run.py all",),

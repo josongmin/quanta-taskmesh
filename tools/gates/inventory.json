@@ -148,7 +148,11 @@
         "semgrep (version pinned in tools/semgrep/version.txt)",
         "just"
       ],
-      "workflow": "ci.yml"
+      "workflow": "ci.yml",
+      "status_line": {
+        "marker": "taskmesh-py-test",
+        "require": "status=PASS"
+      }
     },
     {
       "id": "bench-gate",

@@ -561,7 +561,7 @@ pub fn parse_task_spec(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct StrictRuntimeConfig {
+struct StrictRuntimeInput {
     topology: TopologyConfig,
     resources: ResourceBudget,
     classes: BTreeMap<TaskClass, ClassPolicy>,
@@ -571,20 +571,25 @@ pub struct StrictRuntimeConfig {
     capability_limits: BTreeMap<String, u32>,
 }
 
+/// Parsed declaration that can only be constructed through the bounded bytes
+/// entrypoint. It intentionally does not implement `Deserialize` directly.
+pub struct StrictRuntimeConfig(StrictRuntimeInput);
+
 impl StrictRuntimeConfig {
     /// Reuse the existing Builder's topology, policy, and inventory validation.
     /// Canonical built-in substrates are never replayed as extra registrations.
     pub fn into_builder(self) -> Builder {
+        let input = self.0;
         let mut builder = Builder::new()
-            .topology(self.topology)
-            .resources(self.resources);
-        for (class, policy) in self.classes {
+            .topology(input.topology)
+            .resources(input.resources);
+        for (class, policy) in input.classes {
             builder = builder.class_policy(class, policy);
         }
-        for substrate in self.extra_substrates {
+        for substrate in input.extra_substrates {
             builder = builder.substrate(substrate);
         }
-        for (pool, slots) in self.capability_limits {
+        for (pool, slots) in input.capability_limits {
             builder = builder.capability_limit(pool, slots);
         }
         builder
@@ -597,5 +602,7 @@ pub fn parse_runtime_config(
     limits: StrictIngressLimits,
 ) -> Result<StrictRuntimeConfig, StrictIngressError> {
     scan(bytes, limits, Shape::Config)?;
-    serde_json::from_slice(bytes).map_err(|error| StrictIngressError::Decode(error.to_string()))
+    serde_json::from_slice(bytes)
+        .map(StrictRuntimeConfig)
+        .map_err(|error| StrictIngressError::Decode(error.to_string()))
 }

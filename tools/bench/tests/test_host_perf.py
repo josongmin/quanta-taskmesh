@@ -115,6 +115,7 @@ def fixture() -> tuple[dict, dict, dict, dict]:
             "power_source": "ac",
             "power_mode": "normal",
         },
+        "build_environment": {},
     }
     calibration = {
         "generator_headroom_ok": True,
@@ -345,7 +346,7 @@ def test_execution_provenance_binds_run_start_end_and_artifact_digests() -> None
         )
     proof["raw_sha256"] = host_perf.sha256(raw_bytes)
     proof["build_command"].extend(["--features", "taskmesh/rayon"])
-    with pytest.raises(host_perf.ReceiptError, match="unexpected build features"):
+    with pytest.raises(host_perf.ReceiptError, match="build command or features"):
         host_perf.make_summary(
             raw_bytes,
             scenario_bytes,

@@ -32,6 +32,7 @@ IDENTITY_KEYS = {
     "topology_fingerprint",
     "host_fingerprint",
     "host_environment",
+    "build_environment",
 }
 PROVENANCE_KEYS = {
     "schema_version",
@@ -252,6 +253,22 @@ def host_environment() -> dict[str, Any]:
     }
 
 
+def build_environment() -> dict[str, str]:
+    relevant = (
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "RUSTC",
+        "RUSTC_WRAPPER",
+        "CARGO_BUILD_TARGET",
+        "CARGO_INCREMENTAL",
+    )
+    return {
+        key: value
+        for key, value in sorted(os.environ.items())
+        if key in relevant or key.startswith("CARGO_PROFILE_")
+    }
+
+
 def local_identity(scenario: dict[str, Any], features: list[str]) -> dict[str, Any]:
     topology = scenario.get("topology")
     if not isinstance(topology, dict):
@@ -269,6 +286,7 @@ def local_identity(scenario: dict[str, Any], features: list[str]) -> dict[str, A
         "features": sorted(features),
         "topology_fingerprint": sha256(canonical(topology)),
         "host_environment": environment,
+        "build_environment": build_environment(),
         "host_fingerprint": sha256(
             canonical(
                 {
@@ -305,7 +323,17 @@ def validate_identity(identity: Any) -> None:
     for key in environment.keys() - {"logical_cpus"}:
         if not isinstance(environment[key], str) or not environment[key]:
             raise ReceiptError(f"identity.host_environment.{key} must be nonempty")
-    for key in IDENTITY_KEYS - {"source_dirty", "features", "host_environment"}:
+    build = identity["build_environment"]
+    if not isinstance(build, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str) for key, value in build.items()
+    ):
+        raise ReceiptError("identity.build_environment must be a string map")
+    for key in IDENTITY_KEYS - {
+        "source_dirty",
+        "features",
+        "host_environment",
+        "build_environment",
+    }:
         if not isinstance(identity[key], str) or not identity[key].strip():
             raise ReceiptError(f"identity.{key} must be nonempty")
 
@@ -364,22 +392,21 @@ def validate_execution_provenance(
         raise ReceiptError("resolved topology artifact is required with execution provenance")
     if sha256(topology_bytes) != topology_digest:
         raise ReceiptError("execution provenance topology artifact digest mismatch")
-    command = provenance["build_command"]
-    if (
-        not isinstance(command, list)
-        or not all(isinstance(part, str) and part for part in command)
-        or command[:4] != ["cargo", "build", "--locked", "-p"]
-        or "taskmesh-bench" not in command
-        or "--example" not in command
-        or "host_load_probe" not in command
-    ):
-        raise ReceiptError("execution provenance build command is invalid")
     requested_features = identity["features"]
+    expected_command = [
+        "cargo",
+        "build",
+        "--locked",
+        "-p",
+        "taskmesh-bench",
+        "--example",
+        "host_load_probe",
+        "--message-format=json",
+    ]
     if requested_features:
-        if command[-2:] != ["--features", ",".join(requested_features)]:
-            raise ReceiptError("execution provenance feature build does not match identity")
-    elif "--features" in command:
-        raise ReceiptError("execution provenance declares unexpected build features")
+        expected_command.extend(["--features", ",".join(requested_features)])
+    if provenance["build_command"] != expected_command:
+        raise ReceiptError("execution provenance build command or features differ from identity")
     artifact_features = provenance["build_artifact_features"]
     if (
         not isinstance(artifact_features, list)

@@ -171,8 +171,10 @@ fn future_wire_variants_fail_closed_and_snapshot_versions_stay_explicit() {
         .expect_err("an unknown terminal variant must fail closed");
     assert!(terminal_error.to_string().contains("unknown variant"));
 
-    let mut snapshot = Snapshot::default();
-    snapshot.schema_version = SNAPSHOT_SCHEMA_VERSION + 1;
+    let snapshot = Snapshot {
+        schema_version: SNAPSHOT_SCHEMA_VERSION + 1,
+        ..Snapshot::default()
+    };
     let wire = serde_json::to_string(&snapshot).expect("future snapshot serializes");
     let decoded: Snapshot = serde_json::from_str(&wire).expect("snapshot envelope decodes");
     assert_ne!(

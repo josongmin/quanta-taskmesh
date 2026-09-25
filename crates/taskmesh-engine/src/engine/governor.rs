@@ -1121,10 +1121,14 @@ impl Governor {
 
     /// Stop admitting new work (ADR 0003 D17). One-way: there is no reopen.
     ///
-    /// From the moment this returns, every `admit*` call — from the host or
-    /// from an embedder driving the governor directly — is refused with
-    /// [`AdmissionVerdict::RuntimeUnavailable`](taskmesh_contract::AdmissionVerdict::RuntimeUnavailable) before anything is queued,
-    /// charged, or counted. Work already admitted or queued is untouched:
+    /// From the moment this returns, a well-formed request using a valid local
+    /// capability is refused with
+    /// [`AdmissionVerdict::RuntimeUnavailable`](taskmesh_contract::AdmissionVerdict::RuntimeUnavailable)
+    /// before anything is queued, charged, or counted. Direct `admit*` methods
+    /// still run their public preflight first: malformed specs return
+    /// `MalformedTask`, and `admit_resolved` can return a capability error.
+    /// Neither preflight path mutates the closed governor. Work already admitted
+    /// or queued is untouched:
     /// queued requests are still promoted and claimed, leases are still
     /// released, and the gauges still converge to zero. The flag is read and
     /// written under the admission lock, so a [`Self::snapshot`] taken after

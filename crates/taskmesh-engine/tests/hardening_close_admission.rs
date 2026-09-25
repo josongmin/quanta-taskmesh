@@ -19,7 +19,9 @@ use taskmesh_contract::{
     AdmissionVerdict, ClassPolicy, ManualClock, OverflowPolicy, PermitWaker, ResourceBudget,
     TaskClass, TaskSpec,
 };
-use taskmesh_engine::{AdmissionDecision, ClaimOutcome, Governor, PolicySet, ReleaseOutcome};
+use taskmesh_engine::{
+    AdmissionDecision, CapabilityResolutionError, ClaimOutcome, Governor, PolicySet, ReleaseOutcome,
+};
 
 fn class(name: &'static str) -> TaskClass {
     TaskClass::new(name)
@@ -138,6 +140,66 @@ fn a_closed_governor_refuses_before_the_class_is_looked_up_and_charges_nothing()
         None,
         "closing is not a fault: it refuses with the same verdict but reports separately"
     );
+}
+
+#[test]
+fn closed_preflight_precedence_is_explicit_and_side_effect_free() {
+    let g = governor();
+    let foreign_governor = governor();
+    let local = g
+        .policy()
+        .resolve_capability("blocking")
+        .expect("local built-in pool");
+    let foreign = foreign_governor
+        .policy()
+        .resolve_capability("blocking")
+        .expect("same name, different policy authority");
+    let malformed = TaskSpec::io(class("c")); // operation is deliberately empty
+    let valid = spec("c", "after-close");
+    g.close_admission();
+    let before = g.snapshot();
+    let drops = Arc::new(AtomicUsize::new(0));
+
+    refused("valid request", g.admit(&valid));
+    assert!(matches!(
+        g.admit(&malformed),
+        AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask)
+    ));
+    assert!(matches!(
+        g.admit_waitable(
+            &malformed,
+            Arc::new(DropCountingWaker(Arc::clone(&drops))),
+        ),
+        AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask)
+    ));
+    assert_eq!(
+        g.admit_resolved(&valid, foreign.clone(), None),
+        Err(CapabilityResolutionError::ForeignId),
+        "capability preflight precedes the closed-state verdict"
+    );
+    assert_eq!(
+        g.admit_resolved(
+            &malformed,
+            foreign,
+            Some(Arc::new(DropCountingWaker(Arc::clone(&drops)))),
+        ),
+        Err(CapabilityResolutionError::ForeignId),
+        "capability preflight also precedes malformed-spec preflight"
+    );
+    assert!(matches!(
+        g.admit_resolved(&malformed, local.clone(), None),
+        Ok(AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask))
+    ));
+    refused(
+        "valid local capability",
+        g.admit_resolved(&valid, local, None)
+            .expect("local capability is valid"),
+    );
+
+    assert_eq!(drops.load(Ordering::SeqCst), 2);
+    assert_eq!(g.snapshot(), before);
+    assert!(g.permit_ledgers().is_empty());
+    assert!(g.admission_closed());
 }
 
 #[test]

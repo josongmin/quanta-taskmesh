@@ -18,18 +18,36 @@ def fixture() -> tuple[dict, dict, dict, dict]:
     scenario = {
         "schema_version": 1,
         "id": "synthetic",
-        "load": {"warmup_ms": 0, "injection_ms": 10, "interval_ms": 1,
-                 "snapshot_ms": 0, "settlement_ms": 10,
-                 "max_outstanding": 2, "max_records": 2},
-        "topology": {"cpu_workers": 1, "blocking_threads": 1,
-                     "shared_blocking_limit": 1, "cpu_units": 2, "memory_units": 2},
-        "classes": [{"name": "c", "slo_ms": 5, "max_inflight": 2,
-                     "max_queue_depth": 2, "cpu_units": 1, "memory_units": 1,
-                     "overflow": "queue_within_depth"}],
+        "load": {
+            "warmup_ms": 0,
+            "injection_ms": 10,
+            "interval_ms": 1,
+            "snapshot_ms": 0,
+            "settlement_ms": 10,
+            "max_outstanding": 2,
+            "max_records": 2,
+        },
+        "topology": {
+            "cpu_workers": 1,
+            "blocking_threads": 1,
+            "shared_blocking_limit": 1,
+            "cpu_units": 2,
+            "memory_units": 2,
+        },
+        "classes": [
+            {
+                "name": "c",
+                "slo_ms": 5,
+                "max_inflight": 2,
+                "max_queue_depth": 2,
+                "cpu_units": 1,
+                "memory_units": 1,
+                "overflow": "queue_within_depth",
+            }
+        ],
         "offers": [
             {"send_time_ns": 0, "class": "c", "path": "io", "body": {"kind": "noop"}},
-            {"send_time_ns": 1_000_000, "class": "c", "path": "io",
-             "body": {"kind": "noop"}},
+            {"send_time_ns": 1_000_000, "class": "c", "path": "io", "body": {"kind": "noop"}},
         ],
     }
 
@@ -105,6 +123,31 @@ def complete() -> tuple[bytes, bytes, bytes, dict, dict]:
     return raw_bytes, scenario_bytes, encoded(summary), identity, calibration
 
 
+def provenance(raw: bytes, scenario: bytes, identity: dict) -> dict:
+    return {
+        "schema_version": 1,
+        "status": "complete",
+        "reason": None,
+        "scenario_sha256": host_perf.sha256(scenario),
+        "raw_sha256": host_perf.sha256(raw),
+        "binary_sha256": "f" * 64,
+        "build_command": [
+            "cargo",
+            "build",
+            "--locked",
+            "-p",
+            "taskmesh-bench",
+            "--example",
+            "host_load_probe",
+            "--message-format=json",
+        ],
+        "build_artifact_features": ["default"],
+        "start_identity": identity,
+        "end_identity": identity,
+        "runner_exit_code": 0,
+    }
+
+
 def test_complete_raw_summary_pair_is_structurally_admissible() -> None:
     raw, scenario, summary, identity, _ = complete()
     accepted = host_perf.verify_receipt(raw, scenario, summary, identity)
@@ -122,8 +165,22 @@ def test_complete_raw_summary_pair_is_structurally_admissible() -> None:
 def test_self_asserted_calibration_never_qualifies_performance() -> None:
     raw, scenario, summary, identity, _ = complete()
     assert host_perf.verify_receipt(raw, scenario, summary, identity)
-    with pytest.raises(host_perf.ReceiptError, match="measured calibration artifact"):
+    with pytest.raises(host_perf.ReceiptError, match="execution provenance"):
         host_perf.verify_receipt(raw, scenario, summary, identity, require_performance=True)
+    proof = encoded(provenance(raw, scenario, identity))
+    raw_obj, scenario_obj, _, calibration = fixture()
+    summary_with_proof = host_perf.make_summary(
+        encoded(raw_obj), encoded(scenario_obj), identity, calibration, 2, proof
+    )
+    with pytest.raises(host_perf.ReceiptError, match="measured calibration artifact"):
+        host_perf.verify_receipt(
+            raw,
+            scenario,
+            encoded(summary_with_proof),
+            identity,
+            require_performance=True,
+            provenance_bytes=proof,
+        )
 
 
 def test_cli_create_and_verify_stay_structural(tmp_path: Path) -> None:
@@ -133,31 +190,123 @@ def test_cli_create_and_verify_stay_structural(tmp_path: Path) -> None:
     calibration_path = tmp_path / "calibration.json"
     summary_path = tmp_path / "summary.json"
     for path, value in (
-        (raw_path, raw), (scenario_path, scenario), (calibration_path, calibration)
+        (raw_path, raw),
+        (scenario_path, scenario),
+        (calibration_path, calibration),
     ):
         path.write_bytes(encoded(value))
     command = [
-        sys.executable, str(Path(host_perf.__file__)), "create", str(raw_path),
-        str(scenario_path), str(summary_path), "--calibration", str(calibration_path),
-        "--p99-min-samples", "2",
+        sys.executable,
+        str(Path(host_perf.__file__)),
+        "create",
+        str(raw_path),
+        str(scenario_path),
+        str(summary_path),
+        "--calibration",
+        str(calibration_path),
+        "--p99-min-samples",
+        "2",
     ]
     created = subprocess.run(command, capture_output=True, text=True, check=False)
     assert created.returncode == 0, created.stderr
     assert "performance=UNQUALIFIED" in created.stdout
     verified = subprocess.run(
-        [sys.executable, str(Path(host_perf.__file__)), "verify", str(raw_path),
-         str(scenario_path), str(summary_path)],
-        capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            str(Path(host_perf.__file__)),
+            "verify",
+            str(raw_path),
+            str(scenario_path),
+            str(summary_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert verified.returncode == 0, verified.stderr
     assert "performance=UNQUALIFIED" in verified.stdout
     claimed = subprocess.run(
-        [sys.executable, str(Path(host_perf.__file__)), "verify", str(raw_path),
-         str(scenario_path), str(summary_path), "--require-performance"],
-        capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            str(Path(host_perf.__file__)),
+            "verify",
+            str(raw_path),
+            str(scenario_path),
+            str(summary_path),
+            "--require-performance",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert claimed.returncode != 0
     assert "STRUCTURALLY_VALID" not in claimed.stdout
+
+
+def test_execution_provenance_binds_run_start_end_and_artifact_digests() -> None:
+    raw, scenario, identity, calibration = fixture()
+    raw_bytes, scenario_bytes = encoded(raw), encoded(scenario)
+    proof = provenance(raw_bytes, scenario_bytes, identity)
+    proof_bytes = encoded(proof)
+    summary = host_perf.make_summary(
+        raw_bytes, scenario_bytes, identity, calibration, 2, proof_bytes
+    )
+    assert summary["execution_provenance_sha256"] == host_perf.sha256(proof_bytes)
+    host_perf.verify_receipt(
+        raw_bytes,
+        scenario_bytes,
+        encoded(summary),
+        identity,
+        provenance_bytes=proof_bytes,
+    )
+    with pytest.raises(host_perf.ReceiptError):
+        host_perf.verify_receipt(raw_bytes, scenario_bytes, encoded(summary), identity)
+    proof["end_identity"] = {**identity, "source_head": "changed"}
+    with pytest.raises(host_perf.ReceiptError, match="changed during run"):
+        host_perf.make_summary(raw_bytes, scenario_bytes, identity, calibration, 2, encoded(proof))
+    proof["end_identity"] = identity
+    proof["raw_sha256"] = "0" * 64
+    with pytest.raises(host_perf.ReceiptError, match="digest mismatch"):
+        host_perf.make_summary(raw_bytes, scenario_bytes, identity, calibration, 2, encoded(proof))
+    proof["raw_sha256"] = host_perf.sha256(raw_bytes)
+    proof["build_command"].extend(["--features", "taskmesh/rayon"])
+    with pytest.raises(host_perf.ReceiptError, match="unexpected build features"):
+        host_perf.make_summary(raw_bytes, scenario_bytes, identity, calibration, 2, encoded(proof))
+
+
+def test_host_run_wrapper_binds_real_binary_and_raw(tmp_path: Path) -> None:
+    _, scenario, _, calibration = fixture()
+    scenario_path = tmp_path / "scenario.json"
+    raw_path = tmp_path / "raw.json"
+    summary_path = tmp_path / "summary.json"
+    calibration_path = tmp_path / "calibration.json"
+    scenario_path.write_bytes(encoded(scenario))
+    calibration_path.write_bytes(encoded(calibration))
+    command = [
+        sys.executable,
+        str(Path(host_perf.__file__).with_name("host_run.py")),
+        str(scenario_path),
+        str(raw_path),
+        str(summary_path),
+        str(calibration_path),
+    ]
+    run = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert run.returncode == 0, run.stderr
+    assert "performance=UNQUALIFIED" in run.stdout
+    proof_path = raw_path.with_name(raw_path.name + ".provenance.json")
+    proof_bytes = proof_path.read_bytes()
+    proof = json.loads(proof_bytes)
+    assert proof["status"] == "complete"
+    assert proof["binary_sha256"] != "0" * 64
+    summary = json.loads(summary_path.read_bytes())
+    assert summary["execution_provenance_sha256"] == host_perf.sha256(proof_bytes)
+    host_perf.verify_receipt(
+        raw_path.read_bytes(),
+        scenario_path.read_bytes(),
+        summary_path.read_bytes(),
+        proof["end_identity"],
+        provenance_bytes=proof_bytes,
+    )
 
 
 @pytest.mark.parametrize("damage", ["body", "timer", "unknown", "topology"])
@@ -172,9 +321,7 @@ def test_rust_scenario_contract_rejects_invalid_receipt_fixture(damage: str) -> 
     else:
         scenario["topology"]["shared_blocking_limit"] = 0
     with pytest.raises(host_perf.ReceiptError, match="Rust scenario preflight"):
-        host_perf.make_summary(
-            encoded(raw), encoded(scenario), identity, calibration, 2
-        )
+        host_perf.make_summary(encoded(raw), encoded(scenario), identity, calibration, 2)
 
 
 def test_forged_rejection_variant_is_not_a_typed_verdict() -> None:
@@ -182,15 +329,11 @@ def test_forged_rejection_variant_is_not_a_typed_verdict() -> None:
     row = raw["records"][1]
     row["body_started_ns"] = None
     row["body_finished_ns"] = None
-    row["disposition"]["outcome"] = {
-        "kind": "rejected", "verdict": "NotAnAdmissionVerdict"
-    }
+    row["disposition"]["outcome"] = {"kind": "rejected", "verdict": "NotAnAdmissionVerdict"}
     for field in ("admitted", "started", "terminated"):
         raw["class_counters"]["c"][field] = 1
     with pytest.raises(host_perf.ReceiptError, match="Rust scenario preflight"):
-        host_perf.make_summary(
-            encoded(raw), encoded(scenario), identity, calibration, 1
-        )
+        host_perf.make_summary(encoded(raw), encoded(scenario), identity, calibration, 1)
 
 
 def test_failed_runner_persists_one_row_per_offer_and_is_rejected(tmp_path: Path) -> None:
@@ -199,10 +342,24 @@ def test_failed_runner_persists_one_row_per_offer_and_is_rejected(tmp_path: Path
     raw_path = tmp_path / "failed-raw.json"
     scenario_path.write_bytes(encoded(scenario))
     failed = subprocess.run(
-        ["cargo", "run", "--locked", "--quiet", "-p", "taskmesh-bench",
-         "--example", "host_load_probe", "--", str(scenario_path), str(raw_path),
-         "--inject-producer-before-first-offer"],
-        cwd=host_perf.REPO, capture_output=True, text=True, check=False,
+        [
+            "cargo",
+            "run",
+            "--locked",
+            "--quiet",
+            "-p",
+            "taskmesh-bench",
+            "--example",
+            "host_load_probe",
+            "--",
+            str(scenario_path),
+            str(raw_path),
+            "--inject-producer-before-first-offer",
+        ],
+        cwd=host_perf.REPO,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert failed.returncode != 0
     raw = json.loads(raw_path.read_bytes())
@@ -219,9 +376,7 @@ def test_explicit_invalid_status_cannot_be_summarized() -> None:
     raw, scenario, identity, calibration = fixture()
     raw["status"] = {"kind": "invalid", "reason": "injected"}
     with pytest.raises(host_perf.ReceiptError, match="invalid host run"):
-        host_perf.make_summary(
-            encoded(raw), encoded(scenario), identity, calibration, 1
-        )
+        host_perf.make_summary(encoded(raw), encoded(scenario), identity, calibration, 1)
 
 
 def test_post_window_success_stays_in_cohort_but_misses_slo() -> None:

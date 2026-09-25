@@ -32,6 +32,19 @@ IDENTITY_KEYS = {
     "topology_fingerprint",
     "host_fingerprint",
 }
+PROVENANCE_KEYS = {
+    "schema_version",
+    "status",
+    "reason",
+    "scenario_sha256",
+    "raw_sha256",
+    "binary_sha256",
+    "build_command",
+    "build_artifact_features",
+    "start_identity",
+    "end_identity",
+    "runner_exit_code",
+}
 CALIBRATION_KEYS = {
     "generator_headroom_ok",
     "observer_distorted",
@@ -120,17 +133,18 @@ def parse_object(data: bytes, name: str) -> dict[str, Any]:
     return value
 
 
-def validate_with_rust(scenario_bytes: bytes, raw_bytes: bytes) -> None:
+def validate_with_rust(scenario_bytes: bytes, raw_bytes: bytes, features: list[str]) -> None:
     """Use the runner's typed scenario, raw ledger and Builder rules."""
     try:
         with tempfile.TemporaryDirectory(prefix="taskmesh-host-receipt-") as temp_dir:
             raw_path = Path(temp_dir) / "raw.json"
             raw_path.write_bytes(raw_bytes)
+            command = ["cargo", "run", "--locked", "--quiet", "-p", "taskmesh-bench"]
+            if features:
+                command.extend(["--features", ",".join(features)])
+            command.extend(["--example", "host_scenario_validate", "--", "--raw", str(raw_path)])
             result = subprocess.run(
-                [
-                    "cargo", "run", "--locked", "--quiet", "-p", "taskmesh-bench",
-                    "--example", "host_scenario_validate", "--", "--raw", str(raw_path),
-                ],
+                command,
                 cwd=REPO,
                 input=scenario_bytes,
                 capture_output=True,
@@ -191,7 +205,9 @@ def local_identity(scenario: dict[str, Any], features: list[str]) -> dict[str, A
                     "system": platform.system(),
                     "release": platform.release(),
                     "machine": platform.machine(),
+                    "processor": platform.processor(),
                     "cpu_count": os.cpu_count(),
+                    "node_sha256": sha256(platform.node().encode()),
                 }
             )
         ),
@@ -213,6 +229,55 @@ def validate_identity(identity: Any) -> None:
     for key in IDENTITY_KEYS - {"source_dirty", "features"}:
         if not isinstance(identity[key], str) or not identity[key].strip():
             raise ReceiptError(f"identity.{key} must be nonempty")
+
+
+def validate_execution_provenance(
+    data: bytes, raw_bytes: bytes, scenario_bytes: bytes, identity: dict[str, Any]
+) -> None:
+    provenance = parse_object(data, "execution provenance")
+    exact_keys(provenance, PROVENANCE_KEYS, "execution provenance")
+    if provenance["schema_version"] != 1 or provenance["status"] != "complete":
+        raise ReceiptError("execution provenance is invalid or incomplete")
+    if provenance["reason"] is not None or provenance["runner_exit_code"] != 0:
+        raise ReceiptError("execution provenance contains a failed runner")
+    if provenance["scenario_sha256"] != sha256(scenario_bytes) or provenance[
+        "raw_sha256"
+    ] != sha256(raw_bytes):
+        raise ReceiptError("execution provenance artifact digest mismatch")
+    binary_digest = provenance["binary_sha256"]
+    if (
+        not isinstance(binary_digest, str)
+        or len(binary_digest) != 64
+        or any(char not in "0123456789abcdef" for char in binary_digest)
+    ):
+        raise ReceiptError("execution provenance binary digest is invalid")
+    command = provenance["build_command"]
+    if (
+        not isinstance(command, list)
+        or not all(isinstance(part, str) and part for part in command)
+        or command[:4] != ["cargo", "build", "--locked", "-p"]
+        or "taskmesh-bench" not in command
+        or "--example" not in command
+        or "host_load_probe" not in command
+    ):
+        raise ReceiptError("execution provenance build command is invalid")
+    requested_features = identity["features"]
+    if requested_features:
+        if command[-2:] != ["--features", ",".join(requested_features)]:
+            raise ReceiptError("execution provenance feature build does not match identity")
+    elif "--features" in command:
+        raise ReceiptError("execution provenance declares unexpected build features")
+    artifact_features = provenance["build_artifact_features"]
+    if (
+        not isinstance(artifact_features, list)
+        or not all(isinstance(feature, str) and feature for feature in artifact_features)
+        or artifact_features != sorted(set(artifact_features))
+    ):
+        raise ReceiptError("execution provenance artifact features are invalid")
+    for key in ("start_identity", "end_identity"):
+        validate_identity(provenance[key])
+        if provenance[key] != identity:
+            raise ReceiptError("execution provenance source or host changed during run")
 
 
 def analyze_raw(raw: dict[str, Any], scenario: dict[str, Any]) -> dict[str, Any]:
@@ -548,9 +613,12 @@ def make_summary(
     identity: dict[str, Any],
     calibration: dict[str, Any],
     p99_min_samples: int,
+    provenance_bytes: Optional[bytes] = None,
 ) -> dict[str, Any]:
-    validate_with_rust(scenario_bytes, raw_bytes)
     validate_identity(identity)
+    validate_with_rust(scenario_bytes, raw_bytes, identity["features"])
+    if provenance_bytes is not None:
+        validate_execution_provenance(provenance_bytes, raw_bytes, scenario_bytes, identity)
     if not isinstance(calibration, dict):
         raise ReceiptError("calibration must be an object")
     exact_keys(calibration, CALIBRATION_KEYS, "calibration")
@@ -578,9 +646,10 @@ def make_summary(
         else:
             population["p99_status"] = "available"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "raw_sha256": sha256(raw_bytes),
         "scenario_sha256": sha256(scenario_bytes),
+        "execution_provenance_sha256": sha256(provenance_bytes) if provenance_bytes else None,
         "identity": identity,
         "calibration": calibration,
         "p99_min_samples": p99_min_samples,
@@ -594,6 +663,7 @@ def verify_receipt(
     summary_bytes: bytes,
     expected_identity: Optional[dict[str, Any]] = None,
     require_performance: bool = False,
+    provenance_bytes: Optional[bytes] = None,
 ) -> dict[str, Any]:
     summary = parse_object(summary_bytes, "summary")
     exact_keys(
@@ -602,6 +672,7 @@ def verify_receipt(
             "schema_version",
             "raw_sha256",
             "scenario_sha256",
+            "execution_provenance_sha256",
             "identity",
             "calibration",
             "p99_min_samples",
@@ -615,6 +686,7 @@ def verify_receipt(
         summary["identity"],
         summary["calibration"],
         summary["p99_min_samples"],
+        provenance_bytes,
     )
     if summary != expected:
         raise ReceiptError("summary differs from raw/scenario reconstruction or digest")
@@ -640,6 +712,8 @@ def verify_receipt(
             for population in metrics["success_latency_by_class_path"].values()
         ):
             raise ReceiptError("unsupported per-class/path p99 population")
+        if provenance_bytes is None:
+            raise ReceiptError("execution provenance is required for performance")
         # The current booleans are caller assertions, not measured null-work,
         # A/A and observer-on/off receipts. Fail closed until those artifacts
         # have a versioned contract and independent verification.
@@ -655,6 +729,7 @@ def main() -> int:
     parser.add_argument("summary", type=Path)
     parser.add_argument("--feature", action="append", default=[])
     parser.add_argument("--calibration", type=Path)
+    parser.add_argument("--provenance", type=Path)
     parser.add_argument("--p99-min-samples", type=int, default=10_000)
     parser.add_argument("--require-performance", action="store_true")
     args = parser.parse_args()
@@ -663,6 +738,7 @@ def main() -> int:
         scenario_bytes = args.scenario.read_bytes()
         scenario = parse_object(scenario_bytes, "scenario")
         identity = local_identity(scenario, args.feature)
+        provenance_bytes = args.provenance.read_bytes() if args.provenance else None
         if args.mode == "create":
             if args.summary.exists():
                 raise ReceiptError("refusing to overwrite summary")
@@ -670,14 +746,23 @@ def main() -> int:
                 raise ReceiptError("create requires --calibration")
             calibration = parse_object(args.calibration.read_bytes(), "calibration")
             summary = make_summary(
-                raw_bytes, scenario_bytes, identity, calibration, args.p99_min_samples
+                raw_bytes,
+                scenario_bytes,
+                identity,
+                calibration,
+                args.p99_min_samples,
+                provenance_bytes,
             )
             args.summary.write_bytes(json.dumps(summary, indent=2, sort_keys=True).encode() + b"\n")
             print(f"STRUCTURALLY_VALID summary={args.summary} performance=UNQUALIFIED")
         else:
             summary = verify_receipt(
-                raw_bytes, scenario_bytes, args.summary.read_bytes(), identity,
+                raw_bytes,
+                scenario_bytes,
+                args.summary.read_bytes(),
+                identity,
                 require_performance=args.require_performance,
+                provenance_bytes=provenance_bytes,
             )
             print(f"STRUCTURALLY_VALID performance=UNQUALIFIED raw_sha256={summary['raw_sha256']}")
     except (OSError, subprocess.CalledProcessError, ReceiptError) as error:

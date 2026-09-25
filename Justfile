@@ -167,8 +167,7 @@ bench:
 # Diagnostic public-host run. Raw and summary paths must be fresh. The
 # calibration file is an explicit input; this command makes no timing claim.
 bench-host scenario raw summary calibration:
-    cargo run --locked -p taskmesh-bench --example host_load_probe -- {{scenario}} {{raw}}
-    python3 tools/bench/host_perf.py create {{raw}} {{scenario}} {{summary}} --calibration {{calibration}}
+    python3 tools/bench/host_run.py {{scenario}} {{raw}} {{summary}} {{calibration}}
 
 # Deterministic allocation gate (ADR 9000 / P2). Runs anywhere — no valgrind.
 bench-gate:

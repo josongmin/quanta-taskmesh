@@ -455,6 +455,29 @@ fn raw_dto_compatibility_is_not_redefined_by_strict_ingress() {
     );
     assert_eq!(decoded.stack_size_bytes, None);
     assert_eq!(raw, decoded);
+
+    let mut misspelled_stack = serde_json::to_value(&raw).unwrap();
+    misspelled_stack
+        .as_object_mut()
+        .unwrap()
+        .remove("stack_size_bytes");
+    misspelled_stack["stack_size_byte"] = json!(1_048_576);
+    let legacy: TaskSpec = serde_json::from_value(misspelled_stack.clone()).unwrap();
+    assert_eq!(
+        legacy.stack_size_bytes, None,
+        "raw Serde still defaults to shared"
+    );
+    assert!(
+        legacy.validate().is_ok(),
+        "raw DTO compatibility is unchanged"
+    );
+    assert_eq!(
+        parse(&misspelled_stack, StrictIngressLimits::default()),
+        Err(StrictIngressError::UnknownKey {
+            object: "task",
+            key: "stack_size_byte".into(),
+        })
+    );
 }
 
 #[test]

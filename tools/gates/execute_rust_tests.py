@@ -16,7 +16,6 @@ if str(REPO) not in sys.path:
 
 from tools.gates.target_catalog import (  # noqa: E402
     RECIPE_FRAGMENTS,
-    ZERO_CASE_LIBS,
     catalog_digest,
     source_catalog,
 )
@@ -68,7 +67,6 @@ def selected_cases(value: object) -> tuple[set[tuple[str, str, str]], set[str]]:
         if not isinstance(cases, dict):
             raise ValueError(f"{identity}: missing testcases")
         case_prefix = f"{package}::{target}" if kind == "lib" else binary_id
-        selected_in_suite = 0
         for name, case in cases.items():
             if not isinstance(case, dict) or not isinstance(name, str):
                 raise ValueError(f"{identity}: malformed testcase")
@@ -77,9 +75,6 @@ def selected_cases(value: object) -> tuple[set[tuple[str, str, str]], set[str]]:
                 raise ValueError(f"{identity}: missing filter status")
             if case.get("ignored") is False and match.get("status") == "matches":
                 selected.add(f"{case_prefix}${name}")
-                selected_in_suite += 1
-        if selected_in_suite == 0 and f"{package}/{kind}/{target}" not in ZERO_CASE_LIBS:
-            raise ValueError(f"{identity}: no runnable cases")
     if value.get("test-count") != len(selected):
         raise ValueError("nextest test-count differs from selected nonignored cases")
     if not selected:
@@ -87,10 +82,22 @@ def selected_cases(value: object) -> tuple[set[tuple[str, str, str]], set[str]]:
     return targets, selected
 
 
-def executed_cases(lines: str) -> tuple[set[str], set[str]]:
+def executed_cases(
+    lines: str,
+    expected: set[str],
+    targets: set[tuple[str, str, str]],
+) -> tuple[set[str], set[str]]:
     started: set[str] = set()
     passed: set[str] = set()
-    suites = 0
+    suite_started: set[tuple[str, str]] = set()
+    suite_finished: set[tuple[str, str]] = set()
+    expected_by_suite: dict[tuple[str, str], int] = {}
+    for package, _kind, target in targets:
+        key = (package, target)
+        if key in expected_by_suite:
+            raise ValueError(f"selected targets alias nextest suite identity {key}")
+        prefix = f"{package}::{target}$"
+        expected_by_suite[key] = sum(name.startswith(prefix) for name in expected)
     for line in lines.splitlines():
         try:
             event = json.loads(line)
@@ -102,6 +109,8 @@ def executed_cases(lines: str) -> tuple[set[str], set[str]]:
             name = event.get("name")
             if not isinstance(name, str) or not name:
                 raise ValueError("nextest test event has no name")
+            if name not in expected:
+                raise ValueError(f"unexpected nextest test event {name}")
             if event.get("event") == "started":
                 if name in started:
                     raise ValueError(f"duplicate test start {name}")
@@ -112,16 +121,39 @@ def executed_cases(lines: str) -> tuple[set[str], set[str]]:
                 passed.add(name)
             else:
                 raise ValueError(f"test {name} did not pass: {event.get('event')}")
-        elif event.get("type") == "suite" and event.get("event") == "ok":
-            if event.get("failed") != 0 or event.get("ignored") != 0:
-                raise ValueError("nextest suite reports failed or ignored cases")
-            suites += 1
-        elif event.get("type") == "suite" and event.get("event") == "started":
-            pass
+        elif event.get("type") == "suite":
+            info = event.get("nextest")
+            if not isinstance(info, dict):
+                raise ValueError("nextest suite lacks identity")
+            key = (info.get("crate"), info.get("test_binary"))
+            if not all(isinstance(item, str) for item in key):
+                raise ValueError("nextest suite identity is malformed")
+            if key not in expected_by_suite:
+                raise ValueError(f"unexpected nextest suite {key}")
+            if event.get("event") == "started":
+                if key in suite_started:
+                    raise ValueError(f"duplicate suite start {key}")
+                if event.get("test_count") != expected_by_suite[key]:
+                    raise ValueError(f"suite start denominator differs from selected cases {key}")
+                suite_started.add(key)
+            elif event.get("event") == "ok":
+                if key in suite_finished or key not in suite_started:
+                    raise ValueError(f"unmatched suite finish {key}")
+                if (
+                    event.get("passed") != expected_by_suite[key]
+                    or event.get("failed") != 0
+                    or event.get("ignored") != 0
+                    or event.get("filtered_out") != 0
+                ):
+                    raise ValueError(f"non-pass suite denominator {key}")
+                suite_finished.add(key)
+            else:
+                raise ValueError(f"non-pass suite event {event.get('event')}")
         else:
             raise ValueError(f"unrecognized nextest event: {event}")
-    if not suites:
-        raise ValueError("nextest ran no suites")
+    required_suites = {key for key, count in expected_by_suite.items() if count > 0}
+    if suite_started != suite_finished or not required_suites.issubset(suite_finished):
+        raise ValueError("nextest suite execution denominator mismatch")
     return started, passed
 
 
@@ -159,7 +191,7 @@ def main() -> None:
             "--test-threads", os.environ.get("TASKMESH_TEST_JOBS", "4"),
         ]
         env = {**os.environ, "NEXTEST_EXPERIMENTAL_LIBTEST_JSON": "1"}
-        started, completed = executed_cases(run(argv, env=env))
+        started, completed = executed_cases(run(argv, env=env), cases, targets)
         if started != cases or completed != cases:
             raise ValueError(
                 f"Nextest execution differs from selection: selected={len(cases)} "

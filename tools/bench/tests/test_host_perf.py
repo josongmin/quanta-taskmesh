@@ -447,6 +447,18 @@ def test_host_run_wrapper_binds_real_binary_and_raw(tmp_path: Path) -> None:
     )
     assert cli.returncode == 0, cli.stderr
     assert "performance=UNQUALIFIED" in cli.stdout
+    tampered_raw = json.loads(raw_path.read_bytes())
+    tampered_raw["records"][0]["caller_response_ns"] = None
+    with pytest.raises(host_perf.ReceiptError, match="Rust scenario preflight"):
+        host_perf.verify_receipt(
+            encoded(tampered_raw),
+            scenario_path.read_bytes(),
+            summary_path.read_bytes(),
+            proof["end_identity"],
+            provenance_bytes=proof_bytes,
+            binary_bytes=binary_path.read_bytes(),
+            topology_bytes=topology_path.read_bytes(),
+        )
     with pytest.raises(host_perf.ReceiptError, match="retained runner binary is required"):
         host_perf.verify_receipt(
             raw_path.read_bytes(),

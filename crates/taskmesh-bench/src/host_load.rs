@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -74,6 +74,59 @@ pub enum HostRunStatus {
 pub enum HostHarnessFault {
     ProducerBeforeOffer(usize),
     SamplerPanic,
+}
+
+/// Test-only control for one blocking offer. It is never serialized into a
+/// measured scenario or used by the diagnostic CLI.
+pub struct HostHarnessTestGate {
+    offer_id: usize,
+    started: CancellationToken,
+    drop_now: CancellationToken,
+    caller_dropped: CancellationToken,
+    release: (Mutex<bool>, Condvar),
+}
+
+impl HostHarnessTestGate {
+    pub fn new(offer_id: usize) -> Self {
+        Self {
+            offer_id,
+            started: CancellationToken::new(),
+            drop_now: CancellationToken::new(),
+            caller_dropped: CancellationToken::new(),
+            release: (Mutex::new(false), Condvar::new()),
+        }
+    }
+
+    pub async fn wait_started(&self) {
+        self.started.cancelled().await;
+    }
+
+    pub fn trigger_drop(&self) {
+        self.drop_now.cancel();
+    }
+
+    pub async fn wait_caller_dropped(&self) {
+        self.caller_dropped.cancelled().await;
+    }
+
+    pub fn release_worker(&self) {
+        let (lock, changed) = &self.release;
+        *lock.lock().expect("test gate lock") = true;
+        changed.notify_all();
+    }
+
+    fn wait_for_release(&self) {
+        self.started.cancel();
+        let (lock, changed) = &self.release;
+        let (ready, _) = changed
+            .wait_timeout_while(
+                lock.lock().expect("test gate lock"),
+                Duration::from_secs(10),
+                |ready| !*ready,
+            )
+            .expect("test gate wait");
+        assert!(*ready, "test gate worker was never released");
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -556,6 +609,7 @@ async fn execute(
     slot: Slot,
     origin: Instant,
     submit_at: Instant,
+    test_gate: Option<Arc<HostHarnessTestGate>>,
 ) -> Result<(), RunError<()>> {
     let class = TaskClass::new(offer.class.clone());
     let cancel = CancellationToken::new();
@@ -600,9 +654,14 @@ async fn execute(
                 HostBody::BlockingSleep { millis } => *millis,
                 _ => 0,
             };
+            let gate =
+                test_gate.filter(|gate| gate.offer_id == slot.lock().expect("record lock").id);
             runtime
                 .run_blocking_with(spec, opts, move || {
                     mutate(&slot, |row| row.body_started_ns = Some(since(origin)));
+                    if let Some(gate) = gate {
+                        gate.wait_for_release();
+                    }
                     if sleep != 0 {
                         std::thread::sleep(Duration::from_millis(sleep));
                     }
@@ -692,6 +751,32 @@ pub async fn run_host_scenario_with_fault(
 pub async fn run_host_scenario_with_topology(
     scenario: &HostScenario,
     fault: Option<HostHarnessFault>,
+) -> Result<(RawHostRun, ResolvedHostTopology), String> {
+    run_host_scenario_inner(scenario, fault, None).await
+}
+
+/// Exercise row attribution with a controlled blocking worker. The gate is
+/// bench-test code and cannot be supplied by a serialized workload.
+pub async fn run_host_scenario_with_test_gate(
+    scenario: &HostScenario,
+    gate: Arc<HostHarnessTestGate>,
+) -> Result<RawHostRun, String> {
+    let offer = scenario
+        .offers
+        .get(gate.offer_id)
+        .ok_or("test gate offer id is out of range")?;
+    if offer.path != HostPath::Blocking || offer.drop_after_ms.is_none() {
+        return Err("test gate requires a blocking offer with caller drop".into());
+    }
+    run_host_scenario_inner(scenario, None, Some(gate))
+        .await
+        .map(|(run, _)| run)
+}
+
+async fn run_host_scenario_inner(
+    scenario: &HostScenario,
+    fault: Option<HostHarnessFault>,
+    test_gate: Option<Arc<HostHarnessTestGate>>,
 ) -> Result<(RawHostRun, ResolvedHostTopology), String> {
     scenario.validate()?;
     let runtime = scenario.build_runtime()?;
@@ -842,11 +927,16 @@ pub async fn run_host_scenario_with_topology(
             mutate(&slot, |row| row.submitted_ns = Some(submit_ns));
             let guard = OutstandingGuard(Arc::clone(&outstanding_for_producer));
             let runtime = producer_runtime.clone();
+            let gate = test_gate.clone();
             jobs.push(handle.spawn(async move {
                 let _guard = guard;
                 let drop_after = offer.drop_after_ms;
-                let run = execute(runtime, offer, Arc::clone(&slot), origin, submit_at);
+                let gated_drop = gate
+                    .as_ref()
+                    .is_some_and(|gate| gate.offer_id == slot.lock().expect("record lock").id);
+                let run = execute(runtime, offer, Arc::clone(&slot), origin, submit_at, gate.clone());
                 if let Some(ms) = drop_after {
+                    let drop_gate = gate.clone();
                     tokio::select! {
                         result = run => {
                             mutate(&slot, |row| {
@@ -854,13 +944,26 @@ pub async fn run_host_scenario_with_topology(
                                 row.disposition = CallerDisposition::Responded { outcome: classify_response(result) };
                             });
                         }
-                        () = tokio::time::sleep_until(
-                            tokio::time::Instant::from_std(submit_at + Duration::from_millis(ms))
-                        ) => {
+                        () = async move {
+                            if gated_drop {
+                                if let Some(gate) = drop_gate {
+                                    gate.drop_now.cancelled().await;
+                                }
+                            } else {
+                                tokio::time::sleep_until(
+                                    tokio::time::Instant::from_std(submit_at + Duration::from_millis(ms))
+                                ).await;
+                            }
+                        } => {
                             mutate(&slot, |row| {
                                 row.caller_drop_ns = Some(since(origin));
                                 row.disposition = CallerDisposition::CallerDropped;
                             });
+                            if gated_drop {
+                                if let Some(gate) = &gate {
+                                    gate.caller_dropped.cancel();
+                                }
+                            }
                         }
                     }
                 } else {

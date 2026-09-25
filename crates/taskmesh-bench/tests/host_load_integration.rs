@@ -1,6 +1,7 @@
 //! The bench adapter, rather than the engine's already-covered verdict matrix.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
@@ -9,7 +10,8 @@ use taskmesh::{
     TaskClass, TaskSpec,
 };
 use taskmesh_bench::host_load::{
-    classify_response, run_host_scenario, CallerCounts, CallerDisposition, ResponseOutcome,
+    classify_response, run_host_scenario, run_host_scenario_with_test_gate, CallerCounts,
+    CallerDisposition, HostHarnessTestGate, ResponseOutcome,
 };
 use taskmesh_bench::host_scenarios::HostScenario;
 use tokio_util::sync::CancellationToken;
@@ -84,6 +86,77 @@ async fn finite_two_class_mixed_path_run_keeps_every_intended_offer() {
     let encoded = serde_json::to_vec(&raw).unwrap();
     let decoded: taskmesh_bench::host_load::RawHostRun = serde_json::from_slice(&encoded).unwrap();
     decoded.validate_against(&scenario).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mixed_caller_events_keep_blocking_worker_custody_in_raw_rows() {
+    let fixture = json!({
+        "schema_version": 1,
+        "id": "mixed-caller-attribution",
+        "load": {"warmup_ms": 0, "injection_ms": 100, "interval_ms": 10,
+                 "snapshot_ms": 0, "settlement_ms": 1000,
+                 "max_outstanding": 8, "max_records": 8},
+        "topology": {"cpu_workers": 2, "blocking_threads": 2,
+                     "shared_blocking_limit": 2, "cpu_units": 8, "memory_units": 8},
+        "classes": [
+            {"name": "held", "slo_ms": 900, "max_inflight": 2,
+             "max_queue_depth": 1, "cpu_units": 1, "memory_units": 1,
+             "overflow": "queue_within_depth"},
+            {"name": "other", "slo_ms": 900, "max_inflight": 2,
+             "max_queue_depth": 1, "cpu_units": 1, "memory_units": 1,
+             "overflow": "queue_within_depth"}
+        ],
+        "offers": [
+            {"send_time_ns": 0, "class": "held", "path": "blocking",
+             "body": {"kind": "blocking_sleep", "millis": 1}, "drop_after_ms": 900},
+            {"send_time_ns": 1_000_000, "class": "other", "path": "io",
+             "body": {"kind": "async_sleep", "millis": 1}, "deadline_ms": 0},
+            {"send_time_ns": 2_000_000, "class": "other", "path": "io",
+             "body": {"kind": "async_sleep", "millis": 1}, "cancel_after_ms": 0}
+        ]
+    });
+    let scenario = HostScenario::from_json(&serde_json::to_vec(&fixture).unwrap()).unwrap();
+    let gate = Arc::new(HostHarnessTestGate::new(0));
+    let run_gate = Arc::clone(&gate);
+    let run = tokio::spawn(async move {
+        run_host_scenario_with_test_gate(&scenario, run_gate)
+            .await
+            .map(|raw| (raw, scenario))
+    });
+    tokio::time::timeout(Duration::from_secs(5), gate.wait_started())
+        .await
+        .expect("blocking body starts");
+    gate.trigger_drop();
+    tokio::time::timeout(Duration::from_secs(5), gate.wait_caller_dropped())
+        .await
+        .expect("caller drop is recorded");
+    gate.release_worker();
+    let (raw, scenario) = tokio::time::timeout(Duration::from_secs(5), run)
+        .await
+        .expect("bounded scenario settles")
+        .expect("harness task")
+        .expect("harness run");
+    raw.validate_against(&scenario).unwrap();
+    assert_eq!(raw.records.len(), 3);
+    assert_eq!(raw.settlement.intended, 3);
+    assert_eq!(raw.settlement.submitted, 3);
+    assert_eq!(raw.settlement.caller_dropped, 1);
+    assert_eq!(raw.settlement.responded, 2);
+    assert_eq!(raw.settlement.unanswered_at_settlement, 0);
+    let held = &raw.records[0];
+    assert_eq!(held.disposition, CallerDisposition::CallerDropped);
+    assert!(held.caller_response_ns.is_none());
+    assert!(held.body_started_ns.unwrap() <= held.caller_drop_ns.unwrap());
+    assert!(held.body_finished_ns.unwrap() > held.caller_drop_ns.unwrap());
+    for row in &raw.records[1..] {
+        assert!(matches!(
+            row.disposition,
+            CallerDisposition::Responded { .. }
+        ));
+        assert!(row.caller_response_ns.is_some());
+    }
+    assert!(raw.final_capabilities.values().all(|in_use| *in_use == 0));
+    assert!(raw.drain_ok && raw.conservation_ok);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

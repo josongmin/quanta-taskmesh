@@ -80,7 +80,7 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   topology와 대조한다. 이는 동일 소스의 독립 재빌드나 성능 자격을 뜻하지 않는다.
   현재 calibration 파일의 boolean은 실측 증거가 아니므로
   `host_perf.py --require-performance`는 fail closed다.
-  실측 calibration, 외부 resource sampler, repeated comparison, closed-loop,
+  실측 calibration, external resource sampler의 왜곡 검증, repeated comparison, closed-loop,
   local/requested-stack/Rayon, H0–H8 인덱스와 대표 H7은 남아 있다.
   상세 목적·파일·DoD는 위 티켓이 소유한다.
 - `just bench-gate`는 allocation, `just bench-smoke`는 bench 실행 smoke,

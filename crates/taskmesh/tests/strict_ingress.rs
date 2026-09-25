@@ -5,7 +5,7 @@ use taskmesh::{
     parse_runtime_config, parse_task_spec, ClassPolicy, DeterministicReducePolicy,
     DuplicateMergePolicy, ErrorAggregationPolicy, PartialResultOrdering, ResourceBudget,
     StrictIngressError, StrictIngressLimits, SubstrateHint, TaskClass, TaskSpec, TaskStage,
-    TieBreakPolicy, TopologyConfig,
+    TieBreakPolicy, TopologyConfig, MAX_REQUESTED_STACK_BYTES,
 };
 
 fn task() -> Value {
@@ -32,6 +32,36 @@ fn parse(
     limits: StrictIngressLimits,
 ) -> Result<taskmesh::ValidatedTaskPlan, StrictIngressError> {
     parse_task_spec(&serde_json::to_vec(value).unwrap(), limits)
+}
+
+#[test]
+fn requested_stack_size_bounds_are_enforced_at_strict_ingress() {
+    let mut input = task();
+    let limits = StrictIngressLimits::default();
+    let invalid_stack = StrictIngressError::BlockingDispatch(
+        "requested stack size is not representable and within the supported bound",
+    );
+
+    input["blocking_dispatch"] = json!({"requested_stack": {"stack_size_bytes": 0}});
+    assert_eq!(parse(&input, limits), Err(invalid_stack.clone()));
+
+    input["blocking_dispatch"] =
+        json!({"requested_stack": {"stack_size_bytes": MAX_REQUESTED_STACK_BYTES}});
+    if u64::try_from(usize::MAX).unwrap_or(u64::MAX) >= MAX_REQUESTED_STACK_BYTES {
+        assert_eq!(
+            parse(&input, limits)
+                .expect("the inclusive stack bound must be accepted")
+                .as_spec()
+                .stack_size_bytes,
+            Some(MAX_REQUESTED_STACK_BYTES)
+        );
+    } else {
+        assert_eq!(parse(&input, limits), Err(invalid_stack.clone()));
+    }
+
+    input["blocking_dispatch"] =
+        json!({"requested_stack": {"stack_size_bytes": MAX_REQUESTED_STACK_BYTES + 1}});
+    assert_eq!(parse(&input, limits), Err(invalid_stack));
 }
 
 #[test]

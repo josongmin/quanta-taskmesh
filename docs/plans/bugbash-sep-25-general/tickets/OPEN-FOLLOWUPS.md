@@ -16,3 +16,12 @@ The 104-row `scenario-evidence.json` is static selection provenance. Historic
 receipts qualify only their recorded source. The Semantica focused 2/2 run is
 a manual comparison whose receipt does not bind its mutable Taskmesh path
 dependency to a Taskmesh commit; deployment adoption remains open.
+
+After the implementation archive, H31's combined external lease preemption,
+host non-execution, second admission, and drain boundary was added at `6c45345`.
+`taskmesh --lib` passed 24/24 at that source; the H31 scenario now selects
+`external_preemption_blocks_host_dispatch_and_drain_until_token_release_v1`
+as its primary case. The archived review's H31 gap describes its earlier
+source state. H02, H17, H24, D03, D04, and D19 also received focused evidence
+updates after their earlier exact-HEAD receipts. All require the final clean
+CI-profile receipt before BG25-012 proof closure.

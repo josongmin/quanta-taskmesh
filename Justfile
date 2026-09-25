@@ -174,6 +174,11 @@ bench-host scenario raw summary calibration:
 bench-generator scenario raw:
     uv run python tools/bench/generator_run.py {{scenario}} {{raw}}
 
+# Repeated fresh-process A/A study; output remains diagnostic until measured
+# generator/observer calibration and a predeclared noise policy are present.
+bench-host-aa scenario calibration directory *ARGS:
+    uv run python tools/bench/host_aa.py {{scenario}} {{calibration}} {{directory}} {{ARGS}}
+
 # Deterministic allocation gate (ADR 9000 / P2). Runs anywhere — no valgrind.
 bench-gate:
     bash tools/bench-gate.sh

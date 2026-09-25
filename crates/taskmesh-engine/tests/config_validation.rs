@@ -355,6 +355,23 @@ fn same_discipline_different_weights_is_ok() {
         ],
     );
     assert_eq!(Governor::validate_policy(&p), Ok(()));
+
+    // DRR quantum is likewise a parameter of one discipline, not a second
+    // scheduling policy inside the same primary tier.
+    let p = policy(
+        ResourceBudget::new(),
+        vec![
+            (
+                "a",
+                ClassPolicy::new().fairness(FairnessPolicy::DeficitRoundRobin { quantum: 1 }),
+            ),
+            (
+                "b",
+                ClassPolicy::new().fairness(FairnessPolicy::DeficitRoundRobin { quantum: 3 }),
+            ),
+        ],
+    );
+    assert_eq!(Governor::validate_policy(&p), Ok(()));
 }
 
 #[test]

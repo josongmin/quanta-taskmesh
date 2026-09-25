@@ -216,8 +216,10 @@ def validate_identity(identity: Any) -> None:
 
 
 def analyze_raw(raw: dict[str, Any], scenario: dict[str, Any]) -> dict[str, Any]:
-    if raw.get("schema_version") != 1 or scenario.get("schema_version") != 1:
+    if raw.get("schema_version") != 2 or scenario.get("schema_version") != 1:
         raise ReceiptError("unsupported raw/scenario version")
+    if raw.get("status") != {"kind": "complete"}:
+        raise ReceiptError("raw host run is invalid or missing complete status")
     offers = scenario.get("offers")
     records = raw.get("records")
     classes = scenario.get("classes")

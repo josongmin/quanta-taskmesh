@@ -59,8 +59,9 @@ def fixture() -> tuple[dict, dict, dict, dict]:
         "unanswered_at_settlement": 0,
     }
     raw = {
-        "schema_version": 1,
+        "schema_version": 2,
         "scenario_id": "synthetic",
+        "status": {"kind": "complete"},
         "injection_window_ns": 10_000_000,
         "interval_ns": 1_000_000,
         "snapshot_cadence_ns": 0,
@@ -187,6 +188,37 @@ def test_forged_rejection_variant_is_not_a_typed_verdict() -> None:
     for field in ("admitted", "started", "terminated"):
         raw["class_counters"]["c"][field] = 1
     with pytest.raises(host_perf.ReceiptError, match="Rust scenario preflight"):
+        host_perf.make_summary(
+            encoded(raw), encoded(scenario), identity, calibration, 1
+        )
+
+
+def test_failed_runner_persists_one_row_per_offer_and_is_rejected(tmp_path: Path) -> None:
+    _, scenario, identity, calibration = fixture()
+    scenario_path = tmp_path / "scenario.json"
+    raw_path = tmp_path / "failed-raw.json"
+    scenario_path.write_bytes(encoded(scenario))
+    failed = subprocess.run(
+        ["cargo", "run", "--locked", "--quiet", "-p", "taskmesh-bench",
+         "--example", "host_load_probe", "--", str(scenario_path), str(raw_path),
+         "--inject-producer-before-first-offer"],
+        cwd=host_perf.REPO, capture_output=True, text=True, check=False,
+    )
+    assert failed.returncode != 0
+    raw = json.loads(raw_path.read_bytes())
+    assert raw["status"]["kind"] == "invalid"
+    assert "producer" in raw["status"]["reason"]
+    assert len(raw["records"]) == len(scenario["offers"])
+    with pytest.raises(host_perf.ReceiptError, match="invalid host run"):
+        host_perf.make_summary(
+            raw_path.read_bytes(), scenario_path.read_bytes(), identity, calibration, 1
+        )
+
+
+def test_explicit_invalid_status_cannot_be_summarized() -> None:
+    raw, scenario, identity, calibration = fixture()
+    raw["status"] = {"kind": "invalid", "reason": "injected"}
+    with pytest.raises(host_perf.ReceiptError, match="invalid host run"):
         host_perf.make_summary(
             encoded(raw), encoded(scenario), identity, calibration, 1
         )

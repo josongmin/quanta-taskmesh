@@ -17,7 +17,20 @@ use tokio_util::sync::CancellationToken;
 
 use crate::host_scenarios::{HostBody, HostOffer, HostPath, HostScenario};
 
-pub const HOST_RAW_VERSION: u32 = 1;
+pub const HOST_RAW_VERSION: u32 = 2;
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HostRunStatus {
+    Complete,
+    Invalid { reason: String },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HostHarnessFault {
+    ProducerBeforeOffer(usize),
+    SamplerPanic,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -273,6 +286,7 @@ pub struct SnapshotSample {
 #[serde(deny_unknown_fields)]
 pub struct RawHostRun {
     pub schema_version: u32,
+    pub status: HostRunStatus,
     pub scenario_id: String,
     pub injection_window_ns: u64,
     pub interval_ns: u64,
@@ -289,6 +303,9 @@ pub struct RawHostRun {
 
 impl RawHostRun {
     pub fn validate(&self) -> Result<(), String> {
+        if let HostRunStatus::Invalid { reason } = &self.status {
+            return Err(format!("invalid host run: {reason}"));
+        }
         if self.schema_version != HOST_RAW_VERSION
             || self.injection_window_ns == 0
             || self.interval_ns == 0
@@ -613,6 +630,15 @@ fn snapshot_sample(runtime: &TokioRuntime, origin: Instant, intended_ns: u64) ->
 /// Run a finite, prevalidated public-host scenario. Results are diagnostic
 /// until the external receipt checker and quiet-host calibration qualify them.
 pub async fn run_host_scenario(scenario: &HostScenario) -> Result<RawHostRun, String> {
+    run_host_scenario_with_fault(scenario, None).await
+}
+
+/// Fault injection is confined to the unpublished bench crate. It tests that
+/// harness failures leave a bounded raw artifact rather than a silent gap.
+pub async fn run_host_scenario_with_fault(
+    scenario: &HostScenario,
+    fault: Option<HostHarnessFault>,
+) -> Result<RawHostRun, String> {
     scenario.validate()?;
     let runtime = scenario.build_runtime()?;
     if scenario.load.warmup_ms != 0 {
@@ -702,6 +728,9 @@ pub async fn run_host_scenario(scenario: &HostScenario) -> Result<RawHostRun, St
         let sample_runtime = runtime.clone();
         let sample_count = scenario.load.injection_ms / scenario.load.snapshot_ms;
         Some(tokio::spawn(async move {
+            if fault == Some(HostHarnessFault::SamplerPanic) {
+                panic!("injected snapshot sampler failure");
+            }
             let mut samples = Vec::with_capacity(sample_count as usize);
             for index in 0..sample_count {
                 let intended_ns = index * snapshot_cadence_ns;
@@ -717,6 +746,9 @@ pub async fn run_host_scenario(scenario: &HostScenario) -> Result<RawHostRun, St
     let producer = std::thread::spawn(move || {
         let mut jobs = preallocated_jobs;
         for (id, offer) in offers.into_iter().enumerate() {
+            if fault == Some(HostHarnessFault::ProducerBeforeOffer(id)) {
+                panic!("injected producer failure before offer {id}");
+            }
             let due = origin + Duration::from_nanos(offer.send_time_ns);
             while let Some(delay) = due.checked_duration_since(Instant::now()) {
                 if delay.is_zero() {
@@ -791,14 +823,25 @@ pub async fn run_host_scenario(scenario: &HostScenario) -> Result<RawHostRun, St
         }
         let _ = producer_tx.send(jobs);
     });
-    let mut jobs = producer_rx
-        .await
-        .map_err(|_| "producer failed before reporting jobs".to_owned())?;
-    producer
-        .join()
-        .map_err(|_| "producer thread panicked".to_owned())?;
+    let mut issues = Vec::new();
+    let mut jobs = match producer_rx.await {
+        Ok(jobs) => jobs,
+        Err(_) => {
+            issues.push("producer failed before reporting jobs");
+            Vec::new()
+        }
+    };
+    if producer.join().is_err() {
+        issues.push("producer thread panicked");
+    }
     let snapshots = match sampler {
-        Some(sampler) => sampler.await.unwrap_or_default(),
+        Some(sampler) => match sampler.await {
+            Ok(samples) => samples,
+            Err(_) => {
+                issues.push("snapshot sampler failed");
+                Vec::new()
+            }
+        },
         None => Vec::new(),
     };
     let until = Instant::now() + Duration::from_millis(scenario.load.settlement_ms);
@@ -811,7 +854,9 @@ pub async fn run_host_scenario(scenario: &HostScenario) -> Result<RawHostRun, St
         }
     }
     for job in jobs {
-        let _ = job.await;
+        if job.await.is_err() {
+            issues.push("caller task failed or was aborted");
+        }
     }
     for slot in &slots {
         mutate(slot, |row| {
@@ -822,17 +867,29 @@ pub async fn run_host_scenario(scenario: &HostScenario) -> Result<RawHostRun, St
     }
     // Keep malformed rows in the artifact. The public validator will reject
     // these fallback counts after the CLI has persisted the raw records.
-    let settlement = CallerCounts::from_records(&snapshot_rows(&slots)).unwrap_or_default();
+    let settlement = CallerCounts::from_records(&snapshot_rows(&slots)).unwrap_or_else(|_| {
+        issues.push("settlement rows failed accounting");
+        CallerCounts::default()
+    });
     let cut = CallerCounts::at_cut(
         &snapshot_rows(&slots),
         u64::try_from(injection.as_nanos()).unwrap_or(u64::MAX),
     )
-    .unwrap_or_default();
+    .unwrap_or_else(|_| {
+        issues.push("window-cut rows failed accounting");
+        CallerCounts::default()
+    });
     let drain_ok = runtime
         .drain(Duration::from_millis(scenario.load.settlement_ms))
         .await
         .is_ok();
     let final_snapshot = runtime.snapshot();
+    if !drain_ok {
+        issues.push("host drain did not settle");
+    }
+    if final_snapshot.conservation_violation().is_some() {
+        issues.push("final governor conservation failed");
+    }
     let class_counters = scenario
         .classes
         .iter()
@@ -854,6 +911,13 @@ pub async fn run_host_scenario(scenario: &HostScenario) -> Result<RawHostRun, St
         .collect();
     let run = RawHostRun {
         schema_version: HOST_RAW_VERSION,
+        status: if issues.is_empty() {
+            HostRunStatus::Complete
+        } else {
+            HostRunStatus::Invalid {
+                reason: issues.join("; "),
+            }
+        },
         scenario_id: scenario.id.clone(),
         injection_window_ns: u64::try_from(injection.as_nanos()).unwrap_or(u64::MAX),
         interval_ns: scenario.load.interval_ms * 1_000_000,

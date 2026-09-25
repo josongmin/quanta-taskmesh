@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use serde_json::{json, Value};
 use taskmesh::AdmissionVerdict;
 use taskmesh_bench::host_load::{
-    producer_decision, CallerCounts, CallerDisposition, ClassCounters, ProducerDecision,
-    RawHostRecord, RawHostRun, ResponseOutcome, HOST_RAW_VERSION,
+    producer_decision, run_host_scenario_with_fault, CallerCounts, CallerDisposition,
+    ClassCounters, HostHarnessFault, HostRunStatus, ProducerDecision, RawHostRecord, RawHostRun,
+    ResponseOutcome, HOST_RAW_VERSION,
 };
 use taskmesh_bench::host_scenarios::{HostPath, HostScenario};
 
@@ -173,6 +174,7 @@ fn raw_rows_count_every_intended_offer_without_inventing_latency() {
     );
     let run = RawHostRun {
         schema_version: HOST_RAW_VERSION,
+        status: HostRunStatus::Complete,
         scenario_id: "synthetic".into(),
         injection_window_ns: 10,
         interval_ns: 1,
@@ -245,4 +247,32 @@ fn pure_producer_cap_and_lag_have_exact_boundary() {
         producer_decision(10, 12, 1, 1),
         ProducerDecision::NotSubmitted { lag_ns: 2 }
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn producer_and_sampler_failures_return_bounded_invalid_raw() {
+    let scenario =
+        HostScenario::from_json(&serde_json::to_vec(&valid_scenario()).unwrap()).unwrap();
+    for (fault, expected) in [
+        (HostHarnessFault::ProducerBeforeOffer(0), "producer"),
+        (HostHarnessFault::SamplerPanic, "sampler"),
+    ] {
+        let mut scenario = scenario.clone();
+        if fault == HostHarnessFault::SamplerPanic {
+            scenario.load.snapshot_ms = 5;
+        }
+        let raw = run_host_scenario_with_fault(&scenario, Some(fault))
+            .await
+            .expect("post-start failures retain raw rows");
+        assert_eq!(raw.records.len(), scenario.offers.len());
+        assert!(matches!(raw.status, HostRunStatus::Invalid { .. }));
+        assert!(raw
+            .validate_against(&scenario)
+            .unwrap_err()
+            .contains(expected));
+        let encoded = serde_json::to_vec(&raw).unwrap();
+        let decoded: RawHostRun = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.records.len(), scenario.offers.len());
+        assert!(matches!(decoded.status, HostRunStatus::Invalid { .. }));
+    }
 }

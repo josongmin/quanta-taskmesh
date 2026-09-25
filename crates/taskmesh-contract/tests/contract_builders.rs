@@ -114,6 +114,29 @@ fn product_neutral_plan_source_is_bounded() {
     let source = PlanSource::new("adapter.v2").expect("valid opaque key");
     assert_eq!(source.as_str(), "adapter.v2");
     assert_eq!(serde_json::to_string(&source).unwrap(), r#""adapter.v2""#);
+    assert_eq!(
+        serde_json::from_str::<PlanSource>(r#""adapter.v2""#).expect("custom source decodes"),
+        source
+    );
+
+    let invalid_character = TaskPlanError::InvalidIdentifier {
+        field: TaskIdentifierField::PlanSource,
+        violation: IdentifierViolation::InvalidCharacter {
+            byte_offset: 3,
+            character: ' ',
+        },
+    };
+    assert_eq!(
+        PlanSource::new("bad source").unwrap_err(),
+        invalid_character
+    );
+    assert!(
+        serde_json::from_str::<PlanSource>(r#""bad source""#)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid character"),
+        "the wire decoder must apply the same character policy"
+    );
 
     assert_eq!(
         PlanSource::new("").unwrap_err(),

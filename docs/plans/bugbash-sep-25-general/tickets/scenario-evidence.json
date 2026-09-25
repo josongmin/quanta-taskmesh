@@ -976,12 +976,19 @@
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::B18",
       "target": "crates/taskmesh-contract/tests/contract_roundtrip.rs",
       "case": "legacy_plan_source_strings_decode_and_reencode_exactly",
-      "oracle": "custom `PlanSource`와 legacy alias를 source API/Serde로 제출",
+      "oracle": "custom `PlanSource`의 API/Serde roundtrip·길이·문자 검증과 legacy alias의 정확한 Serde spelling 보존",
       "feature": "default",
       "platform": "any",
       "gate": "test",
       "source": [
-        "crates/taskmesh-contract/tests/contract_roundtrip.rs"
+        "crates/taskmesh-contract/tests/contract_roundtrip.rs",
+        "crates/taskmesh-contract/tests/contract_builders.rs"
+      ],
+      "supporting_cases": [
+        {
+          "target": "crates/taskmesh-contract/tests/contract_builders.rs",
+          "case": "product_neutral_plan_source_is_bounded"
+        }
       ]
     },
     {

@@ -17,12 +17,12 @@
 | F03 / B28 | OPEN — contract/API decision | `PermitId` and `Ticket` are `u64` aliases and every Governor starts at 1. A foreign raw value that collides locally can act on the local ledger. Lease tokens have authority nonces; raw transition APIs do not. | `crates/taskmesh-engine/src/shared/mod.rs`, `crates/taskmesh-engine/src/engine/governor.rs` | BG25-001, BG25-004 |
 | F04 / D21,D22,D25,H33 | OPEN — deployment boundary | Derived Serde accepts unknown keys; defaults can alter cycle or dispatch declarations. Whether untrusted bytes reach these DTOs is an external ownership fact. Add strict ingress only after identifying that boundary. | `crates/taskmesh-contract/src/task.rs`; config/topology deserializers | BG25-001, BG25-002 |
 | F05 / B25 | RESOLVED | Tokio-backed blocking/CPU and timer/local paths now validate required runtime services before admission. Already-decided cancel/deadline verdicts retain precedence and failed preflight leaves no permit or ticket. | `bf03efc`, `74a18f7`; `hardening_executor_protocol::default_tokio_dispatch_without_a_runtime_is_rejected_before_admission` | BG25-005, BG25-006 |
+| F06 / D17 | RESOLVED | Closed admission was documented as preceding every direct preflight, while malformed specs and foreign capabilities actually reject first. Rustdoc now states the real order and an exact side-effect-free fixture covers each public intake path. | `1c7b8ac`; `hardening_close_admission::closed_preflight_precedence_is_explicit_and_side_effect_free` | BG25-003 |
 
 ## Contract decisions, not automatic engine defects
 
 - B22: parent-stage membership requires a parent-plan registry the engine does not own. Default recommendation: external planner validates membership; engine continues to own declared ancestry/cycle safety.
 - B24: the engine preserves classification provenance but cannot prove semantic truth of caller-supplied metadata.
-- D17: malformed or foreign-capability preflight may precede closed-admission rejection. The external interface already describes this; align rustdoc/tests rather than changing precedence accidentally.
 - D23: unknown future enum variants fail derived Serde decode. This is a consumer version-negotiation policy, not a present execution bug.
 - H27: separate runtimes sharing one executor govern only their own submissions unless an explicit shared authority exists. `3e57f1a` proves both per-runtime bounds and the aggregate physical executor bound.
 - H35: `run_local` owns the submitted root, not arbitrary detached local or ambient Tokio children.

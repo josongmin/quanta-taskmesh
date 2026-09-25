@@ -73,11 +73,13 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   raw v2에 intended, submitted, caller terminal/drop, body start/finish, cut/settlement,
   sampled Snapshot과 실패 시 `invalid` 원시 행을 기록한다. Rust typed
   scenario/raw/Builder 검증과 Python 구조 검증이 연결돼 있다.
-- `just bench-host`는 진단 raw/summary와 실행 출처 sidecar를 만든다. 실행 전후
-  소스·호스트 식별자, 빌드 명령/feature, 고정 복사본의 바이너리 digest,
-  fixture/raw digest가 기록된다. 바이너리 bytes의 독립 검증, 실제 resolved
-  topology, 전력 상태는 아직 묶이지 않았다. 현재 calibration 파일의 boolean은
-  실측 증거가 아니므로 `host_perf.py --require-performance`는 fail closed다.
+- `just bench-host`는 진단 raw/summary, 보관 실행 파일, 같은 실행의 resolved
+  topology와 실행 출처 sidecar를 만든다. 실행 전후 소스·호스트·전원 상태,
+  빌드 명령/환경/feature, 보관 파일과 fixture/raw/topology digest가 기록된다.
+  검증기는 실행 파일 bytes를 다시 해시하고 같은 시나리오로 만든 런타임의
+  topology와 대조한다. 이는 동일 소스의 독립 재빌드나 성능 자격을 뜻하지 않는다.
+  현재 calibration 파일의 boolean은 실측 증거가 아니므로
+  `host_perf.py --require-performance`는 fail closed다.
   실측 calibration, 외부 resource sampler, repeated comparison, closed-loop,
   local/requested-stack/Rayon, H0–H8 인덱스와 대표 H7은 남아 있다.
   상세 목적·파일·DoD는 위 티켓이 소유한다.

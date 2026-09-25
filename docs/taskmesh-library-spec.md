@@ -38,6 +38,27 @@ but `serde`.
 5. `TerminalReason` / `GovernorError::TicketClaimTerminated` — a queued request
    that ended before its waiter claimed it says so, with the reason
 
+### Untrusted JSON ingress
+
+`taskmesh::{parse_task_spec, parse_runtime_config}` is the opt-in bytes boundary;
+raw `TaskSpec`/`RuntimeConfig` Serde decoding remains compatible with 0.3 and
+must not be treated as strict intake. `StrictIngressLimits` defaults to 1 MiB,
+32 nested JSON containers, and 64 stages. A preparse byte check precedes a
+streaming shape scan: the scan rejects duplicate/unknown keys at every nested
+level and refuses an over-limit stage before decoding its body. A second typed
+decode and `ValidatedTaskPlan` check promote task bytes into an admissible plan.
+
+Strict task JSON uses `blocking_dispatch: "shared_blocking"` or
+`blocking_dispatch: {"requested_stack":{"stack_size_bytes":N}}` on blocking-family
+primary stages; non-blocking stages omit the tag. Strict child scope requires
+`parent_operation_id`, `parent_stage`, and `parent_awaits` even when false. A
+strict runtime declaration has `topology`, `resources`, `classes`, and optional
+`extra_substrates` and `capability_limits`; `into_builder().build()` remains the
+authority for policy, topology, and inventory validation. Its
+`extra_substrates` are additions, not a replay of built-in inventory. External
+deployment ingress must explicitly call these APIs; a library-local test does
+not prove downstream adoption.
+
 ## Runtime Highlights
 
 1. `run_io`     — async, `Send`

@@ -148,6 +148,17 @@ pool을 첫 permit에서도 예약한다.
 
 타입 규칙:
 
+Untrusted JSON bytes는 `taskmesh::parse_task_spec` 또는
+`parse_runtime_config`를 명시적으로 호출해야 한다. raw contract DTO의
+`serde_json::from_slice`는 하위호환용이며 unknown field/default 때문에 strict ingress가 아니다.
+strict task의 child scope는 `parent_awaits`를 false일 때도 쓰고,
+blocking-family 첫 stage는 `blocking_dispatch`에 `"shared_blocking"` 또는
+`{"requested_stack":{"stack_size_bytes":N}}`를 쓴다. strict config는
+`topology`/`resources`/`classes`와 선택적 `extra_substrates`/`capability_limits`를
+받으며 Builder 검증을 거친다. 기본 입력 상한은 1 MiB/깊이 32/stage 64;
+중복·미지 키는 중첩 위치에서도 거절된다. 라이브러리 API의 존재만으로 외부
+배포 ingress가 이 경로를 사용한다는 뜻은 아니다.
+
 1. governor rejection과 task failure는 `RunError::{Governor, Task}`로 분리되며 다시 flatten되지 않는다.
 2. `spawn_blocking`/CPU worker join 실패는 task error가 아니라 governor-side error다.
 3. `Snapshot`은 `schema_version = 2`다. held 자원은 `u128`이며 JSON에서는 decimal string으로 직렬화된다.

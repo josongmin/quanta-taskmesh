@@ -1805,13 +1805,19 @@
       "owner_ticket": null,
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H24",
       "target": "crates/taskmesh-engine/tests/hardening_child_scope.rs",
-      "case": "an_abandoned_queued_child_frees_its_recursion_slot",
+      "case": "parallel_children_at_one_root_stage_admit_only_one_guard_owner",
       "oracle": "같은 root·declared parent_stage에 서로 다른 child operation 두 개를 병렬 제출",
       "feature": "default",
       "platform": "any",
       "gate": "test",
       "source": [
         "crates/taskmesh-engine/tests/hardening_child_scope.rs"
+      ],
+      "supporting_cases": [
+        {
+          "target": "crates/taskmesh-engine/tests/hardening_child_scope.rs",
+          "case": "an_abandoned_queued_child_frees_its_recursion_slot"
+        }
       ]
     },
     {

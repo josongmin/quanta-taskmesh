@@ -11,7 +11,8 @@
 //! must not free that other execution.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
+use std::time::Duration;
 
 use taskmesh_contract::{
     AdmissionVerdict, ClassPolicy, ManualClock, MemoryReleasePolicy, OverflowPolicy,
@@ -121,6 +122,64 @@ fn an_abandoned_queued_child_frees_its_recursion_slot() {
         g.admit(&child("R", "map")),
         AdmissionDecision::Admitted { .. }
     ));
+}
+
+#[test]
+fn parallel_children_at_one_root_stage_admit_only_one_guard_owner() {
+    let (governor, _clock) = governor(1);
+    let governor = Arc::new(governor);
+    let holder = admit(&governor, &root("holder"));
+    let start = Arc::new(Barrier::new(3));
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let mut workers = Vec::new();
+    for operation in ["left", "right"] {
+        let governor = Arc::clone(&governor);
+        let start = Arc::clone(&start);
+        let result_tx = result_tx.clone();
+        workers.push(std::thread::spawn(move || {
+            start.wait();
+            let result = governor.admit(&child("R", "map").operation(operation));
+            result_tx.send(result).expect("result observer alive");
+        }));
+    }
+    drop(result_tx);
+    start.wait();
+    let outcomes = [
+        result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first admission finishes"),
+        result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second admission finishes"),
+    ];
+    for worker in workers {
+        worker.join().expect("admission worker does not panic");
+    }
+    let queued = outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            AdmissionDecision::Queued { ticket } => Some(*ticket),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(queued.len(), 1, "one child owns the queued guard slot");
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(
+                outcome,
+                AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission)
+            ))
+            .count(),
+        1,
+        "the other child cannot enter the same root stage"
+    );
+    assert_eq!(
+        governor.abandon(queued[0]),
+        taskmesh_engine::AbandonOutcome::Abandoned
+    );
+    assert_eq!(governor.release(holder), ReleaseOutcome::Released);
+    assert_eq!(governor.snapshot().conservation_violation(), None);
 }
 
 #[test]

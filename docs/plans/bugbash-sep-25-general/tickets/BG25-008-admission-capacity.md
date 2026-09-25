@@ -46,6 +46,12 @@ class, capability, CPU, measured memory, tier/fallback이 동시에 충돌할 �
 - Engine matrix + focused host capacity fixture.
 - Assertions include closure count, queue depth, per-class/global held, and every capability occupancy.
 
+## 현재 증거 범위 (2026-09-25)
+
+- `hardening_admission_matrix` 3개 focused case와 target Clippy가 통과했다. 입력 이벤트에서 독립 계산한 class CPU/memory, inflight, blocking-pool occupancy를 교차 class admit/release마다 비교한다.
+- class/pool/CPU/memory의 대표 compound primary blocker와 class-full 해소 후 memory-primary 전환을 검증했다. 이 범위에서 새 운영 코드 결함은 관측되지 않았다.
+- measured overcommit/fallback, 실제 host executor occupancy·closure count, 0/1/exact/+1 전체 필드 표, BG25-012 selector·exact-source receipt는 여전히 OPEN이다. 이 focused proof를 티켓 전체 완료로 승격하지 않는다.
+
 ## 인계 및 중단 조건
 
 - Do not add a second executor queue or engine-specific pools.

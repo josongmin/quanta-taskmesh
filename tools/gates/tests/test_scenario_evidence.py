@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -88,6 +89,11 @@ def test_feature_gated_case_requires_matching_feature(tmp_path: Path) -> None:
 
 def test_committed_scenario_mapping_uses_real_test_functions() -> None:
     VALIDATE.main()
+
+
+def test_status_summary_reports_open_rows_without_calling_them_mapped() -> None:
+    summary = VALIDATE.format_status_summary(Counter({"MAPPED": 103, "OPEN": 1}))
+    assert summary == "MAPPED=103 NOT_RUN=0 OPEN=1 OUT_OF_SCOPE=0"
 
 
 def test_repository_file_rejects_absolute_traversal_and_external_symlink(

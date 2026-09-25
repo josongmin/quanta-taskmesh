@@ -6,7 +6,7 @@
 //! `e2e_chaos.rs`.
 //!
 //! Robustness rules followed here: no assertions on cross-thread ordering (only
-//! on completion, conservation, drain-to-zero, and forward progress), and every
+//! on completion, conservation, drain-to-zero, and forward progress), and
 //! timing-sensitive scenarios use explicit completion and cancellation cohorts.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -51,8 +51,8 @@ fn assert_drained(rt: &TokioRuntime, classes: &[&str]) {
 
 // ───────────────────────── 1. cancellation chaos ────────────────────────
 
-/// Spawn a churn of submissions, cancel a deterministic ~half of them mid-flight
-/// via outer timeouts, and prove the governor never leaks: after everything
+/// Spawn a churn of submissions, cancel exactly half of them mid-flight via
+/// outer timeouts, and prove the governor never leaks: after everything
 /// settles, all accounting is zero and the runtime still serves fresh work.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancellation_chaos_never_leaks() {
@@ -77,25 +77,30 @@ async fn cancellation_chaos_never_leaks() {
         let rt = rt.clone();
         let completed = completed.clone();
         let cancelled = cancelled.clone();
-        // Keep both outcomes meaningful under host contention. The completion
-        // cohort has a wide budget; the cancellation cohort cannot finish its
-        // deliberately long sleep before its timeout.
-        let (work, deadline) = if i % 2 == 0 {
-            (Duration::ZERO, Duration::from_secs(1))
-        } else {
-            (Duration::from_millis(50), Duration::from_millis(1))
-        };
+        // Keep both outcomes meaningful under host contention. Completion is
+        // not decided by wall-clock speed; only the cancellation cohort uses
+        // a timeout, against work that cannot finish inside that budget.
+        let should_cancel = i % 2 != 0;
         handles.push(tokio::spawn(async move {
             let spec = TaskSpec::io(cls("c")).operation(format!("c-{i}"));
             let fut = rt.run_io(spec, async move {
-                tokio::time::sleep(work).await;
+                if should_cancel {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
                 Ok::<_, ()>(i)
             });
-            match tokio::time::timeout(deadline, fut).await {
-                Ok(Ok(_)) => completed.fetch_add(1, Ordering::SeqCst),
-                Err(_) => cancelled.fetch_add(1, Ordering::SeqCst),
-                Ok(Err(error)) => panic!("unexpected runtime failure: {error:?}"),
-            };
+            if should_cancel {
+                match tokio::time::timeout(Duration::from_millis(1), fut).await {
+                    Err(_) => cancelled.fetch_add(1, Ordering::SeqCst),
+                    Ok(Ok(value)) => panic!("cancellation cohort completed as {value}"),
+                    Ok(Err(error)) => panic!("unexpected runtime failure: {error:?}"),
+                };
+            } else {
+                match fut.await {
+                    Ok(_) => completed.fetch_add(1, Ordering::SeqCst),
+                    Err(error) => panic!("unexpected runtime failure: {error:?}"),
+                };
+            }
         }));
     }
     bounded_storm("cancellation chaos task group", async move {
@@ -105,12 +110,8 @@ async fn cancellation_chaos_never_leaks() {
     })
     .await;
 
-    // Both paths must have been exercised (the scenario is meaningful).
-    assert!(completed.load(Ordering::SeqCst) > 0, "some must complete");
-    assert!(
-        cancelled.load(Ordering::SeqCst) > 0,
-        "some must be cancelled"
-    );
+    assert_eq!(completed.load(Ordering::SeqCst), 80);
+    assert_eq!(cancelled.load(Ordering::SeqCst), 80);
 
     // Each submission future has returned; its permit release is part of that
     // completion contract. A delay here would hide a late-release regression.

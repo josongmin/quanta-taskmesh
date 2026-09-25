@@ -199,6 +199,12 @@ def validate_nightly(nightly: object) -> None:
         fail("unexecuted nightly gates must remain explicit NOT_RUN entries with reasons")
 
 
+def format_status_summary(statuses: Counter[str]) -> str:
+    return " ".join(
+        f"{status}={statuses.get(status, 0)}" for status in sorted(VALID_STATUS)
+    )
+
+
 def main() -> None:
     data = json.loads(MANIFEST.read_text(encoding="utf-8"))
     plan = json.loads(PLAN.read_text(encoding="utf-8"))
@@ -328,8 +334,9 @@ def main() -> None:
     validate_nightly(data.get("qualification", {}).get("nightly", []))
 
     print(
-        "scenario mapping PASS: 104 unique MAPPED rows; "
+        "scenario mapping PASS: 104 unique rows; "
         "origins K=51 P=34 G=19; targets/cases/sources/gates valid; execution not asserted"
+        f"; statuses {format_status_summary(statuses)}"
     )
 
 

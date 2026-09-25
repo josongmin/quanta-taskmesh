@@ -9,6 +9,7 @@ The 104-row static mapping validates on the current tree; this is structural evi
 | Priority | Owner | Remaining action and DoD | Evidence boundary |
 |---|---|---|---|
 | Required for this updated tree | BG25-012 integrator | On the final clean HEAD run `just dev`, then `just verify-macos-ci`, and validate the receipt with `--expected-head "$(git rev-parse HEAD)"`. Require 16 applicable required gates PASS, no required NOT_RUN/FAIL, unchanged HEAD/tree/path digest, and durable receipt custody. | The validated `a23dcda` receipt predates this tracked audit update. Its PASS cannot qualify a later tree. |
+| Required for H31 semantic closure | BG25-006 host/runtime owner | Add one controlled fixture for external `advance_phase` preemption between host acquisition and dispatch, asserting work does not start, host drop does not refund the external lease, a second admission stays blocked, and drain completes only after the external token is released. | The current mapped host case checks release of an already running lease; the internal ext-preemption case checks lease refusal, but neither covers the combined H31 oracle. |
 | Required for deployment adoption | Product/consumer owner with BG25-001–003 | Review D1–D9 against each deployed Taskmesh consumer. Identify the exact bytes ingress, child planner, classifier, serialized wire consumer, and deadline/executor assumptions or record a source-backed N/A for each absent boundary. Run consumer fixtures against final Taskmesh source and obtain owner/deployment qualification. | Semantica's scoped typed-builder path and clean focused 2/2 test do not prove deployment approval or exhaust all consumers. |
 | Required only for nightly/release claim | BG25-009/012 and release owner | On explicit high-cost authorization, run all registered source-bound modelcheck, TSan, fuzz, coverage, IAI, and mutation producers as applicable; validate complete raw receipts and release checklist/semver/adjudication separately. | Bounded deterministic CI and focused Shuttle replay do not cover the full nightly state space. |
 | Required only for performance claim | BG25-011 benchmark owner | Capture a quiet-host baseline with same source/toolchain/features/workload/seed/warmup and exact response/worker denominators before claiming latency or throughput improvement/regression. | Current host/simulator correctness tests and `bench-smoke` are not performance qualification. |
@@ -59,7 +60,8 @@ No additional reachable production defect is established by this audit. `scenari
 - BG25-008: H01 covers four host dispatch paths and reject-before-work; B05 isolates all four capacity dimensions; H07 combines primary/scavenger/fallback/drop policy; H25 releases four blockers independently; H32 preserves measured cross-class memory pressure after class release; D01 distinguishes zero/one/exact/+1 capacity meanings.
 - BG25-009: H04's bounded combined fixture starts release, claim, timeout abandon, cancel abandon, and sweep behind one barrier and checks quiescent ownership/accounting; the finite-history and host race-storm cases remain supporting evidence. This does not exhaust every internal interleaving. H06 links independent DRR/WFQ/cancellation/cross-pool references. H13 proves both drain futures reached `Pending` before direct release; H14 covers reentrant snapshot/release and callback panic outside the lock. H16 uses a bounded two-thread input ledger. Its focused Shuttle fixture saves and replays one real Governor admission ordering under an intentionally false assertion; it proves replay capability, not a product defect or the full model set.
 - BG25-003/004/005/006/007/010: compound wire, identity, deadline, stack, child-lifetime, and snapshot claims use explicit supporting cases. H18 additionally depends on the `test-rayon` exact selectors and the separate default+rayon `consumer-msrv` gate.
-- BG25-011: H28 compares host and simulator offered/completed/rejected/max-queue counts under the same finite burst without treating virtual wait as host latency. Quiet-host latency and multi-class performance baselines remain separate performance qualification, not correctness gaps.
+- BG25-011: H17 now links explicit overload, undersaturation, and multi-seed simulator cases. H28 compares host and simulator offered/completed/rejected/max-queue counts under the same finite burst without treating virtual wait as host latency. Quiet-host latency and multi-class performance baselines remain separate performance qualification, not correctness gaps.
+- H02 now uses distinct class policies for blocking, maintenance, and CPU fallback while checking one shared physical bound. H24 now uses a barrier-delimited parallel child submission fixture; its prior sequential case remains support. Both changes need the final exact-HEAD CI receipt.
 - `MAPPED` remains a static source/case relationship. Execution PASS comes only from the exact-source receipt.
 - The library strict ingress exists; deployment owners must explicitly call it at their untrusted byte boundary.
 - Parent-plan stage membership and detached structured concurrency remain outside the engine contract by D4 and the root-child lifetime fixtures.
@@ -67,10 +69,11 @@ No additional reachable production defect is established by this audit. `scenari
 
 ## Remaining work order
 
-1. BG25-012: validate the external macOS CI receipt against the current clean HEAD; reissue it after any tracked change.
-2. BG25-001–003 and deployment owners: decide D1–D9 applicability for each real consumer and obtain owner/deployment evidence. The Semantica focused 2/2 comparison is a lead, not deployment qualification.
-3. BG25-009/012 and release owner: run the full nightly/release producers only when that qualification is requested.
-4. BG25-011: measure a quiet-host baseline only when making a performance claim.
+1. BG25-006: close the combined H31 semantic fixture, or keep the DoD explicitly open.
+2. BG25-012: complete the 104-row semantic audit, then validate the external macOS CI receipt against the final clean HEAD; reissue it after any tracked change.
+3. BG25-001–003 and deployment owners: decide D1–D9 applicability for each real consumer and obtain owner/deployment evidence. The Semantica focused 2/2 comparison is a lead, not deployment qualification.
+4. BG25-009/012 and release owner: run the full nightly/release producers only when that qualification is requested.
+5. BG25-011: measure a quiet-host baseline only when making a performance claim.
 
 ## External adoption boundary
 

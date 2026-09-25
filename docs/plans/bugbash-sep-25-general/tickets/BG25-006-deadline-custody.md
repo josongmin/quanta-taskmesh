@@ -9,9 +9,9 @@
 
 ## 2026-09-25 재감사 잔여
 
-- **저장소 코드:** `CompleteBy` 응답과 worker custody 분리, D05/D15/H11/H12/H19/H20/H31/H34 회귀가 직전 clean HEAD `da5356b`의 `test` 게이트에서 PASS였다. 새 확정 결함 없음.
+- **저장소 코드:** `CompleteBy` 응답과 worker custody 분리, D05/D15/H11/H12/H19/H20/H31/H34의 매핑된 테스트가 clean HEAD `da5356b`의 `test` 게이트에서 PASS였다. 새 확정 결함 없음. H31의 매핑된 host case는 실행 중인 lease에 대한 외부 release 거부를 검증한다. 외부 `advance_phase` 선점은 `runtime/claim_acquisition_tests.rs::a_lease_taken_through_ext_is_refused_not_run_v1`이 검증하지만, 선점과 실제 host dispatch, 두 번째 입장, drain을 한 fixture로 결합한 증거는 없다.
 - **외부 계약:** 실제 consumer가 늦은 정상 성공을 기대하는지는 BG25-001의 D6 호환성 검토로 추적한다. 그 증거 없이 응답 계약을 다시 변경하지 않는다.
-- **남은 증거:** 문서 변경 후 clean exact-source CI 재검증은 BG25-012가 소유한다.
+- **남은 증거:** H31 결합 fixture 및 문서 변경 후 clean exact-source CI 재검증은 BG25-012가 소유한다.
 
 ## 목적
 
@@ -58,7 +58,7 @@ caller response, root completion, owned-runtime teardown, blocking child termina
 - H34: requested-stack `CompleteBy`에서 teardown이 deadline을 넘으면 준비된 `Ok`/task `Err`를 폐기하고 `DeadlineExceeded`를 반환한다. worker는 실제 teardown까지 lease를 보유한다.
 - Tokio timer/local service가 필요한 경로는 permit/ticket 전에 typed preflight를 수행한다. pre-cancel/expired deadline처럼 이미 결정된 계약 verdict는 host prerequisite보다 먼저 반환한다.
 - `hardening_deadline_custody`와 `hardening_executor_protocol`의 default/Rayon focused control 및 `just dev`가 통과했다.
-- D05, D15, H11, H12, H19, H20, H31의 개별 fixture에 `host_open_loop::caller_terminal_response_and_worker_custody_are_separate_ledgers`의 결합 ledger를 추가했다.
+- D05, D15, H11, H12, H19, H20의 개별 fixture에 `host_open_loop::caller_terminal_response_and_worker_custody_are_separate_ledgers`의 결합 ledger를 추가했다. H31은 direct lease 선점 및 running lease의 external release 거부가 각각 검증됐지만, 앞의 DoD 전체를 증명하는 결합 fixture는 남아 있다.
 - 관련 default tests와 unit tests는 최종 committed HEAD의 BG25-012 receipt에서 함께 판정한다.
 - D05는 checked-add overflow, zero-budget try-once, deadline equality를 별도 case로 연결한다. D15는 0/1/MAX/MAX+1/target-usize validator 경계와 sync/async preflight case를 연결한다.
 - H11은 cancel/deadline/acquire의 동일 tick 우선순위 unit cases를 연결한다. H12/H19는 caller 응답, accepted/started worker custody, RunFor, 다른 요청과 drain의 별도 fixture를 supporting cases로 연결한다.

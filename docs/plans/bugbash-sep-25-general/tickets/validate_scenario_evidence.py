@@ -53,29 +53,54 @@ def repository_file(relative: str, context: str) -> Path:
     return candidate
 
 
-def test_case_exists(path: Path, case: str) -> bool:
+def test_case_exists(path: Path, case: str, *, feature: str = "default") -> bool:
     lines = path.read_text(encoding="utf-8").splitlines()
     declaration = re.compile(rf"^\s*(?:async\s+)?fn\s+{re.escape(case)}\s*\(")
     attribute = re.compile(r"^\s*#\[(?P<body>[^]]+)]\s*$")
+    inner_attribute = re.compile(r"^\s*#!\[(?P<body>[^]]+)]\s*$")
+    file_conditions = [
+        match.group("body")
+        for line in lines
+        if (match := inner_attribute.fullmatch(line)) is not None
+    ]
     for index, line in enumerate(lines):
         if declaration.search(line) is None:
             continue
         cursor = index - 1
-        is_test = False
+        attributes = list(file_conditions)
         while cursor >= 0:
+            if not lines[cursor].strip() or lines[cursor].lstrip().startswith("///"):
+                cursor -= 1
+                continue
             match = attribute.fullmatch(lines[cursor])
             if match is None:
                 break
-            body = match.group("body")
-            is_test |= (
-                body == "test"
-                or body == "tokio::test"
-                or body.startswith("tokio::test(")
-            )
+            attributes.append(match.group("body"))
             cursor -= 1
-        if is_test:
+        is_test = any(
+            body == "test" or body == "tokio::test" or body.startswith("tokio::test(")
+            for body in attributes
+        )
+        if is_test and all(attribute_selected(body, feature) for body in attributes):
             return True
     return False
+
+
+def attribute_selected(body: str, feature: str) -> bool:
+    if body == "ignore" or body.startswith("ignore ="):
+        return False
+    if body.startswith("cfg_attr("):
+        return False  # Conditional ignore/test attributes need an explicit proof path.
+    if not body.startswith("cfg("):
+        return True
+    condition = re.sub(r"\s+", "", body)
+    if condition == 'cfg(feature="rayon")':
+        return feature == "rayon"
+    if condition == 'cfg(not(feature="rayon"))':
+        return feature == "default"
+    if condition == "cfg(test)":
+        return True
+    return False  # Unknown cfg conditions cannot establish selected execution.
 
 
 def recipe_body(justfile: str, recipe: str) -> str:
@@ -89,7 +114,7 @@ def recipe_body(justfile: str, recipe: str) -> str:
     return match.group("body")
 
 
-def recipe_executes_test(body: str, target: str, case: str) -> bool:
+def recipe_executes_test(body: str, target: str, case: str, package: str) -> bool:
     selector = ["--test", target, case, "--", "--exact"]
     for line in body.splitlines():
         stripped = line.strip()
@@ -105,7 +130,23 @@ def recipe_executes_test(body: str, target: str, case: str) -> bool:
             continue
         if any(token in {"&&", "||", ";", "|", "&"} for token in tokens):
             continue
-        if any(tokens[index : index + len(selector)] == selector for index in range(len(tokens))):
+        cargo_args = tokens[: tokens.index("--")] if "--" in tokens else tokens
+        if not any(
+            cargo_args[index : index + 2] in (["-p", package], ["--package", package])
+            for index in range(len(cargo_args))
+        ):
+            continue
+        if package == "taskmesh" and not any(
+            cargo_args[index : index + 2] == ["--features", "rayon"]
+            or cargo_args[index] == "--features=rayon"
+            for index in range(len(cargo_args))
+        ):
+            continue
+        if any(
+            index + 3 == len(cargo_args)
+            and tokens[index : index + len(selector)] == selector
+            for index in range(len(cargo_args))
+        ):
             return True
     return False
 
@@ -241,6 +282,9 @@ def main() -> None:
             fail(f"{scenario}: unsupported feature/platform selector")
         if row["gate"] not in known_gates:
             fail(f"{scenario}: selecting gate {row['gate']!r} is not inventoried")
+        expected_gate = "test-rayon" if row["feature"] == "rayon" else "test"
+        if row["gate"] != expected_gate:
+            fail(f"{scenario}: feature {row['feature']!r} requires gate {expected_gate!r}")
         cases = evidence_cases(row, scenario)
         sources = row["source"]
         evidence_targets = {target for target, _case in cases}
@@ -257,14 +301,18 @@ def main() -> None:
         if row["status"] == "MAPPED":
             for case_target, case_name in cases:
                 target = repository_file(case_target, f"{scenario}: target")
-                if not test_case_exists(target, case_name):
+                if not test_case_exists(target, case_name, feature=row["feature"]):
                     fail(
-                        f"{scenario}: MAPPED target/case does not exist: "
+                        f"{scenario}: MAPPED target/case is absent, ignored, or not selected: "
                         f"{case_target}::{case_name}"
                     )
                 if row["feature"] == "rayon" and (
-                    row["gate"] != "test-rayon"
-                    or not recipe_executes_test(rayon_recipe, Path(case_target).stem, case_name)
+                    not recipe_executes_test(
+                        rayon_recipe,
+                        Path(case_target).stem,
+                        case_name,
+                        Path(case_target).parts[1],
+                    )
                 ):
                     fail(f"{scenario}: rayon selector is not executed by test-rayon")
 

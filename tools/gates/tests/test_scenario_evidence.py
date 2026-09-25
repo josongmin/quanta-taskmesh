@@ -28,7 +28,7 @@ SPEC.loader.exec_module(VALIDATE)
         "#[test]\nfn named_case() {}\n",
         "#[tokio::test]\nasync fn named_case() {}\n",
         '#[tokio::test(flavor = "multi_thread")]\nasync fn named_case() {}\n',
-        "#[test]\n#[ignore]\nfn named_case() {}\n",
+        '#[cfg(not(feature = "rayon"))]\n#[test]\nfn named_case() {}\n',
     ],
 )
 def test_test_case_exists_accepts_only_declared_tests(
@@ -47,6 +47,13 @@ def test_test_case_exists_accepts_only_declared_tests(
         "// #[test]\nfn named_case() {}\n",
         "#[tokio::test_case]\nasync fn named_case() {}\n",
         "#[test]\nfn different_case() {}\nfn named_case() {}\n",
+        "#[test]\n#[ignore]\nfn named_case() {}\n",
+        '#[ignore = "flaky"]\n#[test]\nfn named_case() {}\n',
+        '#[ignore]\n/// docs\n#[test]\nfn named_case() {}\n',
+        '#[cfg(feature = "rayon")]\n#[test]\nfn named_case() {}\n',
+        '#[cfg(target_os = "linux")]\n#[test]\nfn named_case() {}\n',
+        '#[cfg_attr(test, ignore)]\n#[test]\nfn named_case() {}\n',
+        '#![cfg(shuttle)]\n#[test]\nfn named_case() {}\n',
     ],
 )
 def test_test_case_exists_rejects_helpers_and_misattributed_attributes(
@@ -55,6 +62,28 @@ def test_test_case_exists_rejects_helpers_and_misattributed_attributes(
     source = tmp_path / "case.rs"
     source.write_text(declaration, encoding="utf-8")
     assert not VALIDATE.test_case_exists(source, "named_case")
+
+
+def test_feature_gated_case_requires_matching_feature(tmp_path: Path) -> None:
+    source = tmp_path / "case.rs"
+    source.write_text(
+        '#[cfg(feature = "rayon")]\n#[tokio::test]\nasync fn named_case() {}\n',
+        encoding="utf-8",
+    )
+    assert VALIDATE.test_case_exists(source, "named_case", feature="rayon")
+    assert not VALIDATE.test_case_exists(source, "named_case", feature="default")
+    source.write_text(
+        '#![cfg(feature = "rayon")]\n#[test]\nfn named_case() {}\n',
+        encoding="utf-8",
+    )
+    assert VALIDATE.test_case_exists(source, "named_case", feature="rayon")
+    assert not VALIDATE.test_case_exists(source, "named_case", feature="default")
+    source.write_text(
+        '#[cfg(not(feature = "rayon"))]\n#[test]\nfn named_case() {}\n',
+        encoding="utf-8",
+    )
+    assert VALIDATE.test_case_exists(source, "named_case", feature="default")
+    assert not VALIDATE.test_case_exists(source, "named_case", feature="rayon")
 
 
 def test_committed_scenario_mapping_uses_real_test_functions() -> None:
@@ -97,18 +126,23 @@ def test_nightly_inventory_rejects_duplicate_gate_rows() -> None:
 def test_recipe_selector_requires_an_executed_exact_cargo_test() -> None:
     selector = "--test sample exact_case -- --exact"
     assert VALIDATE.recipe_executes_test(
-        f"CARGO_BUILD_JOBS=4 cargo test --locked -p taskmesh {selector}\n",
+        f"CARGO_BUILD_JOBS=4 cargo test --locked -p taskmesh --features rayon {selector}\n",
         "sample",
         "exact_case",
+        "taskmesh",
     )
     for body in (
         f"# cargo test {selector}\n",
         f"echo cargo test {selector}\n",
-        "cargo test --test sample exact_case_extra -- --exact\n",
-        "cargo test --test sample exact_case\n",
-        f"cargo test {selector} || true\n",
+        "cargo test -p taskmesh --features rayon --test sample exact_case_extra -- --exact\n",
+        "cargo test -p taskmesh --features rayon --test sample exact_case\n",
+        f"cargo test -p taskmesh --features rayon {selector} || true\n",
+        f"cargo test -p other --features rayon {selector}\n",
+        f"cargo test -p taskmesh {selector}\n",
+        f"cargo test -p taskmesh --features rayon -- {selector}\n",
+        f"cargo test --features rayon {selector} -p taskmesh\n",
     ):
-        assert not VALIDATE.recipe_executes_test(body, "sample", "exact_case")
+        assert not VALIDATE.recipe_executes_test(body, "sample", "exact_case", "taskmesh")
 
 
 def test_evidence_cases_are_exact_nonduplicated_pairs() -> None:

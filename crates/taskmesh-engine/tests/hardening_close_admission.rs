@@ -166,10 +166,7 @@ fn closed_preflight_precedence_is_explicit_and_side_effect_free() {
         AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask)
     ));
     assert!(matches!(
-        g.admit_waitable(
-            &malformed,
-            Arc::new(DropCountingWaker(Arc::clone(&drops))),
-        ),
+        g.admit_waitable(&malformed, Arc::new(DropCountingWaker(Arc::clone(&drops))),),
         AdmissionDecision::Rejected(AdmissionVerdict::MalformedTask)
     ));
     assert_eq!(

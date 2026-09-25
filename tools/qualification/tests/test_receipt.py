@@ -308,6 +308,24 @@ def passing_gate_results(required: list[str]) -> list[dict]:
                     + " execution_digest="
                     + "b" * 64
                 )
+            if result["id"] == "test-rayon":
+                summary = {
+                    "schema_version": 1,
+                    "runner": "nextest",
+                    "runner_version": "0.9.104",
+                    "catalog_digest": "a" * 64,
+                    "selection_digest": "b" * 64,
+                    "execution_digest": "b" * 64,
+                    "commands_digest": "c" * 64,
+                    "targets": 7,
+                    "cases": 33,
+                }
+                summary["summary_digest"] = hashlib.sha256(
+                    json.dumps(summary, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+                status_line += " " + " ".join(
+                    f"{key}={value}" for key, value in summary.items()
+                )
             if result["id"] == "py-test":
                 status_line += (
                     " runner=pytest runner_version=8.4.0 modules=1 selected=1 passed=1"

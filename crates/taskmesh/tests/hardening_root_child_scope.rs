@@ -190,6 +190,61 @@ async fn aborted_caller_root_refunds_only_its_own_lease() {
         .expect("aborted caller releases root custody");
 }
 
+#[test]
+fn local_caller_panic_and_drop_refund_the_root_without_worker_reclassification() {
+    // run_local is !Send, so drive it on the caller's current-thread runtime.
+    // An unwind is a caller panic, not a detached worker's WorkerPanicked.
+    let tokio = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("current-thread runtime builds");
+    let rt = runtime();
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tokio.block_on(
+            rt.run_local(TaskSpec::local(class()).operation("local-panic"), async {
+                panic!("local caller panics while it owns the root lease");
+                #[allow(unreachable_code, reason = "the caller must panic")]
+                Ok::<(), ()>(())
+            }),
+        )
+    }));
+    assert!(
+        panic.is_err(),
+        "caller panic must not be converted to RunError"
+    );
+    assert_eq!(rt.snapshot().classes[&class()].inflight, 0);
+
+    tokio.block_on(async {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+        let mut root = Box::pin(rt.run_local(
+            TaskSpec::local(class()).operation("local-drop"),
+            async move {
+                let _observer_gone = started_tx.send(());
+                std::future::pending::<Result<(), ()>>().await
+            },
+        ));
+        tokio::select! {
+            result = &mut root => panic!("local root must remain pending: {result:?}"),
+            ready = bounded("local root starts", started_rx) => {
+                ready.expect("local root signals admission");
+            }
+        }
+        assert_eq!(rt.snapshot().classes[&class()].inflight, 1);
+        drop(root);
+        assert_eq!(rt.snapshot().classes[&class()].inflight, 0);
+
+        bounded(
+            "local capacity reused after panic and drop",
+            rt.run_local(TaskSpec::local(class()).operation("local-next"), async {
+                Ok::<(), ()>(())
+            }),
+        )
+        .await
+        .expect("next caller admits without a leaked root permit");
+        assert_eq!(rt.snapshot().classes[&class()].inflight, 0);
+    });
+}
+
 struct DropNotice(Arc<AtomicUsize>);
 
 impl Drop for DropNotice {
@@ -202,11 +257,16 @@ impl Drop for DropNotice {
 async fn unawaited_local_child_is_dropped_with_the_root_local_set() {
     let rt = runtime();
     let dropped = Arc::new(AtomicUsize::new(0));
-    let completed = Arc::new(AtomicBool::new(false));
+    let local_completed = Arc::new(AtomicBool::new(false));
+    let ambient_completed = Arc::new(AtomicBool::new(false));
     let child_dropped = Arc::clone(&dropped);
-    let child_completed = Arc::clone(&completed);
-    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
-    let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+    let child_completed = Arc::clone(&local_completed);
+    let ambient_child_completed = Arc::clone(&ambient_completed);
+    let (local_release_tx, local_release_rx) = tokio::sync::oneshot::channel::<()>();
+    let (local_started_tx, local_started_rx) = tokio::sync::oneshot::channel::<()>();
+    let (ambient_release_tx, ambient_release_rx) = tokio::sync::oneshot::channel::<()>();
+    let (ambient_started_tx, ambient_started_rx) = tokio::sync::oneshot::channel::<()>();
+    let (ambient_done_tx, ambient_done_rx) = tokio::sync::oneshot::channel::<()>();
 
     bounded(
         "local root completion",
@@ -215,11 +275,20 @@ async fn unawaited_local_child_is_dropped_with_the_root_local_set() {
             async move {
                 let _unawaited = tokio::task::spawn_local(async move {
                     let _notice = DropNotice(child_dropped);
-                    let _observer_gone = started_tx.send(());
-                    let _released = release_rx.await;
+                    let _observer_gone = local_started_tx.send(());
+                    let _released = local_release_rx.await;
                     child_completed.store(true, Ordering::SeqCst);
                 });
-                started_rx.await.expect("local child starts");
+                let _ambient = tokio::spawn(async move {
+                    let _observer_gone = ambient_started_tx.send(());
+                    ambient_release_rx
+                        .await
+                        .expect("test releases ambient child");
+                    ambient_child_completed.store(true, Ordering::SeqCst);
+                    let _observer_gone = ambient_done_tx.send(());
+                });
+                local_started_rx.await.expect("local child starts");
+                ambient_started_rx.await.expect("ambient child starts");
                 Ok::<(), ()>(())
             },
         ),
@@ -229,9 +298,21 @@ async fn unawaited_local_child_is_dropped_with_the_root_local_set() {
 
     assert_eq!(rt.snapshot().classes[&class()].inflight, 0);
     assert_eq!(dropped.load(Ordering::SeqCst), 1);
-    assert!(!completed.load(Ordering::SeqCst));
-    assert_eq!(release_tx.send(()), Err(()), "local child receiver is gone");
+    assert!(!local_completed.load(Ordering::SeqCst));
+    assert_eq!(
+        local_release_tx.send(()),
+        Err(()),
+        "local child receiver is gone"
+    );
     rt.drain(Duration::from_secs(1))
         .await
-        .expect("dropped local child has no governed lease");
+        .expect("neither detached child holds the root's governed lease");
+    assert!(!ambient_completed.load(Ordering::SeqCst));
+    ambient_release_tx
+        .send(())
+        .expect("ambient child still outlives local root and drain");
+    bounded("ambient child completion", ambient_done_rx)
+        .await
+        .expect("ambient child reports completion");
+    assert!(ambient_completed.load(Ordering::SeqCst));
 }

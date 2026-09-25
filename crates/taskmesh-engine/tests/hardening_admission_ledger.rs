@@ -242,6 +242,87 @@ fn selected_compound_blockers_follow_class_pool_cpu_memory_priority() {
 }
 
 #[test]
+fn each_capacity_dimension_saturates_without_help_from_another_dimension() {
+    struct Case {
+        name: &'static str,
+        governor: Governor,
+        contender_class: &'static str,
+        expected: fn(&AdmissionDecision) -> bool,
+    }
+
+    let cases = [
+        Case {
+            name: "class quota",
+            governor: governor(10, 10, 10, &[("a", 1, 1, 1), ("b", 4, 1, 1)]),
+            contender_class: "a",
+            expected: |decision| {
+                matches!(
+                    decision,
+                    AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated { .. })
+                )
+            },
+        },
+        Case {
+            name: "capability pool",
+            governor: governor(10, 10, 1, &[("a", 4, 1, 1), ("b", 4, 1, 1)]),
+            contender_class: "b",
+            expected: |decision| {
+                matches!(
+                    decision,
+                    AdmissionDecision::Rejected(AdmissionVerdict::SubstrateSaturated { .. })
+                )
+            },
+        },
+        Case {
+            name: "CPU budget",
+            governor: governor(1, 10, 10, &[("a", 4, 1, 1), ("b", 4, 1, 1)]),
+            contender_class: "b",
+            expected: |decision| {
+                matches!(
+                    decision,
+                    AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated { .. })
+                )
+            },
+        },
+        Case {
+            name: "memory budget",
+            governor: governor(10, 1, 10, &[("a", 4, 1, 1), ("b", 4, 1, 1)]),
+            contender_class: "b",
+            expected: |decision| {
+                matches!(
+                    decision,
+                    AdmissionDecision::Rejected(AdmissionVerdict::MemorySaturated { .. })
+                )
+            },
+        },
+    ];
+
+    for case in cases {
+        let holder = admitted(&case.governor, "a", "holder");
+        let before = case.governor.snapshot();
+        let decision = submit(&case.governor, case.contender_class, "contender");
+        assert!(
+            (case.expected)(&decision),
+            "{}: got {decision:?}",
+            case.name
+        );
+        assert_eq!(
+            case.governor.snapshot(),
+            before,
+            "{} changed state",
+            case.name
+        );
+        assert_eq!(
+            case.governor.release(holder),
+            ReleaseOutcome::Released,
+            "{} holder release",
+            case.name
+        );
+        assert_eq!(case.governor.snapshot().conservation_violation(), None);
+    }
+}
+
+#[test]
 fn class_full_precedes_memory_then_memory_becomes_primary_after_class_release() {
     let g = governor(3, 1, 3, &[("a", 1, 1, 1), ("b", 1, 1, 1), ("c", 1, 1, 1)]);
     let a = admitted(&g, "a", "a-holder");

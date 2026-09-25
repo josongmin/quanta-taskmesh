@@ -309,7 +309,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stack_validator_has_an_injectable_32_bit_conversion_boundary() {
+    fn stack_validator_distinguishes_zero_one_max_plus_one_and_target_width() {
+        assert_eq!(
+            validate_stack_size_for_usize(0, u64::MAX),
+            Err(GovernorError::PolicyViolation(
+                "requested stack size must be nonzero".into()
+            ))
+        );
+        assert_eq!(
+            validate_stack_size_for_usize(1, u64::MAX)
+                .expect("one byte crosses the protocol validator")
+                .get(),
+            1
+        );
+        let protocol_maximum =
+            validate_stack_size_for_usize(MAX_REQUESTED_STACK_BYTES, usize_max_as_u64());
+        if usize_max_as_u64() >= MAX_REQUESTED_STACK_BYTES {
+            assert_eq!(
+                protocol_maximum
+                    .expect("protocol maximum is inclusive when the target can represent it")
+                    .get() as u64,
+                MAX_REQUESTED_STACK_BYTES
+            );
+        } else {
+            assert_eq!(
+                protocol_maximum,
+                Err(GovernorError::PolicyViolation(
+                    "requested stack size does not fit usize".into()
+                ))
+            );
+        }
+        assert_eq!(
+            validate_stack_size_for_usize(MAX_REQUESTED_STACK_BYTES + 1, u64::MAX),
+            Err(GovernorError::PolicyViolation(
+                format!(
+                    "requested stack size {} bytes exceeds the supported maximum \
+                     {MAX_REQUESTED_STACK_BYTES}",
+                    MAX_REQUESTED_STACK_BYTES + 1
+                )
+                .into()
+            ))
+        );
+
         let maximum_32_bit = u64::from(u32::MAX);
         assert_eq!(
             validate_stack_size_for_usize(maximum_32_bit, maximum_32_bit)

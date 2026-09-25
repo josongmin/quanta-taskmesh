@@ -184,6 +184,43 @@ fn identifier_maximum_is_inclusive_and_field_display_is_exact() {
 }
 
 #[test]
+fn class_identifiers_reject_nul_non_ascii_and_over_limit_values() {
+    for (value, violation) in [
+        (
+            "nul\0class".to_owned(),
+            IdentifierViolation::InvalidCharacter {
+                byte_offset: 3,
+                character: '\0',
+            },
+        ),
+        (
+            "café".to_owned(),
+            IdentifierViolation::InvalidCharacter {
+                byte_offset: 3,
+                character: 'é',
+            },
+        ),
+        (
+            "x".repeat(MAX_TASK_IDENTIFIER_LEN + 1),
+            IdentifierViolation::TooLong {
+                actual: MAX_TASK_IDENTIFIER_LEN + 1,
+                max: MAX_TASK_IDENTIFIER_LEN,
+            },
+        ),
+    ] {
+        let mut raw = root();
+        raw.class = TaskClass::new(value);
+        assert_invalid(
+            raw,
+            TaskPlanError::InvalidIdentifier {
+                field: TaskIdentifierField::Class,
+                violation,
+            },
+        );
+    }
+}
+
+#[test]
 fn reduce_key_is_validated_as_an_identifier() {
     let raw = root().reduce_stage(
         TaskStage::new("merge"),

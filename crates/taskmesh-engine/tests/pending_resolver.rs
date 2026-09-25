@@ -274,6 +274,43 @@ fn duplicate_active_operation_identity_within_one_root_fails_closed() {
 }
 
 #[test]
+fn duplicate_identity_is_global_across_classes_and_includes_queued_requests() {
+    let g = governor(
+        [("a", queueing(1, 1, 1)), ("b", queueing(4, 1, 1))],
+        100,
+        100,
+        0,
+        0,
+    );
+    let holder = admitted(&g, &TaskSpec::io(class("a")).operation("holder"));
+    let first = TaskSpec::io(class("a"))
+        .child_of("root", "parent-a", TaskStage::new("stage-a"))
+        .operation("duplicate-operation");
+    let ticket = match g.admit(&first) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("first duplicate identity must be live in the queue: {other:?}"),
+    };
+    let before = g.snapshot();
+    let cross_class = TaskSpec::io(class("b"))
+        .child_of("root", "parent-b", TaskStage::new("stage-b"))
+        .operation("duplicate-operation");
+    assert_eq!(
+        g.admit(&cross_class),
+        AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission)
+    );
+    assert_eq!(g.snapshot(), before);
+
+    assert_eq!(g.release(holder), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(promoted) = g.claim(ticket) else {
+        panic!("the original queued identity must remain claimable")
+    };
+    assert_eq!(g.release(promoted), ReleaseOutcome::Released);
+    let reused = admitted(&g, &cross_class);
+    assert_eq!(g.release(reused), ReleaseOutcome::Released);
+    assert_eq!(g.snapshot().conservation_violation(), None);
+}
+
+#[test]
 fn root_operation_slot_can_be_reused_while_descendant_identity_remains_live() {
     let g = governor([("c", queueing(8, 1, 1))], 100, 100, 0, 0);
     let root_spec = TaskSpec::io(class("c")).operation("root");

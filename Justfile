@@ -179,6 +179,10 @@ bench-generator scenario raw:
 bench-host-aa scenario calibration directory *ARGS:
     uv run python tools/bench/host_aa.py {{scenario}} {{calibration}} {{directory}} {{ARGS}}
 
+# Balanced Snapshot-on/off host pairs, with the same body and executable.
+bench-host-snapshot scenario calibration directory *ARGS:
+    uv run python tools/bench/host_observer.py {{scenario}} {{calibration}} {{directory}} {{ARGS}}
+
 # Deterministic allocation gate (ADR 9000 / P2). Runs anywhere — no valgrind.
 bench-gate:
     bash tools/bench-gate.sh

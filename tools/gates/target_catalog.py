@@ -14,10 +14,6 @@ MODEL_FEATURES = {
     "shuttle_governance": ("shuttle",),
     "model_replay_fixture": ("shuttle",),
 }
-ZERO_CASE_LIBS = {
-    "taskmesh-contract/lib/taskmesh_contract",
-    "taskmesh-rayon/lib/taskmesh_rayon",
-}
 RAYON_SCOPES = (
     ("taskmesh", "lib", "taskmesh", None),
     (

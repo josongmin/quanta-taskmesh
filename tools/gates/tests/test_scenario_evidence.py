@@ -106,5 +106,6 @@ def test_recipe_selector_requires_an_executed_exact_cargo_test() -> None:
         f"echo cargo test {selector}\n",
         "cargo test --test sample exact_case_extra -- --exact\n",
         "cargo test --test sample exact_case\n",
+        f"cargo test {selector} || true\n",
     ):
         assert not VALIDATE.recipe_executes_test(body, "sample", "exact_case")

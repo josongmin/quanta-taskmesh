@@ -103,6 +103,8 @@ def recipe_executes_test(body: str, target: str, case: str) -> bool:
             tokens.pop(0)
         if tokens[:2] != ["cargo", "test"]:
             continue
+        if any(token in {"&&", "||", ";", "|", "&"} for token in tokens):
+            continue
         if any(tokens[index : index + len(selector)] == selector for index in range(len(tokens))):
             return True
     return False

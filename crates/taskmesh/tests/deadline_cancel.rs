@@ -392,11 +392,12 @@ async fn absolute_deadline_rejects_non_cancellable_blocking_work_v1() {
         .await
         .expect_err("blocking work cannot promise cancellation at an absolute deadline");
 
-    assert!(matches!(
+    assert_eq!(
         error,
-        RunError::Governor(GovernorError::PolicyViolation(message))
-            if message.contains("cooperative async work")
-    ));
+        RunError::Governor(GovernorError::PolicyViolation(
+            "absolute completion deadline requires cooperative async work".into()
+        ))
+    );
     assert!(!invoked.load(Ordering::SeqCst));
 
     // The same job with a stack request runs on a dedicated thread instead of
@@ -420,11 +421,12 @@ async fn absolute_deadline_rejects_non_cancellable_blocking_work_v1() {
         )
         .await
         .expect_err("a blocking job on a dedicated thread cannot promise cancellation either");
-    assert!(matches!(
+    assert_eq!(
         error,
-        RunError::Governor(GovernorError::PolicyViolation(message))
-            if message.contains("cooperative async work")
-    ));
+        RunError::Governor(GovernorError::PolicyViolation(
+            "absolute completion deadline requires cooperative async work".into()
+        ))
+    );
     assert!(!invoked.load(Ordering::SeqCst));
     assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
 }
@@ -449,11 +451,12 @@ async fn absolute_deadline_rejects_non_cancellable_cpu_work_v1() {
         .await
         .expect_err("CPU work cannot promise cancellation at an absolute deadline");
 
-    assert!(matches!(
+    assert_eq!(
         error,
-        RunError::Governor(GovernorError::PolicyViolation(message))
-            if message.contains("cooperative async work")
-    ));
+        RunError::Governor(GovernorError::PolicyViolation(
+            "absolute completion deadline requires cooperative async work".into()
+        ))
+    );
     assert!(!invoked.load(Ordering::SeqCst));
 }
 
@@ -713,12 +716,11 @@ async fn a_run_deadline_that_does_not_fit_the_clock_is_refused_before_the_work_i
     )
     .await
     .expect_err("an unrepresentable deadline is refused, not dropped");
-    let RunError::Governor(GovernorError::PolicyViolation(message)) = &error else {
-        panic!("expected a typed policy violation, got {error:?}");
-    };
-    assert!(
-        message.contains("exceeds Instant range"),
-        "the refusal names the reason: {message}"
+    assert_eq!(
+        error,
+        RunError::Governor(GovernorError::PolicyViolation(
+            "relative run deadline exceeds Instant range".into()
+        ))
     );
     assert!(
         !polled.load(Ordering::SeqCst),

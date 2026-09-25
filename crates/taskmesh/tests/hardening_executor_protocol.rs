@@ -194,17 +194,23 @@ async fn invalid_stack_preflight_has_zero_governor_and_worker_side_effects() {
         (
             SubstrateHint::BlockingPool,
             0,
-            "requested stack size must be nonzero",
+            "requested stack size must be nonzero".to_owned(),
         ),
         (
             SubstrateHint::LargeStackCapability,
             MAX_REQUESTED_STACK_BYTES + 1,
-            "exceeds the supported maximum",
+            format!(
+                "requested stack size {} bytes exceeds the supported maximum {MAX_REQUESTED_STACK_BYTES}",
+                MAX_REQUESTED_STACK_BYTES + 1
+            ),
         ),
         (
             SubstrateHint::BackgroundOnly,
             MAX_REQUESTED_STACK_BYTES + 1,
-            "exceeds the supported maximum",
+            format!(
+                "requested stack size {} bytes exceeds the supported maximum {MAX_REQUESTED_STACK_BYTES}",
+                MAX_REQUESTED_STACK_BYTES + 1
+            ),
         ),
     ] {
         let job_ran = Arc::clone(&ran);
@@ -220,13 +226,10 @@ async fn invalid_stack_preflight_has_zero_governor_and_worker_side_effects() {
             )
             .await
             .expect_err("invalid stack must fail in preflight");
-        assert!(
-            matches!(
-                &error,
-                RunError::Governor(GovernorError::PolicyViolation(message))
-                    if message.contains(expected)
-            ),
-            "{hint:?}/{requested}: {error:?}"
+        assert_eq!(
+            error,
+            RunError::Governor(GovernorError::PolicyViolation(expected.into())),
+            "{hint:?}/{requested}"
         );
         assert_eq!(rt.snapshot(), before, "{hint:?}/{requested}");
     }
@@ -436,13 +439,13 @@ async fn each_failure_mode_is_reported_as_itself() {
         )
         .await
         .expect_err("an absurd stack request must be refused");
-    assert!(
-        matches!(
-            &error,
-            RunError::Governor(GovernorError::PolicyViolation(message))
-                if message.contains("exceeds the supported maximum")
-        ),
-        "got {error:?}"
+    let oversized = format!(
+        "requested stack size {} bytes exceeds the supported maximum {MAX_REQUESTED_STACK_BYTES}",
+        MAX_REQUESTED_STACK_BYTES + 1
+    );
+    assert_eq!(
+        error,
+        RunError::Governor(GovernorError::PolicyViolation(oversized.clone().into()))
     );
     assert_eq!(ran.load(Ordering::SeqCst), 0, "the job never started");
     // Exactly the maximum is *not* refused by this check (whether the OS can
@@ -474,13 +477,9 @@ async fn each_failure_mode_is_reported_as_itself() {
         )
         .await
         .expect_err("an absurd async stack request must be refused");
-    assert!(
-        matches!(
-            &error,
-            RunError::Governor(GovernorError::PolicyViolation(message))
-                if message.contains("exceeds the supported maximum")
-        ),
-        "got {error:?}"
+    assert_eq!(
+        error,
+        RunError::Governor(GovernorError::PolicyViolation(oversized.into()))
     );
 
     assert_drains(&rt, &class, "failure modes").await;

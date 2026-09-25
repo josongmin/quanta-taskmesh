@@ -17,7 +17,10 @@ fn builder_rejects_malformed_class_policy_before_admission() {
     else {
         panic!("policy key rejected at build");
     };
-    assert!(message.contains("invalid policy class"), "{message}");
+    assert_eq!(
+        message,
+        "invalid policy class TaskClass(\"bad class\"): invalid task-plan identifier class: contains invalid character ' ' at byte offset 3"
+    );
 }
 
 #[test]
@@ -29,10 +32,7 @@ fn builder_rejects_duplicate_class_policy_even_when_values_match() {
     else {
         panic!("duplicate class registration rejected at build");
     };
-    assert!(
-        message.contains("duplicate class policy registration: c"),
-        "{message}"
-    );
+    assert_eq!(message, "duplicate class policy registration: c");
 }
 
 #[test]
@@ -49,9 +49,9 @@ fn duplicate_custom_capability_cannot_change_finite_limit_to_unbounded() {
     else {
         panic!("duplicate capability registration rejected at build");
     };
-    assert!(
-        message.contains("duplicate capability limit registration: external-gpu"),
-        "{message}"
+    assert_eq!(
+        message,
+        "duplicate capability limit registration: external-gpu"
     );
 }
 
@@ -72,11 +72,9 @@ fn builder_owned_capability_pools_cannot_be_overridden() {
         else {
             panic!("topology-owned pool {pool} must reject caller capacity");
         };
-        assert!(
-            message.contains(&format!(
-                "capability limit for built-in pool {pool} cannot be overridden"
-            )),
-            "{pool}: {message}"
+        assert_eq!(
+            message,
+            format!("capability limit for built-in pool {pool} cannot be overridden")
         );
     }
 }
@@ -88,9 +86,9 @@ fn an_unbounded_sentinel_cannot_override_a_builder_owned_pool() {
     else {
         panic!("the unbounded sentinel must not bypass builder ownership");
     };
-    assert!(
-        message.contains("capability limit for built-in pool blocking cannot be overridden"),
-        "{message}"
+    assert_eq!(
+        message,
+        "capability limit for built-in pool blocking cannot be overridden"
     );
 }
 

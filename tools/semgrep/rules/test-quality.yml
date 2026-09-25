@@ -133,7 +133,8 @@ rules:
     patterns:
       - pattern-either:
           - pattern-regex: '(?s)assert!\s*\(\s*matches!\s*\([^;]*GovernorError::PolicyViolation\s*\(\s*_\s*\)[^;]*\)\s*(?:,|\))'
-          - pattern-regex: '(?s)assert!\s*\(\s*matches!\s*\([^;]*GovernorError::PolicyViolation\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*if\s*[A-Za-z_][A-Za-z0-9_]*\.contains\s*\([^;]*\)[^;]*\)\s*(?:,|\))'
+          - pattern-regex: '(?s)assert!\s*\(\s*matches!\s*\([^;]*GovernorError::PolicyViolation\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*\)+\s*if\s*[A-Za-z_][A-Za-z0-9_]*\.contains\s*\([^;]*\)[^;]*\)\s*(?:,|\))'
+          - pattern-regex: '(?s)let\s+(?:Err\s*\(\s*)?(?:RunError::Governor\s*\(\s*)?GovernorError::PolicyViolation\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*\)*\s*=\s*[^;]*?else\s*\{[^}]*\}\s*;[^}]*?\.contains\s*\('
       - pattern-either:
           - pattern-inside: |
               #[test]
@@ -145,7 +146,7 @@ rules:
               #[tokio::test(...)]
               async fn $F() { ... }
     message: |
-      A wildcard or substring-only `GovernorError::PolicyViolation` match accepts the
+      A wildcard or substring-only `GovernorError::PolicyViolation` check accepts the
       wrong validation branch when messages overlap. Assert the exact policy message.
     severity: ERROR
     languages: [rust]

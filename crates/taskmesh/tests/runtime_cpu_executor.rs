@@ -258,11 +258,12 @@ async fn requested_stack_async_path_requires_explicit_stack_bytes_v1() {
         .await
         .expect_err("async large-stack work without requested bytes must fail closed");
 
-    assert!(matches!(
+    assert_eq!(
         error,
-        RunError::Governor(GovernorError::PolicyViolation(message))
-            if message.contains("requested stack size missing")
-    ));
+        RunError::Governor(GovernorError::PolicyViolation(
+            "requested stack size missing on async large-stack path".into()
+        ))
+    );
 }
 
 #[tokio::test]

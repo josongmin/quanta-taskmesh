@@ -543,11 +543,12 @@ async fn acquire_timeout_overflow_fails_closed_before_work_v1() {
         .await
         .expect_err("overflowing acquire timeout must fail closed");
 
-    assert!(matches!(
+    assert_eq!(
         error,
-        RunError::Governor(GovernorError::PolicyViolation(message))
-            if message.contains("acquire timeout exceeds Instant range")
-    ));
+        RunError::Governor(GovernorError::PolicyViolation(
+            "acquire timeout exceeds Instant range".into()
+        ))
+    );
     assert!(!invoked.load(std::sync::atomic::Ordering::SeqCst));
     assert_drained(&rt);
 }

@@ -35,12 +35,24 @@ fn valid_minimal_config_passes() {
 
 #[test]
 fn malformed_policy_class_is_rejected_before_governor_state_exists() {
-    for invalid in [
-        String::new(),
-        " leading".to_owned(),
-        "trailing ".to_owned(),
-        "bad?class".to_owned(),
-        "a".repeat(129),
+    for (invalid, reason) in [
+        (String::new(), "must not be empty".to_owned()),
+        (
+            " leading".to_owned(),
+            "must not have surrounding whitespace".to_owned(),
+        ),
+        (
+            "trailing ".to_owned(),
+            "must not have surrounding whitespace".to_owned(),
+        ),
+        (
+            "bad?class".to_owned(),
+            "contains invalid character '?' at byte offset 3".to_owned(),
+        ),
+        (
+            "a".repeat(129),
+            "is 129 bytes, above the 128-byte maximum".to_owned(),
+        ),
     ] {
         let p = PolicySet::new(
             ResourceBudget::new(),
@@ -51,9 +63,12 @@ fn malformed_policy_class_is_rejected_before_governor_state_exists() {
         else {
             panic!("malformed class {invalid:?} must fail at construction");
         };
-        assert!(
-            message.contains("invalid policy class") && message.contains("class"),
-            "malformed class {invalid:?} returned unrelated violation: {message}"
+        assert_eq!(
+            message,
+            format!(
+                "invalid policy class {:?}: invalid task-plan identifier class: {reason}",
+                TaskClass::new(invalid)
+            )
         );
     }
 }

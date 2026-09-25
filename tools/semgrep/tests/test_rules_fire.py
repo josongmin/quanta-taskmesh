@@ -315,16 +315,42 @@ CASES: list[tuple[str, str, str, str, str]] = [
         "test-quality.yml",
         HOST_ITEST,
         "enum GovernorError { PolicyViolation(String) }\n"
+        + "enum RunError { Governor(GovernorError) }\n"
         + A
-        + '    let error = GovernorError::PolicyViolation("wrong branch".into());\n'
+        + "    let error = RunError::Governor(\n"
+        + '        GovernorError::PolicyViolation("wrong branch".into())\n'
+        + "    );\n"
         + "    assert!(matches!(\n"
         + "        &error,\n"
-        + "        GovernorError::PolicyViolation(message) if message.contains(\"branch\")\n"
+        + "        RunError::Governor(GovernorError::PolicyViolation(message))\n"
+        + '            if message.contains("branch")\n'
         + "    ));\n}\n",
         "enum GovernorError { PolicyViolation(String) }\n"
+        + "enum RunError { Governor(GovernorError) }\n"
         + A
-        + '    let error = GovernorError::PolicyViolation("bad".into());\n'
-        + '    assert_eq!(error, GovernorError::PolicyViolation("bad".into()));\n}\n',
+        + '    let error = RunError::Governor(GovernorError::PolicyViolation("bad".into()));\n'
+        + "    assert_eq!(\n"
+        + "        error,\n"
+        + '        RunError::Governor(GovernorError::PolicyViolation("bad".into()))\n'
+        + "    );\n}\n",
+    ),
+    (
+        "taskmesh-test-policy-violation-without-message-check",
+        "test-quality.yml",
+        HOST_ITEST,
+        "enum GovernorError { PolicyViolation(String) }\n"
+        + "fn fail() -> Result<(), GovernorError> {\n"
+        + '    Err(GovernorError::PolicyViolation("wrong branch".into()))\n'
+        + "}\n"
+        + T
+        + "    let Err(GovernorError::PolicyViolation(message)) = fail() else { return };\n"
+        + '    assert!(message.contains("branch"));\n}\n',
+        "enum GovernorError { PolicyViolation(String) }\n"
+        + "fn fail() -> Result<(), GovernorError> {\n"
+        + '    Err(GovernorError::PolicyViolation("bad".into()))\n'
+        + "}\n"
+        + T
+        + '    assert_eq!(fail(), Err(GovernorError::PolicyViolation("bad".into())));\n}\n',
     ),
     (
         "taskmesh-test-discards-fallible-let",

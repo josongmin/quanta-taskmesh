@@ -11,6 +11,8 @@ description = "Governed execution control-plane: Tokio host facade for taskmesh.
 taskmesh-contract = { workspace = true }
 taskmesh-engine = { workspace = true }
 taskmesh-rayon = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 tokio-util = { workspace = true }
 

@@ -34,6 +34,7 @@ mod adapters;
 mod builder;
 mod execution_plan;
 mod executor;
+mod ingress;
 mod runtime;
 
 // ---- public SDK surface ---------------------------------------------------
@@ -45,6 +46,10 @@ mod runtime;
 pub use builder::Builder;
 pub use execution_plan::{ValidatedDispatchPlan, ValidatedStackSize, MAX_REQUESTED_STACK_BYTES};
 pub use executor::{SubmissionDeadline, SubmitOptions};
+pub use ingress::{
+    parse_runtime_config, parse_task_spec, StrictIngressError, StrictIngressLimits,
+    StrictRuntimeConfig,
+};
 pub use runtime::{DrainReport, NotDrained, Outstanding, TokioRuntime};
 pub use tokio_util::sync::CancellationToken;
 
@@ -98,6 +103,7 @@ pub use taskmesh_contract::{
     TieBreakPolicy,
     TopologyConfig,
     TopologyError,
+    ValidatedTaskPlan,
     MAX_CAPABILITY_SLOTS,
     PHYSICAL_CPU,
     PHYSICAL_DEDICATED,

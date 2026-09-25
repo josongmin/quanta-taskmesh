@@ -64,6 +64,27 @@ The current operator path is local; hosted attestation remains a compatibility p
   declare nonblocking submit, physical domain, exact worker count, and whether
   submission requires an entered Tokio runtime. The built-in Tokio adapter
   declares that prerequisite even when installed explicitly.
+- **Topology and default host executor (H03).** `TopologyConfig` gained the
+  public `physical_domains` field. Downstream struct literals must add
+  `physical_domains: PhysicalDomainTopology::default()` or migrate to
+  `TopologyConfig::new()` and its builders. `BlockingPoolCpuExecutor` is no
+  longer a unit struct or `Default`; direct embedders construct it with
+  `BlockingPoolCpuExecutor::new(NonZeroU32)`. Normal `Builder` users do not
+  construct this adapter themselves.
+- **Engine observation and custody outcomes (C01/E01).** `PendingView` now
+  exposes `assessment` and a `capabilities` requirement set; `PermitLedgerView`
+  likewise replaces the singular `capability` projection with `capabilities`.
+  `ReleaseOutcome` adds `HeldByLease { phase }`, so exhaustive matches must
+  handle an attempted release that did not own worker custody. `TerminalReason`
+  adds delivery-failure and irreversible-cycle reasons and is no longer
+  `Copy`, `Ord`, or `Hash`; `ClaimOutcome` and `Provenance` are also no longer
+  `Copy`. Clone owned diagnostic values only where needed and match the new
+  typed outcomes instead of relying on ordering or implicit copies.
+- **Capability policy inspection (E01).** `PolicySet::capability_limits()` and
+  `capability_limit()` are replaced by `capability_records()` and
+  `capability_capacity()`. The new API preserves the difference between a
+  missing pool and `CapabilityCapacity::ExplicitUnbounded`; callers must not
+  map both states to the legacy numeric zero sentinel.
 - **Memory result (E03).** Before:
   `if governor.reconcile_memory(permit, bytes) { /* applied */ }`.
   After: `match governor.reconcile_memory(permit, bytes) {

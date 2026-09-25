@@ -11,7 +11,7 @@ release. Durable decisions are indexed in [ADR 0004](../../adr/0004-sep-25-ingre
 | [Jun-4 startup](jun-4-startup/README.md) | Ten original build tickets | Current public specs and ADR 0001–0002 |
 | [Sep-16 hardening](sep-16-hardening/tickets/README.md) | 21 implemented tickets and one retired ticket | ADR 0003; historical receipt and exception register retain their recorded limits |
 | [Sep-22 test optimization](sep-22-test-optimization/tickets/README.md) | Eight locally verified implementation tickets | [Qualification plan](../../plans/2026-09-24-ci-verification-stages.md) and exact-source receipt |
-| [S25 engine coverage](sep-25-engine-coverage/tickets/README.md) | Twelve superseded draft tickets | [BG25 final packet](../../plans/bugbash-sep-25-general/tickets/README.md) |
+| [S25 engine coverage](sep-25-engine-coverage/tickets/README.md) | Superseded draft compressed to a history marker; original 12 tickets remain in Git history | [BG25 final packet](../../plans/bugbash-sep-25-general/tickets/README.md) |
 | [BG25 implementation](bugbash-sep-25-general/tickets/README.md) | Twelve implemented library tickets | [Live manifest](../../plans/bugbash-sep-25-general/tickets/scenario-evidence.json), [external adoption](../../plans/bugbash-sep-25-general/tickets/EXTERNAL-ADOPTION.md), and a new exact-HEAD CI receipt |
 
 The 40 Sep-16 source finding records stay at

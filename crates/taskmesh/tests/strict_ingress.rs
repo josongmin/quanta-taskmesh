@@ -32,6 +32,61 @@ fn parse(
     parse_task_spec(&serde_json::to_vec(value).unwrap(), limits)
 }
 
+#[test]
+fn strict_ingress_error_display_is_stable() {
+    use taskmesh_contract::TaskPlanError;
+
+    let cases = [
+        (
+            StrictIngressError::InvalidLimit("max_bytes"),
+            "strict ingress limit max_bytes must be nonzero",
+        ),
+        (
+            StrictIngressError::ByteLimit { actual: 5, max: 4 },
+            "strict ingress input is 5 bytes, above 4",
+        ),
+        (
+            StrictIngressError::DepthLimit { max: 3 },
+            "strict ingress depth exceeds 3",
+        ),
+        (
+            StrictIngressError::StageLimit { max: 2 },
+            "strict ingress stages exceed 2",
+        ),
+        (
+            StrictIngressError::DuplicateKey { key: "x".into() },
+            "duplicate JSON key \"x\"",
+        ),
+        (
+            StrictIngressError::UnknownKey {
+                object: "task",
+                key: "x".into(),
+            },
+            "unknown key \"x\" in task",
+        ),
+        (
+            StrictIngressError::InvalidShape("task"),
+            "invalid JSON shape for task",
+        ),
+        (
+            StrictIngressError::Decode("bad".into()),
+            "invalid strict JSON: bad",
+        ),
+        (
+            StrictIngressError::TaskPlan(TaskPlanError::NoStages),
+            "invalid task plan: task plan must declare at least one stage",
+        ),
+        (
+            StrictIngressError::BlockingDispatch("bad"),
+            "invalid blocking dispatch: bad",
+        ),
+    ];
+
+    for (error, expected) in cases {
+        assert_eq!(error.to_string(), expected);
+    }
+}
+
 fn config() -> Value {
     json!({
         "topology": TopologyConfig::new().cpu_fixed(1).shared_blocking_domain(taskmesh::PhysicalDomainMode::Fixed(1)),

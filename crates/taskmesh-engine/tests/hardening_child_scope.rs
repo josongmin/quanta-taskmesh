@@ -83,10 +83,10 @@ fn an_abandoned_queued_child_frees_its_recursion_slot() {
     let (g, _clock) = governor(1);
     let holder = admit(&g, &root("holder"));
     let ticket = queue(&g, &child("R", "map"));
-    // Queued, and already guarding: a second child at the same stage is
-    // recursive right now, even though the first has not run.
+    // Queued, and already guarding: a different operation at the same
+    // (root, parent-stage) is recursive even though the first has not run.
     assert!(matches!(
-        g.admit(&child("R", "map")),
+        g.admit(&child("R", "map").operation("other-branch")),
         AdmissionDecision::Rejected(AdmissionVerdict::RecursiveAdmission)
     ));
     // Attribution starts at grant, not at queue: nothing is charged yet.

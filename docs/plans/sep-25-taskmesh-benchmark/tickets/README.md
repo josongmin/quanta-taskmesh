@@ -51,6 +51,71 @@ Ray's distributed node/object-store scalability envelope and Temporal's persiste
 
 No new public Taskmesh API, semantic class, or engine-specific pool is needed to start. Unknown classes must remain rejected; a benchmark fixture must not silently register or admit them.
 
+## To-be benchmark layout
+
+| Lane | Entry point and code | Timed operation | Result and authority |
+|---|---|---|---|
+| A. Governor micro | Existing Criterion `admit_release`, `contention`, `multiclass_fairness`; add `queue_scaling`; existing allocation probe and Linux IAI | One explicit transition or admitted/released cycle; setup outside sample; class count, queue depth, and thread count declared | ns/op plus exact completed-op denominator, alloc/op, and named instruction cases. Regression signal for the engine only. |
+| B. Policy model | Existing `workload.rs` + `loadgen.rs` and deterministic tests | Virtual admission/claim/release against validated fixed-rate fixtures or seeded Poisson/Zipf and MMPP burst arrivals | Conservation, promotion order, rejection, virtual *admission wait*. Never label simulator execution time or virtual wait as host latency. |
+| C. Public host | New `host_load.rs` + `examples/host_load_probe.rs`, driving `TokioRuntime` public methods | Scheduled arrivals and completion of caller-owned work; `Instant` timestamps and finite outstanding cap | Raw per-request outcome, latency, and interval counters; sampled Snapshot; exact workload/topology receipt. This is the only lane for host p99/goodput. |
+| D. Qualification | Existing CI allocation/smoke and Linux IAI; later `tools/bench/host_perf.py` on fixed quiet host | Comparable raw receipts for the same scenario | Missing/partial/incompatible runs reject. Host timing is diagnostic until repeated baselines establish variance and an explicit regression policy is approved. |
+
+```mermaid
+flowchart LR
+    F[Versioned Taskmesh scenario<br/>class policy, topology, path, work body, seed] --> W[ValidatedArrivals]
+    W --> S[Deterministic Governor simulator]
+    W --> P[Bounded monotonic-time producer]
+    P --> H[Public TokioRuntime run_*]
+    H --> O[Caller terminal + worker-finish recorder]
+    H --> G[Sampled Snapshot observer]
+    S --> R[Policy-only result]
+    O --> Q[Versioned raw host receipt]
+    G --> Q
+    Q --> C[Conservation and comparability checker]
+```
+
+### Host harness contract
+
+- **Producer:** Precompute and validate a finite schedule before timing. A dedicated pacing thread uses `Instant` and submits Send paths to a fixed Tokio runtime; it never waits for the prior request's response. Cap pending submissions explicitly. If the cap is reached, count `not_submitted` and mark that rate point **generator-limited**, not a Taskmesh capacity result. `run_local` needs a separate caller-affine adapter because its future is `!Send`; requested-stack execution is a separate path fixture.
+- **Scenario source:** Versioned, validated JSON fixtures under `tools/bench/scenarios/` specify path, class policies, resolved topology expectation, body kind/work amount, arrival mode and frozen rates, seed, warmup, sampling window, outstanding cap, and settlement timeout. The runner rejects unknown fields/classes/path-body mismatches before timing. The serialized fixture digest is part of every receipt.
+- **Load modes:** A fixed-rate staircase establishes idle/steady/knee/overload; a seeded burst shows backlog and recovery. Run a separate closed-loop fixed-concurrency sweep for completion capacity. The two modes have different latency populations and cannot share one p99 series.
+- **Body fixtures:** No-op for control cost; declared fixed CPU work for `run_cpu`; finite blocking work for `run_blocking`; awaited async work for `run_io`; local and requested-stack bodies only in their supported path fixtures. Record body-only duration. Never equate a sleeping body with CPU work or an IO future with a dedicated IO pool.
+- **Timestamps:** For each request record intended send, actual submit, body start if any, caller terminal, and body finish if any. `actual_submit -> body_start` includes Tokio scheduling and Taskmesh admission, plus executor dispatch where applicable; `intended_send -> body_start` also includes producer lag. Exact governor-queue time requires the conditional B05 hook.
+- **Populations:** Success end-to-end, typed rejection response, timeout/cancel response, and worker-after-response custody have separate distributions and counts per class/path. Compute goodput from successful terminal outcomes per measured wall time; report intended and actual offered rates separately. A quantile is published only with its stated sample count and predefined minimum population.
+- **Conservation:** Check `intended = submitted + not_submitted`, `submitted = terminal + unanswered`, and final Snapshot conservation/zero owned resources after settlement. Warm up the same runtime, wait for its work to settle, then start fresh counters/histograms; take Snapshot deltas because engine totals include warmup. After scheduled injection ends, collect caller terminals and time `drain` separately to observe workers still holding custody; drain is one-way.
+- **Observation:** Sample Snapshot at a fixed, documented cadence and label sampled peaks as lower bounds. Compare observer-on/off cost before using dense sampling. Never sample `snapshot()` on every request inside a hot-path timing span.
+- **Artifacts:** Preallocate one record slot per intended request under a configured maximum; fill by request ID without a shared hot-path logger, then write the raw event artifact after timing. Quantify recorder-on/off overhead. Emit a schema-versioned summary with source/toolchain/host/features/topology/scenario digests, outcome counts, histogram populations, interval series, and raw-artifact digest. A summary without its raw artifact is not a qualifying measurement.
+- **Comparators:** `run_blocking` vs raw `spawn_blocking` on the same Tokio runtime and body; `run_cpu` vs the same declared CPU executor/physical domain; `run_io` vs the same async body with a capacity-only control; `run_local` vs the same local caller path. Keep raw, capacity-only, and governed results separately labeled because their semantics differ. Match spec creation inside or outside every compared timed span.
+
+**First release of the harness:** implement Send `run_io`, `run_blocking`, and default `run_cpu`, plus terminal/custody accounting. Add `run_local`, requested-stack, and Rayon feature fixtures after that denominator is stable. This keeps the first result reviewable without dropping those paths from the final matrix.
+
+### Versioned fixture matrix
+
+`R` below is a pilot rate recorded once for a fixed host, path, body, and topology before the candidate comparison. Freeze the resulting absolute rates in the scenario file; do not retune the baseline and candidate independently. The values are fixture design, not performance targets.
+
+| ID | Fixture | Load and comparison | Question answered |
+|---|---|---|---|
+| M1 | One registered class, no-op body; class-count series 1/8/64 and queue-depth series 0/16/128, varying one dimension at a time | Governor admit/reject/queue/claim/release; 1/2/4/8 threads capped at available cores | Where do lock contention, inventory size, and promotion cost become material? |
+| H0 | Each supported public path, no-op then one declared finite body | One request and batch of ten, raw/capacity-only/governed controls | Full facade tax and its setup boundary, not a policy-capacity claim |
+| H1 | One class/path/body/topology per run | Open-loop fixed rates `0.25R/0.5R/0.75R/R/1.25R/2R`; separate closed-loop concurrency sweep | Success goodput, per-outcome latency, queue growth, rejection and capacity knee |
+| H2 | Same H1 fixture | Base rate → short `2R` burst → base-rate recovery, with fixed time buckets | Backlog growth, bounded shedding, time to settle and post-burst latency |
+| H3 | Two registered generic classes `interactive` and `batch`, both valid WFQ policies with declared 4:1 weights | Equal-cost and skewed-cost cases; overload `batch` while `interactive` continues | Protected-class tail, windowed service share, starvation, typed rejection |
+| H4 | Matched CPU+blocking bodies | Default shared-blocking physical domain vs separate `rayon` feature build; requested-stack/local in separate fixtures | Physical-pool interference and whether capability occupancy explains the tail |
+| H5 | Started blocking work plus queued followers | Deadline/cancel/caller drop burst, then graceful drain | Caller response vs worker-finish gap, retained lease, drain settlement and zero final custody |
+| H6 | Parent plus separately submitted governed children | Skewed child times, one failure/cancel, caller-owned deterministic reduce | Per-child governance and parent end-to-end cost without claiming Taskmesh executes the reducer |
+
+Pilot feedback can use shorter runs. The initial performance qualification contract is 30 seconds of warmup, at least 60 seconds of measurement, and five independent repetitions per frozen rate point; each repetition builds and warms a fresh runtime. Publish a p99 for one class/path/outcome only when that population has at least 10,000 samples **in each repetition**; extend duration instead of printing a thin-tail percentile. Revisit these durations after measuring dedicated-host variance; they are initial acquisition parameters, not an automatic PR latency threshold.
+
+### Command and gate placement
+
+| Scope | Command | Status and meaning |
+|---|---|---|
+| Owner edit loop | Selected `cargo bench --locked -p taskmesh-bench --bench <name>` | Existing; micro diagnostic only. Simulator benches must carry simulator labels. |
+| CI profile | `just bench-gate`, `just bench-smoke` | Existing allocation gate and bench execution smoke; no host wall-clock pass. |
+| Linux deep profile | `just bench-iai` | Existing named instruction cases with compatible-baseline requirement; first baseline creation is not a regression-qualified result. |
+| Host exploration | Proposed `just bench-host <scenario-id>` | New bounded public-host runner; writes raw and summary artifacts, never updates CI required membership. |
+| Performance qualification | Proposed `just bench-host-compare <baseline-receipt> <candidate-receipt>` | New fixed-host, exact-definition comparison after variance is established; a separate performance receipt, not automatic PR CI. |
+
 ## Required Taskmesh scenario set
 
 | Priority | Scenario | Configuration and comparison | Required output |
@@ -76,13 +141,13 @@ Use a small declared matrix, not the Cartesian product of all policies and execu
 ### B02 — Build a bounded, paced public-host load harness
 
 - **Purpose:** Reuse `ValidatedArrivals` as intended arrival times but submit real `TokioRuntime` work through public methods. A synthetic simulator result remains a separate oracle.
-- **Files:** new `crates/taskmesh-bench/src/host_load.rs`, `crates/taskmesh-bench/examples/host_load_probe.rs`, focused `crates/taskmesh-bench/tests/host_load_accounting.rs`, and crate exports/config as needed. Keep scenario-only body/path/options metadata in the bench crate; do not widen product `TaskSpec` for a benchmark.
-- **DoD:** A bounded finite schedule is paced from a monotonic run origin; submissions do not wait for prior responses. At a producer cap, record `not_submitted` and scheduled lag explicitly instead of building an unbounded competing queue or silently reducing offered load. A separate fixed-concurrency mode may submit after completion but is labeled closed-loop and never supplies overload-tail claims. Record one terminal classification per submitted request, or an explicit unanswered-at-deadline count; separate warmup from samples. Collect intended send, actual submit, body start, caller terminal, body finish, and final drain; `offered = submitted + not_submitted` and `submitted = terminal + unanswered` are checked. Report interval counts as well as run totals so a spike and its recovery remain visible. Per-class/path samples state whether rejects and timeouts belong to the population. Synthetic accounting fixtures cover a delayed producer, rejection, timeout/cancel, and caller response before worker finish.
+- **Files:** new `crates/taskmesh-bench/src/{host_load,host_scenarios}.rs`, `crates/taskmesh-bench/examples/host_load_probe.rs`, `tools/bench/scenarios/*.json`, focused `crates/taskmesh-bench/tests/host_load_accounting.rs`, `crates/taskmesh-bench/Cargo.toml`, and crate exports as needed. Keep scenario-only body/path/options metadata in the bench crate; do not widen product `TaskSpec` for a benchmark.
+- **DoD:** Implement the host harness contract above. A bounded finite schedule is paced from a monotonic run origin; submissions do not wait for prior responses. At a producer cap, record `not_submitted` and scheduled lag explicitly instead of building an unbounded competing queue or silently reducing offered load. A separate fixed-concurrency mode may submit after completion but is labeled closed-loop and never supplies overload-tail claims. Record one terminal classification per submitted request, or an explicit unanswered-at-deadline count; separate warmup from samples. Collect intended send, actual submit, body start, caller terminal, body finish, and final drain; `offered = submitted + not_submitted` and `submitted = terminal + unanswered` are checked. Report interval counts as well as run totals so a spike and its recovery remain visible. Per-class/path samples state whether rejects and timeouts belong to the population. Synthetic accounting fixtures cover a delayed producer, rejection, timeout/cancel, and caller response before worker finish.
 
 ### B03 — Run the Taskmesh scenario matrix and establish honest baselines
 
 - **Purpose:** Characterize capacity and failure behavior on the real host; distinguish governance cost from CPU/body cost and simulator behavior.
-- **Files:** bench-owned scenario fixtures/examples under `crates/taskmesh-bench/`, optional `tools/bench/host_perf.py` report parser, source-backed scenario documentation in this plan.
+- **Files:** bench-owned scenario fixtures/examples under `crates/taskmesh-bench/`, `tools/bench/host_perf.py` report parser/checker, source-backed scenario documentation in this plan.
 - **DoD:** Run P0 before P1. A declared fixed workload is swept across arrival rate with repeat runs on the same quiet host, including a low-rate baseline, steady saturation, spike and recovery. Use fixed concurrency as a separate capacity comparison. Report per path/class success goodput, tail sample counts, reject types, unanswered, send lag, interval started/terminal counts, sampled queue/capability peaks (explicit lower bounds, never exact high-water claims), custody after response, and final conservation. Record clean HEAD, tree/lock digest, rustc, features, CPU/OS, resolved topology, seed/trace digest, work-body definition, warmup, measurement duration, and raw results. Compare only compatible runs. A knee or throughput limit is reported only from sustained measured points and an explicit application SLO, not a fitted USL extrapolation alone.
 
 ### B04 — Add performance qualification after a stable measurement contract

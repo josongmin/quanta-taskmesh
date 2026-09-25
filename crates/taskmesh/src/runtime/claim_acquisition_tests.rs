@@ -30,7 +30,8 @@ fn runtime() -> (TokioRuntime, Arc<ManualClock>, TaskSpec) {
     let clock = Arc::new(ManualClock::new(1_000));
     let policy = runtime.governor.policy().clone();
     runtime.governor = Arc::new(
-        Governor::new(policy, clock.clone()).expect("same validated policy with controlled clock"),
+        Governor::new_with_settlement_waker(policy, clock.clone(), runtime.drain.clone())
+            .expect("same validated policy and drain observer with controlled clock"),
     );
     let spec = TaskSpec::io(TaskClass::new("claim-regression")).operation("claim-lifecycle");
     (runtime, clock, spec)
@@ -522,4 +523,65 @@ async fn a_lease_taken_through_ext_is_refused_not_run_v1() {
         ReleaseOutcome::Released
     );
     assert_accounting(&runtime, 0, 0);
+}
+
+#[tokio::test]
+async fn external_preemption_blocks_host_dispatch_and_drain_until_token_release_v1() {
+    let (runtime, _, spec) = runtime();
+    let opts = SubmitOptions::unbounded();
+    let plan = validated_plan(&runtime, &spec, &opts);
+    let lease = runtime
+        .acquire_execution_lease::<()>(&opts, &plan)
+        .await
+        .expect("host acquires one reserved lease");
+    let ledgers = runtime.governor.permit_ledgers();
+    assert_eq!(ledgers.len(), 1);
+    let permit = ledgers[0].permit_id;
+    let AdvanceOutcome::Leased(taken) = runtime
+        .governor
+        .advance_phase(permit, ExecutionPhase::Accepted)
+    else {
+        panic!("external caller must take the reserved permit's token");
+    };
+
+    let started = AtomicBool::new(false);
+    let error = TokioRuntime::run_io_acquired(lease, plan, async {
+        started.store(true, Ordering::SeqCst);
+        Ok::<(), ()>(())
+    })
+    .await
+    .expect_err("host cannot dispatch on an externally leased permit");
+    assert_eq!(
+        error,
+        RunError::Governor(GovernorError::PolicyViolation(
+            format!(
+                "permit {permit} was leased outside its runtime lease; the runtime cannot release it and will not run under it"
+            )
+            .into()
+        ))
+    );
+    assert!(!started.load(Ordering::SeqCst));
+    assert_accounting(&runtime, 1, 0);
+
+    let second_plan = validated_plan(&runtime, &spec, &opts);
+    let second_arbiter = arbiter(&opts);
+    let mut second = Box::pin(runtime.acquire(&second_plan, &second_arbiter));
+    park(second.as_mut()).await;
+    assert_accounting(&runtime, 1, 1);
+
+    let mut drain = Box::pin(runtime.drain(Duration::MAX));
+    park(drain.as_mut()).await;
+    drop(second);
+    assert_accounting(&runtime, 1, 0);
+    park(drain.as_mut()).await;
+
+    assert_eq!(
+        runtime.governor.release_leased(taken),
+        ReleaseOutcome::Released
+    );
+    finish(drain)
+        .await
+        .expect("external token release lets drain finish");
+    assert_accounting(&runtime, 0, 0);
+    assert_eq!(runtime.governor.snapshot().conservation_violation(), None);
 }

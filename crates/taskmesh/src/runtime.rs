@@ -421,7 +421,18 @@ impl TokioRuntime {
             Ok(plan) => plan,
             Err(error) => return Err(RunError::Governor(error)),
         };
-        let mut lease = self.acquire_execution_lease(&opts, &plan).await?;
+        let lease = self.acquire_execution_lease(&opts, &plan).await?;
+        Self::run_io_acquired(lease, plan, fut).await
+    }
+
+    async fn run_io_acquired<T, E, Fut>(
+        mut lease: ExecutionLease,
+        plan: ValidatedDispatchPlan,
+        fut: Fut,
+    ) -> Result<T, RunError<E>>
+    where
+        Fut: Future<Output = Result<T, E>> + Send,
+    {
         lease.advance(ExecutionPhase::Running)?;
         run_cancellable(plan.cancel.clone(), plan.deadline, async {
             fut.await.map_err(RunError::Task)

@@ -1922,14 +1922,21 @@
       "status": "MAPPED",
       "owner_ticket": "BG25-006",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H31",
-      "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
-      "case": "an_ext_release_cannot_free_a_running_jobs_slot",
+      "target": "crates/taskmesh/src/runtime/claim_acquisition_tests.rs",
+      "case": "external_preemption_blocks_host_dispatch_and_drain_until_token_release_v1",
       "oracle": "host가 예약한 permit을 embedder가 direct `governor().advance_phase`로 먼저 lease한 뒤 host가 dispatch하고 drain도 시작",
       "feature": "default",
       "platform": "any",
       "gate": "test",
       "source": [
+        "crates/taskmesh/src/runtime/claim_acquisition_tests.rs",
         "crates/taskmesh/tests/hardening_executor_protocol.rs"
+      ],
+      "supporting_cases": [
+        {
+          "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
+          "case": "an_ext_release_cannot_free_a_running_jobs_slot"
+        }
       ]
     },
     {

@@ -43,6 +43,7 @@ REQUIRED = Path(__file__).resolve().parent / "required.json"
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from tools.gates.execution_evidence import REPORTS, report_problems  # noqa: E402
 from tools.gates.parallel_policy import PARALLEL_GATE_LIMIT, PARALLEL_GROUP_MEMBERS  # noqa: E402
 from tools.gates.status_line import (  # noqa: E402
     final_status_line,
@@ -230,6 +231,11 @@ def local_receipt_problems(
         problems.append("local receipt result ids are malformed or duplicated")
     problems.extend(result_record_problems(valid_results))
     problems.extend(pass_status_line_problems(valid_results, INVENTORY))
+    for result in valid_results:
+        if result["id"] in REPORTS and result.get("status") == "PASS":
+            problems.extend(report_problems(
+                result["id"], result.get("execution"), result.get("status_line"), source
+            ))
     expected_not_run, expected_not_passed = summarize_required(required, valid_results)
     if value.get("required_not_run") != expected_not_run:
         problems.append("local receipt required_not_run differs from its results")
@@ -426,6 +432,22 @@ def gate_process_result(
         # Kept verbatim: the output tail is bounded and cargo's stderr can push
         # this line out of it, and for coverage/tsan the line *is* the evidence.
         result["status_line"] = final_status_line(gate["status_line"]["marker"], proc.stdout)
+    if result["status"] == "PASS" and gate["id"] in REPORTS:
+        try:
+            execution = json.loads(REPORTS[gate["id"]].read_text(encoding="utf-8"))
+            evidence_problems = report_problems(
+                gate["id"], execution, result.get("status_line"), source_identity()
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            execution = None
+            evidence_problems = [f"{gate['id']}: cannot read execution report: {exc}"]
+        if evidence_problems:
+            result["status"] = "NOT_RUN"
+            result["process_exit_code"] = result["exit_code"]
+            result["exit_code"] = None
+            result["output_tail"] += "\nEXECUTION EVIDENCE INVALID: " + "; ".join(evidence_problems)
+        else:
+            result["execution"] = execution
     return result
 
 

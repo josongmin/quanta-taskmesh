@@ -181,6 +181,7 @@ def main() -> None:
         "source": before,
         "runner": "nextest",
         "runner_version": RUNNER_VERSION,
+        "experimental_env": {"NEXTEST_EXPERIMENTAL_LIBTEST_JSON": "1"},
         "commands": commands,
         "catalog_digest": catalog_digest(records),
         "targets": sorted(map(list, selected_targets)),

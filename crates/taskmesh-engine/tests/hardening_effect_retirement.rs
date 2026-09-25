@@ -13,13 +13,13 @@
 //! guarantees it will be resumed.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Weak};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, OnceLock, Weak};
 use std::time::Duration;
 
 use taskmesh_contract::{
     ClassPolicy, ManualClock, MemoryOvercommitPolicy, OverflowPolicy, PermitWaker, ResourceBudget,
-    TaskClass, TaskSpec,
+    SettlementWaker, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
     AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome,
@@ -79,6 +79,35 @@ fn spec(op: &str) -> TaskSpec {
     TaskSpec::io(TaskClass::new("c")).operation(op.to_string())
 }
 
+struct ReentrantPanickingSettlementWaker {
+    governor: OnceLock<Weak<Governor>>,
+    panic_on_next_wake: AtomicBool,
+    wakes: AtomicUsize,
+}
+
+impl SettlementWaker for ReentrantPanickingSettlementWaker {
+    fn wake(&self) {
+        let governor = self
+            .governor
+            .get()
+            .and_then(Weak::upgrade)
+            .expect("settlement port is attached before transitions");
+        assert_eq!(governor.snapshot().conservation_violation(), None);
+        self.wakes.fetch_add(1, Ordering::SeqCst);
+        if self.panic_on_next_wake.swap(false, Ordering::SeqCst) {
+            panic!("settlement callback failed after re-entering governor");
+        }
+    }
+}
+
+#[allow(
+    clippy::clone_on_ref_ptr,
+    reason = "Arc::clone fixes the output type before the trait-object unsizing coercion"
+)]
+fn settlement_port<T: SettlementWaker + 'static>(value: &Arc<T>) -> Arc<dyn SettlementWaker> {
+    value.clone()
+}
+
 /// Run `body` on a worker thread and fail if it does not finish in time.
 ///
 /// The failure being tested is a deadlock, so the test cannot simply call the
@@ -88,13 +117,80 @@ fn spec(op: &str) -> TaskSpec {
 fn with_deadline<F: FnOnce() + Send + 'static>(what: &str, body: F) {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        body();
-        let _ = tx.send(());
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+        let _worker_may_have_timed_out = tx.send(outcome);
     });
-    assert!(
-        rx.recv_timeout(Duration::from_secs(10)).is_ok(),
-        "{what} did not return: the governor mutex is held by a re-entrant caller"
+    match rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(())) => {}
+        Ok(Err(payload)) => std::panic::resume_unwind(payload),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            panic!("{what} did not return: the governor mutex is held by a re-entrant caller")
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("{what} worker disconnected without reporting its outcome")
+        }
+    }
+}
+
+#[test]
+fn panicking_settlement_waker_runs_after_promotion_and_leaves_governor_usable() {
+    let probe = Arc::new(ReentrantPanickingSettlementWaker {
+        governor: OnceLock::new(),
+        panic_on_next_wake: AtomicBool::new(false),
+        wakes: AtomicUsize::new(0),
+    });
+    let governor = Arc::new(
+        Governor::new_with_settlement_waker(
+            PolicySet::new(
+                ResourceBudget::new().cpu_units(1),
+                BTreeMap::from([(
+                    TaskClass::new("c"),
+                    ClassPolicy::new()
+                        .max_inflight(1)
+                        .max_queue_depth(1)
+                        .cpu_units(1)
+                        .overflow_policy(OverflowPolicy::QueueWithinDepth),
+                )]),
+            ),
+            Arc::new(ManualClock::new(0)),
+            settlement_port(&probe),
+        )
+        .expect("valid one-slot policy"),
     );
+    probe
+        .governor
+        .set(Arc::downgrade(&governor))
+        .expect("settlement port attached once");
+    let holder = match governor.admit(&spec("holder")) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("holder must admit: {other:?}"),
+    };
+    let ticket = match governor.admit(&spec("queued")) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("follower must queue: {other:?}"),
+    };
+    let before = probe.wakes.load(Ordering::SeqCst);
+    probe.panic_on_next_wake.store(true, Ordering::SeqCst);
+    let releasing = Arc::clone(&governor);
+    with_deadline(
+        "release with re-entrant panicking settlement callback",
+        move || {
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                releasing.release(holder)
+            }));
+            let payload = panic.expect_err("settlement callback panic must propagate");
+            assert_eq!(
+                payload.downcast_ref::<&str>(),
+                Some(&"settlement callback failed after re-entering governor")
+            );
+        },
+    );
+    assert_eq!(probe.wakes.load(Ordering::SeqCst), before + 1);
+    let ClaimOutcome::Ready(promoted) = governor.claim(ticket) else {
+        panic!("the first queued request must already own the promoted slot")
+    };
+    assert_eq!(governor.release(promoted), ReleaseOutcome::Released);
+    assert_eq!(governor.snapshot().conservation_violation(), None);
 }
 
 #[test]

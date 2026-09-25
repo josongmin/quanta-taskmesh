@@ -30,6 +30,7 @@
 //! binary.
 
 use std::collections::BTreeMap;
+use std::future::{poll_fn, Future};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -193,6 +194,77 @@ async fn direct_governor_release_wakes_finite_and_unbounded_drains() {
         assert_eq!(report.classes_drained, 2);
         assert_idle(&rt.snapshot(), "after direct release");
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_drain_callers_complete_after_one_direct_release() {
+    let rt = drain_runtime(1);
+    let decision = rt
+        .governor()
+        .admit(&TaskSpec::io(class("c")).operation("direct-holder"));
+    let ext::AdmissionDecision::Admitted { permit_id } = decision else {
+        panic!("direct holder must admit, got {decision:?}");
+    };
+
+    let (first_registered_tx, first_registered_rx) = tokio::sync::oneshot::channel();
+    let first_rt = rt.clone();
+    let first = tokio::spawn(async move {
+        let drain = first_rt.drain(Duration::MAX);
+        tokio::pin!(drain);
+        let mut registered = Some(first_registered_tx);
+        poll_fn(|cx| match drain.as_mut().poll(cx) {
+            std::task::Poll::Ready(result) => std::task::Poll::Ready(result),
+            std::task::Poll::Pending => {
+                if let Some(registered) = registered.take() {
+                    registered
+                        .send(())
+                        .expect("first registration observer alive");
+                }
+                std::task::Poll::Pending
+            }
+        })
+        .await
+    });
+    let (second_registered_tx, second_registered_rx) = tokio::sync::oneshot::channel();
+    let second_rt = rt.clone();
+    let second = tokio::spawn(async move {
+        let drain = second_rt.drain(Duration::MAX);
+        tokio::pin!(drain);
+        let mut registered = Some(second_registered_tx);
+        poll_fn(|cx| match drain.as_mut().poll(cx) {
+            std::task::Poll::Ready(result) => std::task::Poll::Ready(result),
+            std::task::Poll::Pending => {
+                if let Some(registered) = registered.take() {
+                    registered
+                        .send(())
+                        .expect("second registration observer alive");
+                }
+                std::task::Poll::Pending
+            }
+        })
+        .await
+    });
+    bounded("first drain registers", first_registered_rx)
+        .await
+        .expect("first drain must reach Pending");
+    bounded("second drain registers", second_registered_rx)
+        .await
+        .expect("second drain must reach Pending");
+    assert!(!first.is_finished());
+    assert!(!second.is_finished());
+
+    assert_eq!(
+        rt.governor().release(permit_id),
+        ext::ReleaseOutcome::Released
+    );
+    for (name, caller) in [("first", first), ("second", second)] {
+        let report = bounded(name, caller)
+            .await
+            .expect("drain caller joins")
+            .expect("direct release settles both drains");
+        assert_eq!(report.classes_drained, 2);
+    }
+    assert_idle(&rt.snapshot(), "after both drains");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

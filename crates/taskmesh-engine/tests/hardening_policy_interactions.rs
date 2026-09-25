@@ -152,6 +152,26 @@ fn zero_one_exact_and_plus_one_are_distinct_for_every_capacity_kind() {
         AdmissionDecision::Rejected(AdmissionVerdict::ClassDisabled)
     );
 
+    let one_class_slot = Governor::new(
+        PolicySet::new(
+            ResourceBudget::new(),
+            BTreeMap::from([(class("one-slot"), ClassPolicy::new().max_inflight(1))]),
+        ),
+        Arc::new(ManualClock::new(0)),
+    )
+    .expect("one class slot is valid");
+    let class_holder = admitted(one_class_slot.admit(&io("one-slot", "class-exact")));
+    assert_eq!(
+        one_class_slot.admit(&io("one-slot", "class-plus-one")),
+        AdmissionDecision::Rejected(AdmissionVerdict::CpuSaturated {
+            retry_after_ms: None,
+        })
+    );
+    assert_eq!(
+        one_class_slot.release(class_holder),
+        ReleaseOutcome::Released
+    );
+
     let zero_depth = Governor::new(
         PolicySet::new(
             ResourceBudget::new(),
@@ -277,6 +297,29 @@ fn zero_one_exact_and_plus_one_are_distinct_for_every_capacity_kind() {
     );
     assert_eq!(
         exact_budget.release(budget_holder),
+        ReleaseOutcome::Released
+    );
+
+    let exact_memory_budget = Governor::new(
+        PolicySet::new(
+            ResourceBudget::new().memory_units(1),
+            BTreeMap::from([(
+                class("memory-budget"),
+                ClassPolicy::new().max_inflight(2).memory_units(1),
+            )]),
+        ),
+        Arc::new(ManualClock::new(0)),
+    )
+    .expect("one-unit memory budget is valid");
+    let memory_holder = admitted(exact_memory_budget.admit(&io("memory-budget", "memory-exact")));
+    assert_eq!(
+        exact_memory_budget.admit(&io("memory-budget", "memory-plus-one")),
+        AdmissionDecision::Rejected(AdmissionVerdict::MemorySaturated {
+            retry_after_ms: None,
+        })
+    );
+    assert_eq!(
+        exact_memory_budget.release(memory_holder),
         ReleaseOutcome::Released
     );
 

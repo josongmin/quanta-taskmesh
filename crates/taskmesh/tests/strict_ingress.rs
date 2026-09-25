@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 use taskmesh::{
     parse_runtime_config, parse_task_spec, ClassPolicy, ResourceBudget, StrictIngressError,
-    StrictIngressLimits, SubstrateHint, TaskClass, TaskSpec, TopologyConfig,
+    StrictIngressLimits, SubstrateHint, TaskClass, TaskSpec, TaskStage, TopologyConfig,
 };
 
 fn task() -> Value {
@@ -46,7 +46,14 @@ fn config() -> Value {
 fn task_limits_reject_before_typed_decode_or_stage_allocation() {
     let value = task();
     let bytes = serde_json::to_vec(&value).unwrap();
-    assert!(parse_task_spec(&bytes, StrictIngressLimits::default()).is_ok());
+    let expected = TaskSpec::blocking(TaskClass::new("c"))
+        .operation("root")
+        .validate()
+        .expect("independently constructed valid task");
+    assert_eq!(
+        parse_task_spec(&bytes, StrictIngressLimits::default()),
+        Ok(expected.clone())
+    );
     assert_eq!(
         parse_task_spec(
             &bytes,
@@ -83,14 +90,16 @@ fn task_limits_reject_before_typed_decode_or_stage_allocation() {
             max: bytes.len() - 1
         })
     );
-    assert!(parse_task_spec(
-        &bytes,
-        StrictIngressLimits {
-            max_bytes: bytes.len(),
-            ..StrictIngressLimits::default()
-        }
-    )
-    .is_ok());
+    assert_eq!(
+        parse_task_spec(
+            &bytes,
+            StrictIngressLimits {
+                max_bytes: bytes.len(),
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Ok(expected.clone())
+    );
     let mut over_bytes = bytes.clone();
     over_bytes.push(b' ');
     assert_eq!(
@@ -146,14 +155,16 @@ fn task_limits_reject_before_typed_decode_or_stage_allocation() {
         ),
         Err(StrictIngressError::DepthLimit { max: 2 })
     );
-    assert!(parse_task_spec(
-        &bytes,
-        StrictIngressLimits {
-            max_depth: 3,
-            ..StrictIngressLimits::default()
-        }
-    )
-    .is_ok());
+    assert_eq!(
+        parse_task_spec(
+            &bytes,
+            StrictIngressLimits {
+                max_depth: 3,
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Ok(expected)
+    );
 
     let mut two = value;
     two["stages"].as_array_mut().unwrap().push(json!({
@@ -186,14 +197,21 @@ fn task_limits_reject_before_typed_decode_or_stage_allocation() {
         "class": "c", "stage": "second", "substrate_hint": "BlockingPool",
         "fan_out": false, "reduce_policy": null
     });
-    assert!(parse(
-        &two,
-        StrictIngressLimits {
-            max_stages: 2,
-            ..StrictIngressLimits::default()
-        }
-    )
-    .is_ok());
+    let expected_two = TaskSpec::blocking(TaskClass::new("c"))
+        .operation("root")
+        .stage(TaskStage::new("second"), SubstrateHint::BlockingPool)
+        .validate()
+        .expect("two distinct declared stages");
+    assert_eq!(
+        parse(
+            &two,
+            StrictIngressLimits {
+                max_stages: 2,
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Ok(expected_two)
+    );
 }
 
 #[test]
@@ -239,7 +257,15 @@ fn child_wait_and_blocking_dispatch_are_explicit() {
     child["scope"] = json!({
         "Child": {"parent_operation_id": "root", "parent_stage": "blocking", "parent_awaits": false}
     });
-    assert!(parse(&child, StrictIngressLimits::default()).is_ok());
+    let expected_child = TaskSpec::blocking(TaskClass::new("c"))
+        .child_of("root", "root", TaskStage::new("blocking"))
+        .operation("child")
+        .validate()
+        .expect("explicit unawaited child");
+    assert_eq!(
+        parse(&child, StrictIngressLimits::default()),
+        Ok(expected_child)
+    );
     child["scope"]["Child"]
         .as_object_mut()
         .unwrap()
@@ -417,8 +443,10 @@ async fn explicit_dispatch_tags_charge_the_actual_worker_domain() {
         let worker = tokio::spawn(async move {
             worker_runtime
                 .run_blocking(plan.into_spec(), move || {
-                    let _ = entered_tx.send(());
-                    let _ = release_rx.blocking_recv();
+                    entered_tx.send(()).expect("caller waits for worker entry");
+                    release_rx
+                        .blocking_recv()
+                        .expect("caller releases the held worker");
                     Ok::<_, ()>(())
                 })
                 .await
@@ -432,7 +460,9 @@ async fn explicit_dispatch_tags_charge_the_actual_worker_domain() {
         assert_eq!(held.capabilities[domain].in_use, 1, "physical domain");
         assert_eq!(held.capabilities[other_role].in_use, 0);
         assert_eq!(held.capabilities[other_domain].in_use, 0);
-        let _ = release_tx.send(());
+        release_tx
+            .send(())
+            .expect("worker still holds the receiver");
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(3), worker)
                 .await
@@ -467,9 +497,13 @@ fn raw_dto_compatibility_is_not_redefined_by_strict_ingress() {
         legacy.stack_size_bytes, None,
         "raw Serde still defaults to shared"
     );
-    assert!(
-        legacy.validate().is_ok(),
-        "raw DTO compatibility is unchanged"
+    assert_eq!(
+        legacy
+            .clone()
+            .validate()
+            .expect("raw DTO compatibility is unchanged")
+            .as_spec(),
+        &legacy
     );
     assert_eq!(
         parse(&misspelled_stack, StrictIngressLimits::default()),

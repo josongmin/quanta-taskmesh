@@ -109,7 +109,7 @@ def main() -> None:
     }
     tracker = Tracker()
     args = ["tools", "-q", "--strict-markers"]
-    result = pytest.main(args, plugins=[tracker])
+    result = pytest.main(list(args), plugins=[tracker])
     if result != pytest.ExitCode.OK:
         raise ValueError(f"pytest exited {int(result)}")
     passed, excluded = reconcile(

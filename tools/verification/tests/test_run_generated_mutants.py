@@ -314,6 +314,13 @@ def test_generated_command_uses_two_isolated_cargo_mutants_jobs() -> None:
     generated = gm.command(args, Path("/tmp/raw"))
     assert generated[generated.index("--jobs") + 1] == "2"
     assert generated[generated.index("--test-tool") + 1] == "nextest"
+    assert generated[generated.index("--timeout") + 1] == "120"
+
+
+def test_generated_command_allows_explicit_per_mutant_timeout() -> None:
+    args = SimpleNamespace(jobs=2, timeout=180, package=[])
+    generated = gm.command(args, Path("/tmp/raw"))
+    assert generated[generated.index("--timeout") + 1] == "180"
 
 
 def test_generated_receipt_identifies_nextest(monkeypatch, tmp_path: Path) -> None:

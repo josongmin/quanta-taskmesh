@@ -13,9 +13,11 @@ its proof and external-adoption fields have different authorities.
 | Benchmark owner | Make a performance claim only after quiet-host comparison | Same source/toolchain/features/workload/seed/warmup and explicit response/worker denominators |
 
 The 104-row `scenario-evidence.json` is static selection provenance. Historic
-receipts qualify only their recorded source. The Semantica focused 2/2 run is
-a manual comparison whose receipt does not bind its mutable Taskmesh path
-dependency to a Taskmesh commit; deployment adoption remains open.
+receipts qualify only their recorded source. The earlier Semantica focused 2/2
+run did not bind its mutable Taskmesh path dependency to a Taskmesh commit. The
+later pinned-pair run binds clean Semantica `0384053` to clean Taskmesh
+`76295ba` and also passes 2/2, but its authority remains
+`manual_invocation_comparison_only`; deployment adoption remains open.
 
 After the implementation archive, H31's combined external lease preemption,
 host non-execution, second admission, and drain boundary was added at `6c45345`.

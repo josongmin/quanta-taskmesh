@@ -136,18 +136,23 @@
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::A05",
       "target": "crates/taskmesh/tests/e2e_chaos.rs",
       "case": "global_budget_cross_class_contention_makes_progress",
-      "oracle": "서로 다른 class가 global CPU 또는 memory를 공유",
+      "oracle": "서로 다른 class의 global CPU/memory admission과 release 진전을 class별 snapshot 및 입력에서 만든 독립 permit 원장으로 대조",
       "feature": "default",
       "platform": "any",
       "gate": "test",
       "source": [
         "crates/taskmesh/tests/e2e_chaos.rs",
-        "crates/taskmesh-engine/tests/hardening_memory_ledger.rs"
+        "crates/taskmesh-engine/tests/hardening_memory_ledger.rs",
+        "crates/taskmesh-engine/tests/hardening_admission_ledger.rs"
       ],
       "supporting_cases": [
         {
           "target": "crates/taskmesh-engine/tests/hardening_memory_ledger.rs",
           "case": "stage_reconcile_promotion_and_sweep_match_an_input_derived_ledger"
+        },
+        {
+          "target": "crates/taskmesh-engine/tests/hardening_admission_ledger.rs",
+          "case": "cross_class_global_and_pool_limits_follow_only_admitted_events"
         }
       ]
     },
@@ -1458,17 +1463,22 @@
       "owner_ticket": "BG25-006",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H12",
       "target": "crates/taskmesh/tests/host_open_loop.rs",
-      "case": "caller_terminal_response_and_worker_custody_are_separate_ledgers",
-      "oracle": "started sync worker가 deadline/cancel/caller drop 후 계속 실행; 동시에 다른 요청과 drain",
+      "case": "terminal_caller_keeps_worker_charged_through_pre_drain_queue",
+      "oracle": "started sync worker의 deadline/cancel 응답 또는 caller drop 뒤에도 custody를 유지; drain 전 접수된 두 번째 요청만 worker 종료 후 진전하고 drain 시작 뒤 새 입장은 거절",
       "feature": "default",
       "platform": "any",
       "gate": "test",
       "source": [
         "crates/taskmesh/tests/host_open_loop.rs",
         "crates/taskmesh/tests/hardening_deadline_custody.rs",
-        "crates/taskmesh/tests/hardening_drain.rs"
+        "crates/taskmesh/tests/hardening_drain.rs",
+        "crates/taskmesh/tests/hardening_executor_protocol.rs"
       ],
       "supporting_cases": [
+        {
+          "target": "crates/taskmesh/tests/host_open_loop.rs",
+          "case": "caller_terminal_response_and_worker_custody_are_separate_ledgers"
+        },
         {
           "target": "crates/taskmesh/tests/hardening_deadline_custody.rs",
           "case": "a_blocking_run_budget_bounds_the_caller_and_keeps_the_worker_charged"
@@ -1476,6 +1486,14 @@
         {
           "target": "crates/taskmesh/tests/hardening_drain.rs",
           "case": "a_held_blocking_worker_makes_drain_report_not_drained_and_stay_charged"
+        },
+        {
+          "target": "crates/taskmesh/tests/hardening_drain.rs",
+          "case": "queued_and_inflight_work_finish_before_drain_reports_ok"
+        },
+        {
+          "target": "crates/taskmesh/tests/hardening_executor_protocol.rs",
+          "case": "a_caller_that_stops_waiting_leaves_custody_with_the_worker"
         }
       ]
     },

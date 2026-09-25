@@ -1,8 +1,8 @@
 # Taskmesh 엔진 필수 유즈케이스·적대 시나리오 체크리스트
 
-- 기준: `main@76559c483bdd1d6b0b5226f7c5b5591b919afae9` (2026-09-25)의 원본 oracle inventory. 현재 구현·매핑 판정은 `docs/plans/bugbash-sep-25-general/tickets/{FINAL-REVIEW.md,scenario-evidence.json,EXTERNAL-ADOPTION.md}`가 갱신한다. 아래 fixture 참조는 clean-HEAD 실행 증거가 아니다.
+- 기준: `main@76559c483bdd1d6b0b5226f7c5b5591b919afae9` (2026-09-25)의 원본 oracle inventory. 현재 매핑과 잔여 작업은 `docs/plans/bugbash-sep-25-general/tickets/{scenario-evidence.json,OPEN-FOLLOWUPS.md,EXTERNAL-ADOPTION.md}`를 따른다. 당시 구현 감사는 `docs/archive/2026-09-25/bugbash-sep-25-general/tickets/FINAL-REVIEW.md`에 보존한다. 아래 fixture 참조는 clean-HEAD 실행 증거가 아니다.
 - 범위: 현재 `taskmesh-contract` / `taskmesh-engine` / Tokio facade / Rayon adapter / benchmark harness의 기능과 그 경계에 필요한 안전 시나리오. 현행 보장과 미결정 목표 계약은 각 행에서 구분한다. 미래의 실행형 flow·분산 복구·자동 checkpoint 실행은 제외한다.
-- 상태: 시나리오 설계 목록. 관련 테스트 파일은 탐색 앵커일 뿐, 각 행의 완전한 커버리지나 현재 HEAD의 PASS 영수증이 아니다. 이 문서를 작성하며 테스트·mutation·nightly는 실행하지 않았다.
+- 상태: 시나리오 설계 목록. 관련 테스트 파일은 탐색 앵커일 뿐, 각 행의 완전한 커버리지나 현재 HEAD의 PASS 영수증이 아니다. 원본 목록 작성 시 테스트·mutation·nightly는 실행하지 않았다. 2026-09-26의 별도 재검증 범위는 아래에 기록한다.
 - 규모: 기본 16·엣지 28·헬게이트 35·코너 25, 총 104개. 미결정 계약과 source-backed 실패 후보는 해당 행에 표시했다.
 - 용어: **기본**=대표 사용 경로, **엣지**=단일 경계·실패 경로, **헬게이트**=두 개 이상 기능/경쟁 상태가 겹친 적대 경로, **코너**=수치·순서·직렬화의 정확한 끝점.
 
@@ -92,7 +92,7 @@
 | H09 | root/parent operation 이름 재사용과 queued child promotion/abandon | live parent generation/정확한 immediate parent에 결속; 재사용된 이름으로 ancestry가 바뀌거나 recursion guard가 새 root에 새지 않음. |
 | H10 | stage memory release ↔ measured/hybrid reconcile ↔ queue promotion ↔ leak sweep | 반환된 단위는 재등장하지 않고, epoch/sequence는 순서대로만 적용. 아직 실행 중인 lease는 sweep이 뺏지 않음. |
 | H11 | pre-submit cancel, `CompleteBy`, acquire timeout이 같은 tick에 겹침; admission 직후 budget 만료 | 문서화한 cancel→absolute deadline→relative timeout 우선순위; equality는 expired. 늦게 얻은 permit을 work 시작 전에 unwind. |
-| H12 | started sync worker가 deadline/cancel/caller drop 후 계속 실행; 동시에 다른 요청과 drain | caller는 제때 typed 응답, worker는 종료까지 charged. 그 사이 capacity 재판매·drain `Ok` 금지; 실제 종료 후 새 요청 진전. [Tokio `spawn_blocking`](https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html)도 시작된 작업은 abort할 수 없다고 명시한다. |
+| H12 | started sync worker에 `RunFor` deadline·cancel 또는 caller future drop이 발생한다. worker가 살아 있을 때 두 번째 요청을 **drain 전에** 제출·queue하고 drain을 시작한다. | deadline·cancel은 제때 typed 응답; caller drop에는 응답이 없다. worker 종료까지 lease·pool이 charged이고 두 번째 요청은 시작하지 않으며 drain `Ok`도 금지된다. worker 종료 뒤 이미 queue된 요청이 진전하고 그 요청까지 끝나야 drain `Ok`; drain 시작 후 새 제출은 `RuntimeUnavailable`. 각 종료 원인별 판정과 이 결합 순서의 판정은 구분한다. [Tokio `spawn_blocking`](https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html)도 시작된 작업은 abort할 수 없다고 명시한다. |
 | H13 | direct `governor()` admit/release/abandon/reap ↔ host `drain(Duration::MAX)` | engine gauge가 idle이 된 뒤 settlement signal로 drain이 깨어남; close↔첫 snapshot, snapshot↔wait, 여러 drain caller의 lost wake 없음. 현재 HEAD의 `SettlementWaker` 경로를 기준으로 함. |
 | H14 | `PermitWaker`의 `wake`/`drop` 또는 `SettlementWaker`가 재진입하거나 panic; promotion backlog도 큼 | 외부 callback은 engine mutex 밖에서 실행; 가능한 나머지 waiter/effect/continuation 처리 뒤 첫 panic을 전파한다. reentrant snapshot·release가 deadlock하지 않고 engine ledger가 보존된다. panic한 사용자 callback 자체의 알림 전달까지 보장한다고 가정하지 않음. |
 | H15 | executor가 `spawn`에서 panic/거부/closure 유기; caller가 accepted 뒤 즉시 사라짐 | 작업은 최대 1회; started/accepted/never-started 구분에 따라 custody가 끝까지 유지되거나 정확히 반환. |
@@ -108,7 +108,7 @@
 | H25 | queued ticket에 class/pool/CPU/memory blocker가 동시에 존재하고, 하나씩 해제·reconcile | `pending_assessment`가 현재 상태를 재평가한다. 진단 경로는 `promotion_pending`이면 물리적 capacity가 비어도 `QueuedBehind`를 포함할 수 있고, 실제 scheduler는 runnable head를 별도로 평가한다. `pending_block_reason`은 reversible일 때 진단 blocker의 primary, runnable일 때 `Ok`, irreversible cycle일 때 접수 당시 `blocked_on` fallback이다. 단일 reason을 전체 물리적 blocker set으로 오인하지 않음. |
 | H26 | 같은 class의 queue head가 {A,B}를 요구하고 A만 포화; follower는 B 또는 무관한 C 요구 | B와 겹치는 follower는 head 뒤에 남고, 독립 C follower만 정책상 허용될 때 선행 가능. A가 풀리면 head는 A+B를 **원자적으로 각각 한 번** charge하고 release가 둘 다 반환. |
 | H27 | 두 TokioRuntime이 같은 `CpuExecutor` 인스턴스를 공유하고 각자 CPU domain limit까지 제출 | 각 runtime의 엔진은 자기 제출만 제한한다. 두 runtime 합산 physical worker 독점은 보장되지 않음을 관측하고, 외부 공유 pool 전체 상한이 필요하면 호출자가 별도 authority를 제공해야 함. |
-| H28 | 실제 host에 open-loop로 workload 제출하며 benchmark simulator와 결과 범위를 비교 | simulator의 admission-wait 숫자를 host end-to-end latency로 보고하지 않음. host에서는 offered = terminal response(성공·task error·거절·취소·deadline 등) + 미응답 요청을 독립 계측하고, 별도로 응답 뒤 남은 worker custody를 snapshot과 대조한다. class/path별 표본 모집단·warmup·환경을 기록한다. |
+| H28 | 통제된 finite open-loop burst를 실제 host와 benchmark simulator에 제출하고, 별도 host 성능 workload를 계측 | 결정적 CI fixture에서는 두 경로가 공통으로 모델링하는 offered/completed/rejected/max-queue만 비교한다. simulator의 admission-wait를 host end-to-end latency로 보고하지 않고, simulator가 모델링하지 않는 task error·cancel·deadline의 건수 동치를 요구하지 않는다. 별도 quiet-host 성능 자격에서는 intended send/offered, terminal response 유형, 미응답, 응답 뒤 남은 worker custody를 **서로 독립적으로** 계측하고 class/path별 표본 모집단·warmup·환경을 기록한다. |
 | H29 | promoted ticket의 `claim()`에서 마지막 `PermitWaker` drop이 panic; 같은 pool에 다음 waiter 대기 | custody 전달 전 `Claiming` permit을 전량 보상하고 첫 ticket은 `ClaimDeliveryFailed` terminal이 된다. 다음 waiter를 즉시 promote/notify한 뒤 첫 panic을 전파한다. 중복 permit·계수 누락·영구 대기 없음. |
 | H30 | custom `CpuExecutor::capabilities()`가 `Builder::build`에서는 유효하지만 설치 후 domain/worker/submit 선언을 바꿈; IO/local/blocking/CPU 경로를 교차 제출 | build 때 검증한 descriptor를 runtime이 동결하며 제출·debug·accessor는 adapter를 재조회하지 않는다. 변경된 adapter 선언이 panic·work 시작·permit charge·authority drift를 만들지 않음을 검증한다. |
 | H31 | host가 예약한 permit을 embedder가 direct `governor().advance_phase`로 먼저 lease한 뒤 host가 dispatch하고 drain도 시작 | host가 소유하지 않은 token 아래에서 user work를 시작하지 않고 typed `PolicyViolation`을 반환한다. host lease drop은 외부 token의 capacity를 반환하지 않으며, `release_leased(token)` 전 drain `Ok`가 나오지 않는다. |
@@ -167,9 +167,21 @@
 | child 수명 × 응답 | IO의 ambient `tokio::spawn`, local의 `spawn_local`, requested-stack owned runtime의 `spawn_blocking`을 root 정상 완료·취소·deadline과 교차. caller 응답과 worker custody를 별도 원장으로 관측. |
 | executor 선언 × 제출 | build 시 검증한 domain/worker/submit 선언을 submit 전에 고정·변경하고 IO/local/blocking/CPU preflight를 교차. 두 runtime이 같은 bounded executor를 공유하는 동시 제출(H27)도 분리. 현재 재조회 범위와 목표 fail-closed 계약을 분리. |
 
+## 현재 재감사: 시나리오·증거·코드 분리 (2026-09-26)
+
+감사 소스는 clean `0588d26847ba575f1c059f8d86a37d8420ea5589`다. 해당 HEAD의 macOS CI receipt는 `--expected-head`로 검증됐고 필수 16개 gate가 PASS였다. 아래 문서 수정 이후의 새 HEAD 또는 dirty tree에 이 receipt를 재사용하지 않는다. 기존 관련 테스트 6개를 별도로 재실행해 통과했지만, 그 결과가 빠진 결합 순서나 성능 측정을 증명하지는 않는다.
+
+| ID | 시나리오 문제 | 증거 문제 | 코드 판정·남은 작업 |
+|---|---|---|---|
+| H12 | 기존의 caller drop에 대한 typed 응답과 drain 뒤 신규 입장은 불가능한 oracle이었다. 위 행은 drop의 무응답, drain **전** queue된 요청의 진전, drain 뒤 신규 입장 거절로 정정했다. | `host_open_loop::terminal_caller_keeps_worker_charged_through_pre_drain_queue`가 deadline·cancel·caller drop 세 변형에서 응답/무응답 → worker custody → 두 번째 queue → drain `NotDrained` → holder 종료 → queue 진전 → drain `Ok`를 barrier로 고정했다. 후보 tree의 focused 1/1 및 `just dev` 558/558 PASS; 최종 clean-HEAD CI 증거는 별도다. | `runtime.rs::run_detached_job`/`await_detached`의 worker lease 및 `runtime/drain.rs::drain`의 close/wait 계약과 결과가 일치한다. 확인된 제품 코드 위반 없음. |
+| H28 | 결정적 host↔simulator 비교와 quiet-host 성능 자격을 한 행에 섞었다. simulator에는 task error·cancel·deadline/worker cleanup 모델이 없으므로 그 terminal 유형까지 건수 동치를 요구하지 않는다. | `host_simulator_comparison`은 단일 class 9건 burst의 offered/completed/rejected/max-queue를 비교한다. `unanswered = offered - terminal`은 독립 모집단 계측이 아니며, host의 응답 후 살아 있는 worker, 여러 class/path, warmup·환경을 다루지 않는다. | simulator·host의 공통 admission 계정 CI fixture는 유효하다. 제품 코드 결함은 확인되지 않았다. 별도 host harness/quiet-host report가 필요한 경우 독립 offered·terminal·unanswered·custody 원장과 class/path·환경 메타데이터를 수집한다. |
+| A05 | 요구 자체는 유효하다. | `hardening_admission_ledger::cross_class_global_and_pool_limits_follow_only_admitted_events`가 입력 기반 permit 원장으로 class별 CPU·memory·inflight와 pool 점유를 확인했으나 manifest에 누락됐었다. 현재 매핑의 supporting case로 연결했다. | 추가 제품 코드 변경 근거 없음. manifest의 정적 검증과 실제 CI 실행 판정은 분리한다. |
+
+H12의 최종 clean-HEAD CI 자격과 H28 성능 자격의 실행 작업은 `docs/plans/bugbash-sep-25-general/tickets/OPEN-FOLLOWUPS.md`에서 추적한다. 104개 ID의 `MAPPED`는 테스트 선택 목록이며 모든 행의 의미 충족이나 release 자격이 아니다.
+
 ## 역사적 소스 감사 스냅샷
 
-아래 표와 우선순위는 `76559c4` 당시의 감사 입력이며 현재 미해결 목록이 아니다. H30, H34, D17, B28 등은 이후 구현됐다. 현재 판정은 `FINAL-REVIEW.md`와 `scenario-evidence.json`을 따른다. fixture의 존재는 해당 시나리오 전체의 PASS나 clean-HEAD 자격을 뜻하지 않는다.
+아래 표와 우선순위는 `76559c4` 당시의 감사 입력이며 현재 미해결 목록이 아니다. H30, H34, D17, B28 등은 이후 구현됐다. 현재 판정은 위 2026-09-26 재감사, `scenario-evidence.json`, `OPEN-FOLLOWUPS.md`를 따르고 당시 구현 판정은 아카이브 `FINAL-REVIEW.md`에서 확인한다. fixture의 존재는 해당 시나리오 전체의 PASS나 clean-HEAD 자격을 뜻하지 않는다.
 
 | 대상 | 확인된 근거 | 남은 판정 |
 |---|---|---|

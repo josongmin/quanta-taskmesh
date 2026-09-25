@@ -322,11 +322,57 @@ impl TokioRuntime {
         }
         let arbiter =
             AcquisitionArbiter::new(opts, absolute_deadline).map_err(RunError::Governor)?;
+        // Contract verdicts that are already decided at poll time keep their
+        // documented precedence over host prerequisites. In particular, a
+        // pre-cancelled submission stays CancelledBeforeSubmit even when the
+        // caller is outside Tokio.
+        if let Some(rejection) = arbiter.rejection(std::time::Instant::now(), false) {
+            return Err(RunError::Governor(AcquisitionArbiter::to_governor_error(
+                rejection, false,
+            )));
+        }
+        self.preflight_runtime_context(opts, plan)
+            .map_err(RunError::Governor)?;
         let permit = self
             .acquire(plan, &arbiter)
             .await
             .map_err(RunError::Governor)?;
         Ok(ExecutionLease::reserved(Arc::clone(&self.governor), permit))
+    }
+
+    /// Validate caller-runtime services before a permit or ticket can exist.
+    /// Plain I/O futures and custom executors remain usable on other executors;
+    /// only paths that actually need Tokio workers, timers, or a LocalSet are
+    /// rejected.
+    fn preflight_runtime_context(
+        &self,
+        opts: &SubmitOptions,
+        plan: &ValidatedDispatchPlan,
+    ) -> Result<(), GovernorError> {
+        if plan.spec().primary_substrate_hint() == SubstrateHint::LocalRuntime
+            && tokio::runtime::Handle::try_current().is_err()
+        {
+            return Err(GovernorError::LocalRuntimeUnavailable);
+        }
+
+        let timer_required = opts.acquire_timeout.is_some_and(|budget| !budget.is_zero())
+            || match plan.dispatch {
+                DispatchKind::CallerFuture => plan.deadline.is_some(),
+                DispatchKind::BlockingPool
+                | DispatchKind::CpuExecutor
+                | DispatchKind::DedicatedStackThread => plan.run_budget().is_some(),
+                DispatchKind::DedicatedStackRuntime => plan.absolute_deadline().is_some(),
+            };
+        let context = match plan.dispatch {
+            DispatchKind::BlockingPool => Some("blocking worker"),
+            DispatchKind::CpuExecutor if self.cpu_requires_tokio_context => Some("cpu executor"),
+            _ if timer_required => Some("submission timer"),
+            _ => None,
+        };
+        match context {
+            Some(context) => require_tokio_context_v1(context),
+            None => Ok(()),
+        }
     }
 
     /// Resolve the plan for one submission against its class policy.
@@ -409,9 +455,6 @@ impl TokioRuntime {
         };
         let boxed_job: BlockingJobV1<T, E> = Box::new(job);
         Box::pin(async move {
-            if plan.dispatch == DispatchKind::BlockingPool {
-                require_tokio_context_v1("blocking worker").map_err(RunError::Governor)?;
-            }
             let lease = self.acquire_execution_lease(&opts, &plan).await?;
             match plan.dispatch {
                 DispatchKind::DedicatedStackThread => {
@@ -582,7 +625,7 @@ impl TokioRuntime {
         let thread_name = requested_stack_thread_name_v1(plan.spec());
         let cancel = plan.cancel.clone();
         let deadline = plan.deadline;
-        let (tx, rx) = oneshot::channel::<AsyncThreadOutcome<T, E>>();
+        let (tx, mut rx) = oneshot::channel::<AsyncThreadOutcome<T, E>>();
         let mut lease = lease;
         lease.advance(ExecutionPhase::Accepted)?;
         let spawned = std::thread::Builder::new()
@@ -708,7 +751,19 @@ impl TokioRuntime {
                 &error,
             ));
         }
-        match rx.await {
+        let received = match plan.absolute_deadline() {
+            Some(deadline) => {
+                let timeout = tokio::time::sleep_until(Instant::from_std(deadline));
+                tokio::pin!(timeout);
+                tokio::select! {
+                    biased;
+                    () = &mut timeout => return Err(RunError::Governor(GovernorError::DeadlineExceeded)),
+                    received = &mut rx => received,
+                }
+            }
+            None => rx.await,
+        };
+        match received {
             Ok(AsyncThreadOutcome::Completed(result, lease)) => {
                 // Release before returning: a result the caller can see is a
                 // result whose capacity is already back in the pool.
@@ -742,9 +797,6 @@ impl TokioRuntime {
             Ok(plan) => plan,
             Err(error) => return Err(RunError::Governor(error)),
         };
-        if self.cpu_requires_tokio_context {
-            require_tokio_context_v1("cpu executor").map_err(RunError::Governor)?;
-        }
         let cpu = Arc::clone(&self.cpu);
         let lease = self.acquire_execution_lease(&opts, &plan).await?;
         let (started_tx, started_rx) = oneshot::channel();

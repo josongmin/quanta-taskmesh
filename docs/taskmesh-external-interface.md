@@ -91,6 +91,8 @@ let out = runtime
      동기 blocking/requested-stack/CPU worker는 실제 종료 시점(소유 runtime teardown 포함)까지 permit과
      capability slot을 보유한다. 그동안 snapshot에는 `running`/`cleanup_pending`으로 남는다. 정상 완료
      시에는 결과와 함께 custody가 이동하므로 caller가 값을 관측하는 시점에 용량은 이미 반환되어 있다.
+     requested-stack async의 root 결과가 먼저 준비되어도 teardown이 `CompleteBy`를 넘으면 그 결과는
+     폐기되고 caller는 `DeadlineExceeded`를 받으며, 실제 teardown까지 custody는 worker에 남는다.
    - 큐에서 대기하던 요청이 claim 전에 끝나면(leak sweep 회수 등) `GovernorError::TicketClaimTerminated
      { ticket, reason }`로 사유가 보존된다. 알 수 없는 ticket은 `InvalidTicketClaim`이며 둘 다 대기가 아니다.
 6. substrate hint는 run path와 일치해야 한다(불일치 → `SubstrateMismatch`). requested-stack 크기는

@@ -223,8 +223,11 @@ The host enforces the declared contract at runtime:
   job cannot be aborted, and the contract does not pretend otherwise.
   `CompleteBy` is admitted only on cooperative async paths and is polled by the
   runtime that owns the work; blocking and CPU work reject it before invoking
-  the job. A non-yielding poll retains its permit until it yields, so governed
-  counts never understate live work.
+  the job. On requested-stack async execution it also bounds caller response:
+  if owned-runtime teardown crosses the instant, a ready success or task error
+  is discarded and the caller receives `DeadlineExceeded`; teardown retains the
+  lease until it really finishes. A non-yielding poll retains its permit until
+  it yields, so governed counts never understate live work.
 - **response is not custody.** A deadline reply, a cancel, or a dropped caller
   future ends the caller's wait only. `run_blocking`, requested-stack blocking
   and async, and `run_cpu` retain the execution lease through actual worker

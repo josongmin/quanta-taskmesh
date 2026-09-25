@@ -750,6 +750,37 @@ fn default_tokio_dispatch_without_a_runtime_is_rejected_before_admission() {
     assert_eq!(blocking_ran.load(Ordering::SeqCst), 0);
     assert_eq!(rt.snapshot(), before, "failed preflight cannot admit work");
 
+    let mut local = Box::pin(rt.run_local(
+        TaskSpec::local(class.clone()).operation("outside-tokio-local"),
+        async { Ok::<_, ()>(()) },
+    ));
+    assert_eq!(
+        poll_once_without_tokio(local.as_mut()),
+        std::task::Poll::Ready(Err(RunError::Governor(
+            GovernorError::LocalRuntimeUnavailable
+        )))
+    );
+    assert_eq!(rt.snapshot(), before, "failed preflight cannot admit work");
+
+    let cancelled = tokio_util::sync::CancellationToken::new();
+    cancelled.cancel();
+    let mut pre_cancelled = Box::pin(rt.run_blocking_with(
+        TaskSpec::blocking(class.clone()).operation("cancel-before-context"),
+        SubmitOptions::unbounded().with_cancel(cancelled),
+        || Ok::<_, ()>(()),
+    ));
+    assert_eq!(
+        poll_once_without_tokio(pre_cancelled.as_mut()),
+        std::task::Poll::Ready(Err(RunError::Governor(GovernorError::Rejected(
+            AdmissionVerdict::CancelledBeforeSubmit
+        ))))
+    );
+    assert_eq!(
+        rt.snapshot(),
+        before,
+        "pre-cancel precedence cannot admit work"
+    );
+
     #[cfg(not(feature = "rayon"))]
     {
         let cpu_ran = Arc::new(AtomicUsize::new(0));

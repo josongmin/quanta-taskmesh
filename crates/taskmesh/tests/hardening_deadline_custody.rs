@@ -555,3 +555,59 @@ async fn a_panic_answer_is_not_delayed_by_a_blocking_child_teardown() {
     assert!(child_done.load(Ordering::SeqCst));
     assert_eq!(rt.snapshot().capabilities["large_stack"].in_use, 0);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn complete_by_discards_success_and_task_error_when_teardown_misses_the_response_deadline() {
+    for (case, root_result) in [
+        ("success", Ok::<(), &'static str>(())),
+        ("task-error", Err("root task failed")),
+    ] {
+        let rt = deadline_runtime(1);
+        let child_done = Arc::new(AtomicBool::new(false));
+        let (release, hold) = std::sync::mpsc::channel::<()>();
+        let release = ReleaseOnDrop(Some(release));
+        let (child_started_tx, child_started_rx) = tokio::sync::oneshot::channel();
+        let done = Arc::clone(&child_done);
+        let deadline = std::time::Instant::now() + Duration::from_millis(100);
+
+        let error = bounded(
+            case,
+            rt.run_async_with_requested_stack_with(
+                TaskSpec::base(TaskClass::new("c"), SubstrateHint::LargeStackCapability)
+                    .operation(format!("complete-by-{case}"))
+                    .stack_size_bytes(STACK),
+                SubmitOptions::unbounded().with_absolute_deadline(deadline),
+                move || async move {
+                    let _child = tokio::task::spawn_blocking(move || {
+                        let _observer_gone = child_started_tx.send(());
+                        let _released = hold.recv();
+                        done.store(true, Ordering::SeqCst);
+                    });
+                    child_started_rx.await.expect("blocking child starts");
+                    root_result
+                },
+            ),
+        )
+        .await
+        .expect_err("cleanup that crosses CompleteBy cannot return a late root result");
+
+        assert_eq!(
+            error,
+            RunError::Governor(GovernorError::DeadlineExceeded),
+            "{case}"
+        );
+        assert!(
+            !child_done.load(Ordering::SeqCst),
+            "{case}: caller response precedes held-child teardown"
+        );
+        assert_eq!(
+            rt.snapshot().classes[&TaskClass::new("c")].inflight,
+            1,
+            "{case}: cleanup retains custody after the deadline response"
+        );
+
+        release.release();
+        assert_drains(&rt, case).await;
+        assert!(child_done.load(Ordering::SeqCst), "{case}");
+    }
+}

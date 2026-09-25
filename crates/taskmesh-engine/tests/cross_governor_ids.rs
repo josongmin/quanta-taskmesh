@@ -1,10 +1,5 @@
-//! BG25-004/B28: executable counterexamples for raw cross-Governor IDs.
-//!
-//! These tests pin the *current unsafe authority boundary*, not the desired
-//! contract. `PermitId` and `Ticket` are numeric aliases. Two fresh Governors
-//! issue the same values, so a foreign value can act on local state. Replace
-//! these assertions with foreign-handle rejection when D5's public migration
-//! is accepted; do not mistake a green result here for a fix.
+//! BG25-004/B28: cross-Governor identities retain local sequence telemetry
+//! without granting authority over another Governor's state.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -13,8 +8,8 @@ use taskmesh_contract::{
     ClassPolicy, ExecutionPhase, ManualClock, OverflowPolicy, ResourceBudget, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
-    AdmissionDecision, AdvanceOutcome, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome,
-    Ticket,
+    AbandonOutcome, AdmissionDecision, AdvanceOutcome, AdvanceRefusal, ClaimOutcome, Governor,
+    PermitId, PolicySet, ReleaseOutcome, Ticket,
 };
 
 fn class() -> TaskClass {
@@ -37,85 +32,98 @@ fn governor() -> Governor {
     .expect("valid policy")
 }
 
-fn admit(g: &Governor, operation: &str) -> PermitId {
-    match g.admit(&TaskSpec::blocking(class()).operation(operation)) {
+fn admit(governor: &Governor, operation: &str) -> PermitId {
+    match governor.admit(&TaskSpec::blocking(class()).operation(operation)) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("expected admission, got {other:?}"),
     }
 }
 
-fn queue(g: &Governor, operation: &str) -> Ticket {
-    match g.admit(&TaskSpec::blocking(class()).operation(operation)) {
+fn queue(governor: &Governor, operation: &str) -> Ticket {
+    match governor.admit(&TaskSpec::blocking(class()).operation(operation)) {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected queued ticket, got {other:?}"),
     }
 }
 
-fn colliding_permits() -> (Governor, Governor, PermitId, PermitId) {
-    let a = governor();
-    let b = governor();
-    let on_a = admit(&a, "a-holder");
-    let on_b = admit(&b, "b-holder");
-    assert_eq!(on_a, on_b, "fresh Governors reuse the same raw permit ID");
-    (a, b, on_a, on_b)
-}
-
-fn colliding_tickets() -> (Governor, Governor, PermitId, PermitId, Ticket, Ticket) {
-    let (a, b, on_a, on_b) = colliding_permits();
-    let ticket_a = queue(&a, "a-waiter");
-    let ticket_b = queue(&b, "b-waiter");
-    assert_eq!(
-        ticket_a, ticket_b,
-        "fresh Governors reuse the same raw ticket"
+fn same_sequence_permits() -> (Governor, Governor, PermitId, PermitId) {
+    let left = governor();
+    let right = governor();
+    let on_left = admit(&left, "left-holder");
+    let on_right = admit(&right, "right-holder");
+    assert_eq!(on_left.sequence(), on_right.sequence());
+    assert_ne!(
+        on_left, on_right,
+        "authority must distinguish equal sequences"
     );
-    (a, b, on_a, on_b, ticket_a, ticket_b)
+    (left, right, on_left, on_right)
+}
+
+fn same_sequence_tickets() -> (Governor, Governor, PermitId, PermitId, Ticket, Ticket) {
+    let (left, right, on_left, on_right) = same_sequence_permits();
+    let ticket_left = queue(&left, "left-waiter");
+    let ticket_right = queue(&right, "right-waiter");
+    assert_eq!(ticket_left.sequence(), ticket_right.sequence());
+    assert_ne!(
+        ticket_left, ticket_right,
+        "authority must distinguish equal sequences"
+    );
+    (left, right, on_left, on_right, ticket_left, ticket_right)
 }
 
 #[test]
-fn foreign_raw_release_currently_refunds_the_local_colliding_permit() {
-    let (a, b, on_a, on_b) = colliding_permits();
-    assert_eq!(b.release(on_a), ReleaseOutcome::Released);
-    assert_eq!(b.snapshot().classes[&class()].inflight, 0);
-    assert_eq!(a.snapshot().classes[&class()].inflight, 1);
-    assert_eq!(a.release(on_a), ReleaseOutcome::Released);
-    assert_eq!(b.release(on_b), ReleaseOutcome::UnknownPermit);
+fn foreign_release_cannot_refund_a_local_same_sequence_permit() {
+    let (left, right, on_left, on_right) = same_sequence_permits();
+    let before = right.snapshot();
+
+    assert_eq!(right.release(on_left), ReleaseOutcome::UnknownPermit);
+    assert_eq!(right.snapshot(), before);
+    assert_eq!(left.release(on_left), ReleaseOutcome::Released);
+    assert_eq!(right.release(on_right), ReleaseOutcome::Released);
 }
 
 #[test]
-fn foreign_raw_advance_currently_leases_the_local_colliding_permit() {
-    let (a, b, on_a, on_b) = colliding_permits();
-    let AdvanceOutcome::Leased(local_lease) = b.advance_phase(on_a, ExecutionPhase::Accepted)
-    else {
-        panic!("foreign raw ID should expose the current local effect");
-    };
-    assert_eq!(b.phase(on_b), Some(ExecutionPhase::Accepted));
-    assert_eq!(a.phase(on_a), Some(ExecutionPhase::DispatchReserved));
-    assert_eq!(b.release_leased(local_lease), ReleaseOutcome::Released);
-    assert_eq!(a.release(on_a), ReleaseOutcome::Released);
+fn foreign_advance_cannot_lease_a_local_same_sequence_permit() {
+    let (left, right, on_left, on_right) = same_sequence_permits();
+    let before = right.snapshot();
+
+    assert_eq!(
+        right.advance_phase(on_left, ExecutionPhase::Accepted),
+        AdvanceOutcome::Refused(AdvanceRefusal::UnknownPermit)
+    );
+    assert_eq!(right.snapshot(), before);
+    assert_eq!(
+        right.phase(on_right),
+        Some(ExecutionPhase::DispatchReserved)
+    );
+    assert_eq!(left.release(on_left), ReleaseOutcome::Released);
+    assert_eq!(right.release(on_right), ReleaseOutcome::Released);
 }
 
 #[test]
-fn foreign_raw_claim_currently_transfers_the_local_colliding_ticket() {
-    let (a, b, on_a, on_b, ticket_a, ticket_b) = colliding_tickets();
-    assert_eq!(b.release(on_b), ReleaseOutcome::Released);
-    let ClaimOutcome::Ready(on_b_waiter) = b.claim(ticket_a) else {
-        panic!("foreign raw ticket should claim the local promotion");
-    };
-    assert_eq!(b.ticket_status(ticket_b), ClaimOutcome::Invalid);
-    assert_eq!(a.ticket_status(ticket_a), ClaimOutcome::Pending);
-    assert_eq!(b.release(on_b_waiter), ReleaseOutcome::Released);
-    a.abandon(ticket_a);
-    assert_eq!(a.release(on_a), ReleaseOutcome::Released);
+fn foreign_claim_cannot_transfer_a_local_same_sequence_ticket() {
+    let (left, right, on_left, on_right, ticket_left, ticket_right) = same_sequence_tickets();
+    let before = right.snapshot();
+
+    assert_eq!(right.claim(ticket_left), ClaimOutcome::Invalid);
+    assert_eq!(right.snapshot(), before);
+    assert_eq!(right.ticket_status(ticket_right), ClaimOutcome::Pending);
+    assert_eq!(left.abandon(ticket_left), AbandonOutcome::Abandoned);
+    assert_eq!(right.abandon(ticket_right), AbandonOutcome::Abandoned);
+    assert_eq!(left.release(on_left), ReleaseOutcome::Released);
+    assert_eq!(right.release(on_right), ReleaseOutcome::Released);
 }
 
 #[test]
-fn foreign_raw_abandon_currently_removes_the_local_colliding_ticket() {
-    let (a, b, on_a, on_b, ticket_a, ticket_b) = colliding_tickets();
-    b.abandon(ticket_a);
-    assert_eq!(b.ticket_status(ticket_b), ClaimOutcome::Invalid);
-    assert_eq!(b.snapshot().classes[&class()].queued, 0);
-    assert_eq!(a.ticket_status(ticket_a), ClaimOutcome::Pending);
-    a.abandon(ticket_a);
-    assert_eq!(a.release(on_a), ReleaseOutcome::Released);
-    assert_eq!(b.release(on_b), ReleaseOutcome::Released);
+fn foreign_abandon_cannot_remove_a_local_same_sequence_ticket() {
+    let (left, right, on_left, on_right, ticket_left, ticket_right) = same_sequence_tickets();
+    let before = right.snapshot();
+
+    assert_eq!(right.abandon(ticket_left), AbandonOutcome::Invalid);
+    assert_eq!(right.snapshot(), before);
+    assert_eq!(right.ticket_status(ticket_right), ClaimOutcome::Pending);
+    assert_eq!(left.abandon(ticket_left), AbandonOutcome::Abandoned);
+    assert_eq!(right.abandon(ticket_right), AbandonOutcome::Abandoned);
+    assert_eq!(left.release(on_left), ReleaseOutcome::Released);
+    assert_eq!(right.release(on_right), ReleaseOutcome::Released);
 }

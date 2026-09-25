@@ -129,6 +129,30 @@ def encoded(value: dict) -> bytes:
     return json.dumps(value, sort_keys=True).encode()
 
 
+def synthetic_resources() -> bytes:
+    return encoded(
+        {
+            "schema_version": 1,
+            "status": "complete",
+            "reason": None,
+            "pid": 1234,
+            "process_create_time_ns": 1,
+            "cadence_ms": 250,
+            "sampling_started_monotonic_ns": 10,
+            "sampling_ended_monotonic_ns": 20,
+            "samples": [
+                {
+                    "monotonic_ns": 15,
+                    "cpu_user_ns": 1,
+                    "cpu_system_ns": 1,
+                    "rss_bytes": 4096,
+                    "threads": 2,
+                }
+            ],
+        }
+    )
+
+
 @lru_cache(maxsize=4)
 def resolved_topology(scenario_bytes: bytes) -> bytes:
     result = subprocess.run(
@@ -162,7 +186,7 @@ def complete() -> tuple[bytes, bytes, bytes, dict, dict]:
 
 def provenance(raw: bytes, scenario: bytes, identity: dict) -> dict:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "complete",
         "reason": None,
         "scenario_sha256": host_perf.sha256(scenario),
@@ -171,6 +195,9 @@ def provenance(raw: bytes, scenario: bytes, identity: dict) -> dict:
         "binary_artifact": "synthetic-raw.json.runner",
         "topology_sha256": host_perf.sha256(resolved_topology(scenario)),
         "topology_artifact": "synthetic-raw.json.topology.json",
+        "resources_sha256": host_perf.sha256(synthetic_resources()),
+        "resources_artifact": "synthetic-raw.json.resources.json",
+        "runner_pid": 1234,
         "build_command": [
             "cargo",
             "build",
@@ -218,6 +245,7 @@ def test_self_asserted_calibration_never_qualifies_performance() -> None:
         proof,
         RUNNER_BYTES,
         resolved_topology(scenario),
+        synthetic_resources(),
     )
     with pytest.raises(host_perf.ReceiptError, match="measured calibration artifact"):
         host_perf.verify_receipt(
@@ -229,6 +257,7 @@ def test_self_asserted_calibration_never_qualifies_performance() -> None:
             provenance_bytes=proof,
             binary_bytes=RUNNER_BYTES,
             topology_bytes=resolved_topology(scenario),
+            resource_bytes=synthetic_resources(),
         )
 
 
@@ -306,6 +335,7 @@ def test_execution_provenance_binds_run_start_end_and_artifact_digests() -> None
         proof_bytes,
         RUNNER_BYTES,
         resolved_topology(scenario_bytes),
+        synthetic_resources(),
     )
     assert summary["execution_provenance_sha256"] == host_perf.sha256(proof_bytes)
     host_perf.verify_receipt(
@@ -316,6 +346,7 @@ def test_execution_provenance_binds_run_start_end_and_artifact_digests() -> None
         provenance_bytes=proof_bytes,
         binary_bytes=RUNNER_BYTES,
         topology_bytes=resolved_topology(scenario_bytes),
+        resource_bytes=synthetic_resources(),
     )
     with pytest.raises(host_perf.ReceiptError):
         host_perf.verify_receipt(raw_bytes, scenario_bytes, encoded(summary), identity)
@@ -330,6 +361,7 @@ def test_execution_provenance_binds_run_start_end_and_artifact_digests() -> None
             encoded(proof),
             RUNNER_BYTES,
             resolved_topology(scenario_bytes),
+            synthetic_resources(),
         )
     proof["end_identity"] = identity
     proof["raw_sha256"] = "0" * 64
@@ -343,6 +375,7 @@ def test_execution_provenance_binds_run_start_end_and_artifact_digests() -> None
             encoded(proof),
             RUNNER_BYTES,
             resolved_topology(scenario_bytes),
+            synthetic_resources(),
         )
     proof["raw_sha256"] = host_perf.sha256(raw_bytes)
     proof["build_command"].extend(["--features", "taskmesh/rayon"])
@@ -356,6 +389,7 @@ def test_execution_provenance_binds_run_start_end_and_artifact_digests() -> None
             encoded(proof),
             RUNNER_BYTES,
             resolved_topology(scenario_bytes),
+            synthetic_resources(),
         )
     with pytest.raises(host_perf.ReceiptError, match="binary artifact digest mismatch"):
         host_perf.make_summary(
@@ -367,6 +401,7 @@ def test_execution_provenance_binds_run_start_end_and_artifact_digests() -> None
             encoded(provenance(raw_bytes, scenario_bytes, identity)),
             b"tampered",
             resolved_topology(scenario_bytes),
+            synthetic_resources(),
         )
     changed_topology = json.loads(resolved_topology(scenario_bytes))
     changed_topology["cpu_executor"]["declared_workers"] = 999
@@ -383,6 +418,19 @@ def test_execution_provenance_binds_run_start_end_and_artifact_digests() -> None
             encoded(forged_proof),
             RUNNER_BYTES,
             changed_topology_bytes,
+            synthetic_resources(),
+        )
+    with pytest.raises(host_perf.ReceiptError, match="resource artifact digest mismatch"):
+        host_perf.make_summary(
+            raw_bytes,
+            scenario_bytes,
+            identity,
+            calibration,
+            2,
+            encoded(provenance(raw_bytes, scenario_bytes, identity)),
+            RUNNER_BYTES,
+            resolved_topology(scenario_bytes),
+            b"tampered",
         )
 
 
@@ -408,6 +456,7 @@ def test_host_run_wrapper_binds_real_binary_and_raw(tmp_path: Path) -> None:
     proof_path = raw_path.with_name(raw_path.name + ".provenance.json")
     binary_path = raw_path.with_name(raw_path.name + ".runner")
     topology_path = raw_path.with_name(raw_path.name + ".topology.json")
+    resource_path = raw_path.with_name(raw_path.name + ".resources.json")
     proof_bytes = proof_path.read_bytes()
     proof = json.loads(proof_bytes)
     assert proof["status"] == "complete"
@@ -415,6 +464,9 @@ def test_host_run_wrapper_binds_real_binary_and_raw(tmp_path: Path) -> None:
     assert proof["binary_sha256"] == host_perf.sha256(binary_path.read_bytes())
     assert proof["topology_artifact"] == topology_path.name
     assert proof["topology_sha256"] == host_perf.sha256(topology_path.read_bytes())
+    assert proof["resources_artifact"] == resource_path.name
+    assert proof["resources_sha256"] == host_perf.sha256(resource_path.read_bytes())
+    assert proof["runner_pid"] == json.loads(resource_path.read_bytes())["pid"]
     summary = json.loads(summary_path.read_bytes())
     assert summary["execution_provenance_sha256"] == host_perf.sha256(proof_bytes)
     host_perf.verify_receipt(
@@ -425,6 +477,7 @@ def test_host_run_wrapper_binds_real_binary_and_raw(tmp_path: Path) -> None:
         provenance_bytes=proof_bytes,
         binary_bytes=binary_path.read_bytes(),
         topology_bytes=topology_path.read_bytes(),
+        resource_bytes=resource_path.read_bytes(),
     )
     cli = subprocess.run(
         [
@@ -440,6 +493,8 @@ def test_host_run_wrapper_binds_real_binary_and_raw(tmp_path: Path) -> None:
             str(binary_path),
             "--topology",
             str(topology_path),
+            "--resources",
+            str(resource_path),
         ],
         capture_output=True,
         text=True,
@@ -458,6 +513,7 @@ def test_host_run_wrapper_binds_real_binary_and_raw(tmp_path: Path) -> None:
             provenance_bytes=proof_bytes,
             binary_bytes=binary_path.read_bytes(),
             topology_bytes=topology_path.read_bytes(),
+            resource_bytes=resource_path.read_bytes(),
         )
     with pytest.raises(host_perf.ReceiptError, match="retained runner binary is required"):
         host_perf.verify_receipt(
@@ -467,6 +523,7 @@ def test_host_run_wrapper_binds_real_binary_and_raw(tmp_path: Path) -> None:
             proof["end_identity"],
             provenance_bytes=proof_bytes,
             topology_bytes=topology_path.read_bytes(),
+            resource_bytes=resource_path.read_bytes(),
         )
 
 

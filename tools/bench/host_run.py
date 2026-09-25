@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import host_perf
+from process_resource import sample_subprocess
 
 
 def build_runner(features: list[str]) -> tuple[Path, list[str], list[str]]:
@@ -91,13 +92,21 @@ def main() -> int:
     provenance_path = args.raw.with_name(args.raw.name + ".provenance.json")
     executable_path = args.raw.with_name(args.raw.name + ".runner")
     topology_path = args.raw.with_name(args.raw.name + ".topology.json")
+    resource_path = args.raw.with_name(args.raw.name + ".resources.json")
     try:
         if any(
             path.exists()
-            for path in (args.raw, args.summary, provenance_path, executable_path, topology_path)
+            for path in (
+                args.raw,
+                args.summary,
+                provenance_path,
+                executable_path,
+                topology_path,
+                resource_path,
+            )
         ):
             raise host_perf.ReceiptError(
-                "raw, summary, provenance, runner and topology paths must be fresh"
+                "raw, summary, provenance, runner, topology and resource paths must be fresh"
             )
         scenario_bytes = args.scenario.read_bytes()
         scenario = host_perf.parse_object(scenario_bytes, "scenario")
@@ -119,7 +128,7 @@ def main() -> int:
             if host_perf.sha256(executable_bytes) != binary_digest:
                 raise host_perf.ReceiptError("retained runner differs from sealed executable")
             start_identity = host_perf.local_identity(scenario, features)
-            runner = subprocess.run(
+            runner_exit_code, runner_pid, runner_stderr, resources = sample_subprocess(
                 [
                     str(sealed_binary),
                     str(sealed_scenario),
@@ -128,10 +137,9 @@ def main() -> int:
                     str(topology_path),
                 ],
                 cwd=host_perf.REPO,
-                capture_output=True,
-                text=True,
-                check=False,
             )
+            resource_bytes = host_perf.canonical(resources) + b"\n"
+            write_new(resource_path, resource_bytes)
             end_identity = host_perf.local_identity(scenario, features)
             binary_unchanged = host_perf.sha256(sealed_binary.read_bytes()) == binary_digest
         raw_bytes = args.raw.read_bytes() if args.raw.exists() else None
@@ -151,8 +159,8 @@ def main() -> int:
             not binary_unchanged or host_perf.sha256(executable_path.read_bytes()) != binary_digest
         ):
             reason = "sealed or retained executable changed during run"
-        elif runner.returncode != 0:
-            reason = f"runner exited {runner.returncode}: {runner.stderr[-1000:]}"
+        elif runner_exit_code != 0:
+            reason = f"runner exited {runner_exit_code}: {runner_stderr[-1000:]}"
         elif raw_bytes is None:
             reason = "runner did not write raw artifact"
         elif topology_bytes is None:
@@ -160,7 +168,7 @@ def main() -> int:
         elif not raw_valid:
             reason = f"runner wrote invalid raw artifact: {raw_problem or 'status is not complete'}"
         provenance = {
-            "schema_version": 2,
+            "schema_version": 3,
             "status": "invalid" if reason else "complete",
             "reason": reason,
             "scenario_sha256": host_perf.sha256(scenario_bytes),
@@ -169,11 +177,14 @@ def main() -> int:
             "binary_artifact": executable_path.name,
             "topology_sha256": host_perf.sha256(topology_bytes) if topology_bytes else None,
             "topology_artifact": topology_path.name,
+            "resources_sha256": host_perf.sha256(resource_bytes),
+            "resources_artifact": resource_path.name,
+            "runner_pid": runner_pid,
             "build_command": build_command,
             "build_artifact_features": artifact_features,
             "start_identity": start_identity,
             "end_identity": end_identity,
-            "runner_exit_code": runner.returncode,
+            "runner_exit_code": runner_exit_code,
         }
         if reason is None:
             assert raw_bytes is not None
@@ -188,6 +199,7 @@ def main() -> int:
                     provisional,
                     executable_bytes,
                     topology_bytes,
+                    resource_bytes,
                 )
             except host_perf.ReceiptError as error:
                 provenance["status"] = "invalid"
@@ -207,6 +219,7 @@ def main() -> int:
                         f"STRUCTURALLY_VALID performance=UNQUALIFIED raw={args.raw} "
                         f"provenance={provenance_path} runner={executable_path} "
                         f"topology={topology_path} "
+                        f"resources={resource_path} "
                         f"summary={args.summary}"
                     )
                     return 0

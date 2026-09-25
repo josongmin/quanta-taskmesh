@@ -44,6 +44,9 @@ PROVENANCE_KEYS = {
     "binary_artifact",
     "topology_sha256",
     "topology_artifact",
+    "resources_sha256",
+    "resources_artifact",
+    "runner_pid",
     "build_command",
     "build_artifact_features",
     "start_identity",
@@ -94,6 +97,24 @@ SAMPLE_KEYS = {
     "classes",
     "capabilities",
     "conservation_ok",
+}
+RESOURCE_KEYS = {
+    "schema_version",
+    "status",
+    "reason",
+    "pid",
+    "process_create_time_ns",
+    "cadence_ms",
+    "sampling_started_monotonic_ns",
+    "sampling_ended_monotonic_ns",
+    "samples",
+}
+RESOURCE_SAMPLE_KEYS = {
+    "monotonic_ns",
+    "cpu_user_ns",
+    "cpu_system_ns",
+    "rss_bytes",
+    "threads",
 }
 SAMPLED_CLASS_KEYS = {
     "inflight",
@@ -338,6 +359,50 @@ def validate_identity(identity: Any) -> None:
             raise ReceiptError(f"identity.{key} must be nonempty")
 
 
+def validate_resource_artifact(data: bytes, runner_pid: Any) -> dict[str, Any]:
+    resources = parse_object(data, "process resources")
+    exact_keys(resources, RESOURCE_KEYS, "process resources")
+    if resources["schema_version"] != 1 or resources["status"] not in ("complete", "unavailable"):
+        raise ReceiptError("unsupported process resource artifact")
+    pid = nat(resources["pid"], "process resources.pid")
+    if pid == 0 or pid != runner_pid:
+        raise ReceiptError("process resource PID differs from executed runner")
+    if nat(resources["cadence_ms"], "process resources.cadence_ms") == 0:
+        raise ReceiptError("process resource cadence must be positive")
+    start = nat(resources["sampling_started_monotonic_ns"], "process resources.start")
+    end = nat(resources["sampling_ended_monotonic_ns"], "process resources.end")
+    if end < start:
+        raise ReceiptError("process resource sample window is reversed")
+    created = resources["process_create_time_ns"]
+    if created is not None:
+        nat(created, "process resources.process_create_time_ns")
+    samples = resources["samples"]
+    if not isinstance(samples, list) or len(samples) > 20_000:
+        raise ReceiptError("process resource sample population is invalid")
+    previous_time = None
+    previous_cpu = None
+    for index, sample in enumerate(samples):
+        if not isinstance(sample, dict):
+            raise ReceiptError(f"process resource sample {index} is not an object")
+        exact_keys(sample, RESOURCE_SAMPLE_KEYS, f"process resource sample {index}")
+        values = {key: nat(value, f"sample {index}.{key}") for key, value in sample.items()}
+        stamp = values["monotonic_ns"]
+        cpu = values["cpu_user_ns"] + values["cpu_system_ns"]
+        if stamp < start or stamp > end or (previous_time is not None and stamp <= previous_time):
+            raise ReceiptError("process resource sample time is invalid")
+        if previous_cpu is not None and cpu < previous_cpu:
+            raise ReceiptError("process resource CPU time regressed")
+        if values["threads"] == 0:
+            raise ReceiptError("process resource thread count must be positive")
+        previous_time, previous_cpu = stamp, cpu
+    if resources["status"] == "complete":
+        if resources["reason"] is not None or created is None or not samples:
+            raise ReceiptError("complete process resource artifact lacks samples")
+    elif not isinstance(resources["reason"], str) or not resources["reason"]:
+        raise ReceiptError("unavailable process resource artifact lacks reason")
+    return resources
+
+
 def validate_execution_provenance(
     data: bytes,
     raw_bytes: bytes,
@@ -345,10 +410,11 @@ def validate_execution_provenance(
     identity: dict[str, Any],
     binary_bytes: Optional[bytes],
     topology_bytes: Optional[bytes],
+    resource_bytes: Optional[bytes],
 ) -> None:
     provenance = parse_object(data, "execution provenance")
     exact_keys(provenance, PROVENANCE_KEYS, "execution provenance")
-    if provenance["schema_version"] != 2 or provenance["status"] != "complete":
+    if provenance["schema_version"] != 3 or provenance["status"] != "complete":
         raise ReceiptError("execution provenance is invalid or incomplete")
     if provenance["reason"] is not None or provenance["runner_exit_code"] != 0:
         raise ReceiptError("execution provenance contains a failed runner")
@@ -392,6 +458,23 @@ def validate_execution_provenance(
         raise ReceiptError("resolved topology artifact is required with execution provenance")
     if sha256(topology_bytes) != topology_digest:
         raise ReceiptError("execution provenance topology artifact digest mismatch")
+    resource_digest = provenance["resources_sha256"]
+    resource_artifact = provenance["resources_artifact"]
+    if (
+        not isinstance(resource_artifact, str)
+        or not resource_artifact.endswith(".resources.json")
+        or "/" in resource_artifact
+        or "\\" in resource_artifact
+        or not isinstance(resource_digest, str)
+        or len(resource_digest) != 64
+        or any(char not in "0123456789abcdef" for char in resource_digest)
+    ):
+        raise ReceiptError("execution provenance resource artifact is invalid")
+    if resource_bytes is None:
+        raise ReceiptError("process resource artifact is required with execution provenance")
+    if sha256(resource_bytes) != resource_digest:
+        raise ReceiptError("execution provenance resource artifact digest mismatch")
+    validate_resource_artifact(resource_bytes, provenance["runner_pid"])
     requested_features = identity["features"]
     expected_command = [
         "cargo",
@@ -756,12 +839,19 @@ def make_summary(
     provenance_bytes: Optional[bytes] = None,
     binary_bytes: Optional[bytes] = None,
     topology_bytes: Optional[bytes] = None,
+    resource_bytes: Optional[bytes] = None,
 ) -> dict[str, Any]:
     validate_identity(identity)
     validate_with_rust(scenario_bytes, raw_bytes, identity["features"], topology_bytes)
     if provenance_bytes is not None:
         validate_execution_provenance(
-            provenance_bytes, raw_bytes, scenario_bytes, identity, binary_bytes, topology_bytes
+            provenance_bytes,
+            raw_bytes,
+            scenario_bytes,
+            identity,
+            binary_bytes,
+            topology_bytes,
+            resource_bytes,
         )
     if not isinstance(calibration, dict):
         raise ReceiptError("calibration must be an object")
@@ -810,6 +900,7 @@ def verify_receipt(
     provenance_bytes: Optional[bytes] = None,
     binary_bytes: Optional[bytes] = None,
     topology_bytes: Optional[bytes] = None,
+    resource_bytes: Optional[bytes] = None,
 ) -> dict[str, Any]:
     summary = parse_object(summary_bytes, "summary")
     exact_keys(
@@ -835,6 +926,7 @@ def verify_receipt(
         provenance_bytes,
         binary_bytes,
         topology_bytes,
+        resource_bytes,
     )
     if summary != expected:
         raise ReceiptError("summary differs from raw/scenario reconstruction or digest")
@@ -880,6 +972,7 @@ def main() -> int:
     parser.add_argument("--provenance", type=Path)
     parser.add_argument("--binary", type=Path)
     parser.add_argument("--topology", type=Path)
+    parser.add_argument("--resources", type=Path)
     parser.add_argument("--p99-min-samples", type=int, default=10_000)
     parser.add_argument("--require-performance", action="store_true")
     args = parser.parse_args()
@@ -891,6 +984,7 @@ def main() -> int:
         provenance_bytes = args.provenance.read_bytes() if args.provenance else None
         binary_bytes = args.binary.read_bytes() if args.binary else None
         topology_bytes = args.topology.read_bytes() if args.topology else None
+        resource_bytes = args.resources.read_bytes() if args.resources else None
         if args.binary and provenance_bytes is not None:
             provenance = parse_object(provenance_bytes, "execution provenance")
             if args.binary.name != provenance.get("binary_artifact"):
@@ -899,6 +993,10 @@ def main() -> int:
             provenance = parse_object(provenance_bytes, "execution provenance")
             if args.topology.name != provenance.get("topology_artifact"):
                 raise ReceiptError("resolved topology filename differs from provenance")
+        if args.resources and provenance_bytes is not None:
+            provenance = parse_object(provenance_bytes, "execution provenance")
+            if args.resources.name != provenance.get("resources_artifact"):
+                raise ReceiptError("process resources filename differs from provenance")
         if args.mode == "create":
             if args.summary.exists():
                 raise ReceiptError("refusing to overwrite summary")
@@ -914,6 +1012,7 @@ def main() -> int:
                 provenance_bytes,
                 binary_bytes,
                 topology_bytes,
+                resource_bytes,
             )
             args.summary.write_bytes(json.dumps(summary, indent=2, sort_keys=True).encode() + b"\n")
             print(f"STRUCTURALLY_VALID summary={args.summary} performance=UNQUALIFIED")
@@ -927,6 +1026,7 @@ def main() -> int:
                 provenance_bytes=provenance_bytes,
                 binary_bytes=binary_bytes,
                 topology_bytes=topology_bytes,
+                resource_bytes=resource_bytes,
             )
             print(f"STRUCTURALLY_VALID performance=UNQUALIFIED raw_sha256={summary['raw_sha256']}")
     except (OSError, subprocess.CalledProcessError, ReceiptError) as error:

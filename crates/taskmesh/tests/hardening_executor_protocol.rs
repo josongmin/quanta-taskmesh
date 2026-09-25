@@ -805,6 +805,44 @@ fn default_tokio_dispatch_without_a_runtime_is_rejected_before_admission() {
 }
 
 #[test]
+fn explicitly_installed_tokio_cpu_adapter_requires_context_before_admission() {
+    let class = TaskClass::new("c");
+    let adapter =
+        BlockingPoolCpuExecutor::new(std::num::NonZeroU32::new(1).expect("one worker is nonzero"));
+    let rt = Builder::new()
+        .topology(TopologyConfig::new().shared_blocking_domain(PhysicalDomainMode::Fixed(1)))
+        .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
+        .class_policy(
+            class.clone(),
+            ClassPolicy::new().max_inflight(1).cpu_units(1),
+        )
+        .cpu_executor(Arc::new(adapter))
+        .build()
+        .expect("explicit Tokio adapter builds");
+    assert!(rt.executor_capabilities().requires_tokio_context);
+    let before = rt.snapshot();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&calls);
+    let mut cpu = Box::pin(rt.run_cpu(
+        TaskSpec::cpu(class).operation("explicit-tokio"),
+        move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, ()>(())
+        },
+    ));
+
+    assert_eq!(
+        poll_once_without_tokio(cpu.as_mut()),
+        std::task::Poll::Ready(Err(RunError::Governor(GovernorError::WorkerUnavailable {
+            context: "cpu executor".into(),
+            detail: "an active Tokio runtime context is required before admission".into(),
+        })))
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(rt.snapshot(), before, "failed preflight cannot admit work");
+}
+
+#[test]
 fn tokio_context_is_checked_when_the_dispatch_future_is_polled() {
     let class = TaskClass::new("c");
     let rt = runtime_for(class.clone());

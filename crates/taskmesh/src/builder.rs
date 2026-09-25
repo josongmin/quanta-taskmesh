@@ -178,7 +178,6 @@ impl Builder {
         // Construct and validate the installed executor before creating any
         // governed state. Installed executors are submission protocols, not
         // advisory metadata: inline/legacy submission is rejected.
-        let uses_default_cpu_executor = self.cpu_executor.is_none();
         let cpu: Arc<dyn CpuExecutor> = match self.cpu_executor {
             Some(cpu) => cpu,
             None => default_cpu_executor(cpu_workers, shared_blocking_workers)?,
@@ -267,20 +266,7 @@ impl Builder {
             settlement_waker,
         )?);
 
-        // Only the built-in Tokio adapter requires an ambient Tokio runtime to
-        // submit work. A custom adapter can legitimately use its own threads,
-        // even when it declares the same physical accounting domain.
-        let cpu_requires_tokio_context =
-            uses_default_cpu_executor && domain == PHYSICAL_SHARED_BLOCKING;
-
-        Ok(TokioRuntime::new(
-            config,
-            governor,
-            cpu,
-            descriptor,
-            cpu_requires_tokio_context,
-            drain,
-        ))
+        Ok(TokioRuntime::new(config, governor, cpu, descriptor, drain))
     }
 }
 

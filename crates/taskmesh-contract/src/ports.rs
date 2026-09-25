@@ -123,6 +123,10 @@ pub struct ExecutorCapabilities {
     /// resolves and freezes this once at build time; submission and promotion
     /// never query the adapter again.
     pub physical_domain: Option<&'static str>,
+    /// Whether submitting work through this adapter requires an entered Tokio
+    /// runtime. The host checks this before admission; standalone executors
+    /// leave it false.
+    pub requires_tokio_context: bool,
 }
 
 impl ExecutorCapabilities {
@@ -134,6 +138,7 @@ impl ExecutorCapabilities {
             declared_workers: None,
             exclusive_pool: false,
             physical_domain: None,
+            requires_tokio_context: false,
         }
     }
 
@@ -154,6 +159,11 @@ impl ExecutorCapabilities {
 
     pub const fn physical_domain(mut self, value: &'static str) -> Self {
         self.physical_domain = Some(value);
+        self
+    }
+
+    pub const fn requires_tokio_context(mut self, value: bool) -> Self {
+        self.requires_tokio_context = value;
         self
     }
 }

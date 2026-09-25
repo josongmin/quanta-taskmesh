@@ -54,7 +54,9 @@ The current operator path is local; hosted attestation remains a compatibility p
   requirements in one plan. `physical.shared_blocking`, `physical.cpu`, and
   `physical.dedicated` have finite limits; mixed blocking/CPU fallback work
   sharing an executor consumes one physical bound. Custom executors must
-  declare nonblocking submit, physical domain and exact worker count.
+  declare nonblocking submit, physical domain, exact worker count, and whether
+  submission requires an entered Tokio runtime. The built-in Tokio adapter
+  declares that prerequisite even when installed explicitly.
 - **Memory result (E03).** Before:
   `if governor.reconcile_memory(permit, bytes) { /* applied */ }`.
   After: `match governor.reconcile_memory(permit, bytes) {

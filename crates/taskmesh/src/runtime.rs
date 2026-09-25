@@ -78,9 +78,6 @@ pub struct TokioRuntime {
     /// The exact declaration accepted by `Builder::build`. Adapters are ports,
     /// not mutable runtime policy authorities, so dispatch never re-queries it.
     cpu_capabilities: ExecutorCapabilities,
-    /// Whether the installed CPU adapter is Taskmesh's built-in Tokio adapter.
-    /// Custom executors own their submission environment.
-    cpu_requires_tokio_context: bool,
     /// The drain's wake-up (D17), shared with every lease this handle issues.
     /// The refusal itself is the engine's (`Governor::close_admission`).
     drain: Arc<DrainSignal>,
@@ -94,10 +91,6 @@ impl std::fmt::Debug for TokioRuntime {
             .field("config", &self.config)
             .field("governor", &self.governor)
             .field("cpu_executor", &self.cpu_capabilities)
-            .field(
-                "cpu_requires_tokio_context",
-                &self.cpu_requires_tokio_context,
-            )
             .field("draining", &self.is_draining())
             .field("drain", &self.drain)
             // `cpu_executor` above is the validated summary of the otherwise
@@ -112,7 +105,6 @@ impl TokioRuntime {
         governor: Arc<Governor>,
         cpu: Arc<dyn CpuExecutor>,
         cpu_capabilities: ExecutorCapabilities,
-        cpu_requires_tokio_context: bool,
         drain: Arc<DrainSignal>,
     ) -> Self {
         Self {
@@ -120,7 +112,6 @@ impl TokioRuntime {
             governor,
             cpu,
             cpu_capabilities,
-            cpu_requires_tokio_context,
             drain,
         }
     }
@@ -365,7 +356,9 @@ impl TokioRuntime {
             };
         let context = match plan.dispatch {
             DispatchKind::BlockingPool => Some("blocking worker"),
-            DispatchKind::CpuExecutor if self.cpu_requires_tokio_context => Some("cpu executor"),
+            DispatchKind::CpuExecutor if self.cpu_capabilities.requires_tokio_context => {
+                Some("cpu executor")
+            }
             _ if timer_required => Some("submission timer"),
             _ => None,
         };

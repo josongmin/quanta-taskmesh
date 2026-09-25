@@ -36,5 +36,6 @@ impl CpuExecutor for BlockingPoolCpuExecutor {
             .declared_workers(self.physical_workers)
             .exclusive_pool(false)
             .physical_domain(PHYSICAL_SHARED_BLOCKING)
+            .requires_tokio_context(true)
     }
 }

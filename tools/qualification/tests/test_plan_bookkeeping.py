@@ -15,7 +15,9 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-VALIDATOR = REPO / "docs" / "archive" / "2026-09-25" / "sep-16-hardening" / "tickets" / "validate_plan.py"
+VALIDATOR = REPO.joinpath(
+    "docs", "archive", "2026-09-25", "sep-16-hardening", "tickets", "validate_plan.py"
+)
 
 _spec = importlib.util.spec_from_file_location("validate_plan", VALIDATOR)
 assert _spec and _spec.loader

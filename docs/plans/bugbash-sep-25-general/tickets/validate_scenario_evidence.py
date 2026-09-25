@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 from collections import Counter
 from pathlib import Path
@@ -86,6 +87,25 @@ def recipe_body(justfile: str, recipe: str) -> str:
     if match is None:
         fail(f"missing Just recipe {recipe!r}")
     return match.group("body")
+
+
+def recipe_executes_test(body: str, target: str, case: str) -> bool:
+    selector = ["--test", target, case, "--", "--exact"]
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        try:
+            tokens = shlex.split(stripped)
+        except ValueError:
+            continue
+        while tokens and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
+            tokens.pop(0)
+        if tokens[:2] != ["cargo", "test"]:
+            continue
+        if any(tokens[index : index + len(selector)] == selector for index in range(len(tokens))):
+            return True
+    return False
 
 
 def validate_nightly(nightly: object) -> None:
@@ -189,10 +209,9 @@ def main() -> None:
             fail(f"{scenario}: target must be a repository-relative path")
         target = repository_file(row["target"], f"{scenario}: target")
         if row["feature"] == "rayon":
-            selector = (
-                f"--test {Path(row['target']).stem} {row['case']} -- --exact"
-            )
-            if row["gate"] != "test-rayon" or selector not in rayon_recipe:
+            if row["gate"] != "test-rayon" or not recipe_executes_test(
+                rayon_recipe, Path(row["target"]).stem, row["case"]
+            ):
                 fail(f"{scenario}: rayon selector is not executed by test-rayon")
         sources = row["source"]
         if not isinstance(sources, list) or not sources or row["target"] not in sources:

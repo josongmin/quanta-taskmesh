@@ -89,3 +89,19 @@ def test_nightly_inventory_rejects_duplicate_gate_rows() -> None:
         VALIDATE.validate_nightly([*rows, rows[0]])
     with pytest.raises(ValueError, match="unknown or missing fields"):
         VALIDATE.validate_nightly([{**rows[0], "receipt": "forged"}, *rows[1:]])
+
+
+def test_recipe_selector_requires_an_executed_exact_cargo_test() -> None:
+    selector = "--test sample exact_case -- --exact"
+    assert VALIDATE.recipe_executes_test(
+        f"CARGO_BUILD_JOBS=4 cargo test --locked -p taskmesh {selector}\n",
+        "sample",
+        "exact_case",
+    )
+    for body in (
+        f"# cargo test {selector}\n",
+        f"echo cargo test {selector}\n",
+        "cargo test --test sample exact_case_extra -- --exact\n",
+        "cargo test --test sample exact_case\n",
+    ):
+        assert not VALIDATE.recipe_executes_test(body, "sample", "exact_case")

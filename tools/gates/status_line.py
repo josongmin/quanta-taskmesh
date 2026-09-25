@@ -42,9 +42,17 @@ def status_line_qualifies(gate: dict, stdout: str) -> bool:
         fields[key] = value
     if gate.get("id") == "test":
         return (
-            set(fields) == {
-            "status", "runner", "runner_version", "targets", "selected", "passed",
-            "catalog_digest", "selection_digest", "execution_digest",
+            set(fields)
+            == {
+                "status",
+                "runner",
+                "runner_version",
+                "targets",
+                "selected",
+                "passed",
+                "catalog_digest",
+                "selection_digest",
+                "execution_digest",
             }
             and fields["runner"] == "nextest"
             and fields["runner_version"] == "0.9.104"
@@ -59,15 +67,26 @@ def status_line_qualifies(gate: dict, stdout: str) -> bool:
             )
         )
     return (
-        set(fields) == {
-            "status", "runner", "runner_version", "modules", "selected", "passed",
-            "excluded", "slow", "qualification", "catalog_digest", "selection_digest",
+        set(fields)
+        == {
+            "status",
+            "runner",
+            "runner_version",
+            "modules",
+            "selected",
+            "passed",
+            "excluded",
+            "slow",
+            "qualification",
+            "catalog_digest",
+            "selection_digest",
             "execution_digest",
         }
         and fields["runner"] == "pytest"
-        and all(fields[key].isdigit() for key in (
-            "modules", "selected", "passed", "excluded", "slow", "qualification"
-        ))
+        and all(
+            fields[key].isdigit()
+            for key in ("modules", "selected", "passed", "excluded", "slow", "qualification")
+        )
         and int(fields["modules"]) > 0
         and int(fields["selected"]) > 0
         and int(fields["passed"]) > 0

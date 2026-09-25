@@ -204,7 +204,7 @@ async fn unawaited_local_child_is_dropped_with_the_root_local_set() {
     assert_eq!(rt.snapshot().classes[&class()].inflight, 0);
     assert_eq!(dropped.load(Ordering::SeqCst), 1);
     assert!(!completed.load(Ordering::SeqCst));
-    assert!(release_tx.send(()).is_err(), "local child receiver is gone");
+    assert_eq!(release_tx.send(()), Err(()), "local child receiver is gone");
     rt.drain(Duration::from_secs(1))
         .await
         .expect("dropped local child has no governed lease");

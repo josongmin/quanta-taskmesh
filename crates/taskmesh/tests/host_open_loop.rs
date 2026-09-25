@@ -83,12 +83,23 @@ async fn offered_terminal_unanswered_and_execution_counts_close_exactly() {
     .expect("bounded producer reaches queue and rejection terminal states");
 
     release_tx.send(()).expect("holder waits");
-    assert_eq!(holder.await.expect("holder task"), Ok(0));
+
+    let (holder_result, follower_results) = tokio::time::timeout(Duration::from_secs(5), async {
+        let holder_result = holder.await.expect("holder task");
+        let mut follower_results = Vec::with_capacity(FOLLOWERS);
+        for task in followers {
+            follower_results.push(task.await.expect("follower task"));
+        }
+        (holder_result, follower_results)
+    })
+    .await
+    .expect("holder and every follower reach a terminal result");
+    assert_eq!(holder_result, Ok(0));
 
     let mut succeeded = 0_usize;
     let mut rejected = 0_usize;
-    for task in followers {
-        match task.await.expect("follower task") {
+    for result in follower_results {
+        match result {
             Ok(_) => succeeded += 1,
             Err(RunError::Governor(GovernorError::Rejected(AdmissionVerdict::QueueFull {
                 ..

@@ -156,6 +156,7 @@ lint-rules: semgrep test-architecture prompt-check
 test-rayon:
     cargo test --locked -p taskmesh --features rayon --lib
     cargo test --locked -p taskmesh --features rayon --test hardening_executor_authority rayon_cpu_domain_is_separate_and_observable -- --exact
+    cargo test --locked -p taskmesh --features rayon --test e2e_scenarios rayon_cpu_soak_results_correct_and_drains -- --exact
 
 doctest:
     cargo test --locked --workspace --exclude taskmesh-doc-examples --doc

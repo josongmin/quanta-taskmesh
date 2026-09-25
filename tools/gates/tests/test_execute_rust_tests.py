@@ -54,6 +54,12 @@ def test_library_case_uses_nextest_execution_name() -> None:
     assert cases == {"pkg::pkg_lib$runs"}
 
 
+def test_empty_test_filter_is_not_execution_evidence() -> None:
+    value = listed({"filtered": {"ignored": False, "filter-match": {"status": "mismatch"}}})
+    with pytest.raises(ValueError, match="no runnable cases"):
+        selected_cases(value)
+
+
 def test_execution_requires_started_and_ok_for_every_case() -> None:
     lines = '\n'.join([
         '{"type":"suite","event":"started","test_count":1}',

@@ -77,6 +77,8 @@ def selected_cases(value: object) -> tuple[set[tuple[str, str, str]], set[str]]:
                 selected.add(f"{case_prefix}${name}")
     if value.get("test-count") != len(selected):
         raise ValueError("nextest test-count differs from selected nonignored cases")
+    if not selected:
+        raise ValueError("nextest selector matched no runnable cases")
     return targets, selected
 
 

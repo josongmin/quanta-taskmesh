@@ -227,12 +227,17 @@ def catalog(
     return records, problems
 
 
-def source_catalog(root: Path, recipes: dict[str, str]) -> tuple[list[dict], list[str]]:
-    python_modules = sorted(
+def python_test_modules(root: Path) -> list[str]:
+    """Discover test entrypoints; support modules are not execution targets."""
+    return sorted(
         path.relative_to(root).as_posix()
         for path in (root / "tools").rglob("*.py")
         if path.name.startswith("test_") or path.name.endswith("_test.py")
     )
+
+
+def source_catalog(root: Path, recipes: dict[str, str]) -> tuple[list[dict], list[str]]:
+    python_modules = python_test_modules(root)
     return catalog(
         metadata(root),
         metadata(root, fuzz=True),

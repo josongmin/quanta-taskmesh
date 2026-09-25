@@ -1030,30 +1030,46 @@ async fn futures_poll_once<F: std::future::Future>(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_runtimes_sharing_an_executor_each_govern_their_own_submissions() {
-    // Declared limitation, asserted rather than assumed: two runtimes over one
-    // `Arc<dyn CpuExecutor>` each bound *their own* work. Neither claims to bound
-    // the other's, and nothing pretends the shared pool has a single budget.
-    struct CountingExecutor {
-        seen: Arc<AtomicUsize>,
+    // One real worker and one queue give the shared adapter a measurable
+    // aggregate physical bound. Each runtime still owns only its own governor
+    // accounting; the adapter supplies the cross-runtime physical serialization.
+    struct SerialExecutor {
+        queue: std::sync::mpsc::Sender<Box<dyn FnOnce() + Send + 'static>>,
+        submitted: tokio::sync::mpsc::UnboundedSender<()>,
     }
-    impl CpuExecutor for CountingExecutor {
-        fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
-            self.seen.fetch_add(1, Ordering::SeqCst);
-            std::thread::spawn(work);
+
+    impl SerialExecutor {
+        fn new(submitted: tokio::sync::mpsc::UnboundedSender<()>) -> Self {
+            let (queue, worker) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send + 'static>>();
+            std::thread::Builder::new()
+                .name("taskmesh-test-shared-cpu".into())
+                .spawn(move || {
+                    while let Ok(work) = worker.recv() {
+                        work();
+                    }
+                })
+                .expect("shared executor worker starts");
+            Self { queue, submitted }
         }
+    }
+
+    impl CpuExecutor for SerialExecutor {
+        fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
+            self.queue.send(work).expect("shared worker is alive");
+            self.submitted.send(()).expect("submission observer alive");
+        }
+
         fn capabilities(&self) -> ExecutorCapabilities {
-            // Honest profile: shared with another runtime, so not exclusive.
             ExecutorCapabilities::legacy()
                 .nonblocking_submit(true)
                 .declared_workers(1)
+                .exclusive_pool(false)
                 .physical_domain(PHYSICAL_CPU)
         }
     }
 
-    let seen = Arc::new(AtomicUsize::new(0));
-    let executor = Arc::new(CountingExecutor {
-        seen: Arc::clone(&seen),
-    });
+    let (submitted_tx, mut submitted_rx) = tokio::sync::mpsc::unbounded_channel();
+    let executor = Arc::new(SerialExecutor::new(submitted_tx));
     let build = |executor: Arc<dyn CpuExecutor>| {
         Builder::new()
             .topology(TopologyConfig::new().cpu_fixed(1))
@@ -1075,33 +1091,104 @@ async fn two_runtimes_sharing_an_executor_each_govern_their_own_submissions() {
         "each runtime resolved the same declared topology"
     );
 
-    let a: i32 = first
-        .run_cpu(TaskSpec::cpu(TaskClass::new("c")).operation("a"), || {
-            Ok::<_, ()>(1)
-        })
-        .await
-        .expect("first runtime");
-    let b: i32 = second
-        .run_cpu(TaskSpec::cpu(TaskClass::new("c")).operation("b"), || {
-            Ok::<_, ()>(2)
-        })
-        .await
-        .expect("second runtime");
-    assert_eq!((a, b), (1, 2));
-    assert_eq!(seen.load(Ordering::SeqCst), 2);
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let (first_started_tx, mut first_started_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (second_started_tx, mut second_started_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release_first, hold_first) = std::sync::mpsc::channel::<()>();
 
-    // Each runtime accounts only what it admitted.
+    let first_run = {
+        let runtime = first.clone();
+        let active = Arc::clone(&active);
+        let peak = Arc::clone(&peak);
+        tokio::spawn(async move {
+            runtime
+                .run_cpu(
+                    TaskSpec::cpu(TaskClass::new("c")).operation("first"),
+                    move || {
+                        let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(now, Ordering::SeqCst);
+                        first_started_tx.send(()).expect("first observer alive");
+                        let _released = hold_first.recv();
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        Ok::<_, ()>(1)
+                    },
+                )
+                .await
+        })
+    };
+    submitted_rx.recv().await.expect("first job submitted");
+    first_started_rx.recv().await.expect("first job started");
+
+    let second_run = {
+        let runtime = second.clone();
+        let active = Arc::clone(&active);
+        let peak = Arc::clone(&peak);
+        tokio::spawn(async move {
+            runtime
+                .run_cpu(
+                    TaskSpec::cpu(TaskClass::new("c")).operation("second"),
+                    move || {
+                        let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(now, Ordering::SeqCst);
+                        second_started_tx.send(()).expect("second observer alive");
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        Ok::<_, ()>(2)
+                    },
+                )
+                .await
+        })
+    };
+    submitted_rx.recv().await.expect("second job submitted");
+
+    let first_snapshot = first.snapshot();
+    let first_busy = &first_snapshot.classes[&TaskClass::new("c")];
+    assert_eq!((first_busy.inflight, first_busy.running), (1, 1));
+    let second_snapshot = second.snapshot();
+    let second_queued_at_executor = &second_snapshot.classes[&TaskClass::new("c")];
     assert_eq!(
-        first.snapshot().classes[&TaskClass::new("c")].admitted_total,
-        1
+        (
+            second_queued_at_executor.inflight,
+            second_queued_at_executor.accepted,
+            second_queued_at_executor.running,
+        ),
+        (1, 1, 0),
+        "the second runtime accounts custody while the shared executor queues it"
     );
     assert_eq!(
-        second.snapshot().classes[&TaskClass::new("c")].admitted_total,
-        1
+        second_started_rx.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty),
+        "one physical worker prevents cross-runtime overlap"
     );
+    assert_eq!(peak.load(Ordering::SeqCst), 1);
+
+    release_first.send(()).expect("first worker still waiting");
+    second_started_rx
+        .recv()
+        .await
+        .expect("second job starts after the first");
+    let a = first_run
+        .await
+        .expect("first caller task")
+        .expect("first job");
+    let b = second_run
+        .await
+        .expect("second caller task")
+        .expect("second job");
+    assert_eq!((a, b), (1, 2));
     assert_eq!(
-        first.snapshot().capabilities["cpu"].limit,
+        peak.load(Ordering::SeqCst),
         1,
-        "each runtime bounds its own submissions to the shared pool"
+        "aggregate worker bound held"
     );
+
+    // Each runtime reports only the job it admitted and drains independently.
+    for runtime in [&first, &second] {
+        let snapshot = runtime.snapshot();
+        let class = &snapshot.classes[&TaskClass::new("c")];
+        assert_eq!((class.admitted_total, class.inflight), (1, 0));
+        assert_eq!(snapshot.capabilities["cpu"].limit, 1);
+        assert_eq!(snapshot.capabilities["cpu"].in_use, 0);
+        assert_eq!(snapshot.conservation_violation(), None);
+    }
 }

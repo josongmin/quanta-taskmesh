@@ -563,6 +563,83 @@ fn strict_config_accepts_supported_nested_variant_payloads() {
     .expect("all currently supported nested config shapes must decode");
 }
 
+#[test]
+fn strict_config_fairness_variants_require_exact_names_and_payload_keys() {
+    use taskmesh::FairnessPolicy;
+
+    for (wire, expected, variant, fields) in [
+        (
+            json!({"WeightedFairQueue": {"weight": 3, "burst": 2}}),
+            FairnessPolicy::WeightedFairQueue {
+                weight: 3,
+                burst: 2,
+            },
+            "WeightedFairQueue",
+            &[("weight", "weigth"), ("burst", "brust")][..],
+        ),
+        (
+            json!({"DeficitRoundRobin": {"quantum": 7}}),
+            FairnessPolicy::DeficitRoundRobin { quantum: 7 },
+            "DeficitRoundRobin",
+            &[("quantum", "quantm")][..],
+        ),
+        (
+            json!({"DeadlineAware": {"slack_ms": 29}}),
+            FairnessPolicy::DeadlineAware { slack_ms: 29 },
+            "DeadlineAware",
+            &[("slack_ms", "slack_mss")][..],
+        ),
+    ] {
+        let mut valid = config();
+        valid["classes"]["c"]["fairness"] = wire;
+        let runtime = parse_runtime_config(
+            &serde_json::to_vec(&valid).unwrap(),
+            StrictIngressLimits::default(),
+        )
+        .expect("explicit fairness variant must pass strict scanning")
+        .into_builder()
+        .build()
+        .expect("valid fairness policy must build");
+        assert_eq!(
+            runtime.config().classes[&TaskClass::new("c")].fairness,
+            expected
+        );
+
+        for &(field, typo) in fields {
+            let mut misspelled = valid.clone();
+            let payload = misspelled["classes"]["c"]["fairness"][variant]
+                .as_object_mut()
+                .unwrap();
+            let original = payload.remove(field).unwrap();
+            payload.insert(typo.into(), original);
+            assert_eq!(
+                parse_runtime_config(
+                    &serde_json::to_vec(&misspelled).unwrap(),
+                    StrictIngressLimits::default(),
+                )
+                .err(),
+                Some(StrictIngressError::UnknownKey {
+                    object: variant,
+                    key: typo.into(),
+                })
+            );
+
+            let mut missing = valid.clone();
+            missing["classes"]["c"]["fairness"][variant]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            assert!(matches!(
+                parse_runtime_config(
+                    &serde_json::to_vec(&missing).unwrap(),
+                    StrictIngressLimits::default(),
+                ),
+                Err(StrictIngressError::Decode(_))
+            ));
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn explicit_dispatch_tags_charge_the_actual_worker_domain() {
     use std::time::Duration;

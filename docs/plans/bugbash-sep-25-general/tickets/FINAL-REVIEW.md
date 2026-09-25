@@ -9,7 +9,7 @@ The packet remains implementable without treating all 53 incomplete scenarios as
 | Class | Tickets | Source-change rule |
 |---|---|---|
 | Contract decision | BG25-001, 003, 007 | Documentation/fixtures first; production behavior changes only after compatibility decision. |
-| Resolved structural defect | BG25-005 H30/B25/H27 | `bf03efc` and `3e57f1a` freeze executor authority, preflight Tokio-backed dispatch, and prove aggregate shared-executor bounds. |
+| Resolved structural defect | BG25-005 H30/B25/H27 | `bf03efc`, `3e57f1a`, and `0b608c3` freeze executor authority and its runtime prerequisite, preflight Tokio-backed dispatch including explicitly installed built-ins, and prove aggregate shared-executor bounds. |
 | Resolved deadline defect | BG25-006 H34 | `74a18f7` enforces `CompleteBy` at caller response while retaining worker custody through teardown. |
 | Resolved contract mismatch | BG25-003 D17 | `1c7b8ac` aligns closed-admission rustdoc with actual preflight precedence and adds an exact no-side-effect fixture. |
 | Conditional contract defect | BG25-002 | Implement only after the official untrusted-byte ingress boundary is identified. |

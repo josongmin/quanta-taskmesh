@@ -1,7 +1,7 @@
 # BG25-005 — executor descriptor와 worker authority
 
 - 상태: PLANNED
-- 구현 상태: COMPLETE (`bf03efc`, `3e57f1a`)
+- 구현 상태: COMPLETE (`bf03efc`, `3e57f1a`, `0b608c3`)
 - 우선순위: P0
 - 선행: BG25-001 D7–D8
 - 소유: host/executor owner
@@ -48,7 +48,7 @@ Builder가 검증한 executor descriptor를 runtime의 단일 불변 authority�
 ## 완료 근거
 
 - H30: build 시 검증한 descriptor를 runtime이 동결하며 네 run path, debug, accessor가 adapter를 재조회하지 않는다.
-- B25: default blocking/CPU와 timer/local prerequisite가 admission 전에 typed error로 종료되고 governor state가 변하지 않는다.
+- B25: default blocking/CPU와 timer/local prerequisite가 admission 전에 typed error로 종료되고 governor state가 변하지 않는다. 명시적으로 설치한 built-in Tokio CPU adapter도 동결 descriptor의 `requires_tokio_context`를 통해 같은 검사를 받는다.
 - H15: submit panic, accepted closure hold/drop/execute, caller drop에서 user closure 최대 1회와 lease custody를 검증한다.
 - H27: worker 1 shared executor의 runtime별 gate와 aggregate peak 1을 barrier 기반 독립 counter로 검증한다.
 - D16: portable `Auto` 선언과 build-time resolved executor snapshot을 문서와 accessor에서 구분한다.

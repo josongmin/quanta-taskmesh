@@ -36,8 +36,8 @@ PASS is invalid if the target/case does not exist, is filtered out, is feature-d
 
 ## Current baseline
 
-- Historical CI receipt: bound to audit HEAD/tree `76559c4`/`215a968`, 16/16 PASS, 561 default workspace tests reported. It does not qualify the newer `29bd8ce` HEAD.
-- Current checkout: untracked plan documents; not clean for a new qualifying run.
+- Historical CI receipt: bound to audit HEAD/tree `76559c4`/`215a968`, 16/16 PASS, 561 default workspace tests reported. It does not qualify current source.
+- 2026-09-25 replan baseline: HEAD `63bc5fd`/tree `c3310bf`; `just dev` passed 506/506 tests, but the clean-source CI-profile receipt is `qualified=false` because Clippy rejected an unreadable numeric literal in `strict_ingress.rs` and nine subsequent gates were NOT_RUN. A one-line local correction and this documentation are uncommitted; rerun on a new clean unchanged HEAD before claiming CI-profile qualification.
 - No current nightly/modelcheck/TSan/fuzz/mutation qualification artifact.
 
 The plan validator checks document mapping only. Its PASS is not product verification.

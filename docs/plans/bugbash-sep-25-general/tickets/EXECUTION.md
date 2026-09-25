@@ -1,13 +1,13 @@
 # Parallel execution and ownership
 
-Status: **plan only**. Ticket dependencies in `plan.json` describe logical prerequisites; the integration barriers below also prevent concurrent writes to shared source. Work starts from a newly recorded HEAD/tree and dirty-file inventory. The audit source in `plan.json` is evidence for this plan, not an implementation base that can be assumed current.
+Status as of 2026-09-25: **partially implemented, not qualified**. This is the current execution plan; `plan.json` retains the original 53 P/G assignments and audit baseline, not a claim that every ticket is still untouched. The observed base for this replan is HEAD `63bc5fd1933c359aab66ce8d2fc1806b415586b4`, tree `c3310bf86cb30a25e31c549a2b25bd70aa0f32a5`. The checkout has a one-line, uncommitted Clippy fix in `crates/taskmesh/tests/strict_ingress.rs`; its earlier CI-profile receipt is `qualified=false` and cannot be reused. Re-freeze HEAD, tree, status, and receipt before starting any wave.
 
 ## Launch conditions
 
-1. Preserve the current dirty checkout. During this planning pass, HEAD advanced from the audit commit `76559c4` to `29bd8ce` as proof-rail/test edits were committed; the bugbash packet and other docs remain untracked. Recheck `git status --short` and `git diff <audit-head>..HEAD --name-only` before assigning files. No lane stages or overwrites another owner's paths without a handoff.
-2. Pick one implementation base and record its full HEAD, tree, toolchain, and feature set. Give each code lane an isolated worktree/branch and its own `CARGO_TARGET_DIR`. A lane reports its base and changed paths; the integrator rebases or reapplies it against the latest integration commit before accepting proof.
-3. BG25-001 records D1–D9 with current behavior, target behavior, consumer owner, semver/migration, and typed failure. Production contract changes wait for the relevant decision. External ingress, planner, and wire adoption remain OPEN until an actual consumer and call site are identified.
-4. Reserve one Mac Cargo build slot for expensive commands. Parallel reading, fixture design, and non-Cargo tooling are fine; competing Cargo builds invalidate timing comparisons and waste compile time.
+1. The integrator owns the main checkout and its existing dirty `strict_ingress.rs` change. Commit/reconcile that fix separately, then run focused Clippy/ingress proof; do not treat the failed receipt as qualification. Defer the expensive full CI-profile run until W4. No worker stages or overwrites main's dirty path.
+2. Give each production lane a branch/worktree from one recorded base, a disjoint file manifest, and a separate `CARGO_TARGET_DIR`. Workers may prepare test-only fixtures against that base; the integrator rebases and reruns changed selectors after each merge. One Mac Cargo build slot runs at a time. Never use GitHub CI for this plan.
+3. BG25-001's D1–D9 are proposals until each relevant consumer, compatibility/semver choice, typed error, and owner is accepted. In-repo strict ingress exists, but external bytes ingress, planner, and wire consumers have no identified call site; their deployment adoption stays OPEN rather than being inferred from library tests.
+4. Treat BG25-008–010 as proof-first. Add deterministic independent oracles before changing engine source. A missing test is not a confirmed production defect. Mutation, modelcheck, TSan, fuzz campaigns, and release qualification are outside this routine plan unless explicitly authorized.
 
 ## Dependency graph
 
@@ -29,37 +29,37 @@ flowchart LR
   I & W & D & H & M & L --> G[012 proof integration]
 ```
 
-## Work lanes
+## Work lanes (three workers plus one serial integrator)
 
-| Lane | Owns | Can start in parallel | Exclusive integration window |
+| Lane | Owns now | Parallel-safe first output | Exclusive write window |
 |---|---|---|---|
-| Contract/API | 001 decision; 002 strict parser and controls; 003 wire/consumer fixtures; 004 collision repro and handle proposal | After 001: 002 parser and 003 fixture design in separate files; 004 RED repro can proceed without changing engine/host production code | One writer for `taskmesh-contract/src/**` and the two public docs. 002 Builder hook follows 005. 004 public handle migration follows the 002 hook and precedes engine 008 production edits and host 006 edits. |
-| Host/executor | 005, then 006, then 007; host portions of 002/004/008/011 by handoff | 005 after 001; 006 timeline fixture design while 005 runs | One writer for `taskmesh/src/runtime.rs` and `builder.rs`. Integrate 005, then the 002 Builder hook, then 004 host migration, then 006 and 007. |
-| Engine proof | 008, then 009, then 010 | Input-derived admission/queue/memory oracles and distinct new test files can be drafted after 001 | One writer for `engine/{governor,state}.rs` and overlapping feature slices. Integrate 004 handle migration first; apply 008 → 009 → 010 production fixes only for deterministic counterexamples. |
-| Load/evidence | 011 simulator ledger; 012 inventory schema and 104-row draft | Denominator design and evidence schema may start immediately; no PASS status from a draft | 011 host fixture waits for 005/006/008 interfaces. 012 alone edits selectors, model producer manifest, `Justfile`, gate files, and release checklist after target names/cases stabilize. |
+| A — contract/identity | 001 unresolved D1–D9; 003 consumer/version boundary; 004 cross-Governor collision reproduction and handle design; 002 external adoption inventory | Read-only consumer search, decision sheet, new `cross_governor_ids` RED fixture, wire negatives. The already implemented library parser is not reimplemented. | One writer for `taskmesh-contract/src/**` and both public specs. If D4/semver accepts owner-bound handles, 004 contract → engine → host migration is one serial integration window. |
+| B — host/lifetime | 005 closure audit; 006 combined response/custody timeline; 007 root/child scope; host portion of 011 | New independent timeline and root-scope fixtures in distinct test files; prove existing H34/H30 controls. No runtime patch without a RED counterexample. | One writer for `taskmesh/src/runtime.rs` and `builder.rs`. Wait for 004 host migration before any overlapping runtime change; then 006 → 007. |
+| C — engine/evidence | 008 compound admission; 009 queue/waker histories; 010 memory ledger; 011 simulator per-class ledger | Separate input-derived test/model fixtures and `taskmesh-bench` simulator ledger tests. No production snapshot as expected-value oracle. | One writer for `engine/{governor,state}.rs`: 004 migration → 008 → 009 → 010. Host open-loop fixture is handed to B, not written concurrently. |
+| Integrator — proof rails | 012 evidence schema, scenario mapping, test discovery, selectors, source-bound local receipt | Draft schema/validator and map 51 K + 53 P/G rows to existing or proposed cases; keep missing rows OPEN. Reconcile the dirty Clippy fix and reserve Cargo build slot. | Integrator alone edits `Justfile`, `tools/gates/**`, model producer manifest, release checklist, and main. Wire selectors only after test targets actually collect. |
 
-The four rows are ownership tracks, not four unrestricted writers. A host or engine change proposed by another lane is a patch request to that owner. `BG25-004` is a cross-crate bridge: its contract, engine, and host pieces are integrated in one short serial window so permit/ticket types cannot drift across crates.
+These are ownership tracks, not unrestricted writers. A proposed change to another lane's source is a handoff, not a parallel edit. Current source-backed implementations: BG25-002 host-library parser/Builder promotion; BG25-003 D17 precedence; BG25-005 executor descriptor/Tokio preflight; BG25-006 H34 response bound. None alone closes deployment adoption, remaining ticket DoD, or final qualification.
 
 ## Merge and proof waves
 
-| Wave | Parallel work | Serial gate to next wave |
+| Wave | Concurrent work | Serial gate |
 |---|---|---|
-| W0 | 001 source/consumer inventory and D1–D9 decisions; other lanes may prepare read-only negative fixtures | Accepted contract with compatibility and external-owner status. A missing external owner stays OPEN. |
-| W1 | 005 H30 fix; 002 strict parser/negative fixtures if D1–D3 authorize a library entrypoint, otherwise ingress design only; 003 wire fixtures; 004 foreign-ID RED repro; 008 independent oracle design; 012 evidence schema | Merge 005 and its focused host proof. Host owner then integrates any accepted 002 Builder promotion; contract owner reconciles 002/003 docs and types. |
-| W2 | 004 authority migration in its exclusive window; 011 simulator ledger tests; 006 response timeline design; 008 test-only matrix | Merge 004 across contract/engine/host with consumer-MSRV and foreign-ID proof. Rebase host and engine work on that result. If semver decision blocks 004, keep its DoD OPEN and continue only nonconflicting proof work. |
-| W3 | Host owner implements 006 → 007. Engine owner runs 008 → 009 → 010 in order. Bench owner completes 011 simulator work and receives the host-open-loop fixture from host owner after 006/008. | Each ticket supplies a deterministic case, independent observable, focused result, and changed-path list. No source fix for an unconfirmed engine mismatch. |
-| W4 | 012 integrates the 104-row scenario inventory, test discovery, Rayon/model selectors, and gate metadata | One integration commit lineage; `just dev`, then one clean unchanged-source `just verify-macos-ci` on the Mac. Record failed, filtered, and not-run rows honestly. |
+| W0 — baseline | A freezes decisions/consumer owners; B/C inspect controls; integrator resolves the known Clippy literal and runs focused Clippy/strict-ingress checks. | Record clean HEAD/tree and focused results. Preserve the failed prior receipt as diagnostic only; avoid a redundant full CI-profile run before integration. |
+| W1 — independent RED proofs | A builds foreign-ID and wire/ingress-consumer negatives; B builds combined custody and root-scope timelines; C builds independent admission/queue/memory and simulator ledgers; integrator drafts 104-row evidence schema. | Each fixture must collect and assert externally derived expected values. Classify RED as production defect, contract gap, or test-only gap. Resolve D4/semver before 004 migration. |
+| W2 — authority bridge | A owns 004 contract/engine/host migration in one short window; B/C continue only nonoverlapping test/bench files; integrator reviews consumer/MSRV and public docs. | Cross-Governor collided-ID control and facade tests pass on one source. If D4/semver is unresolved, leave 004 OPEN and do not silently replace public aliases. |
+| W3 — owner fixes | B owns 006 → 007 runtime changes only if fixtures fail; C owns 008 → 009 → 010 engine changes only if fixtures fail; B integrates host open-loop after 006/008, C completes simulator 011. | One writer per shared source file, one Cargo build slot. Rebase and rerun direct consumers at every handoff; no PASS from a stale base. |
+| W4 — evidence integration | Integrator wires actual collected cases, default/Rayon selectors, 104-row statuses, and gate inventory. A resolves identified external adoption/consumer proofs or records them OPEN with owner. | `just dev`, then clean unchanged-HEAD `just verify-macos-ci` locally; verify source HEAD/tree/digest, denominator, PASS/FAIL/NOT_RUN, and exclusions. No GitHub Actions spend or implied nightly qualification. |
 
 ## File ownership and collision rules
 
 | Shared path | Collision | Resolution |
 |---|---|---|
-| `crates/taskmesh/src/builder.rs` | 002/005 | 005 owns descriptor freeze; 002 hands over a narrow config-promotion patch afterward. |
-| `crates/taskmesh/src/runtime.rs` | 004/005/006/007 and host fixtures | 005 → 004 migration → 006 → 007. 008/011 cannot edit it directly. |
+| `crates/taskmesh/src/builder.rs` | 002/005 | Descriptor freeze and strict config promotion are already integrated. Any follow-up is owned by the host lane after reviewing both contracts. |
+| `crates/taskmesh/src/runtime.rs` | 004/005/006/007 and host fixtures | 005 is already implemented; 004 migration → 006 → 007. 008/011 cannot edit it directly. |
 | `crates/taskmesh-engine/src/engine/{governor,state}.rs` | 004/008/009/010 | 004 migration → 008 → 009 → 010; tests in distinct files can be prepared earlier. |
 | `crates/taskmesh-contract/src/**`, `docs/taskmesh-{library-spec,external-interface}.md` | 001/002/003/004/006/007 | Contract owner merges public type/doc changes; host and engine owners submit contract wording and API requirements. |
 | `crates/taskmesh/tests/host_open_loop.rs` and host capacity fixtures | 008/011 versus 005/006 | Host owner creates or integrates these fixtures after runtime semantics settle; bench owner keeps simulator tests in `taskmesh-bench`. |
-| `Justfile`, `tools/gates/**`, `tools/modelcheck/producer-manifest.json`, `docs/release-checklist.md` | functional lanes versus 012; current dirty edits | 012 owns selector and evidence changes after test collection; preserve and reconcile the pre-existing edits before writing. |
+| `Justfile`, `tools/gates/**`, `tools/modelcheck/producer-manifest.json`, `docs/release-checklist.md` | functional lanes versus 012 | 012 owns selector and evidence changes after test collection. The current dirty path is `strict_ingress.rs`, not these files; recheck at handoff. |
 
 ## Worker handoff
 
@@ -69,7 +69,7 @@ Keep `RunFor` worker-budget and `CompleteBy` caller-response contracts distinct.
 
 ## Completion and stop conditions
 
-- BG25-012 closes only with all 104 scenarios inventoried: 51 existing K baselines retained and 53 P/G rows assigned once, with actual selected cases and exact-source evidence. `validate_plan.py` checks planning consistency only.
+- BG25-012 closes only with all 104 scenarios inventoried: 51 existing K baselines retained and 53 P/G rows assigned once, with actual selected cases and exact-source evidence. `validate_plan.py` checks planning consistency only. Do not claim all 104 PASS if a deployment consumer is unidentified or a target is uncollected.
 - An external ingress/planner/consumer without an identified owner leaves deployment adoption OPEN. A nonreproducing proof gap does not authorize a production patch.
 - Do not release a worker lease before actual worker/child termination, add a second unbounded queue or executor-specific pool, or infer child tracking from an unawaited spawn.
 - Owner-local commands are in [COMMANDS](COMMANDS.md). Mutation, modelcheck, TSan, and fuzz campaigns require separate explicit authorization; a CI-profile receipt does not imply those rails passed.

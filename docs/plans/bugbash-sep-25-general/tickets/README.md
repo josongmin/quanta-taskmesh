@@ -1,9 +1,9 @@
 # Bugbash Sep-25 general — final resolution plan
 
-- Status: **PLANNED**. This packet contains audit conclusions and implementation tickets, not production fixes or qualification evidence.
-- Audit source: `76559c483bdd1d6b0b5226f7c5b5591b919afae9`, tree `215a968630e9f0675bfd1e42f0919bd2047bded2`. HEAD advanced to `29bd8ce` during planning; implementation must refresh its base and proof.
+- Status: **execution in progress; not qualified**. `plan.json` and ticket headers retain their original PLANNED mapping; [EXECUTION](EXECUTION.md) records the current partial implementation and next parallel waves. Do not read a PLANNED header as proof that no source work has landed.
+- Original audit source: `76559c483bdd1d6b0b5226f7c5b5591b919afae9`, tree `215a968630e9f0675bfd1e42f0919bd2047bded2`. The 2026-09-25 replan observed HEAD `63bc5fd`; every worker must refresh its base and proof.
 - Scenario source: [104-case audit](../../../misc/tmp-engine-checklist-sep-25.md). Its static result is K 51 / P 34 / G 19; all 53 P/G scenarios are assigned exactly once here.
-- Predecessor: `docs/plans/sep-25-engine-coverage/tickets/` is an untracked draft. This directory is the final bugbash execution packet; do not execute both as separate plans.
+- Predecessor: `docs/plans/sep-25-engine-coverage/tickets/` is superseded. This directory is the bugbash execution packet; do not execute both as separate plans.
 - Scope: contract, engine, Tokio facade, Rayon adapter, benchmark harness, and proof rails. Distributed scheduling, durable workflow recovery, automatic checkpoint execution, caller-owned fan-out/reduce execution, and undeclared closure waits remain out of scope.
 
 ## Read order

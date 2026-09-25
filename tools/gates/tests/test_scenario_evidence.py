@@ -89,6 +89,9 @@ def test_nightly_inventory_rejects_duplicate_gate_rows() -> None:
         VALIDATE.validate_nightly([*rows, rows[0]])
     with pytest.raises(ValueError, match="unknown or missing fields"):
         VALIDATE.validate_nightly([{**rows[0], "receipt": "forged"}, *rows[1:]])
+    for reason in ("", "   ", 1):
+        with pytest.raises(ValueError, match="explicit NOT_RUN"):
+            VALIDATE.validate_nightly([{**rows[0], "reason": reason}, *rows[1:]])
 
 
 def test_recipe_selector_requires_an_executed_exact_cargo_test() -> None:

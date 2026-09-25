@@ -121,7 +121,12 @@ def validate_nightly(nightly: object) -> None:
         fail("nightly qualification inventory contains missing or duplicate gates")
     if set(gates) != NIGHTLY_GATES:
         fail("nightly qualification inventory drift")
-    if any(row.get("status") != "NOT_RUN" or not row.get("reason") for row in nightly):
+    if any(
+        row.get("status") != "NOT_RUN"
+        or not isinstance(row.get("reason"), str)
+        or not row["reason"].strip()
+        for row in nightly
+    ):
         fail("unexecuted nightly gates must remain explicit NOT_RUN entries with reasons")
 
 

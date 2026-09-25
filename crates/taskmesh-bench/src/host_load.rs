@@ -11,13 +11,57 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use taskmesh::{
-    AdmissionVerdict, RunError, Runtime, SubmitOptions, TaskClass, TaskSpec, TokioRuntime,
+    AdmissionVerdict, RunError, Runtime, RuntimeConfig, SubmitOptions, TaskClass, TaskSpec,
+    TokioRuntime,
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::host_scenarios::{HostBody, HostOffer, HostPath, HostScenario};
 
 pub const HOST_RAW_VERSION: u32 = 2;
+
+/// Installed facts from the actual measured runtime, outside the timed span.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedHostTopology {
+    pub schema_version: u32,
+    pub runtime_config: RuntimeConfig,
+    pub capability_limits: BTreeMap<String, u32>,
+    pub cpu_executor: CpuExecutorReceipt,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CpuExecutorReceipt {
+    pub nonblocking_submit: bool,
+    pub declared_workers: Option<u32>,
+    pub exclusive_pool: bool,
+    pub physical_domain: Option<String>,
+    pub requires_tokio_context: bool,
+}
+
+impl ResolvedHostTopology {
+    pub fn from_runtime(runtime: &TokioRuntime) -> Self {
+        let capabilities = runtime.executor_capabilities();
+        Self {
+            schema_version: 1,
+            runtime_config: runtime.config().clone(),
+            capability_limits: runtime
+                .snapshot()
+                .capabilities
+                .into_iter()
+                .map(|(name, usage)| (name, usage.limit))
+                .collect(),
+            cpu_executor: CpuExecutorReceipt {
+                nonblocking_submit: capabilities.nonblocking_submit,
+                declared_workers: capabilities.declared_workers,
+                exclusive_pool: capabilities.exclusive_pool,
+                physical_domain: capabilities.physical_domain.map(str::to_owned),
+                requires_tokio_context: capabilities.requires_tokio_context,
+            },
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -639,8 +683,19 @@ pub async fn run_host_scenario_with_fault(
     scenario: &HostScenario,
     fault: Option<HostHarnessFault>,
 ) -> Result<RawHostRun, String> {
+    run_host_scenario_with_topology(scenario, fault)
+        .await
+        .map(|(run, _)| run)
+}
+
+/// Return the installed topology of the same runtime that ran the workload.
+pub async fn run_host_scenario_with_topology(
+    scenario: &HostScenario,
+    fault: Option<HostHarnessFault>,
+) -> Result<(RawHostRun, ResolvedHostTopology), String> {
     scenario.validate()?;
     let runtime = scenario.build_runtime()?;
+    let resolved_topology = ResolvedHostTopology::from_runtime(&runtime);
     if scenario.load.warmup_ms != 0 {
         // Warm each measured class/path on this host, then subtract its counters.
         let mut warmed = Vec::new();
@@ -938,5 +993,5 @@ pub async fn run_host_scenario_with_fault(
     // Return the raw artifact even if its ledger is inconsistent. The CLI
     // persists it before reporting the validation error, so failed runs are
     // inspectable instead of disappearing behind an Err.
-    Ok(run)
+    Ok((run, resolved_topology))
 }

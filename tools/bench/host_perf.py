@@ -31,6 +31,7 @@ IDENTITY_KEYS = {
     "features",
     "topology_fingerprint",
     "host_fingerprint",
+    "host_environment",
 }
 PROVENANCE_KEYS = {
     "schema_version",
@@ -39,6 +40,9 @@ PROVENANCE_KEYS = {
     "scenario_sha256",
     "raw_sha256",
     "binary_sha256",
+    "binary_artifact",
+    "topology_sha256",
+    "topology_artifact",
     "build_command",
     "build_artifact_features",
     "start_identity",
@@ -133,16 +137,25 @@ def parse_object(data: bytes, name: str) -> dict[str, Any]:
     return value
 
 
-def validate_with_rust(scenario_bytes: bytes, raw_bytes: bytes, features: list[str]) -> None:
+def validate_with_rust(
+    scenario_bytes: bytes,
+    raw_bytes: bytes,
+    features: list[str],
+    topology_bytes: Optional[bytes] = None,
+) -> None:
     """Use the runner's typed scenario, raw ledger and Builder rules."""
     try:
         with tempfile.TemporaryDirectory(prefix="taskmesh-host-receipt-") as temp_dir:
             raw_path = Path(temp_dir) / "raw.json"
             raw_path.write_bytes(raw_bytes)
+            topology_path = Path(temp_dir) / "topology.json"
             command = ["cargo", "run", "--locked", "--quiet", "-p", "taskmesh-bench"]
             if features:
                 command.extend(["--features", ",".join(features)])
             command.extend(["--example", "host_scenario_validate", "--", "--raw", str(raw_path)])
+            if topology_bytes is not None:
+                topology_path.write_bytes(topology_bytes)
+                command.extend(["--topology", str(topology_path)])
             result = subprocess.run(
                 command,
                 cwd=REPO,
@@ -184,6 +197,61 @@ def _git(*args: str) -> str:
     return result.stdout.strip()
 
 
+def _command_output(*command: str) -> str:
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+    except OSError:
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _read_optional(path: Path) -> str:
+    try:
+        return path.read_text(errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def host_environment() -> dict[str, Any]:
+    system = platform.system()
+    cpu_model = platform.processor() or platform.machine()
+    power_source = "unknown"
+    power_mode = "unknown"
+    if system == "Darwin":
+        cpu_model = _command_output("sysctl", "-n", "machdep.cpu.brand_string") or cpu_model
+        battery = _command_output("pmset", "-g", "batt")
+        if "Now drawing from 'AC Power'" in battery:
+            power_source = "ac"
+        elif "Now drawing from 'Battery Power'" in battery:
+            power_source = "battery"
+        for line in _command_output("pmset", "-g").splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[0] == "powermode":
+                power_mode = parts[1]
+                break
+    elif system == "Linux":
+        for line in _read_optional(Path("/proc/cpuinfo")).splitlines():
+            if line.startswith("model name") and ":" in line:
+                cpu_model = line.split(":", 1)[1].strip()
+                break
+        supplies = Path("/sys/class/power_supply")
+        if supplies.exists():
+            online = [_read_optional(path) for path in supplies.glob("*/online")]
+            if online:
+                power_source = "ac" if "1" in online else "battery"
+        governor = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+        power_mode = _read_optional(governor) or power_mode
+    return {
+        "system": system,
+        "release": platform.release(),
+        "machine": platform.machine(),
+        "cpu_model": cpu_model,
+        "logical_cpus": os.cpu_count(),
+        "power_source": power_source,
+        "power_mode": power_mode,
+    }
+
+
 def local_identity(scenario: dict[str, Any], features: list[str]) -> dict[str, Any]:
     topology = scenario.get("topology")
     if not isinstance(topology, dict):
@@ -191,6 +259,7 @@ def local_identity(scenario: dict[str, Any], features: list[str]) -> dict[str, A
     rustc = subprocess.run(
         ["rustc", "--version"], capture_output=True, text=True, check=True
     ).stdout.strip()
+    environment = host_environment()
     return {
         "source_head": _git("rev-parse", "HEAD"),
         "source_tree": _git("rev-parse", "HEAD^{tree}"),
@@ -199,14 +268,11 @@ def local_identity(scenario: dict[str, Any], features: list[str]) -> dict[str, A
         "rustc": rustc,
         "features": sorted(features),
         "topology_fingerprint": sha256(canonical(topology)),
+        "host_environment": environment,
         "host_fingerprint": sha256(
             canonical(
                 {
-                    "system": platform.system(),
-                    "release": platform.release(),
-                    "machine": platform.machine(),
-                    "processor": platform.processor(),
-                    "cpu_count": os.cpu_count(),
+                    **environment,
                     "node_sha256": sha256(platform.node().encode()),
                 }
             )
@@ -226,17 +292,35 @@ def validate_identity(identity: Any) -> None:
         or identity["features"] != sorted(set(identity["features"]))
     ):
         raise ReceiptError("identity.features must be a sorted unique string list")
-    for key in IDENTITY_KEYS - {"source_dirty", "features"}:
+    environment = identity["host_environment"]
+    if not isinstance(environment, dict):
+        raise ReceiptError("identity.host_environment must be an object")
+    exact_keys(
+        environment,
+        {"system", "release", "machine", "cpu_model", "logical_cpus", "power_source", "power_mode"},
+        "identity.host_environment",
+    )
+    if type(environment["logical_cpus"]) is not int or environment["logical_cpus"] <= 0:
+        raise ReceiptError("identity.host_environment.logical_cpus must be positive")
+    for key in environment.keys() - {"logical_cpus"}:
+        if not isinstance(environment[key], str) or not environment[key]:
+            raise ReceiptError(f"identity.host_environment.{key} must be nonempty")
+    for key in IDENTITY_KEYS - {"source_dirty", "features", "host_environment"}:
         if not isinstance(identity[key], str) or not identity[key].strip():
             raise ReceiptError(f"identity.{key} must be nonempty")
 
 
 def validate_execution_provenance(
-    data: bytes, raw_bytes: bytes, scenario_bytes: bytes, identity: dict[str, Any]
+    data: bytes,
+    raw_bytes: bytes,
+    scenario_bytes: bytes,
+    identity: dict[str, Any],
+    binary_bytes: Optional[bytes],
+    topology_bytes: Optional[bytes],
 ) -> None:
     provenance = parse_object(data, "execution provenance")
     exact_keys(provenance, PROVENANCE_KEYS, "execution provenance")
-    if provenance["schema_version"] != 1 or provenance["status"] != "complete":
+    if provenance["schema_version"] != 2 or provenance["status"] != "complete":
         raise ReceiptError("execution provenance is invalid or incomplete")
     if provenance["reason"] is not None or provenance["runner_exit_code"] != 0:
         raise ReceiptError("execution provenance contains a failed runner")
@@ -251,6 +335,35 @@ def validate_execution_provenance(
         or any(char not in "0123456789abcdef" for char in binary_digest)
     ):
         raise ReceiptError("execution provenance binary digest is invalid")
+    artifact = provenance["binary_artifact"]
+    if (
+        not isinstance(artifact, str)
+        or not artifact.endswith(".runner")
+        or artifact in (".runner", "..runner")
+        or "/" in artifact
+        or "\\" in artifact
+    ):
+        raise ReceiptError("execution provenance binary artifact name is invalid")
+    if binary_bytes is None:
+        raise ReceiptError("retained runner binary is required with execution provenance")
+    if sha256(binary_bytes) != binary_digest:
+        raise ReceiptError("execution provenance binary artifact digest mismatch")
+    topology_digest = provenance["topology_sha256"]
+    topology_artifact = provenance["topology_artifact"]
+    if (
+        not isinstance(topology_artifact, str)
+        or not topology_artifact.endswith(".topology.json")
+        or "/" in topology_artifact
+        or "\\" in topology_artifact
+        or not isinstance(topology_digest, str)
+        or len(topology_digest) != 64
+        or any(char not in "0123456789abcdef" for char in topology_digest)
+    ):
+        raise ReceiptError("execution provenance topology artifact is invalid")
+    if topology_bytes is None:
+        raise ReceiptError("resolved topology artifact is required with execution provenance")
+    if sha256(topology_bytes) != topology_digest:
+        raise ReceiptError("execution provenance topology artifact digest mismatch")
     command = provenance["build_command"]
     if (
         not isinstance(command, list)
@@ -614,11 +727,15 @@ def make_summary(
     calibration: dict[str, Any],
     p99_min_samples: int,
     provenance_bytes: Optional[bytes] = None,
+    binary_bytes: Optional[bytes] = None,
+    topology_bytes: Optional[bytes] = None,
 ) -> dict[str, Any]:
     validate_identity(identity)
-    validate_with_rust(scenario_bytes, raw_bytes, identity["features"])
+    validate_with_rust(scenario_bytes, raw_bytes, identity["features"], topology_bytes)
     if provenance_bytes is not None:
-        validate_execution_provenance(provenance_bytes, raw_bytes, scenario_bytes, identity)
+        validate_execution_provenance(
+            provenance_bytes, raw_bytes, scenario_bytes, identity, binary_bytes, topology_bytes
+        )
     if not isinstance(calibration, dict):
         raise ReceiptError("calibration must be an object")
     exact_keys(calibration, CALIBRATION_KEYS, "calibration")
@@ -664,6 +781,8 @@ def verify_receipt(
     expected_identity: Optional[dict[str, Any]] = None,
     require_performance: bool = False,
     provenance_bytes: Optional[bytes] = None,
+    binary_bytes: Optional[bytes] = None,
+    topology_bytes: Optional[bytes] = None,
 ) -> dict[str, Any]:
     summary = parse_object(summary_bytes, "summary")
     exact_keys(
@@ -687,6 +806,8 @@ def verify_receipt(
         summary["calibration"],
         summary["p99_min_samples"],
         provenance_bytes,
+        binary_bytes,
+        topology_bytes,
     )
     if summary != expected:
         raise ReceiptError("summary differs from raw/scenario reconstruction or digest")
@@ -730,6 +851,8 @@ def main() -> int:
     parser.add_argument("--feature", action="append", default=[])
     parser.add_argument("--calibration", type=Path)
     parser.add_argument("--provenance", type=Path)
+    parser.add_argument("--binary", type=Path)
+    parser.add_argument("--topology", type=Path)
     parser.add_argument("--p99-min-samples", type=int, default=10_000)
     parser.add_argument("--require-performance", action="store_true")
     args = parser.parse_args()
@@ -739,6 +862,16 @@ def main() -> int:
         scenario = parse_object(scenario_bytes, "scenario")
         identity = local_identity(scenario, args.feature)
         provenance_bytes = args.provenance.read_bytes() if args.provenance else None
+        binary_bytes = args.binary.read_bytes() if args.binary else None
+        topology_bytes = args.topology.read_bytes() if args.topology else None
+        if args.binary and provenance_bytes is not None:
+            provenance = parse_object(provenance_bytes, "execution provenance")
+            if args.binary.name != provenance.get("binary_artifact"):
+                raise ReceiptError("retained runner binary filename differs from provenance")
+        if args.topology and provenance_bytes is not None:
+            provenance = parse_object(provenance_bytes, "execution provenance")
+            if args.topology.name != provenance.get("topology_artifact"):
+                raise ReceiptError("resolved topology filename differs from provenance")
         if args.mode == "create":
             if args.summary.exists():
                 raise ReceiptError("refusing to overwrite summary")
@@ -752,6 +885,8 @@ def main() -> int:
                 calibration,
                 args.p99_min_samples,
                 provenance_bytes,
+                binary_bytes,
+                topology_bytes,
             )
             args.summary.write_bytes(json.dumps(summary, indent=2, sort_keys=True).encode() + b"\n")
             print(f"STRUCTURALLY_VALID summary={args.summary} performance=UNQUALIFIED")
@@ -763,6 +898,8 @@ def main() -> int:
                 identity,
                 require_performance=args.require_performance,
                 provenance_bytes=provenance_bytes,
+                binary_bytes=binary_bytes,
+                topology_bytes=topology_bytes,
             )
             print(f"STRUCTURALLY_VALID performance=UNQUALIFIED raw_sha256={summary['raw_sha256']}")
     except (OSError, subprocess.CalledProcessError, ReceiptError) as error:

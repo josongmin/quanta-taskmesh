@@ -67,6 +67,19 @@ def write_new(path: Path, data: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def retain_executable(source: Path, destination: Path) -> bytes:
+    if destination.exists():
+        raise host_perf.ReceiptError(f"refusing to overwrite {destination}")
+    try:
+        with source.open("rb") as input_stream, destination.open("xb") as output_stream:
+            shutil.copyfileobj(input_stream, output_stream)
+        destination.chmod(source.stat().st_mode & 0o777)
+        return destination.read_bytes()
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("scenario", type=Path)
@@ -76,9 +89,16 @@ def main() -> int:
     parser.add_argument("--feature", action="append", default=[])
     args = parser.parse_args()
     provenance_path = args.raw.with_name(args.raw.name + ".provenance.json")
+    executable_path = args.raw.with_name(args.raw.name + ".runner")
+    topology_path = args.raw.with_name(args.raw.name + ".topology.json")
     try:
-        if any(path.exists() for path in (args.raw, args.summary, provenance_path)):
-            raise host_perf.ReceiptError("raw, summary and provenance paths must be fresh")
+        if any(
+            path.exists()
+            for path in (args.raw, args.summary, provenance_path, executable_path, topology_path)
+        ):
+            raise host_perf.ReceiptError(
+                "raw, summary, provenance, runner and topology paths must be fresh"
+            )
         scenario_bytes = args.scenario.read_bytes()
         scenario = host_perf.parse_object(scenario_bytes, "scenario")
         calibration = host_perf.parse_object(args.calibration.read_bytes(), "calibration")
@@ -95,16 +115,27 @@ def main() -> int:
             shutil.copy2(binary, sealed_binary)
             sealed_scenario.write_bytes(scenario_bytes)
             binary_digest = host_perf.sha256(sealed_binary.read_bytes())
+            executable_bytes = retain_executable(sealed_binary, executable_path)
+            if host_perf.sha256(executable_bytes) != binary_digest:
+                raise host_perf.ReceiptError("retained runner differs from sealed executable")
             start_identity = host_perf.local_identity(scenario, features)
             runner = subprocess.run(
-                [str(sealed_binary), str(sealed_scenario), str(args.raw)],
+                [
+                    str(sealed_binary),
+                    str(sealed_scenario),
+                    str(args.raw),
+                    "--topology-out",
+                    str(topology_path),
+                ],
                 cwd=host_perf.REPO,
                 capture_output=True,
                 text=True,
                 check=False,
             )
             end_identity = host_perf.local_identity(scenario, features)
+            binary_unchanged = host_perf.sha256(sealed_binary.read_bytes()) == binary_digest
         raw_bytes = args.raw.read_bytes() if args.raw.exists() else None
+        topology_bytes = topology_path.read_bytes() if topology_path.exists() else None
         raw_valid = False
         raw_problem = None
         if raw_bytes is not None:
@@ -116,19 +147,28 @@ def main() -> int:
         reason = None
         if start_identity != end_identity:
             reason = "source, toolchain or host identity changed during run"
+        elif (
+            not binary_unchanged or host_perf.sha256(executable_path.read_bytes()) != binary_digest
+        ):
+            reason = "sealed or retained executable changed during run"
         elif runner.returncode != 0:
             reason = f"runner exited {runner.returncode}: {runner.stderr[-1000:]}"
         elif raw_bytes is None:
             reason = "runner did not write raw artifact"
+        elif topology_bytes is None:
+            reason = "runner did not write resolved topology artifact"
         elif not raw_valid:
             reason = f"runner wrote invalid raw artifact: {raw_problem or 'status is not complete'}"
         provenance = {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": "invalid" if reason else "complete",
             "reason": reason,
             "scenario_sha256": host_perf.sha256(scenario_bytes),
             "raw_sha256": host_perf.sha256(raw_bytes) if raw_bytes is not None else None,
             "binary_sha256": binary_digest,
+            "binary_artifact": executable_path.name,
+            "topology_sha256": host_perf.sha256(topology_bytes) if topology_bytes else None,
+            "topology_artifact": topology_path.name,
             "build_command": build_command,
             "build_artifact_features": artifact_features,
             "start_identity": start_identity,
@@ -140,7 +180,14 @@ def main() -> int:
             provisional = host_perf.canonical(provenance) + b"\n"
             try:
                 summary = host_perf.make_summary(
-                    raw_bytes, scenario_bytes, end_identity, calibration, 10_000, provisional
+                    raw_bytes,
+                    scenario_bytes,
+                    end_identity,
+                    calibration,
+                    10_000,
+                    provisional,
+                    executable_bytes,
+                    topology_bytes,
                 )
             except host_perf.ReceiptError as error:
                 provenance["status"] = "invalid"
@@ -158,7 +205,9 @@ def main() -> int:
                     )
                     print(
                         f"STRUCTURALLY_VALID performance=UNQUALIFIED raw={args.raw} "
-                        f"provenance={provenance_path} summary={args.summary}"
+                        f"provenance={provenance_path} runner={executable_path} "
+                        f"topology={topology_path} "
+                        f"summary={args.summary}"
                     )
                     return 0
         write_new(provenance_path, host_perf.canonical(provenance) + b"\n")

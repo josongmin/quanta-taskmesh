@@ -4,18 +4,27 @@ use std::env;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 
-use taskmesh_bench::host_load::RawHostRun;
+use taskmesh_bench::host_load::{RawHostRun, ResolvedHostTopology};
 use taskmesh_bench::host_scenarios::HostScenario;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args_os().skip(1);
-    let raw_path = match args.next() {
-        None => None,
-        Some(flag) if flag == "--raw" => Some(args.next().ok_or("--raw requires a path")?),
-        _ => return Err("usage: host_scenario_validate [--raw RAW_FILE]".into()),
-    };
-    if args.next().is_some() {
-        return Err("usage: host_scenario_validate [--raw RAW_FILE]".into());
+    let mut raw_path = None;
+    let mut topology_path = None;
+    let mut emit_topology = false;
+    while let Some(flag) = args.next() {
+        if flag == "--raw" && raw_path.is_none() {
+            raw_path = Some(args.next().ok_or("--raw requires a path")?);
+        } else if flag == "--topology" && topology_path.is_none() {
+            topology_path = Some(args.next().ok_or("--topology requires a path")?);
+        } else if flag == "--emit-topology" && !emit_topology {
+            emit_topology = true;
+        } else {
+            return Err("usage: host_scenario_validate [--raw RAW_FILE] [--topology TOPOLOGY_FILE] [--emit-topology]".into());
+        }
+    }
+    if emit_topology && (raw_path.is_some() || topology_path.is_some()) {
+        return Err("--emit-topology cannot be combined with artifact validation".into());
     }
     let mut bytes = Vec::new();
     io::stdin()
@@ -26,7 +35,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let scenario = HostScenario::from_json(&bytes)?;
     // Builder policy validation is part of scenario preflight, before timing.
-    let _runtime = scenario.build_runtime()?;
+    let runtime = scenario.build_runtime()?;
+    let resolved_topology = ResolvedHostTopology::from_runtime(&runtime);
+    if emit_topology {
+        println!("{}", serde_json::to_string(&resolved_topology)?);
+        return Ok(());
+    }
+    if let Some(path) = topology_path {
+        let file = File::open(path)?;
+        if file.metadata()?.len() > 16 * 1024 * 1024 {
+            return Err("topology artifact exceeds 16 MiB validation input limit".into());
+        }
+        let topology: ResolvedHostTopology = serde_json::from_reader(BufReader::new(file))?;
+        if topology != resolved_topology {
+            return Err("topology artifact differs from freshly resolved runtime".into());
+        }
+    }
     if let Some(path) = raw_path {
         let file = File::open(path)?;
         if file.metadata()?.len() > 1024 * 1024 * 1024 {

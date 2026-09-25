@@ -3,10 +3,20 @@
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use taskmesh_bench::host_load::{run_host_scenario_with_fault, HostHarnessFault};
+use taskmesh_bench::host_load::{run_host_scenario_with_topology, HostHarnessFault};
 use taskmesh_bench::host_scenarios::HostScenario;
+
+fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    if path.exists() {
+        return Err(format!("refusing to overwrite {}", path.display()).into());
+    }
+    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    fs::write(&temporary, bytes)?;
+    fs::rename(&temporary, path)?;
+    Ok(())
+}
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,32 +29,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.next()
             .ok_or("usage: host_load_probe SCENARIO RAW_OUT")?,
     );
-    let fault =
-        match args.next() {
-            None => None,
-            Some(flag) if flag == "--inject-producer-before-first-offer" => {
-                Some(HostHarnessFault::ProducerBeforeOffer(0))
-            }
-            _ => return Err(
-                "usage: host_load_probe SCENARIO RAW_OUT [--inject-producer-before-first-offer]"
-                    .into(),
-            ),
-        };
-    if args.next().is_some() {
-        return Err(
-            "usage: host_load_probe SCENARIO RAW_OUT [--inject-producer-before-first-offer]".into(),
-        );
+    let mut fault = None;
+    let mut topology_path = None;
+    while let Some(flag) = args.next() {
+        if flag == "--inject-producer-before-first-offer" && fault.is_none() {
+            fault = Some(HostHarnessFault::ProducerBeforeOffer(0));
+        } else if flag == "--topology-out" && topology_path.is_none() {
+            topology_path = Some(PathBuf::from(
+                args.next().ok_or("--topology-out requires a path")?,
+            ));
+        } else {
+            return Err("usage: host_load_probe SCENARIO RAW_OUT [--topology-out PATH] [--inject-producer-before-first-offer]".into());
+        }
     }
-    if output_path.exists() {
-        return Err(format!("refusing to overwrite {}", output_path.display()).into());
+    if topology_path
+        .as_ref()
+        .is_some_and(|path| path == &output_path)
+    {
+        return Err("raw and topology output paths must differ".into());
     }
     let bytes = fs::read(&scenario_path)?;
     let scenario = HostScenario::from_json(&bytes)?;
-    let run = run_host_scenario_with_fault(&scenario, fault).await?;
+    let (run, topology) = run_host_scenario_with_topology(&scenario, fault).await?;
     let raw = serde_json::to_vec_pretty(&run)?;
-    let temporary = output_path.with_extension(format!("tmp-{}", std::process::id()));
-    fs::write(&temporary, raw)?;
-    fs::rename(&temporary, &output_path)?;
+    write_new(&output_path, &raw)?;
+    if let Some(path) = topology_path {
+        write_new(&path, &serde_json::to_vec_pretty(&topology)?)?;
+    }
     if let Err(error) = run.validate_against(&scenario) {
         return Err(format!("raw artifact {} is invalid: {error}", output_path.display()).into());
     }

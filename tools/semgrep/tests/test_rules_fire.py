@@ -311,6 +311,22 @@ CASES: list[tuple[str, str, str, str, str]] = [
         + '    assert_eq!(error, GovernorError::PolicyViolation("bad".into()));\n}\n',
     ),
     (
+        "taskmesh-test-policy-violation-without-message-check",
+        "test-quality.yml",
+        HOST_ITEST,
+        "enum GovernorError { PolicyViolation(String) }\n"
+        + A
+        + '    let error = GovernorError::PolicyViolation("wrong branch".into());\n'
+        + "    assert!(matches!(\n"
+        + "        &error,\n"
+        + "        GovernorError::PolicyViolation(message) if message.contains(\"branch\")\n"
+        + "    ));\n}\n",
+        "enum GovernorError { PolicyViolation(String) }\n"
+        + A
+        + '    let error = GovernorError::PolicyViolation("bad".into());\n'
+        + '    assert_eq!(error, GovernorError::PolicyViolation("bad".into()));\n}\n',
+    ),
+    (
         "taskmesh-test-discards-fallible-let",
         "test-quality.yml",
         HOST_ITEST,
@@ -486,30 +502,32 @@ def test_every_rule_has_a_fire_and_clean_fixture() -> None:
     assert not phantom, f"fixtures for rules that no longer exist: {phantom}"
 
 
-def test_scan_target_policy_accepts_every_present_crate_test_file() -> None:
-    scanned: set[str] = set()
-    for crate_tests in sorted((REPO / "crates").glob("*/tests")):
-        scanned.update(path.relative_to(REPO).as_posix() for path in crate_tests.rglob("*.rs"))
+def crate_rust_sources(root: Path = REPO) -> set[str]:
+    return {
+        path.relative_to(root).as_posix()
+        for path in (root / "crates").rglob("*.rs")
+        if path.is_file()
+    }
+
+
+def test_scan_target_policy_accepts_every_present_crate_rust_file() -> None:
+    scanned = crate_rust_sources()
     assert semgrep_check.target_set_problems(scanned) == []
 
 
 def test_scan_target_policy_rejects_empty_and_same_tree_omission() -> None:
     assert semgrep_check.target_set_problems(set()) == ["semgrep reported no scanned paths"]
-    scanned = {
-        path.relative_to(REPO).as_posix()
-        for crate_tests in (REPO / "crates").glob("*/tests")
-        for path in crate_tests.rglob("*.rs")
-    }
+    scanned = crate_rust_sources()
     missing = "crates/taskmesh-engine/tests/prop_invariants.rs"
     assert missing in scanned
     scanned.remove(missing)
     problems = semgrep_check.target_set_problems(scanned)
-    assert problems == [f"Rust test files were not scanned: ['{missing}']"]
+    assert problems == [f"Rust crate files were not scanned: ['{missing}']"]
 
 
-def test_scan_target_policy_rejects_an_unscanned_crate_test_tree(tmp_path: Path) -> None:
+def test_scan_target_policy_rejects_an_unscanned_crate_source_tree(tmp_path: Path) -> None:
     first = tmp_path / "crates" / "first" / "tests" / "covered.rs"
-    second = tmp_path / "crates" / "second" / "tests" / "missed.rs"
+    second = tmp_path / "crates" / "second" / "src" / "missed.rs"
     first.parent.mkdir(parents=True)
     second.parent.mkdir(parents=True)
     first.write_text("#[test]\nfn covered() {}\n", encoding="utf-8")
@@ -518,4 +536,22 @@ def test_scan_target_policy_rejects_an_unscanned_crate_test_tree(tmp_path: Path)
 
     problems = semgrep_check.target_set_problems(scanned, root=tmp_path)
 
-    assert problems == ["Rust test files were not scanned: ['crates/second/tests/missed.rs']"]
+    assert problems == ["Rust crate files were not scanned: ['crates/second/src/missed.rs']"]
+
+
+def test_scan_target_policy_rejects_unscanned_benches_and_examples(tmp_path: Path) -> None:
+    source = tmp_path / "crates" / "one" / "src" / "lib.rs"
+    bench = tmp_path / "crates" / "one" / "benches" / "load.rs"
+    example = tmp_path / "crates" / "one" / "examples" / "demo.rs"
+    for path in (source, bench, example):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("fn main() {}\n", encoding="utf-8")
+
+    problems = semgrep_check.target_set_problems(
+        {source.relative_to(tmp_path).as_posix()}, root=tmp_path
+    )
+
+    assert problems == [
+        "Rust crate files were not scanned: "
+        "['crates/one/benches/load.rs', 'crates/one/examples/demo.rs']"
+    ]

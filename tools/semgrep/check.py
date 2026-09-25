@@ -29,7 +29,13 @@ def semgrep_identity_problems(proc: subprocess.CompletedProcess[str]) -> list[st
 
 
 def target_set_problems(scanned: set[str], root: Path = REPO) -> list[str]:
-    """Require every present Rust test file under each crate to be scanned."""
+    """Require every present Rust source file under ``crates/`` to be scanned.
+
+    The rule pack governs production code, tests, benches, and examples.  A
+    target-set check limited to ``crates/*/tests`` would still accept a clean
+    Semgrep result after ``.semgrepignore`` accidentally excluded a production
+    module or benchmark.
+    """
     if not scanned:
         return ["semgrep reported no scanned paths"]
     scanned_relative: set[str] = set()
@@ -42,19 +48,16 @@ def target_set_problems(scanned: set[str], root: Path = REPO) -> list[str]:
                 continue
         scanned_relative.add(candidate.as_posix())
 
-    expected: set[str] = set()
-    for crate_tests in sorted((root / "crates").glob("*/tests")):
-        if not crate_tests.is_dir():
-            continue
-        expected.update(
-            path.relative_to(root).as_posix()
-            for path in crate_tests.rglob("*.rs")
-            if path.is_file()
-        )
+    crates = root / "crates"
+    expected = {
+        path.relative_to(root).as_posix()
+        for path in crates.rglob("*.rs")
+        if path.is_file()
+    }
     if not expected:
-        return ["no Rust test files found under crates/*/tests"]
+        return ["no Rust source files found under crates"]
     missing = sorted(expected - scanned_relative)
-    return [f"Rust test files were not scanned: {missing}"] if missing else []
+    return [f"Rust crate files were not scanned: {missing}"] if missing else []
 
 
 def main() -> int:

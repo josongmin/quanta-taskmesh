@@ -74,10 +74,7 @@ fn a_governor_cannot_boot_with_an_empty_inventory() {
     let GovernorError::PolicyViolation(message) = error else {
         panic!("expected a policy violation, got {error:?}");
     };
-    assert!(
-        message.contains("missing built-in"),
-        "the message must name the missing built-in: {message}"
-    );
+    assert_eq!(message, "substrate registry is missing built-in cpu");
 }
 
 #[test]
@@ -91,9 +88,9 @@ fn every_builtin_must_be_present() {
         let GovernorError::PolicyViolation(message) = error else {
             panic!("expected a policy violation for {absent}, got {error:?}");
         };
-        assert!(
-            message.contains(absent),
-            "the message must name {absent}: {message}"
+        assert_eq!(
+            message,
+            format!("substrate registry is missing built-in {absent}")
         );
     }
 }
@@ -133,9 +130,9 @@ fn a_builtin_rebound_to_another_pool_is_rejected() {
     let GovernorError::PolicyViolation(message) = error else {
         panic!("expected a policy violation, got {error:?}");
     };
-    assert!(
-        message.contains("non-canonical"),
-        "unexpected message: {message}"
+    assert_eq!(
+        message,
+        "built-in substrate large_stack is registered with a non-canonical kind/pool binding"
     );
 }
 
@@ -176,9 +173,12 @@ fn extra_executing_substrates_require_explicit_capability_authority() {
         .expect("an additional substrate registers");
     let error = Governor::new(policy, Arc::new(ManualClock::new(0)))
         .expect_err("missing capability authority must fail closed");
-    assert!(
-        matches!(&error, GovernorError::PolicyViolation(message) if message.contains("no capability authority")),
-        "unexpected error: {error:?}"
+    assert_eq!(
+        error,
+        GovernorError::PolicyViolation(
+            "executing substrate external-gpu has no capability authority for pool external-gpu"
+                .into()
+        )
     );
 
     let policy = PolicySet::new(ResourceBudget::new(), classes())

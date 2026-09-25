@@ -98,12 +98,7 @@ fn per_request_memory_limit_overflow_fails() {
             .per_request_memory_units(2),
         vec![("c", ClassPolicy::new().memory_units(4))],
     );
-    let error = Governor::validate_policy(&p)
-        .expect_err("a class costing more memory than the per-request cap must be rejected");
-    assert!(
-        matches!(&error, GovernorError::PolicyViolation(message) if message.contains("per-request memory limit")),
-        "the rejection names the per-request memory limit, got {error:?}"
-    );
+    assert_policy_violation(&p, "class c exceeds per-request memory limit");
 }
 
 #[test]
@@ -212,11 +207,7 @@ fn degrade_to_a_disabled_fallback_is_rejected() {
             ("light", ClassPolicy::new().max_inflight(0).memory_units(1)),
         ],
     );
-    let error = Governor::validate_policy(&p).expect_err("disabled fallback must be rejected");
-    assert!(
-        matches!(&error, GovernorError::PolicyViolation(message) if message.contains("disabled fallback light")),
-        "got {error:?}"
-    );
+    assert_policy_violation(&p, "class heavy degrades to disabled fallback light");
 }
 
 #[test]
@@ -246,12 +237,10 @@ fn a_degrade_chain_is_rejected() {
         ResourceBudget::new().memory_units(8),
         vec![("a", degrade_to("b")), ("b", degrade_to("a"))],
     );
-    for (label, p) in [("a → b → c", chain), ("a → b → a", cycle)] {
-        let error = Governor::validate_policy(&p)
-            .expect_err("a fallback that itself degrades must be rejected");
-        assert!(
-            matches!(&error, GovernorError::PolicyViolation(message) if message.contains("which itself degrades")),
-            "{label}: the rejection names the chained degrade, got {error:?}"
+    for p in [chain, cycle] {
+        assert_policy_violation(
+            &p,
+            "class a degrades to fallback b, which itself degrades; a degrade is one hop and cannot chain",
         );
     }
 }
@@ -276,9 +265,9 @@ fn a_capability_limit_on_an_authority_only_pool_is_rejected() {
     .expect("an authority-only record may name a pool")
     .with_capability_limits(BTreeMap::from([("gpu".to_string(), 2)]))
     .expect_err("authority-only substrates cannot own execution capacity");
-    assert!(
-        matches!(&error, GovernorError::PolicyViolation(message) if message.contains("unregistered pool")),
-        "the rejection says the pool has no executing provider, got {error:?}"
+    assert_eq!(
+        error,
+        GovernorError::PolicyViolation("capability limit for unregistered pool: gpu".into())
     );
 }
 
@@ -399,10 +388,9 @@ fn a_weighted_fair_queue_weight_of_zero_is_rejected_not_coerced() {
             }),
         )],
     );
-    let message = violation_message(&p, "a zero WFQ weight");
-    assert!(
-        message.contains("weight 0") && message.contains("zero-share"),
-        "a zero WFQ weight must be refused by name, got: {message}"
+    assert_eq!(
+        violation_message(&p, "a zero WFQ weight"),
+        "class zero-share declares WeightedFairQueue weight 0; weight must be >= 1"
     );
     // Weight 1 on the same fixture is fine — the rule is exactly `== 0`.
     let ok = policy(
@@ -436,10 +424,9 @@ fn queueing_on_memory_overcommit_requires_a_queue_to_wait_in() {
                 .memory_overcommit_policy(MemoryOvercommitPolicy::Queue),
         )],
     );
-    let message = violation_message(&p, "memory Queue without a queue");
-    assert!(
-        message.contains("queues on overcommit") && message.contains("max_queue_depth == 0"),
-        "memory Queue without a queue must be refused by name, got: {message}"
+    assert_eq!(
+        violation_message(&p, "memory Queue without a queue"),
+        "class m queues on overcommit but has max_queue_depth == 0"
     );
     let ok = policy(
         ResourceBudget::new().memory_units(8),
@@ -475,9 +462,8 @@ fn a_class_that_degrades_to_itself_is_rejected() {
             ),
         )],
     );
-    let message = violation_message(&p, "a self-fallback");
-    assert!(
-        message.contains("degrades to itself"),
-        "a self-fallback must be refused by name, got: {message}"
+    assert_eq!(
+        violation_message(&p, "a self-fallback"),
+        "class a degrades to itself"
     );
 }

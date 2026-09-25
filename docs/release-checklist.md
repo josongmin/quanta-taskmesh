@@ -65,7 +65,7 @@ Run the registered recipes through `just`:
       clean checkout with no concurrent writers: source digests before and after the
       run cannot detect an edit restored between those observations.
 - [ ] `just gate` — fmt-check, strict clippy (3 passes), test, deny, semgrep
-      (every present Rust file under `crates/*/tests/` enrolled), architecture
+      (every present Rust file under `crates/` enrolled), architecture
       checker, py-lint, py-test, allocation gate, gates-inventory parity, and
       stable fuzz-target Clippy. `gates-inventory` also checks the static
       Cargo/Python/fuzz target-to-gate catalog and recipe selectors; that

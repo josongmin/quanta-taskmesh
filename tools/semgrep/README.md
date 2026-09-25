@@ -19,8 +19,9 @@ Scope of the test-quality rules (`test-quality.yml`): every `#[test] fn`, `#[tok
 and `#[tokio::test(...)] async fn` body under `crates/`. Each rule has a fire/clean fixture in
 `tests/test_rules_fire.py`; a rule without one is not considered enforced.
 The gate compares Semgrep's scanned paths with every present Rust file under
-`crates/*/tests/`, including support modules. Omitting one file fails even if
-another file in the same crate's test tree was scanned.
+`crates/`, including production modules, unit-test modules, integration tests,
+benchmarks, examples, and support modules. Omitting any one file fails even if
+the rest of its crate was scanned.
 
 ```bash
 uv run python tools/semgrep/check.py

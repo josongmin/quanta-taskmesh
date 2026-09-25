@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -471,7 +472,7 @@ def test_qualification_consumes_authorized_producer_jobs_with_bounded_critical_p
     )
 
 
-def test_tracked_pre_push_hook_requires_exact_local_receipt() -> None:
+def test_tracked_pre_push_hook_requires_exact_local_receipt(tmp_path: Path) -> None:
     hook = REPO / ".githooks" / "pre-push"
     text = hook.read_text(encoding="utf-8")
     assert hook.stat().st_mode & 0o111
@@ -480,6 +481,97 @@ def test_tracked_pre_push_hook_requires_exact_local_receipt() -> None:
     assert "target/verification/macos-gates.json" in text
     assert "target/qualification/local-receipt.json" in text
     assert "tools/qualification/receipt.py" in text
+
+    fake_root = tmp_path / "repo"
+    fake_bin = tmp_path / "bin"
+    fake_root.mkdir()
+    fake_bin.mkdir()
+    uv_log = tmp_path / "uv.log"
+    fake_git = fake_bin / "git"
+    fake_git.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1 $2" = "rev-parse --show-toplevel" ]; then\n'
+        '  printf "%s\\n" "$FAKE_REPO_ROOT"\n'
+        'elif [ "$1 $2" = "rev-parse HEAD" ]; then\n'
+        '  printf "%s\\n" "$FAKE_HEAD_SHA"\n'
+        "else\n"
+        '  printf "unexpected git invocation: %s\\n" "$*" >&2\n'
+        "  exit 91\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$*" >> "$UV_LOG"\n',
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    fake_uv.chmod(0o755)
+    head = "1" * 40
+    env = os.environ | {
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "FAKE_REPO_ROOT": str(fake_root),
+        "FAKE_HEAD_SHA": head,
+        "UV_LOG": str(uv_log),
+    }
+
+    proc = subprocess.run(
+        [str(hook), "origin", "unused"],
+        input=f"HEAD {head} refs/heads/main {'0' * 40}\n",
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert uv_log.read_text(encoding="utf-8").splitlines() == [
+        "run python tools/gates/run.py --validate-receipt "
+        f"target/verification/macos-gates.json --expected-head {head}"
+    ]
+
+
+def test_pre_push_rejects_a_detached_branch_update_from_an_unverified_sha(
+    tmp_path: Path,
+) -> None:
+    hook = REPO / ".githooks" / "pre-push"
+    fake_root = tmp_path / "repo"
+    fake_bin = tmp_path / "bin"
+    fake_root.mkdir()
+    fake_bin.mkdir()
+    fake_git = fake_bin / "git"
+    fake_git.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1 $2" = "rev-parse --show-toplevel" ]; then\n'
+        '  printf "%s\\n" "$FAKE_REPO_ROOT"\n'
+        'elif [ "$1 $2" = "rev-parse HEAD" ]; then\n'
+        '  printf "%s\\n" "$FAKE_HEAD_SHA"\n'
+        "else\n"
+        "  exit 91\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    env = os.environ | {
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "FAKE_REPO_ROOT": str(fake_root),
+        "FAKE_HEAD_SHA": "1" * 40,
+    }
+
+    proc = subprocess.run(
+        [str(hook), "origin", "unused"],
+        input=f"HEAD {'2' * 40} refs/heads/main {'0' * 40}\n",
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert proc.returncode == 1
+    assert proc.stderr.strip() == (
+        "pre-push: branch update must point at the currently verified HEAD"
+    )
 
 
 def test_runner_refuses_to_qualify_when_required_gates_did_not_run() -> None:

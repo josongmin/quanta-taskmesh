@@ -437,9 +437,14 @@ async fn a_phase_that_does_not_advance_is_reported_not_ignored_v1() {
         let error = lease
             .advance(phase)
             .expect_err("a non-advancing phase is refused");
-        assert!(
-            matches!(&error, GovernorError::PolicyViolation(message) if message.contains("does not advance")),
-            "got {error:?}"
+        assert_eq!(
+            error,
+            GovernorError::PolicyViolation(
+                format!(
+                    "execution phase {phase:?} does not advance permit {permit} (currently Running)"
+                )
+                .into()
+            )
         );
     }
     assert_accounting(&runtime, 1, 0);
@@ -468,9 +473,14 @@ async fn a_lease_taken_through_ext_is_refused_not_run_v1() {
     let error = lease
         .advance(ExecutionPhase::Running)
         .expect_err("a runtime lease must not run under a lease it does not hold");
-    assert!(
-        matches!(&error, GovernorError::PolicyViolation(message) if message.contains("leased outside its runtime lease")),
-        "got {error:?}"
+    assert_eq!(
+        error,
+        GovernorError::PolicyViolation(
+            format!(
+                "permit {permit} was leased outside its runtime lease; the runtime cannot release it and will not run under it"
+            )
+            .into()
+        )
     );
     // Phase declarations are not token-gated — only the release is — so the
     // engine did record the move; the capacity is what stays with the token.

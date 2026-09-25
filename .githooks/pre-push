@@ -8,8 +8,11 @@ full_receipt="target/qualification/local-receipt.json"
 zero="0000000000000000000000000000000000000000"
 
 checked=0
-while read -r local_ref local_sha _remote_ref _remote_sha; do
-  case "${local_ref}" in
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  # Git permits a detached checkout to update a branch with `HEAD:main`.
+  # Classify the update by its destination; classifying by the local spelling
+  # lets that branch update bypass the exact-HEAD receipt check.
+  case "${remote_ref}" in
     refs/heads/*)
       if [[ "${local_sha}" == "${zero}" ]]; then
         continue

@@ -117,10 +117,7 @@ fn a_substrate_with_an_empty_name_is_rejected() {
         let Err(GovernorError::PolicyViolation(message)) = gov_with(vec![bad]) else {
             panic!("a substrate named {name:?} must be refused");
         };
-        assert!(
-            message.contains("substrate name must be non-empty"),
-            "the refusal must name the rule, got: {message}"
-        );
+        assert_eq!(message, "substrate name must be non-empty");
     }
 }
 
@@ -219,8 +216,10 @@ fn executing_substrate_without_capacity_authority_fails_closed() {
     else {
         panic!("missing capability authority must reject governor construction");
     };
-    assert!(message.contains("custom-pool"));
-    assert!(message.contains("no capability authority"));
+    assert_eq!(
+        message,
+        "executing substrate custom-executor has no capability authority for pool custom-pool"
+    );
 }
 
 #[test]

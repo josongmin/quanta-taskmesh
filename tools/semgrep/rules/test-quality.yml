@@ -131,7 +131,9 @@ rules:
 
   - id: taskmesh-test-policy-violation-without-message-check
     patterns:
-      - pattern-regex: '(?s)assert!\s*\(\s*matches!\s*\([^;]*GovernorError::PolicyViolation\s*\(\s*_\s*\)[^;]*\)\s*(?:,|\))'
+      - pattern-either:
+          - pattern-regex: '(?s)assert!\s*\(\s*matches!\s*\([^;]*GovernorError::PolicyViolation\s*\(\s*_\s*\)[^;]*\)\s*(?:,|\))'
+          - pattern-regex: '(?s)assert!\s*\(\s*matches!\s*\([^;]*GovernorError::PolicyViolation\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*if\s*[A-Za-z_][A-Za-z0-9_]*\.contains\s*\([^;]*\)[^;]*\)\s*(?:,|\))'
       - pattern-either:
           - pattern-inside: |
               #[test]
@@ -143,8 +145,8 @@ rules:
               #[tokio::test(...)]
               async fn $F() { ... }
     message: |
-      `GovernorError::PolicyViolation(_)` accepts every validation failure, so a later
-      check can mask the missing branch under test. Assert the exact policy message.
+      A wildcard or substring-only `GovernorError::PolicyViolation` match accepts the
+      wrong validation branch when messages overlap. Assert the exact policy message.
     severity: ERROR
     languages: [rust]
     paths:

@@ -763,14 +763,14 @@
       "status": "MAPPED",
       "owner_ticket": "BG25-008",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H01",
-      "target": "crates/taskmesh/tests/e2e_scenarios.rs",
-      "case": "overload_is_bounded_and_fail_closed",
+      "target": "crates/taskmesh/tests/hardening_mixed_overload.rs",
+      "case": "mixed_substrate_open_loop_burst_never_reaches_workers_before_permit",
       "oracle": "여러 class × IO/blocking/CPU/large-stack × 급격한 open-loop 과부하",
       "feature": "default",
       "platform": "any",
       "gate": "test",
       "source": [
-        "crates/taskmesh/tests/e2e_scenarios.rs"
+        "crates/taskmesh/tests/hardening_mixed_overload.rs"
       ]
     },
     {

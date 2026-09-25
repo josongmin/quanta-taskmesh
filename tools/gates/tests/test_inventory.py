@@ -260,8 +260,27 @@ def test_workflow_trust_allows_trusted_main_write_job(tmp_path: Path) -> None:
     assert vi.workflow_trust_problems(tmp_path / "bench.yml", document) == []
 
 
-def test_committed_workflows_are_manual_only() -> None:
+def test_committed_workflows_have_only_approved_triggers() -> None:
     assert vi.all_workflow_trigger_problems(vi.WORKFLOWS) == []
+    path = vi.WORKFLOWS / "pr-ci.yml"
+    document = vi.yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert vi.bounded_ci_workflow_problems(path, document) == []
+
+
+def test_bounded_pr_workflow_rejects_paths_skips_and_deep_campaigns() -> None:
+    import copy
+
+    path = vi.WORKFLOWS / "pr-ci.yml"
+    original = vi.yaml.safe_load(path.read_text(encoding="utf-8"))
+    with_paths = copy.deepcopy(original)
+    with_paths[True]["pull_request"] = {"paths": ["crates/**"]}
+    assert vi.workflow_trigger_problems(path, with_paths)
+    with_skip = copy.deepcopy(original)
+    with_skip["jobs"]["ci"]["if"] = "false"
+    assert vi.bounded_ci_workflow_problems(path, with_skip)
+    with_deep = copy.deepcopy(original)
+    with_deep["jobs"]["ci"]["steps"].append({"run": "just nightly"})
+    assert vi.bounded_ci_workflow_problems(path, with_deep)
 
 
 def test_automatic_hosted_triggers_are_rejected(tmp_path: Path) -> None:
@@ -502,8 +521,7 @@ def test_tracked_pre_push_hook_requires_exact_local_receipt(tmp_path: Path) -> N
     )
     fake_uv = fake_bin / "uv"
     fake_uv.write_text(
-        "#!/bin/sh\n"
-        'printf "%s\\n" "$*" >> "$UV_LOG"\n',
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$UV_LOG"\n',
         encoding="utf-8",
     )
     fake_git.chmod(0o755)
@@ -1204,6 +1222,47 @@ def test_saved_local_receipt_rejects_a_conflicting_pass_status_line(
     assert any("bench-iai" in problem and "status line" in problem for problem in problems)
 
 
+def test_saved_test_pass_rejects_a_catalog_digest_from_other_source(monkeypatch) -> None:
+    from tools.gates import rust_test_evidence
+
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    monkeypatch.setattr(module, "source_catalog", lambda *_args, **_kwargs: ([], []))
+    monkeypatch.setattr(module, "catalog_digest", lambda _records: "a" * 64)
+    summary = {
+        "schema_version": 1,
+        "runner": "nextest",
+        "runner_version": "0.9.104",
+        "catalog_digest": "b" * 64,
+        "selection_digest": "c" * 64,
+        "execution_digest": "c" * 64,
+        "commands_digest": "d" * 64,
+        "targets": 1,
+        "cases": 1,
+    }
+    summary["summary_digest"] = rust_test_evidence.digest(summary)
+    line = "taskmesh-test status=PASS " + " ".join(
+        f"{key}={value}" for key, value in summary.items()
+    )
+    source = {"head": "a" * 40, "tree": "b" * 40, "paths_digest": "c" * 64, "dirty": False}
+    receipt = {
+        "schema_version": 2,
+        "platform": "macos",
+        "source": source,
+        "source_after": source,
+        "source_problems": [],
+        "qualified": True,
+        "required_not_run": [],
+        "required_not_passed": [],
+        "platform_scope": {"qualified": True, "excluded_required_gates": []},
+        "results": [{"id": "test", "status": "PASS", "exit_code": 0, "status_line": line}],
+    }
+    problems = module.local_receipt_problems(receipt, source, {"test"}, {}, "macos")
+    assert any("catalog digest differs" in problem for problem in problems), problems
+
+
 def test_local_receipt_rejects_tool_prerequisite_as_platform_exclusion() -> None:
     run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
     assert run and run.loader
@@ -1527,9 +1586,15 @@ def test_generated_mutation_timeout_is_bounded_and_inventory_owned() -> None:
 
 
 def test_doc_fixture_cannot_feature_unify_default_workspace_validation() -> None:
+    from tools.gates import rust_test_evidence
+
     test_body = vi.recipe_body("test")
-    assert test_body.count("--workspace --exclude taskmesh-doc-examples") == 2
-    assert "cargo test --locked -p taskmesh-doc-examples" in test_body
+    assert "python3 tools/gates/rust_test_evidence.py" in test_body
+    assert rust_test_evidence.BASE == ("--locked", "--lib", "--tests")
+    assert rust_test_evidence.SCOPES == (
+        ("workspace", ("--workspace", "--exclude", "taskmesh-doc-examples")),
+        ("doc-examples", ("-p", "taskmesh-doc-examples")),
+    )
 
     clippy_body = vi.recipe_body("clippy")
     assert clippy_body.count("--exclude taskmesh-doc-examples") == 2

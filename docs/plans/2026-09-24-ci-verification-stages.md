@@ -1,7 +1,8 @@
 # Taskmesh verification stages: 2026 audit and implementation plan
 
-Status: **tracked implementation plan; W3 execution-denominator work, W4 hosted
-adoption, and W5 release qualification remain open**.
+Status (2026-09-26): **W3 execution-denominator implementation and W4 bounded
+hosted trial are staged locally. Final candidate-HEAD proof, hosted trial,
+branch-rule decision, and W5 release qualification remain separate.**
 Audit baseline: `main@e5aa4b63a1fedb3b416d33d1ea7ff364258002b5`, clean
 before this plan was created on 2026-09-24. The initial draft was untracked and
 had no test or CI qualification. A later clean `main@934230d` produced a valid
@@ -23,11 +24,12 @@ Execution location, trigger, and proof strength are independent dimensions:
 | `nightly` | Seven expensive proof gates on an isolated clean source | Separate deep-proof receipt; a subset or interruption is not qualified |
 | `release` | All 23 ordinary required gates, plus release-only semver, finding, raw-artifact, and human adjudication requirements | Full release receipt and explicit decision |
 
-`nightly` is a cost/profile name, **not a schedule**. The current workflows are
-`workflow_dispatch`-only and the inventory validator rejects automatic hosted
-triggers. Keep that policy until runner capacity, cadence, and the desired merge
-gate have been decided. A scheduled subset must carry a different receipt/profile
-name and must not satisfy the full `nightly` or `release` requirement.
+`nightly` is a cost/profile name, **not a schedule**. The full `ci.yml`, bench,
+and release workflows remain manual. The locally staged `pr-ci.yml` is a
+non-required PR/main trial of the bounded CI profile; the validator permits
+automatic triggers only there. No hosted run or merge rule is claimed before
+the workflow is pushed, enabled, and measured. A scheduled subset must carry a
+different receipt/profile name and cannot satisfy full `nightly` or `release`.
 
 The existing `Justfile` is the command authority; `tools/gates/inventory.json`
 records gate metadata, and independently authored `tools/gates/required.json`
@@ -41,12 +43,12 @@ hand-maintained list of every Rust test function or pytest case.
 | The gate graph is already substantially structured. | `required.json` has 23 required IDs, of which seven are `nightly_required`; `run.py` derives the CI complement. Inventory has 24 entries including release-only `semver-release`. `validate_inventory.py` checks Justfile/workflow/required parity, fail-capable invocation, tracked scripts, producer handoff, and trigger policy. Preserve these controls. |
 | `fast` is an inventory tier, not an edit-loop runtime promise. | `Justfile:196` includes full Rust `test` and `py-test` in `gate`; `Justfile:207` uses `test-core` and `clippy-core` for `dev`. Do not route an ordinary edit through the inventory `fast` tier by name. |
 | Python owner feedback is separate from `just dev`. | `Justfile:87-108` provides selected Ruff/pytest and Rust package/consumer recipes. `dev-python-tests` excludes `qualification`; `py-test` in CI includes it. A `dev` result alone does not cover Python tooling changes. |
-| CI is currently a local verification profile, not an automatic PR check. | `Justfile:282-286` writes clean-source macOS CI/nightly receipts. `.github/workflows/{ci,bench,release}.yml` are manual-only; `validate_inventory.py:33-37` forbids automatic events. The local pre-push hook checks an exact-HEAD receipt, but is not an independently enforced GitHub merge status. |
-| Hosted `ci.yml` is a full manual qualification workflow. | It contains curated and generated mutations, fuzz, modelcheck, and a full receipt collector in addition to fast/matrix jobs. Enabling `pull_request` on this file would launch the expensive producers. W4 needs a dedicated bounded PR workflow with exactly the 16 CI-profile gates; merely changing its trigger is invalid. |
+| CI has an exact-source local receipt and a staged hosted trial, not an active required PR check. | `verify-macos-ci` writes the clean-source 16-gate receipt. `pr-ci.yml` invokes that recipe in one fail-closed job for PR/main/manual events and validates `$GITHUB_SHA`. The pre-push hook and local workflow file do not establish a GitHub branch rule or a hosted result. |
+| Hosted `ci.yml` stays full manual qualification. | It contains curated and generated mutations, fuzz, modelcheck, and a full receipt collector. `pull_request` on that file would run deep producers. The dedicated bounded workflow has no deep campaign and remains non-required until runner budget and hosted proof are reviewed. |
 | The release witness's `required_gate` is a proof dependency, not its test executor. | `finding_proof.py:48-79` runs every witness with its own focused Cargo/pytest command; `tools/release/receipt.py:386` also requires the row's named ordinary gate to PASS. For example a Python IAI policy witness names `bench-iai`, while `py-test` runs its module. The code does not document the intended domain relationship, but TM21-020's `test-rayon` association cannot be called a false execution mapping from this field. Retract that claim from the earlier audit and document the two meanings. |
 | Baseline Semgrep enrollment was weaker than its full-test-tree wording. | The original `tools/semgrep/check.py` accepted one scanned Rust file per crate `tests/` tree plus six explicit paths. W1 compares every present Rust test file to Semgrep's scanned paths and the policy fixture removes one file from a still-covered tree. The subsequent `934230d` CI-profile run executed both the real Semgrep gate and its pytest policy fixtures. |
 | Baseline weighted fairness property proved repeatability but not complete drain. | The original `prop_invariants.rs` could return with tickets left while comparing two same-helper outputs. W1 requires every admission to queue, every ticket to promote, and a zero queued/inflight snapshot. `fairness_weighted.rs` still independently checks exact order. The subsequent `934230d` CI-profile run executed the changed property. |
-| Runner/environment variability needs explicit disclosure. | `Justfile:27-39` chooses nextest if installed and falls back to Cargo with the same `--lib --tests` selection. The gate receipt records the `just test` result; the ordinary environment record contains rustc/Python/lock identity but no selected test-runner version. Treat this as a reproducibility/diagnostic improvement, not a demonstrated test omission. `deny` also declares a live advisory-network prerequisite in the inventory; record the advisory snapshot or report it as an external input. |
+| Qualified test execution now has one pinned runner. | `test` and `test-rayon` require cargo-nextest 0.9.104, compare machine-readable selected binaries/cases with termination events, and self-report runner, command, catalog, and case digests. The Cargo fallback remains only in `test-core` diagnostic feedback. `deny` still consumes a live advisory input, so its result is source-bound and time-bound. |
 | Existing proof limits are intentional. | `coverage-report` means a report was produced, not a coverage threshold. `bench-smoke` checks build/smoke, not latency. macOS skips Linux `bench-iai` as `SKIPPED_PLATFORM`; a platform-scoped result is not full Linux release qualification. The collector samples source before/after, so final runs need an exclusive checkout to exclude edit-and-restore. |
 
 ## Authoritative gate placement
@@ -149,7 +151,7 @@ tests. The current TSan script deliberately selects three engine binaries,
 host library plus eleven host binaries, and the adapter package; it is a
 targeted race proof, not all 72 default integration targets.
 
-All 20 tracked Python `test_*.py` modules are selected by `just py-test`:
+The current catalog discovers 23 Python test modules for `just py-test`:
 
 | Owner directory | Modules | Owner-local and CI mapping |
 |---|---|---|
@@ -157,7 +159,7 @@ All 20 tracked Python `test_*.py` modules are selected by `just py-test`:
 | `tools/bench/tests` | `test_allocation_gate`, `test_iai_gate`, `test_workflow_policy` (3) | Owner pytest; real `bench-gate` for producer/threshold changes; CI `py-lint`, `py-test`, `bench-gate`; deep `bench-iai` separately |
 | `tools/consumer-msrv/tests` | `test_consumer_msrv` (1) | Owner pytest; real `consumer-msrv` for invocation/toolchain changes; CI `py-lint`, `py-test`, `consumer-msrv` |
 | `tools/fuzz/tests` | `test_evidence` (1) | Owner pytest; `fuzz-check` for harness/API changes; CI `py-lint`, `py-test`, `fuzz-check`; deep `fuzz` separately |
-| `tools/gates/tests` | `test_batch_supervisor`, `test_inventory` (2) | Owner pytest + real `gates-inventory`; CI `py-lint`, `py-test`, `gates-inventory` |
+| `tools/gates/tests` | `test_batch_supervisor`, `test_execution_evidence`, `test_inventory`, `test_scenario_evidence`, `test_target_catalog` (5) | Owner pytest + real `gates-inventory`; CI `py-lint`, `py-test`, `gates-inventory` |
 | `tools/modelcheck/tests` | `test_run` (1) | Owner pytest; CI `py-lint`, `py-test`; deep `modelcheck` separately |
 | `tools/pm/tests` | `test_check` (1) | Owner pytest + `prompt-check` after policy changes; CI `py-lint`, `py-test` |
 | `tools/qualification/tests` | `test_evidence`, `test_plan_bookkeeping`, `test_receipt` (3) | Owner pytest; CI `py-lint`, `py-test`; actual qualification receipt separately |
@@ -314,18 +316,48 @@ preserved CI/deep authority, and a negative/semantic oracle where the test is
 claiming a production invariant.
 
 W1 and the W3 static slice were tracked by `934230d`, whose clean-source local
-macOS CI-profile receipt passed all 16 required gates. That historical receipt
-does not qualify later source changes and does not establish nightly or release
-qualification. W3 execution-denominator work, W4 hosted adoption, and W5 full
-release qualification remain open.
+macOS CI-profile receipt passed all 16 required gates. The later clean
+`3700f3f4dd2e4b783e50ca2e3a8db9b11eba39b0` receipt also passed 16/16 and
+validated against that HEAD; its durable copy is under
+`/Users/songmin/.codex/artifacts/taskmesh-ss-3700f3f/macos-gates.json`.
+Neither receipt qualifies subsequent edits, nightly, or release.
 
-The W3 static slice makes `gates-inventory` derive 113
+The historical W3 static slice made `gates-inventory` derive 113
 Cargo/Python/fuzz target records and rejects unowned feature targets or
 missing declared recipe selectors. The `test` gate reports its selected
 runner/version, and saved PASS validation requires those fields. This does
 not establish compiled target selection, case execution, pytest collection,
-or a reusable receipt for a different source. The remaining W3 acceptance
-evidence is the execution-denominator work below.
+or a reusable receipt for a different source. The current candidate extends
+that slice as follows:
+
+- `test` checks Cargo metadata ownership against the nextest binary list and
+  verifies every selected non-ignored case started and ended `ok`. It runs
+  the regular workspace and doc fixture separately so features do not unify.
+  The two existing zero-case library binaries are explicit exceptions; an
+  unknown empty target fails. The focused candidate run selected 94 targets
+  and completed 632 cases.
+- `test-rayon` checks its ten explicit feature/exact scopes, including the
+  nonzero exact-filter denominator. The focused run selected seven distinct
+  targets and completed 33 cases. Filtered-out cases are disclosed in each
+  scope and never counted as executed.
+- `py-test` collects modules and case IDs under strict markers, requires every
+  collected case to pass, and includes `slow` and `qualification` marks. The
+  current module count is derived from source, not a second allowlist.
+- Both runner summaries bind catalog, selected/executed case, command, and
+  runner digests in the gate's saved status line. The local receipt validator
+  re-derives the current catalog digest and still enforces exact clean HEAD.
+  The static catalog currently discovers 142 records, including ten explicit
+  Rayon matrix selectors; this is a snapshot,
+  not an authored denominator.
+- The new negative fixtures cover added ordinary/model/fuzz targets, Python
+  module renaming, empty/ignored/unfinished Rust selections, edited summary
+  fields, and bounded workflow trigger bypasses. Existing Semgrep and
+  required-set parity fixtures remain in force.
+
+These are candidate-tree checks. The final committed HEAD still needs its own
+full CI-profile receipt. `doctest`, `bench-smoke`, modelcheck, fuzz, and other
+special producers retain their separate gate/producer contracts rather than
+being counted as ordinary nextest or pytest cases.
 
 ### W3 implementation contract
 
@@ -348,7 +380,7 @@ evidence is the execution-denominator work below.
    nonzero and matches the discovered denominator. Do not count ignored,
    skipped, filtered or unstarted cases as execution.
 3. Collect pytest cases under the CI invocation and compare module ownership
-   against the 20 tracked modules. Preserve the local `not qualification`
+   against the dynamically discovered tracked modules. Preserve the local `not qualification`
    choice and prove CI includes marked cases. Check `slow` explicitly and
    treat a whole-module skip/xfail as a stated exclusion rather than a pass.
    Enable pytest strict-marker validation in both local and CI recipes so a
@@ -369,20 +401,20 @@ evidence is the execution-denominator work below.
 
 ### W4 hosted rollout boundary
 
-The current workflow validator intentionally rejects `pull_request`,
-`push`, and `schedule`. The existing `ci.yml` includes full expensive
-qualification producers, so enabling PR events there violates the stage
-contract. W4 first adds a dedicated 16-gate PR workflow and changes the
-validator to allow automatic triggers **only** for that bounded workflow while
-checking its required-gate membership. The manual full workflow stays manual.
-After W0 records CI cost and runner capacity, start with a non-required trial
-of the 16-gate workflow, measure queue and median/p95 wall time, then make one
-aggregate exact-SHA PR result required. Keep full CI membership on every PR;
-path selection only chooses local diagnostics. The aggregate fails if any
-child fails, skips, is cancelled, or lacks its matching artifact. Run a
-main-branch post-merge check, and add `merge_group` only if the branch uses a
-merge queue. A scheduled deep subset, if later chosen, needs a distinct
-profile/receipt and must not claim full nightly or release qualification.
+The validator now permits `pull_request` and main `push` only in the dedicated
+`pr-ci.yml`. It requires one unconditional job, the clean `ci` profile, exact
+`$GITHUB_SHA` receipt validation, pinned actions, read-only token, no path
+filter, and PR-only cancellation. `ci.yml` and all deep producers stay manual.
+The job is a single aggregate verdict, so there is no child-job skip or
+artifact-handoff success path to mistake for qualification.
+
+The workflow is only staged locally and is deliberately **not required** in
+branch protection. Local gate duration varied sharply under unrelated Cargo
+and mutation work on the shared host; that is not a valid hosted median/p95 or
+runner-capacity measurement. After a push is authorized, obtain non-required
+PR and main trial runs, record queue/median/p95 and exact-SHA receipt, then
+decide the merge rule. Add `merge_group` only if merge queue is in use. No
+scheduled deep subset is configured.
 
 ## 2026 reference points
 

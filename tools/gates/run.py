@@ -49,6 +49,12 @@ from tools.gates.status_line import (  # noqa: E402
     pass_status_line_problems,
     status_line_qualifies,
 )
+from tools.gates.target_catalog import (  # noqa: E402
+    RECIPE_FRAGMENTS,
+    catalog_digest,
+    source_catalog,
+)
+from tools.gates.validate_inventory import recipe_body  # noqa: E402
 from tools.process_supervisor import (  # noqa: E402
     SupervisedCommand,
     run_process,
@@ -230,6 +236,29 @@ def local_receipt_problems(
         problems.append("local receipt result ids are malformed or duplicated")
     problems.extend(result_record_problems(valid_results))
     problems.extend(pass_status_line_problems(valid_results, INVENTORY))
+    test_passes = [
+        result
+        for result in valid_results
+        if result.get("id") in {"test", "test-rayon", "py-test"} and result.get("status") == "PASS"
+    ]
+    if test_passes:
+        try:
+            records, catalog_errors = source_catalog(
+                REPO, {name: recipe_body(name) for name in RECIPE_FRAGMENTS}
+            )
+            problems.extend(f"test catalog: {error}" for error in catalog_errors)
+            expected_catalog = catalog_digest(records)
+            for result in test_passes:
+                line = result.get("status_line")
+                fields = (
+                    dict(token.split("=", 1) for token in line.split()[1:] if "=" in token)
+                    if isinstance(line, str)
+                    else {}
+                )
+                if fields.get("catalog_digest") != expected_catalog:
+                    problems.append(f"{result['id']} catalog digest differs from current source")
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            problems.append(f"test catalog cannot be rederived: {exc}")
     expected_not_run, expected_not_passed = summarize_required(required, valid_results)
     if value.get("required_not_run") != expected_not_run:
         problems.append("local receipt required_not_run differs from its results")
@@ -689,7 +718,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--id", action="append", default=[])
     parser.add_argument("--tier", action="append", default=[])
     parser.add_argument(
-        "--profile", choices=("ci", "nightly", "release"),
+        "--profile",
+        choices=("ci", "nightly", "release"),
         help="run the exact ci, nightly, or release set from required.json",
     )
     parser.add_argument("--all", action="store_true")
@@ -794,8 +824,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.expected_head is not None:
         raise SystemExit("--expected-head requires --validate-receipt")
     selectors = (
-        int(args.all) + int(args.required) + int(bool(args.tier))
-        + int(bool(args.id)) + int(args.profile is not None)
+        int(args.all)
+        + int(args.required)
+        + int(bool(args.tier))
+        + int(bool(args.id))
+        + int(args.profile is not None)
     )
     if selectors != 1:
         raise SystemExit("select exactly one of --all, --required, --profile, --tier, or --id")
@@ -912,7 +945,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.allow_platform_skips and scoped_qualified:
         label = (
-            "PLATFORM_QUALIFIED" if profile == "release"
+            "PLATFORM_QUALIFIED"
+            if profile == "release"
             else f"{profile.upper()}_PLATFORM_QUALIFIED"
         )
         print(

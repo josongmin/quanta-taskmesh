@@ -1,0 +1,52 @@
+name: bounded CI
+
+# Non-required hosted trial. One job runs the complete 16-gate CI profile;
+# branch protection can require this job only after runner-cost measurement.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bounded-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  ci:
+    name: exact-source 16-gate verdict
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+      - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
+        with:
+          tool: cargo-deny@0.19.7,cargo-nextest@0.9.104
+      - name: Install qualified tools
+        run: |
+          rustup toolchain install 1.81 --profile minimal
+          uv tool install "semgrep==$(cat tools/semgrep/version.txt)"
+      - name: Run bounded CI profile
+        run: just verify-macos-ci
+      - name: Validate exact-source receipt
+        run: uv run python tools/gates/run.py --validate-receipt target/verification/macos-gates.json --expected-head "$GITHUB_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: bounded-ci-receipt
+          path: target/verification/macos-gates.json

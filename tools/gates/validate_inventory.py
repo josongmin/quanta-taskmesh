@@ -32,9 +32,7 @@ Fails closed on:
     makes every run NOT_RUN.
 - an action ref that is not a full commit SHA, a workflow default token that
   is not read-only, or a write-capable job reachable outside trusted main.
-- any hosted workflow trigger other than explicit `workflow_dispatch` (ordinary
-  verification is local-only and must not consume runner minutes on push, pull
-  request, or schedule).
+- automatic hosted triggers outside the dedicated bounded PR workflow.
 - a Cargo/pytest/fuzz test target with no declared gate executor, or a drifted
   feature-only model/IAI target, fuzz producer target, or Justfile selector.
 
@@ -70,6 +68,9 @@ from tools.gates.target_catalog import (  # noqa: E402
     RECIPE_FRAGMENTS,
     catalog_digest,
     source_catalog,
+)
+from tools.gates.target_catalog import (  # noqa: E402
+    recipe_body as catalog_recipe_body,
 )
 
 TIERS = {"fast", "matrix", "nightly", "release"}
@@ -109,16 +110,11 @@ def recipe_dependencies(recipe: str, text: str | None = None) -> list[str]:
 
 def recipe_body(recipe: str, text: str | None = None) -> str:
     """The indented body lines of `just <recipe>` (the commands it runs)."""
-    text = JUSTFILE.read_text(encoding="utf-8") if text is None else text
-    match = re.search(
-        rf"^{re.escape(recipe)}(?:\s+[+*]?[A-Za-z_][A-Za-z0-9_]*(?:=\S+)?)*:[^\n]*\n"
-        r"((?:[ \t]+[^\n]*\n?)*)",
-        text,
-        re.MULTILINE,
-    )
-    if not match:
-        raise RuntimeError(f"Justfile has no `{recipe}:` recipe")
-    return match.group(1)
+    source = JUSTFILE.read_text(encoding="utf-8") if text is None else text
+    try:
+        return catalog_recipe_body(recipe, source)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 SCRIPT_PATH = re.compile(r"\btools/[\w./-]+\.(?:sh|py)\b")
@@ -313,9 +309,7 @@ def self_report_markers(recipe: str, text: str | None = None, root: Path = REPO)
     or by its inline shell body. Comments do not establish a verdict."""
     markers: set[str] = set()
     body = "\n".join(
-        line
-        for line in recipe_body(recipe, text).splitlines()
-        if not line.lstrip().startswith("#")
+        line for line in recipe_body(recipe, text).splitlines() if not line.lstrip().startswith("#")
     )
     markers.update(STATUS_MARKER.findall(body))
     for script in recipe_scripts(recipe, text):
@@ -481,7 +475,7 @@ def all_workflow_trust_problems(workflows_dir: Path) -> list[str]:
 
 
 def workflow_trigger_problems(path: Path, document: object) -> list[str]:
-    """Reject every hosted trigger except an explicit manual dispatch.
+    """Allow automatic triggers only for the bounded CI workflow.
 
     PyYAML follows YAML 1.1 and may decode the plain key ``on`` as boolean
     ``True``. Read both spellings so the guard validates the actual workflow
@@ -496,12 +490,81 @@ def workflow_trigger_problems(path: Path, document: object) -> list[str]:
         names = {str(name) for name in triggers}
     else:
         names = set()
+    if path.name == "pr-ci.yml":
+        if names != {"pull_request", "push", "workflow_dispatch"}:
+            return [f"{path.name}: bounded CI triggers must be PR, main push, and manual"]
+        if not isinstance(triggers, dict):
+            return [f"{path.name}: bounded CI triggers must be explicit"]
+        if triggers.get("push") != {"branches": ["main"]}:
+            return [f"{path.name}: push must select main without path filters"]
+        if triggers.get("pull_request") is not None:
+            return [f"{path.name}: PR trigger must not filter paths or branches"]
+        return []
     if names != {"workflow_dispatch"}:
         return [
             f"{path.name}: hosted triggers must be exactly workflow_dispatch; "
             f"found {sorted(names)!r}"
         ]
     return []
+
+
+def bounded_ci_workflow_problems(path: Path, document: object) -> list[str]:
+    """The automatic workflow must have one fail-closed CI verdict."""
+    if path.name != "pr-ci.yml":
+        return []
+    if not isinstance(document, dict):
+        return ["pr-ci.yml: workflow is not an object"]
+    problems: list[str] = []
+    jobs = document.get("jobs")
+    if not isinstance(jobs, dict) or set(jobs) != {"ci"}:
+        return ["pr-ci.yml: exactly one aggregate ci job is required"]
+    job = jobs["ci"]
+    if not isinstance(job, dict) or job.get("runs-on") != "macos-latest" or "if" in job:
+        problems.append("pr-ci.yml: ci job must always run on macos-latest")
+        return problems
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return ["pr-ci.yml: ci steps are missing"]
+    runs = [step.get("run") for step in steps if isinstance(step, dict) and "run" in step]
+    if runs.count("just verify-macos-ci") != 1:
+        problems.append("pr-ci.yml: exactly one bounded CI profile invocation is required")
+    validators = [
+        run
+        for run in runs
+        if isinstance(run, str)
+        and "--validate-receipt target/verification/macos-gates.json" in run
+        and '--expected-head "$GITHUB_SHA"' in run
+    ]
+    if len(validators) != 1:
+        problems.append("pr-ci.yml: exact-SHA local receipt validation is required")
+    if any(
+        not isinstance(step, dict) or "continue-on-error" in step or "if" in step
+        for step in steps
+        if not (
+            isinstance(step, dict)
+            and str(step.get("uses", "")).startswith("actions/upload-artifact@")
+        )
+    ):
+        problems.append("pr-ci.yml: gate and validation steps cannot be skipped or softened")
+    if any(
+        isinstance(run, str)
+        and ("just nightly" in run or "just release" in run or "--profile nightly" in run)
+        for run in runs
+    ):
+        problems.append("pr-ci.yml: deep campaign cannot run on automatic CI")
+    concurrency = document.get("concurrency")
+    if (
+        not isinstance(concurrency, dict)
+        or concurrency.get("cancel-in-progress") != "${{ github.event_name == 'pull_request' }}"
+    ):
+        problems.append("pr-ci.yml: only superseded PR runs may be cancelled")
+    body = recipe_body("verify-macos-ci")
+    if (
+        "--profile ci --require-clean-source --allow-platform-skips "
+        "--receipt target/verification/macos-gates.json" not in body
+    ):
+        problems.append("verify-macos-ci no longer selects the clean 16-gate CI profile")
+    return problems
 
 
 def all_workflow_trigger_problems(workflows_dir: Path) -> list[str]:
@@ -685,6 +748,8 @@ def validate(
             )
 
     for recipe, files in invocations.items():
+        if recipe == "verify-macos-ci" and files == {"pr-ci.yml"}:
+            continue
         if recipe not in {gate.get("recipe") for gate in gates}:
             problems.append(
                 f"workflow {sorted(files)} invokes `just {recipe}`, which is not in the inventory"
@@ -786,6 +851,10 @@ def main() -> int:
             *workflow_enforcement_problems(WORKFLOWS, inventory_recipes),
             *all_workflow_trust_problems(WORKFLOWS),
             *all_workflow_trigger_problems(WORKFLOWS),
+            *bounded_ci_workflow_problems(
+                WORKFLOWS / "pr-ci.yml",
+                yaml.safe_load((WORKFLOWS / "pr-ci.yml").read_text(encoding="utf-8")),
+            ),
             *producer_handoff_problems(inventory, WORKFLOWS / "ci.yml"),
         ]
         self_reports = {

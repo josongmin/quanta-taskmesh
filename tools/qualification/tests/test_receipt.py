@@ -298,10 +298,36 @@ def passing_gate_results(required: list[str]) -> list[dict]:
         if result["id"] in specs:
             spec = specs[result["id"]]
             status_line = f"{spec['marker']} {spec['require']}"
-            if result["id"] == "test":
-                status_line += (
-                    " runner=cargo runner_version=1.95.0 fixture_runner=cargo cargo_version=1.95.0"
-                )
+            if result["id"] in {"test", "test-rayon"}:
+                from tools.gates.rust_test_evidence import digest
+
+                summary = {
+                    "schema_version": 1,
+                    "runner": "nextest",
+                    "runner_version": "0.9.104",
+                    "catalog_digest": "a" * 64,
+                    "selection_digest": "b" * 64,
+                    "execution_digest": "b" * 64,
+                    "commands_digest": "c" * 64,
+                    "targets": 1,
+                    "cases": 1,
+                }
+                summary["summary_digest"] = digest(summary)
+                status_line += " " + " ".join(f"{key}={value}" for key, value in summary.items())
+            if result["id"] == "py-test":
+                from tools.gates.pytest_evidence import digest
+
+                summary = {
+                    "catalog_digest": "a" * 64,
+                    "collection_digest": "b" * 64,
+                    "execution_digest": "b" * 64,
+                    "modules": 1,
+                    "cases": 1,
+                    "slow_cases": 1,
+                    "qualification_cases": 0,
+                }
+                summary["summary_digest"] = digest(summary)
+                status_line += " " + " ".join(f"{key}={value}" for key, value in summary.items())
             result["status_line"] = status_line
     return results
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -14,28 +15,70 @@ MODEL_FEATURES = {
     "shuttle_governance": ("shuttle",),
     "model_replay_fixture": ("shuttle",),
 }
+ZERO_CASE_LIBS = {
+    "taskmesh-contract/lib/taskmesh_contract",
+    "taskmesh-rayon/lib/taskmesh_rayon",
+}
+RAYON_SCOPES = (
+    ("taskmesh", "lib", "taskmesh", None),
+    (
+        "taskmesh",
+        "test",
+        "hardening_executor_authority",
+        "rayon_cpu_domain_is_separate_and_observable",
+    ),
+    ("taskmesh", "test", "e2e_scenarios", "rayon_cpu_soak_results_correct_and_drains"),
+    (
+        "taskmesh",
+        "test",
+        "hardening_dispatch_resolution",
+        "direct_and_host_multistage_admission_have_distinct_reservation_contracts",
+    ),
+    (
+        "taskmesh",
+        "test",
+        "runtime_cpu_executor",
+        "the_cpu_gate_and_the_rayon_pool_are_sized_from_one_answer",
+    ),
+    ("taskmesh-rayon", "test", "rayon_smoke", "the_adapter_declares_what_it_can_honestly_promise"),
+    ("taskmesh-contract", "test", "contract_roundtrip", "task_spec_roundtrips"),
+    ("taskmesh-contract", "test", "contract_roundtrip", "runtime_config_roundtrips_pretty"),
+    ("taskmesh-contract", "test", "contract_roundtrip", "snapshot_roundtrips"),
+    (
+        "taskmesh-contract",
+        "test",
+        "contract_roundtrip",
+        "legacy_plan_source_strings_decode_and_reencode_exactly",
+    ),
+)
 RECIPE_FRAGMENTS = {
-    "test": (
-        "cargo nextest run --locked --workspace --exclude taskmesh-doc-examples --lib --tests",
-        "cargo test --locked --workspace --exclude taskmesh-doc-examples --lib --tests",
-        "cargo test --locked -p taskmesh-doc-examples --lib --tests",
-    ),
-    "test-rayon": (
-        "cargo test --locked -p taskmesh --features rayon --lib",
-        "cargo test --locked -p taskmesh --features rayon --test hardening_executor_authority",
-        "rayon_cpu_domain_is_separate_and_observable -- --exact",
-    ),
+    "test": ("python3 tools/gates/rust_test_evidence.py",),
+    "test-rayon": ("python3 tools/gates/rust_test_evidence.py --rayon",),
     "doctest": (
         "cargo test --locked --workspace --exclude taskmesh-doc-examples --doc",
         "cargo test --locked -p taskmesh --features rayon --doc",
     ),
-    "py-test": ("pytest tools -q",),
+    "py-test": ("python tools/gates/pytest_evidence.py",),
     "bench-smoke": ("cargo bench --locked -p taskmesh-bench -- --test",),
     "bench-iai": ("bash tools/bench-iai.sh",),
     "modelcheck": ("tools/modelcheck/run.py all",),
     "fuzz-check": ("bash tools/fuzz/check.sh",),
     "fuzz": ("bash tools/fuzz/run.sh",),
 }
+
+
+def recipe_body(recipe: str, text: str | None = None) -> str:
+    """Read a Justfile recipe body without hosted validator dependencies."""
+    source = (REPO / "Justfile").read_text(encoding="utf-8") if text is None else text
+    match = re.search(
+        rf"^{re.escape(recipe)}(?:\s+[+*]?[A-Za-z_][A-Za-z0-9_]*(?:=\S+)?)*:[^\n]*\n"
+        r"((?:[ \t]+[^\n]*\n?)*)",
+        source,
+        re.MULTILINE,
+    )
+    if not match:
+        raise ValueError(f"Justfile has no `{recipe}:` recipe")
+    return match.group(1)
 
 
 def metadata(root: Path, *, fuzz: bool = False) -> dict:
@@ -94,7 +137,8 @@ def catalog(
     for recipe, fragments in RECIPE_FRAGMENTS.items():
         # A comment cannot prove a recipe selects a target.
         body = "\n".join(
-            line for line in recipes.get(recipe, "").splitlines()
+            line
+            for line in recipes.get(recipe, "").splitlines()
             if not line.lstrip().startswith("#")
         )
         for fragment in fragments:
@@ -157,12 +201,44 @@ def catalog(
                     {
                         "kind": kind[0],
                         "package": package_name,
+                        "owner": package_name,
                         "target": name,
                         "path": relative_path,
                         "required_features": list(features),
                         "executing_gate": gate,
                     }
                 )
+    package_by_name = {package["name"]: package for package in packages}
+    for package_name, kind, target_name, case in RAYON_SCOPES:
+        package = package_by_name.get(package_name)
+        targets = package.get("targets", []) if isinstance(package, dict) else []
+        matches = [
+            target
+            for target in targets
+            if target.get("kind") == [kind] and target.get("name") == target_name
+        ]
+        if len(matches) != 1 or matches[0].get("test") is not True:
+            problems.append(f"test-rayon: missing or disabled {package_name}/{kind}/{target_name}")
+            continue
+        if package_name == "taskmesh" and "rayon" not in package.get("features", {}):
+            problems.append("test-rayon: taskmesh no longer declares the rayon feature")
+            continue
+        try:
+            path = Path(matches[0]["src_path"]).relative_to(root).as_posix()
+        except (KeyError, ValueError):
+            problems.append(f"test-rayon: target path is outside the repository: {target_name}")
+            continue
+        records.append(
+            {
+                "kind": "matrix-case" if case else "matrix-target",
+                "package": package_name,
+                "owner": package_name,
+                "target": f"{target_name}::{case}" if case else target_name,
+                "path": path,
+                "required_features": ["rayon"] if package_name == "taskmesh" else [],
+                "executing_gate": "test-rayon",
+            }
+        )
     if model_declared != set(MODEL_FEATURES):
         problems.append(
             f"model target set differs from registered exceptions: {sorted(model_declared)}"
@@ -199,6 +275,7 @@ def catalog(
                 {
                     "kind": "fuzz-bin",
                     "package": package["name"],
+                    "owner": package["name"],
                     "target": name,
                     "path": relative_path,
                     "required_features": [],
@@ -219,6 +296,7 @@ def catalog(
             {
                 "kind": "pytest-module",
                 "package": "tools",
+                "owner": "tools",
                 "target": Path(path).stem,
                 "path": path,
                 "required_features": [],

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from pathlib import Path
 
 
@@ -30,7 +32,7 @@ def status_line_qualifies(gate: dict, stdout: str) -> bool:
     status_tokens = [token for token in verdict.split() if token.startswith("status=")]
     if status_tokens != [spec["require"]]:
         return False
-    if gate.get("id") != "test":
+    if gate.get("id") not in {"test", "test-rayon", "py-test"}:
         return True
     fields: dict[str, str] = {}
     for token in verdict.split()[1:]:
@@ -40,11 +42,75 @@ def status_line_qualifies(gate: dict, stdout: str) -> bool:
         if key in fields or not value:
             return False
         fields[key] = value
+    if gate["id"] in {"test", "test-rayon"}:
+        expected = {
+            "status",
+            "schema_version",
+            "runner",
+            "runner_version",
+            "catalog_digest",
+            "selection_digest",
+            "execution_digest",
+            "commands_digest",
+            "targets",
+            "cases",
+            "summary_digest",
+        }
+        if (
+            set(fields) != expected
+            or fields["runner"] != "nextest"
+            or fields["runner_version"] != "0.9.104"
+            or fields["schema_version"] != "1"
+        ):
+            return False
+        hash_fields = (
+            "catalog_digest",
+            "selection_digest",
+            "execution_digest",
+            "commands_digest",
+            "summary_digest",
+        )
+        count_fields = ("targets", "cases")
+        paired = ("selection_digest", "execution_digest")
+    else:
+        expected = {
+            "status",
+            "catalog_digest",
+            "collection_digest",
+            "execution_digest",
+            "modules",
+            "cases",
+            "slow_cases",
+            "qualification_cases",
+            "summary_digest",
+        }
+        if set(fields) != expected:
+            return False
+        hash_fields = ("catalog_digest", "collection_digest", "execution_digest", "summary_digest")
+        count_fields = ("modules", "cases", "slow_cases")
+        paired = ("collection_digest", "execution_digest")
+        if not fields["qualification_cases"].isdecimal():
+            return False
+    numerical = {
+        key: int(value)
+        for key, value in fields.items()
+        if key
+        in {"schema_version", "targets", "modules", "cases", "slow_cases", "qualification_cases"}
+        and value.isdecimal()
+    }
+    summary = {
+        key: numerical.get(key, value)
+        for key, value in fields.items()
+        if key not in {"status", "summary_digest"}
+    }
+    actual_summary_digest = hashlib.sha256(
+        json.dumps(summary, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     return (
-        set(fields)
-        == {"status", "runner", "runner_version", "fixture_runner", "cargo_version"}
-        and fields["runner"] in {"cargo", "nextest"}
-        and fields["fixture_runner"] == "cargo"
+        all(re.fullmatch(r"[0-9a-f]{64}", fields[key]) for key in hash_fields)
+        and all(fields[key].isdecimal() and int(fields[key]) > 0 for key in count_fields)
+        and fields[paired[0]] == fields[paired[1]]
+        and fields["summary_digest"] == actual_summary_digest
     )
 
 

@@ -2,6 +2,16 @@
 
 This ledger separates a discovered Rust consumer from deployment acceptance. The source observation below is pinned to the consumer checkout and must be refreshed before a final adoption claim.
 
+2026-09-26 재확인: 공유 Semantica checkout HEAD는
+`74ef258b55ba79a4767d35da487eb847f6ca0695`이고 다른 소유 경로에
+미커밋 변경이 있다. `quanta-runtime/Cargo.toml`의 optional Taskmesh path
+dependency와 `taskmesh-governance` feature, governance adapter의 typed
+`run_io`/`run_blocking_with`/`run_cpu` 호출은 여전히 보인다. 현재 checkout과
+이번 Taskmesh 후보의 고정 페어 소비자 실행은 아직 없으며, 이전 `0384053` ×
+`76295ba`의 2/2는 최신 페어 증거로 재사용할 수 없다. 배포 바이너리 목록,
+실제 feature 활성화, D1–D9 적용성 승인은 여전히 deployment owner의
+권한이다. 공유 checkout의 미커밋 파일은 건드리지 않았다.
+
 2026-09-25 재감사: Semantica의 공유 checkout HEAD `038405343fe50ebc1216dbc52de9148a4cb52710`에는 다른 경로의 미커밋 변경이 있다. 같은 HEAD의 분리된 clean checkout에서 QBC run `20260925T131235.134873Z-a517eb9b83f2`가 governance contract test 2/2를 실행해 exit 0이었다. 이 실행은 `da5356b` 비교로 기록됐지만 영수증의 `command_cwd_v1`는 `semantica-taskmesh-consumer-2555aca`이고, Cargo path dependency는 변경 가능한 공유 `quanta-taskmesh` checkout을 가리킨다. 영수증에는 Taskmesh dependency SHA가 없으며 `source_snapshot_digest`도 앞선 `2555aca` 실행과 동일하다. 따라서 이 영수증만으로 실제 빌드된 Taskmesh commit을 확정할 수 없다. 권한 역시 `manual_invocation_comparison_only`이므로 최종 Taskmesh source/owner/deployment qualification은 OPEN이다. 영수증은 `/Users/songmin/.codex/artifacts/taskmesh-bugbash-sep25-da5356b/semantica-consumer/receipt.json`에 보관했다. 확인한 `packages/`, `apps/`, `crates/` 범위에서 `parse_task_spec`, `parse_runtime_config`, `awaited_child_of`, `parent_stage` 호출은 발견되지 않았다. 이 검색은 배포 topology나 다른 소비자의 부재 증거가 아니다.
 
 2026-09-25 고정 페어 재실행: clean Semantica `038405343fe50ebc1216dbc52de9148a4cb52710`와 clean Taskmesh `76295ba956fe2ef867e405cb3b204f1ef2b4185b`를 형제 detached worktree로 고정했다. QBC run `20260925T143716.570459Z-2452b8772a8d`는 `cargo test --locked -p quanta-runtime --features taskmesh-governance-test-hooks --test taskmesh_query_async_support_contract`를 실행해 2/2 통과했다. QBC의 `command_cwd_v1`는 이 Semantica worktree이고 Cargo 컴파일 로그는 `taskmesh-contract`, `taskmesh-engine`, `taskmesh`를 같은 페어의 Taskmesh 경로에서 컴파일했다고 기록한다. 해당 manifest의 path dependency가 그 경로로 해석되며, 실행 후 다섯 관련 worktree의 HEAD/tree/clean 상태와 영수증 SHA-256을 `/Users/songmin/.codex/artifacts/taskmesh-bugbash-sep25-76295ba/semantica-consumer/provenance.json`에 보관했다. 이 결과는 정확한 Taskmesh 소스에 대한 수동 소비자 비교이며 QBC 권한은 `manual_invocation_comparison_only`이다. 배포 owner 승인과 D1–D9의 실제 ingress/planner/wire topology 판단은 계속 OPEN이다.

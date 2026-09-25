@@ -25,23 +25,7 @@ check:
     cargo check --locked -p taskmesh-doc-examples --all-targets
 
 test:
-    # nextest keeps Cargo's --workspace --lib --tests selection but schedules
-    # independent test binaries concurrently. Four tests keep a 16-core Mac
-    # busy without unbounded fan-out: integration cases create Tokio/OS workers,
-    # so an unbounded process fan-out just trades elapsed time for contention.
-    # A clean bootstrap without cargo-nextest retains the identical Cargo
-    # selection rather than silently skipping the test gate.
-    set -euo pipefail; \
-    cargo_version="$(cargo --version)"; cargo_version="${cargo_version#cargo }"; cargo_version="${cargo_version%% *}"; \
-    if nextest_identity="$(cargo nextest --version 2>/dev/null)"; then \
-        runner=nextest; runner_version="${nextest_identity#cargo-nextest }"; runner_version="${runner_version%% *}"; \
-        CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo nextest run --locked --workspace --exclude taskmesh-doc-examples --lib --tests --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
-    else \
-        runner=cargo; runner_version="${cargo_version}"; \
-        CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked --workspace --exclude taskmesh-doc-examples --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
-    fi; \
-    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked -p taskmesh-doc-examples --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
-    printf 'taskmesh-test status=PASS runner=%s runner_version=%s fixture_runner=cargo cargo_version=%s\n' "$runner" "$runner_version" "$cargo_version"
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" python3 tools/gates/rust_test_evidence.py
 
 # Laptop feedback excludes benchmark harness tests and the generated README/doc
 # fixture. Their correctness and buildability remain required by full `test`,
@@ -84,7 +68,7 @@ py-lint:
     uv run ruff check tools
 
 py-test:
-    uv run pytest tools -q
+    uv run python tools/gates/pytest_evidence.py
 
 prompt-check:
     uv run python tools/pm/check.py
@@ -154,16 +138,7 @@ lint-rules: semgrep test-architecture prompt-check
 # Feature-matrix drift: the `rayon` feature auto-wires the default CPU executor
 # on a cfg-gated path that default-feature builds never compile.
 test-rayon:
-    cargo test --locked -p taskmesh --features rayon --lib
-    cargo test --locked -p taskmesh --features rayon --test hardening_executor_authority rayon_cpu_domain_is_separate_and_observable -- --exact
-    cargo test --locked -p taskmesh --features rayon --test e2e_scenarios rayon_cpu_soak_results_correct_and_drains -- --exact
-    cargo test --locked -p taskmesh --features rayon --test hardening_dispatch_resolution direct_and_host_multistage_admission_have_distinct_reservation_contracts -- --exact
-    cargo test --locked -p taskmesh --features rayon --test runtime_cpu_executor the_cpu_gate_and_the_rayon_pool_are_sized_from_one_answer -- --exact
-    cargo test --locked -p taskmesh-rayon --test rayon_smoke the_adapter_declares_what_it_can_honestly_promise -- --exact
-    cargo test --locked -p taskmesh-contract --test contract_roundtrip task_spec_roundtrips -- --exact
-    cargo test --locked -p taskmesh-contract --test contract_roundtrip runtime_config_roundtrips_pretty -- --exact
-    cargo test --locked -p taskmesh-contract --test contract_roundtrip snapshot_roundtrips -- --exact
-    cargo test --locked -p taskmesh-contract --test contract_roundtrip legacy_plan_source_strings_decode_and_reencode_exactly -- --exact
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" python3 tools/gates/rust_test_evidence.py --rayon
 
 doctest:
     cargo test --locked --workspace --exclude taskmesh-doc-examples --doc

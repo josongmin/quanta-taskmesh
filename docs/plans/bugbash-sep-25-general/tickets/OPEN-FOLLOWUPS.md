@@ -7,10 +7,21 @@ its proof and external-adoption fields have different authorities.
 | Owner | Open action | Closure evidence |
 |---|---|---|
 | BG25-001–003 and each deployment owner | Review D1–D9 applicability, compatibility, migration, actual ingress/planner/wire call sites, and deployed topology | Update [external adoption ledger](EXTERNAL-ADOPTION.md) with owner, exact consumer and Taskmesh source identities, selected tests, and deployment decision; mark non-applicable only with topology evidence |
-| BG25-012 integrator | Qualify each proposed final committed clean Taskmesh HEAD | `just dev`, `just verify-macos-ci`, then validate the receipt with `--expected-head`; require all applicable CI gates PASS, no required NOT_RUN/FAIL, stable HEAD/tree/path digest, and durable receipt custody |
-| CI-plan owner | Finish W3 execution denominator and decide W4 hosted adoption | Update the [verification-stage plan](../../2026-09-24-ci-verification-stages.md) with source-backed implementation and separate exact-source proof |
+| BG25-012 integrator | Qualify each proposed final committed clean Taskmesh HEAD | `just dev`, `just verify-macos-ci`, then validate the receipt with `--expected-head`; require all applicable CI gates PASS, no required NOT_RUN/FAIL, stable HEAD/tree/path digest, and durable receipt custody. The clean `3700f3f` receipt passed 16/16; subsequent candidate edits need a new receipt |
+| CI-plan owner | Finish W3 candidate qualification and hosted W4 rollout | W3 now has selected/executed Rust and pytest denominators; the dedicated 16-gate `pr-ci.yml` is a local non-required trial. Final clean-HEAD receipt, hosted queue/cost result, and branch-rule decision remain separate in the [verification-stage plan](../../2026-09-24-ci-verification-stages.md) |
 | Release owner | Deep nightly and release qualification when explicitly requested | Complete producer denominators, Linux-only gates, compatibility adjudication, and a release decision under the [release checklist](../../../release-checklist.md) |
-| Benchmark owner | Complete H28 host performance qualification **only before making a performance claim**; keep the 9-request host/simulator admission-count test as the deterministic CI proof | Same source/toolchain/features/workload/seed/warmup and quiet-host environment; independently record intended send/offered, each terminal response type, unanswered requests, post-response worker custody, and class/path sample populations. Do not compare simulator counts for terminal types it does not model or label simulator admission wait as host latency |
+| Benchmark owner | Complete H28 host performance qualification **only before making a performance claim**; keep the 9-request host/simulator admission-count test as the deterministic CI proof | Same source/toolchain/features/workload/seed/warmup and quiet-host environment; independently record intended send/offered, each terminal response type, unanswered requests, post-response worker custody, and class/path sample populations. The shared host had unrelated Cargo/mutation contention during this audit, so its gate timings are not a performance baseline |
+
+2026-09-26 execution update: clean Taskmesh `3700f3f4dd2e4b783e50ca2e3a8db9b11eba39b0`
+passed all 16 CI-profile gates and its receipt validated against that exact
+HEAD. Durable copy:
+`/Users/songmin/.codex/artifacts/taskmesh-ss-3700f3f/macos-gates.json`
+(SHA-256 `9b6776e952b9a6e359d772c8bf06e65e5b9b7b5a7b4efef54f58507f9726b1ee`).
+On the later candidate tree, the new Rust test denominator completed 94
+targets/632 cases; the Rayon matrix completed seven targets/33 cases; Python
+collection and execution matched before the last added negative fixtures.
+These are owner-local checks, not a final candidate-HEAD receipt. No nightly,
+mutation, Linux release, or hosted run was performed by this work.
 
 2026-09-26 source audit at clean `0588d26847ba575f1c059f8d86a37d8420ea5589`: H12's old wording expected a typed response from a dropped caller and new admission after the one-way drain; the active checklist now states the valid pre-drain queue order. A new `host_open_loop::terminal_caller_keeps_worker_charged_through_pre_drain_queue` fixture exercises deadline, cancel, and caller drop against the pre-drain queue and worker-custody order. It passed focused 1/1 and `just dev` 558/558 on the candidate tree; BG25-012 still needs a committed clean-HEAD CI receipt. No product-code violation was confirmed. H28's existing bounded burst comparison is a valid narrow CI fixture; its broader measurement requirement is a separate performance qualification. A05's existing input-derived ledger case is now included in `scenario-evidence.json`; no new A05 test or product patch is pending. These are evidence/qualification actions, not reopened archived implementation tickets. The 16/16 CI receipt validated at the audit HEAD does not qualify the changed tree.
 

@@ -36,7 +36,7 @@ jobs:
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
         with:
-          tool: cargo-deny@0.19.7
+          tool: cargo-deny@0.19.7,cargo-nextest@0.9.104
       - name: Install semgrep
         run: uv tool install "semgrep==$(cat tools/semgrep/version.txt)"
 
@@ -62,6 +62,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
       - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
+      - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
+        with:
+          tool: cargo-nextest@0.9.104
 
       # Feature-matrix drift: the `rayon` feature auto-wires the default CPU
       # executor on a cfg-gated path that default-feature CI never compiles.

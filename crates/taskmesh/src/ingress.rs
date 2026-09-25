@@ -149,123 +149,121 @@ impl Shape {
     }
 
     fn field(self, key: &str) -> Option<Self> {
-        use Shape as S;
         match self {
-            S::Task => match key {
+            Self::Task => match key {
                 "class" | "operation" | "root_operation_id" | "source" | "reason" => {
-                    Some(S::Scalar)
+                    Some(Self::Scalar)
                 }
-                "scope" => Some(S::Scope),
-                "blocking_dispatch" => Some(S::BlockingDispatch),
-                "stages" => Some(S::Stages),
+                "scope" => Some(Self::Scope),
+                "blocking_dispatch" => Some(Self::BlockingDispatch),
+                "stages" => Some(Self::Stages),
                 _ => None,
             },
-            S::Scope => (key == "Child").then_some(S::Child),
-            S::Child => match key {
-                "parent_operation_id" | "parent_stage" | "parent_awaits" => Some(S::Scalar),
+            Self::Scope => (key == "Child").then_some(Self::Child),
+            Self::Child => match key {
+                "parent_operation_id" | "parent_stage" | "parent_awaits" => Some(Self::Scalar),
                 _ => None,
             },
-            S::Stage => match key {
-                "class" | "stage" | "substrate_hint" | "fan_out" => Some(S::Scalar),
-                "reduce_policy" => Some(S::Reduce),
+            Self::Stage => match key {
+                "class" | "stage" | "substrate_hint" | "fan_out" => Some(Self::Scalar),
+                "reduce_policy" => Some(Self::Reduce),
                 _ => None,
             },
-            S::Reduce => match key {
+            Self::Reduce => match key {
                 "stable_sort_key"
                 | "duplicate_merge"
                 | "tie_break"
                 | "error_aggregation"
-                | "partial_result_ordering" => Some(S::Scalar),
+                | "partial_result_ordering" => Some(Self::Scalar),
                 _ => None,
             },
-            S::BlockingDispatch => (key == "requested_stack").then_some(S::RequestedStack),
-            S::RequestedStack => (key == "stack_size_bytes").then_some(S::Scalar),
-            S::Config => match key {
-                "topology" => Some(S::Topology),
-                "resources" => Some(S::Resources),
-                "classes" => Some(S::Classes),
-                "extra_substrates" => Some(S::Substrates),
-                "capability_limits" => Some(S::CapabilityLimits),
+            Self::BlockingDispatch => (key == "requested_stack").then_some(Self::RequestedStack),
+            Self::RequestedStack => (key == "stack_size_bytes").then_some(Self::Scalar),
+            Self::Config => match key {
+                "topology" => Some(Self::Topology),
+                "resources" => Some(Self::Resources),
+                "classes" => Some(Self::Classes),
+                "extra_substrates" => Some(Self::Substrates),
+                "capability_limits" => Some(Self::CapabilityLimits),
                 _ => None,
             },
-            S::Topology => match key {
-                "cpu" => Some(S::Cpu),
-                "physical_domains" => Some(S::PhysicalDomains),
+            Self::Topology => match key {
+                "cpu" => Some(Self::Cpu),
+                "physical_domains" => Some(Self::PhysicalDomains),
                 "blocking_threads"
                 | "large_stack_slots"
                 | "maintenance_workers"
-                | "local_runtime_slots" => Some(S::Scalar),
+                | "local_runtime_slots" => Some(Self::Scalar),
                 _ => None,
             },
-            S::Cpu => match key {
-                "mode" => Some(S::CpuMode),
-                "reserve_cores" | "min_workers" | "max_workers" => Some(S::Scalar),
+            Self::Cpu => match key {
+                "mode" => Some(Self::CpuMode),
+                "reserve_cores" | "min_workers" | "max_workers" => Some(Self::Scalar),
                 _ => None,
             },
-            S::CpuMode => (key == "Fixed").then_some(S::Scalar),
-            S::PhysicalDomains => match key {
-                "shared_blocking" | "dedicated" => Some(S::PhysicalMode),
+            Self::PhysicalDomains => match key {
+                "shared_blocking" | "dedicated" => Some(Self::PhysicalMode),
                 _ => None,
             },
-            S::PhysicalMode => (key == "Fixed").then_some(S::Scalar),
-            S::Resources => match key {
+            Self::CpuMode | Self::PhysicalMode => (key == "Fixed").then_some(Self::Scalar),
+            Self::Resources => match key {
                 "max_cpu_units"
                 | "max_memory_units"
                 | "per_request_max_cpu_units"
-                | "per_request_max_memory_units" => Some(S::Scalar),
-                "memory_unit_scale" => Some(S::MemoryScale),
+                | "per_request_max_memory_units" => Some(Self::Scalar),
+                "memory_unit_scale" => Some(Self::MemoryScale),
                 _ => None,
             },
-            S::MemoryScale => (key == "bytes_per_unit").then_some(S::Scalar),
-            S::Classes => Some(S::ClassPolicy),
-            S::ClassPolicy => match key {
+            Self::MemoryScale => (key == "bytes_per_unit").then_some(Self::Scalar),
+            Self::Classes => Some(Self::ClassPolicy),
+            Self::ClassPolicy => match key {
                 "max_inflight"
                 | "max_queue_depth"
                 | "memory_permit_mode"
                 | "memory_release_policy"
                 | "overflow_policy"
                 | "cancellation_policy"
-                | "best_effort" => Some(S::Scalar),
-                "permit_cost" => Some(S::PermitCost),
-                "fairness" => Some(S::Fairness),
-                "memory_overcommit_policy" => Some(S::Overcommit),
-                "retry_after_policy" => Some(S::RetryAfter),
-                "checkpoint_policy" => Some(S::Checkpoint),
+                | "best_effort" => Some(Self::Scalar),
+                "permit_cost" => Some(Self::PermitCost),
+                "fairness" => Some(Self::Fairness),
+                "memory_overcommit_policy" => Some(Self::Overcommit),
+                "retry_after_policy" => Some(Self::RetryAfter),
+                "checkpoint_policy" => Some(Self::Checkpoint),
                 _ => None,
             },
-            S::RetryAfter => (key == "FixedMs").then_some(S::Scalar),
-            S::PermitCost => match key {
-                "cpu_units" | "memory_units" => Some(S::Scalar),
+            Self::RetryAfter => (key == "FixedMs").then_some(Self::Scalar),
+            Self::PermitCost => match key {
+                "cpu_units" | "memory_units" => Some(Self::Scalar),
                 _ => None,
             },
-            S::Fairness => match key {
-                "WeightedFairQueue" => Some(S::Wfq),
-                "DeficitRoundRobin" => Some(S::Drr),
-                "DeadlineAware" => Some(S::DeadlineAware),
+            Self::Fairness => match key {
+                "WeightedFairQueue" => Some(Self::Wfq),
+                "DeficitRoundRobin" => Some(Self::Drr),
+                "DeadlineAware" => Some(Self::DeadlineAware),
                 _ => None,
             },
-            S::Wfq => match key {
-                "weight" | "burst" => Some(S::Scalar),
+            Self::Wfq => match key {
+                "weight" | "burst" => Some(Self::Scalar),
                 _ => None,
             },
-            S::Drr => (key == "quantum").then_some(S::Scalar),
-            S::DeadlineAware => (key == "slack_ms").then_some(S::Scalar),
-            S::Overcommit => (key == "DegradeToLight").then_some(S::Degrade),
-            S::Degrade => (key == "fallback_class").then_some(S::Scalar),
-            S::Checkpoint => match key {
+            Self::Drr => (key == "quantum").then_some(Self::Scalar),
+            Self::DeadlineAware => (key == "slack_ms").then_some(Self::Scalar),
+            Self::Overcommit => (key == "DegradeToLight").then_some(Self::Degrade),
+            Self::Degrade => (key == "fallback_class").then_some(Self::Scalar),
+            Self::Checkpoint => match key {
                 "every_n_work_items"
                 | "before_fan_out"
                 | "before_large_allocation"
                 | "before_stage_boundary"
-                | "before_reduce" => Some(S::Scalar),
+                | "before_reduce" => Some(Self::Scalar),
                 _ => None,
             },
-            S::Substrate => match key {
-                "name" | "kind" | "capability_pool" => Some(S::Scalar),
+            Self::Substrate => match key {
+                "name" | "kind" | "capability_pool" => Some(Self::Scalar),
                 _ => None,
             },
-            S::CapabilityLimits => Some(S::Scalar),
-            S::Stages | S::Substrates | S::Scalar => None,
+            Self::CapabilityLimits => Some(Self::Scalar),
+            Self::Stages | Self::Substrates | Self::Scalar => None,
         }
     }
 }
@@ -476,6 +474,10 @@ enum StrictScope {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(
+    clippy::struct_field_names,
+    reason = "strict wire fields must match the published parent_* identifiers"
+)]
 struct StrictChild {
     parent_operation_id: String,
     parent_stage: TaskStage,
@@ -513,7 +515,7 @@ pub fn parse_task_spec(
         )
     );
     let stack_size_bytes = match (blocking_family, input.blocking_dispatch) {
-        (true, Some(StrictBlockingDispatch::SharedBlocking)) => None,
+        (true, Some(StrictBlockingDispatch::SharedBlocking)) | (false, None) => None,
         (true, Some(StrictBlockingDispatch::RequestedStack(request))) => {
             let size = request.stack_size_bytes;
             if size == 0
@@ -536,7 +538,6 @@ pub fn parse_task_spec(
                 "non-blocking task must not declare blocking dispatch",
             ));
         }
-        (false, None) => None,
     };
     let scope = match input.scope {
         StrictScope::Root => TaskScope::Root,

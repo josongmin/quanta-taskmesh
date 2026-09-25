@@ -163,6 +163,10 @@ fn stage_boundary_release_returns_units_but_keeps_permit() {
     let snap = g.snapshot();
     assert_eq!(snap.classes[&c].memory_units_held, 6);
     assert_eq!(snap.classes[&c].inflight, 1, "permit stays alive");
+    assert_eq!(g.release(p), ReleaseOutcome::Released);
+    let snap = g.snapshot();
+    assert_eq!(snap.classes[&c].memory_units_held, 0);
+    assert_eq!(snap.classes[&c].inflight, 0);
 }
 
 #[test]

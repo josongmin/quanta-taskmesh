@@ -180,12 +180,18 @@ fn same_name_with_a_different_policy_authority_is_foreign() {
         let mut classes = BTreeMap::new();
         classes.insert(TaskClass::new("c"), ClassPolicy::new());
         PolicySet::new(ResourceBudget::new(), classes)
-            .with_capability_limits(BTreeMap::from([("blocking".to_owned(), limit)]))
-            .expect("built-in capability")
+            .with_substrates(vec![SubstrateRecord::new(
+                "custom-executor",
+                SubstrateKind::CompetingExecution,
+                Some("custom-pool"),
+            )])
+            .expect("valid custom substrate")
+            .with_capability_limits(BTreeMap::from([("custom-pool".to_owned(), limit)]))
+            .expect("custom capability")
     };
     let source_policy = policy(1);
     let source_id = source_policy
-        .resolve_capability("blocking")
+        .resolve_capability("custom-pool")
         .expect("source authority");
     let target = Governor::new(policy(2), Arc::new(ManualClock::new(0))).expect("target governor");
     let before = target.snapshot();

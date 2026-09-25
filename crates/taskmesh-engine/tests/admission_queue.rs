@@ -223,7 +223,13 @@ fn release_promotes_queued_work() {
     let snap = g.snapshot().classes[&TaskClass::new("c")].clone();
     assert_eq!(snap.inflight, 1);
     assert_eq!(snap.queued, 0);
-    assert!(matches!(g.claim(ticket), ClaimOutcome::Ready(_)));
+    let ClaimOutcome::Ready(promoted) = g.claim(ticket) else {
+        panic!("promoted ticket must transfer exactly one permit")
+    };
+    assert_eq!(g.claim(ticket), ClaimOutcome::Invalid);
+    assert_eq!(g.release(promoted), ReleaseOutcome::Released);
+    let drained = &g.snapshot().classes[&TaskClass::new("c")];
+    assert_eq!((drained.inflight, drained.queued), (0, 0));
 }
 
 #[test]

@@ -2,6 +2,8 @@
 //! requires a matching hint) and topology slot counts are real capability-pool
 //! capacity limits, not inert metadata.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use taskmesh::*;
@@ -29,8 +31,13 @@ async fn run_blocking_rejects_nonblocking_hints() {
         ("io", TaskSpec::io(TaskClass::new("c"))),
         ("cpu", TaskSpec::cpu(TaskClass::new("c"))),
     ] {
+        let ran = Arc::new(AtomicBool::new(false));
+        let ran_in_work = Arc::clone(&ran);
         let err = rt
-            .run_blocking(spec.operation(hint), || Ok::<i32, ()>(1))
+            .run_blocking(spec.operation(hint), move || {
+                ran_in_work.store(true, Ordering::SeqCst);
+                Ok::<i32, ()>(1)
+            })
             .await
             .expect_err("nonblocking hint on blocking path must reject");
         assert!(
@@ -40,6 +47,8 @@ async fn run_blocking_rejects_nonblocking_hints() {
             ),
             "{hint} spec on blocking path must reject"
         );
+        assert!(!ran.load(Ordering::SeqCst));
+        assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
     }
 }
 
@@ -47,28 +56,42 @@ async fn run_blocking_rejects_nonblocking_hints() {
 async fn run_io_rejects_blocking_hinted_spec() {
     let rt = rt_unlimited();
     let blk = TaskSpec::blocking(TaskClass::new("c")).operation("x");
+    let ran = Arc::new(AtomicBool::new(false));
+    let ran_in_work = Arc::clone(&ran);
     let err = rt
-        .run_io(blk, async { Ok::<i32, ()>(1) })
+        .run_io(blk, async move {
+            ran_in_work.store(true, Ordering::SeqCst);
+            Ok::<i32, ()>(1)
+        })
         .await
         .expect_err("blocking spec on io path must reject");
     assert!(matches!(
         err,
         RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstrateMismatch))
     ));
+    assert!(!ran.load(Ordering::SeqCst));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
 }
 
 #[tokio::test]
 async fn run_cpu_rejects_io_hinted_spec() {
     let rt = rt_unlimited();
     let io_spec = TaskSpec::io(TaskClass::new("c")).operation("x");
+    let ran = Arc::new(AtomicBool::new(false));
+    let ran_in_work = Arc::clone(&ran);
     let err = rt
-        .run_cpu(io_spec, || Ok::<i32, ()>(1))
+        .run_cpu(io_spec, move || {
+            ran_in_work.store(true, Ordering::SeqCst);
+            Ok::<i32, ()>(1)
+        })
         .await
         .expect_err("io spec on cpu path must reject");
     assert!(matches!(
         err,
         RunError::Governor(GovernorError::Rejected(AdmissionVerdict::SubstrateMismatch))
     ));
+    assert!(!ran.load(Ordering::SeqCst));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
 }
 
 #[tokio::test]

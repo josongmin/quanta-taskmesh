@@ -26,8 +26,8 @@ use taskmesh_contract::{
     ResourceBudget, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
-    AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome, TerminalReason,
-    Ticket,
+    AbandonOutcome, AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome,
+    TerminalReason, Ticket,
 };
 
 const CLASS: &str = "c";
@@ -199,7 +199,11 @@ fn promote_claim_abandon_three_way_is_exactly_once() {
         };
         releaser.join().unwrap();
         let claimed = claimer.join().unwrap();
-        let _abandon_outcome = abandoner.join().unwrap();
+        let abandon_outcome = abandoner.join().unwrap();
+        assert!(matches!(
+            abandon_outcome,
+            AbandonOutcome::Abandoned | AbandonOutcome::Invalid
+        ));
 
         // Whoever ended the ticket, it is over: a late look never says "wait".
         assert!(

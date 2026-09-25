@@ -1,6 +1,6 @@
 # Taskmesh 엔진 필수 유즈케이스·적대 시나리오 체크리스트
 
-- 기준: `main@76559c483bdd1d6b0b5226f7c5b5591b919afae9` (2026-09-25). 테스트·검증 보강 커밋 이후의 소스와 fixture를 재감사한다. 아래의 fixture 참조는 clean-HEAD 실행 증거가 아니다.
+- 기준: `main@76559c483bdd1d6b0b5226f7c5b5591b919afae9` (2026-09-25)의 원본 oracle inventory. 현재 구현·매핑 판정은 `docs/plans/bugbash-sep-25-general/tickets/{FINAL-REVIEW.md,scenario-evidence.json,EXTERNAL-ADOPTION.md}`가 갱신한다. 아래 fixture 참조는 clean-HEAD 실행 증거가 아니다.
 - 범위: 현재 `taskmesh-contract` / `taskmesh-engine` / Tokio facade / Rayon adapter / benchmark harness의 기능과 그 경계에 필요한 안전 시나리오. 현행 보장과 미결정 목표 계약은 각 행에서 구분한다. 미래의 실행형 flow·분산 복구·자동 checkpoint 실행은 제외한다.
 - 상태: 시나리오 설계 목록. 관련 테스트 파일은 탐색 앵커일 뿐, 각 행의 완전한 커버리지나 현재 HEAD의 PASS 영수증이 아니다. 이 문서를 작성하며 테스트·mutation·nightly는 실행하지 않았다.
 - 규모: 기본 16·엣지 28·헬게이트 35·코너 25, 총 104개. 미결정 계약과 source-backed 실패 후보는 해당 행에 표시했다.
@@ -33,7 +33,7 @@
 | A10 | root와 declared child를 별도 제출 | immediate parent·root attribution·provenance가 admission→queue→claim 동안 보존. 허용 가능한 자식은 진전. |
 | A11 | 순차 stage 선언과 fan-out/reduce policy 선언 | plan은 검증되지만 뒤 stage와 reducer는 자동 실행되지 않음; caller가 별도 제출한 실제 작업에만 새 permit. |
 | A12 | 한 class 안에서 capability가 겹치는 요청의 순서, 여러 class의 동일 tier fairness discipline | 겹치는 이전 runnable 요청의 순서와 선택된 cross-class 정책이 재현된다. disjoint capability 요청의 허용된 선행은 FIFO 위반으로 오판하지 않음. |
-| A13 | `drain(timeout)` 후 runtime handle 정리 | admission은 one-way 닫힘; 기존 queue·inflight가 0일 때만 `Ok`; 새 **유효한** 제출은 `RuntimeUnavailable`. malformed/foreign-capability 입력의 preflight 우선순위는 D17로 분리. |
+| A13 | idle/active `drain(timeout)`과 여러 runtime handle | admission close는 모든 clone에 공유되는 one-way 상태. 기존 queue·inflight가 0일 때만 `Ok`, timeout은 per-class 미완료를 보고하며 새 **유효한** 제출은 `RuntimeUnavailable`. malformed/foreign-capability 입력의 preflight 우선순위는 D17로 분리. |
 | A14 | snapshot, inventory, provenance, typed error를 facade 소비자가 조회 | 외부 소비자는 공개 facade로 상태와 `GovernorError`/`RunError`를 타입으로 구별한다. `Snapshot`·`TaskSpec`·정책·직렬화 가능한 verdict/terminal reason의 wire 의미는 별도로 보존; runtime-only error 자체의 Serde 왕복은 요구하지 않음. |
 | A15 | requested-stack async `!Send` root와 그 안에서 await하는 `tokio::spawn` child | 명시된 stack의 owned current-thread runtime에서 root와 `Send` child가 실행되고 종료 시 dedicated slot이 반환됨. `spawn_local` child 지원을 이 경로에서 암시하지 않음. |
 | A16 | custom substrate/capability를 명시적으로 등록 | 추가 substrate는 config·snapshot inventory와 direct 거버넌스 authority에만 나타남. 닫힌 `SubstrateHint`와 facade에 새 `run_*` 대상이 자동으로 생기지 않음. |
@@ -62,7 +62,7 @@
 | B16 | 잘못된 substrate inventory/pool authority, resolved domain worker 수보다 작거나 **큰** CPU executor 선언, blocking/unknown submit protocol | 구성 단계에서 reject; executor 선언과 resolved worker 수는 정확히 같아야 한다. runtime snapshot에 보이는 capacity authority와 admission authority가 하나. |
 | B17 | `drain(Duration::ZERO)` 및 유한 timeout에 실제 작업 잔존 | ZERO는 한 번 관측, timeout은 per-class `NotDrained`와 elapsed; admission closed 상태가 유지됨. |
 | B18 | custom `PlanSource`와 legacy alias를 source API/Serde로 제출 | source key의 길이·문자 검증은 일관되며, 유효한 legacy spelling은 보존된다. `ClassificationRationale`은 enum이므로 문자열 길이 검증 대상으로 취급하지 않음; 일반 identifier 끝점은 D03. |
-| B19 | 구조가 틀린 raw `TaskSpec` JSON과 같은 값의 `ValidatedTaskPlan` JSON | raw Serde decode는 구조 검증을 약속하지 않음. `ValidatedTaskPlan` decode나 명시적 `validate()`가 reject하고, 그 전에는 admission·worker side effect 0. |
+| B19 | 구조가 틀린 raw `TaskSpec` JSON과 같은 값의 `ValidatedTaskPlan` JSON | raw Serde decode는 구조 검증을 약속하지 않음. `ValidatedTaskPlan` decode나 명시적 `validate()`가 reject한다. strict ingress는 `ValidatedTaskPlan`을 만들기 전까지 runtime handle을 받지 않는 순수 decode/validation 경계이므로 caller는 실패 값을 admission/worker 경로에 제출할 수 없다. |
 | B20 | local role pool만 포화, 다른 physical domain은 여유 | local 제출은 `local_runtime` blocker를 정확히 보고하고, 무관한 shared/dedicated occupancy를 늘리지 않음. |
 | B21 | 동일 `(root_operation_id, operation)`의 요청 두 건을 class·stage를 달리하거나 첫 건을 queue에 둔 채 제출 | 두 번째는 용량이 남아도 `RecursiveAdmission`이고 계수·queue·waker 부작용이 없다. 다른 root의 같은 operation은 허용하며 첫 identity가 release·abandon·terminalize되면 재사용할 수 있다. |
 | B22 | live parent를 가리키지만 그 parent plan에 없는 유효한 `parent_stage`로 child 제출 | 현재 validator는 `parent_stage`의 문자열 형식만 검사하고 stage membership은 확인하지 않는다. 현재의 attribution/recursion 동작을 고정해 관측하고, cross-plan membership을 API 계약으로 요구할지 별도 결정한다. 현행 `MalformedTask`를 미리 기대하지 않음. |
@@ -71,7 +71,7 @@
 | B25 | `run_blocking` 또는 기본 CPU facade future를 Tokio runtime 밖에서 poll | 지원하는 호출 context를 공개 계약으로 정한다. 미지원이라면 admission/dispatch 전 typed reject가 목표이며, 현 경로에서 panic이 발생하더라도 permit이 남지 않는지 별도 확인한다. 이를 현재 보장된 typed 오류로 주장하지 않음. |
 | B26 | 같은 primary tier의 FIFO·WFQ 혼합, 같은 종류의 weight/quantum 차이, primary와 best-effort의 서로 다른 fairness 종류 | 같은 tier의 **종류** 혼합만 구성 거절; 같은 종류의 파라미터 차이와 tier 간 다른 종류는 허용한다. disabled class는 dispatch하지 않아 종류 합의 대상에서 제외. |
 | B27 | malformed `admit_waitable` 또는 invalid resolved capability와 final-reference `PermitWaker`의 destructor panic | preflight가 waker를 직접 drop하므로 panic은 그대로 전파되지만 permit·ticket·queue 상태는 생성되지 않는다. H14의 transition-effect 전체 배출/보상 oracle을 이 경로에 기계적으로 적용하지 않음. |
-| B28 | 두 Governor가 같은 숫자 `PermitId`/`Ticket`을 발급하고 한 인스턴스의 raw ID를 다른 인스턴스의 `release`/`advance_phase`/`claim`/`abandon`에 전달 | 현재 ID는 Governor별 `u64`이고 1부터 시작해 충돌한다. 다른 인스턴스의 raw ID도 숫자가 같으면 **local** 상태에 작용할 수 있으므로 foreign 자동 거절을 현행 보장으로 주장하지 않는다. lease token은 전역 nonce로 따로 검증된다. direct API를 한 Governor에 한정할지, opaque governor-bound handle로 바꿀지 계약을 결정하고 충돌 fixture로 고정한다. |
+| B28 | 두 Governor가 같은 local sequence의 `PermitId`/`Ticket`을 발급하고 한 인스턴스의 opaque handle을 다른 인스턴스의 `release`/`advance_phase`/`claim`/`abandon`에 전달 | handle의 governor authority가 달라 foreign operation은 `UnknownPermit`/`Invalid` 등 typed no-change로 끝난다. 같은 local sequence만으로 다른 Governor의 상태에 작용할 수 없고 local permit/ticket은 보존된다. |
 
 관련 앵커: `crates/taskmesh-contract/tests/{task_plan_validation,topology_validation,error_surface}.rs`, `crates/taskmesh-engine/tests/{config_validation,hardening_policy_inventory,permit_lifecycle,hardening_lease_token,hardening_child_scope,leak_sweep,memory_overcommit,substrate_inventory,pending_resolver,recursive_rejection}.rs`, `crates/taskmesh-engine/src/{shared/mod,engine/governor}.rs`, `crates/taskmesh/tests/{runtime_cancel_timeout,hardening_executor_protocol,hardening_drain,config_inventory}.rs`.
 
@@ -83,7 +83,7 @@
 |---|---|---|
 | H01 | 여러 class × IO/blocking/CPU/large-stack × 급격한 open-loop 과부하 | class queue·capability·physical domain 상한 동시 보존, 비queueing 즉시 shed, 유한 대기자는 종결. 도착률을 제어하고 응답시간만으로 과부하를 판정하지 않음. |
 | H02 | class quota는 남지만 공유 physical domain이 포화; 다른 class/role도 같은 executor 사용 | engine이 실제 공유 domain을 한 번만 계상, 포화 verdict/queue 원인이 domain을 가리킴; 앞단 gate 뒤의 숨은 무한 대기열 없음. |
-| H03 | CPU fallback·blocking·maintenance가 `physical.shared_blocking`을 동시에 사용 | 세 경로 합계가 같은 유한 상한 이내. Rayon의 별도 `physical.cpu`는 자기 선언대로 격리; shared Tokio pool의 **외부** 작업까지 Taskmesh가 제한한다고 주장하지 않음. |
+| H03 | CPU fallback·blocking·maintenance가 `physical.shared_blocking`을 동시에 사용 | 세 경로 합계가 같은 유한 상한 이내. Rayon의 별도 `physical.cpu` 격리는 H18의 Rayon selector에서 별도 판정한다. shared Tokio pool의 **외부** 작업까지 Taskmesh가 제한한다고 주장하지 않음. |
 | H04 | capacity release ↔ queued promotion ↔ waiter cancel/claim/timeout/sweep 네 방향 경합 | permit은 정확히 한 소유자에게만 이전. 늦은 claim은 소유권 이전이면 `Ready`, 보존된 종료면 `Terminal(reason)`, abandon/retention 밖이면 `Invalid`; 중복 시작·누락·영구 대기 없음. |
 | H05 | `PROMOTION_BUDGET`보다 긴 backlog와 release 한 번, 동시에 새 요청 도착 | continuation이 추가 release 없이 진행; 기존 queue와 capability가 겹치는 queueable same-class newcomer는 앞선 runnable head 뒤에 선다. disjoint capability newcomer의 선행, 다른 pool에 막힌 head의 교차-pool 예외, queue를 사용하지 않는 `Reject` newcomer의 continuation-gap 즉시 입장은 따로 판정한다. |
 | H06 | WFQ/DRR의 불균일 weight·cost와 중간 취소·cross-pool follower 선행 | reference scheduler와 정확한 선택 순서; 취소된 작업의 가상 시간 debt/DRR credit이 생존 요청을 왜곡하지 않음. starve·무한 quantum 순회 없음. |
@@ -110,11 +110,11 @@
 | H27 | 두 TokioRuntime이 같은 `CpuExecutor` 인스턴스를 공유하고 각자 CPU domain limit까지 제출 | 각 runtime의 엔진은 자기 제출만 제한한다. 두 runtime 합산 physical worker 독점은 보장되지 않음을 관측하고, 외부 공유 pool 전체 상한이 필요하면 호출자가 별도 authority를 제공해야 함. |
 | H28 | 실제 host에 open-loop로 workload 제출하며 benchmark simulator와 결과 범위를 비교 | simulator의 admission-wait 숫자를 host end-to-end latency로 보고하지 않음. host에서는 offered = terminal response(성공·task error·거절·취소·deadline 등) + 미응답 요청을 독립 계측하고, 별도로 응답 뒤 남은 worker custody를 snapshot과 대조한다. class/path별 표본 모집단·warmup·환경을 기록한다. |
 | H29 | promoted ticket의 `claim()`에서 마지막 `PermitWaker` drop이 panic; 같은 pool에 다음 waiter 대기 | custody 전달 전 `Claiming` permit을 전량 보상하고 첫 ticket은 `ClaimDeliveryFailed` terminal이 된다. 다음 waiter를 즉시 promote/notify한 뒤 첫 panic을 전파한다. 중복 permit·계수 누락·영구 대기 없음. |
-| H30 | custom `CpuExecutor::capabilities()`가 `Builder::build`에서는 유효하지만 설치 후 domain/worker/submit 선언을 바꿈; IO/local/blocking/CPU 경로를 교차 제출 | build 때는 세 선언을 검증하지만 제출 preflight는 **domain만 다시 읽고** `expect(...)`한다. 선언 고정 또는 변경 시 typed fail-closed를 목표 계약으로 결정하고, panic·work 시작·permit charge와 authority drift를 각각 검증한다. 현재 domain=None 경로는 source-backed **미검증 실패 후보**이며 worker/submit 변경은 재검증되지 않는다. |
+| H30 | custom `CpuExecutor::capabilities()`가 `Builder::build`에서는 유효하지만 설치 후 domain/worker/submit 선언을 바꿈; IO/local/blocking/CPU 경로를 교차 제출 | build 때 검증한 descriptor를 runtime이 동결하며 제출·debug·accessor는 adapter를 재조회하지 않는다. 변경된 adapter 선언이 panic·work 시작·permit charge·authority drift를 만들지 않음을 검증한다. |
 | H31 | host가 예약한 permit을 embedder가 direct `governor().advance_phase`로 먼저 lease한 뒤 host가 dispatch하고 drain도 시작 | host가 소유하지 않은 token 아래에서 user work를 시작하지 않고 typed `PolicyViolation`을 반환한다. host lease drop은 외부 token의 capacity를 반환하지 않으며, `release_leased(token)` 전 drain `Ok`가 나오지 않는다. |
 | H32 | 대상 class inflight가 가득 차고 다른 class의 measured overcommit으로 global memory도 포화; 대상의 일반 overflow는 `Reject`, memory policy는 `Queue`; 그 뒤 대상 holder를 release해도 memory 부족이 남음 | 처음에는 우선순위가 높은 `Inflight`가 primary라 즉시 거절한다. class blocker가 사라지고 Memory만 primary인 새 요청은 bounded queue에 들어간다. memory policy가 모든 blocker를 덮는다고 오판하지 않음. |
 | H33 | JSON child의 `parent_awaits` 누락/오타로 false가 된 상태에서 실제 parent가 child 결과를 기다리고 단일 class/pool slot을 점유 | 현 `ValidatedTaskPlan` 형식 검증만으로 선언 누락을 감지하지 못하며 엔진은 undeclared wait를 추론하지 않아 queue할 수 있다. 외부 ingress의 strict decode/명시적 wait 선언을 통합 안전 조건으로 결정하고, 이를 엔진의 `NestedWaitCycle` 거절 성공으로 오인하지 않음. |
-| H34 | requested-stack async root는 `RunFor`/`CompleteBy` 전에 정상 완료했으나 owned runtime의 `spawn_blocking` child가 오래 살아 있음 | 현재 정상 결과 경로는 runtime teardown 후 `Ok`/task error를 전달하므로 응답이 deadline 뒤로 밀릴 수 있다. 기한이 caller 응답까지 포함하는지 계약을 결정하고, 포함한다면 늦은 성공을 실패로 판정한다. teardown 동안 dedicated lease·pool은 계속 charged이며 응답 시점에는 반환돼야 한다. |
+| H34 | requested-stack async root는 `RunFor`/`CompleteBy` 전에 정상 완료했으나 owned runtime의 `spawn_blocking` child가 오래 살아 있음 | `CompleteBy`는 caller 응답까지 제한한다. teardown이 기한을 넘으면 준비된 `Ok`/task `Err`를 버리고 `DeadlineExceeded`를 반환하며, child 종료까지 dedicated lease·pool custody는 유지한다. |
 | H35 | `run_local` root가 `spawn_local` child를 띄운 뒤 await하지 않고 반환; 같은 root가 raw `tokio::spawn` child도 띄움 | 호출별 `LocalSet::run_until(root)`은 root 완료 시 끝나므로 local child 완료를 암묵적으로 약속하지 않는다. local child의 drop/side effect와 ambient Tokio child의 별도 수명을 구분하고, drain이 어떤 child를 추적하는지 명시한다. |
 
 관련 앵커: `crates/taskmesh-bench/tests/{hellgate,inferno,fairness_property}.rs`, `crates/taskmesh-engine/tests/{hardening_fairness_reference,differential_model,hardening_effect_retirement,loom_governance,shuttle_governance,pending_resolver,hardening_close_admission}.rs`, `crates/taskmesh/tests/{e2e_chaos,hardening_drain,hardening_executor_authority,hardening_deadline_custody,hardening_executor_protocol,host_inferno}.rs`, `crates/taskmesh/src/runtime/claim_acquisition_tests.rs`. 기존 `hellgate.rs`는 **벤치 시뮬레이터/계측**의 헬게이트이고, `inferno.rs`는 direct Governor 적대 불변식이다. 위 H 항목 전체를 두 파일이 다 보증한다는 뜻은 아니다.
@@ -126,7 +126,7 @@
 | D01 | quota/depth/pool/budget이 0, 1, 정확히 한계, 한계+1 | `0`이 각 필드에서 의미하는 바(무제한/비queue/invalid)를 혼동하지 않음; equality는 정책대로 허용·초과는 거절. |
 | D02 | CPU/메모리 총량이 `u32` 도메인을 넘는 여러 permit; `u128` wire 왕복 | 공개 입력 경로에서는 큰 합계가 포화·wrap·JSON 부동소수점 손실 없이 정확. aggregate representability 실패의 sticky `RuntimeUnavailable`은 현 구조의 `u128` 총량·`u32` 단건 비용상 정상 API로 재현 불가하므로 내부 fault injection/모델 oracle로 분리. |
 | D03 | `MAX_TASK_IDENTIFIER_LEN`의 -1/정확히/ +1 byte, 공백·NUL·비ASCII | byte 기준 검증과 오류 위치가 일정; thread 이름 sanitization은 governance identity를 변경하지 않음. |
-| D04 | stage 0개/1개/중복/매우 많음, untrusted JSON bytes 대량 | 형태 검증이 결정적. 현재 `validation.rs`에는 stage-count 상한이 없고 `TaskSpec`의 Serde 파싱 전 바이트 상한도 없다. 두 제한은 현행 보장이 아닌 **미해결 입력 경계**이며, 외부 ingress의 파싱 전 바이트 제한은 호출자 책임이다. |
+| D04 | stage 0개/1개/중복/매우 많음, untrusted JSON bytes 대량 | core 형태 검증은 결정적이고 raw DTO Serde는 호환성을 유지한다. additive strict ingress의 `parse_task_spec`이 pre-decode byte/depth/stage 상한과 duplicate/unknown key를 강제하므로 외부 bytes 경계는 이 entrypoint를 명시적으로 채택해야 한다. |
 | D05 | `Duration::ZERO`, 정확히 deadline 시각, `Instant::checked_add` overflow | ZERO acquire는 즉시 시도; deadline equality는 만료. async IO/local/requested-stack `RunFor`의 overflow는 typed `PolicyViolation`과 lease 반환, 시작된 sync detached `RunFor`의 overflow는 해당 timer만 사실상 unbounded이고 worker custody는 유지한다. 두 경로의 차이를 동일한 기대값으로 합치지 않음. |
 | D06 | `MeasurementSequence=u64::MAX`, 같은 epoch 재전송, 측정 byte→unit 변환 불가 | `EpochExhausted`/stale/변환 오류가 상태를 바꾸지 않음; terminal sequence도 permit은 별도 release 필요. |
 | D07 | leak staleness `now == last_touched + threshold`와 그 직후, clock 역행 | 경계는 명시된 strict 비교; monotonic commit watermark로 과거 시각이 새 lease를 늙게 만들지 않음. |
@@ -139,15 +139,15 @@
 | D14 | requested-stack OS thread label에 허용된 `/`·`:`·최대 길이 class 이름; 별도로 NUL·비ASCII·상한 초과 이름 | 유효한 class는 label에서 안전하게 정규화·절단하되 실제 class/provenance는 원래 값 유지한다. 금지 문자는 spec validation에서 worker 생성 전에 `MalformedTask`로 거절; OS spawn 실패는 별도 typed worker 오류. |
 | D15 | stack bytes `0`, `1`, `MAX_REQUESTED_STACK_BYTES`, 상한+1, target `usize` 초과; blocking/CPU/async dispatch 교차 | 숫자 validator의 허용/거절과 실제 OS thread 생성 성공은 별개다. 0·상한 초과·변환 불가는 typed preflight 오류, 숫자상 허용값도 플랫폼 spawn 실패면 typed worker 오류; 허용 경로에만 실제 dedicated dispatch. |
 | D16 | `CpuMode::Auto`인 `RuntimeConfig`를 JSON 왕복하고 다른 machine에서 build | portable 선언과 inventory만 보존된다. resolved worker/capability limit은 `Governor::snapshot`, 설치 executor 선언은 `TokioRuntime::executor_capabilities`에서 확인; config JSON만으로 동일한 실행 capacity가 재현됐다고 주장하지 않음. |
-| D17 | `close_admission` 이후 malformed raw spec 또는 foreign resolved capability 제출 | 현재 direct `admit`/`admit_waitable`의 malformed 검증과 `admit_resolved`의 capability 검증이 close 검사보다 앞서므로 각각 `MalformedTask`/resolution error가 우선할 수 있다. 유효 요청만 `RuntimeUnavailable`. `Governor::close_admission` rustdoc의 “every admit*” 표현과 실제 순서가 달라 계약/문서 정렬 결정을 남긴다. |
+| D17 | `close_admission` 이후 malformed raw spec 또는 foreign resolved capability 제출 | direct `admit`/`admit_waitable`의 malformed 검증과 `admit_resolved`의 capability 검증이 close 검사보다 앞서 각각 `MalformedTask`/resolution error가 우선한다. 유효 요청만 `RuntimeUnavailable`; rustdoc과 exact no-side-effect fixture가 이 순서를 고정한다. |
 | D18 | custom pool을 등록했으나 다른 policy의 resolved handle 또는 이름 오타로 direct admit | foreign/unknown capability는 admission 전에 typed resolution error; 같은 문자열만으로 authority를 위조할 수 없고 state·ticket·waker 등록이 변하지 않음. |
 | D19 | queued ticket을 읽기만 하면서 manual clock을 전진시키고, 그 뒤 governor transition을 발생 | `pending_view.queue_wait_ms`는 새 wall-clock sample이 아니라 마지막 committed watermark와 `enqueued_at_ms`의 차이. idle read만으로 증가했다고 기대하지 않고, 전이 후 monotonic하게 갱신되는지 판정. |
 | D20 | wire `Snapshot`의 phase/누적 등식은 맞지만 `inflight=0`에 양수 `cpu_units_held`를 넣거나 capability inventory와 occupancy를 불일치시킴 | `conservation_violation()==None`이 나와도 완전한 원장 검증으로 취급하지 않는다. 현 helper 범위를 명시하고, 실제 governor의 `permit_ledgers()`·정책 inventory와 독립 재계산한 경우에만 내부 원장 일치를 판정한다. |
-| D21 | 완전한 설정 JSON에 모르는 키를 추가하거나 `physical_domains`를 `physical_domans`로 오기 | 현 derived Serde의 unknown-field 허용과 defaulted 필드의 fallback을 관측한다. 배포 ingress가 strict key 검증을 맡을지 permissive wire를 공식 계약으로 할지 결정하고, 조용한 capacity 변경을 허용하는 설정 승격 경로는 만들지 않는다. |
-| D22 | child JSON에서 `parent_awaits`를 빼거나 키를 오타 내고 `ValidatedTaskPlan`으로 decode | 필드는 Serde default가 `false`이고 unknown 키는 무시되므로 구조 검증이 통과할 수 있다. 실제 await 의도를 보존하려면 ingress가 필수 선언과 unknown key를 검증해야 한다는 계약 결정을 기록; decode 성공만으로 cycle 안전성을 주장하지 않음. |
+| D21 | 완전한 설정 JSON에 모르는 키를 추가하거나 `physical_domains`를 `physical_domans`로 오기 | raw derived Serde의 permissive 호환성은 유지한다. strict `parse_runtime_config`는 unknown/duplicate key를 builder 승격 전에 거절하므로 배포의 untrusted bytes 경계가 이 entrypoint를 채택해야 한다. |
+| D22 | child JSON에서 `parent_awaits`를 빼거나 키를 오타 내고 `ValidatedTaskPlan`으로 decode | raw DTO는 호환성상 default/unknown-key 동작을 유지한다. strict `parse_task_spec`은 child wait 선언과 unknown key를 명시적으로 검사한다. decode 성공만으로 cycle 안전성을 주장하지 않고 배포 bytes 경계의 strict entrypoint 채택을 별도 추적한다. |
 | D23 | 미래 `AdmissionVerdict`/`TerminalReason` variant를 구버전 Serde 소비자가 읽음 | Rust의 `#[non_exhaustive]`는 패턴 매칭 범위만 넓힌다. derived enum Deserialize의 unknown variant는 decode 오류이므로 소비자는 오류·version negotiation 경로를 갖고, `Snapshot.schema_version`이 다른 타입의 버전 표식인 것처럼 취급하지 않는다. |
 | D24 | direct `advance_phase`를 `DispatchReserved → Running` 또는 `CleanupPending`으로 건너뛰고 반복·역행도 시도 | 첫 forward move만 lease token을 발급하고 `started_total`은 처음 started phase 진입 때 한 번만 증가한다. 반복·역행은 `NotLater`, release는 token 소유자만 가능. 인접 phase를 반드시 순서대로 호출해야 한다는 가짜 제약을 두지 않음. |
-| D25 | blocking `TaskSpec` JSON에서 `stack_size_bytes`만 `stack_size_byte`로 오타 내거나 누락 | 현재 Serde는 unknown key를 무시하고 optional stack을 `None`으로 채운다. raw/validated decode가 성공하면 dedicated stack thread·`large_stack` charge가 shared blocking dispatch·`blocking` charge로 바뀔 수 있다. async requested-stack 경로는 missing stack을 typed reject한다. 배포 ingress가 dispatch-control key를 strict 검증할지 결정하고, decode→plan→실제 pool/worker를 교차 판정한다. |
+| D25 | blocking `TaskSpec` JSON에서 `stack_size_bytes`만 `stack_size_byte`로 오타 내거나 누락 | raw DTO는 permissive 호환성을 유지한다. strict ingress는 unknown dispatch key를 거절하고 blocking dispatch tag를 명시적으로 요구하며, accepted requested-stack payload는 실제 dedicated worker와 `large_stack` charge로 연결된다. 배포 bytes 경계의 strict entrypoint 채택은 외부 증거다. |
 
 관련 앵커: `crates/taskmesh-contract/tests/{contract_roundtrip,snapshot_oracle,task_plan_validation}.rs`, `crates/taskmesh-engine/tests/{hardening_exact_accounting,hardening_memory_epochs,hardening_lifecycle,hardening_fairness_reference,substrate_inventory}.rs`, `crates/taskmesh/tests/{hardening_dispatch_resolution,hardening_executor_protocol,config_inventory}.rs`, `crates/taskmesh-contract/src/task.rs`, `crates/taskmesh/src/{execution_plan,runtime}.rs`.
 
@@ -167,9 +167,9 @@
 | child 수명 × 응답 | IO의 ambient `tokio::spawn`, local의 `spawn_local`, requested-stack owned runtime의 `spawn_blocking`을 root 정상 완료·취소·deadline과 교차. caller 응답과 worker custody를 별도 원장으로 관측. |
 | executor 선언 × 제출 | build 시 검증한 domain/worker/submit 선언을 submit 전에 고정·변경하고 IO/local/blocking/CPU preflight를 교차. 두 runtime이 같은 bounded executor를 공유하는 동시 제출(H27)도 분리. 현재 재조회 범위와 목표 fail-closed 계약을 분리. |
 
-## 현재 소스 감사와 남은 증거
+## 역사적 소스 감사 스냅샷
 
-아래는 기준 HEAD의 소스와 기존 fixture를 읽어 구분한 상태다. fixture의 존재는 해당 시나리오 전체의 PASS나 clean-HEAD 자격을 뜻하지 않는다. 미결정 계약은 현행 보장으로 간주하지 않는다.
+아래 표와 우선순위는 `76559c4` 당시의 감사 입력이며 현재 미해결 목록이 아니다. H30, H34, D17, B28 등은 이후 구현됐다. 현재 판정은 `FINAL-REVIEW.md`와 `scenario-evidence.json`을 따른다. fixture의 존재는 해당 시나리오 전체의 PASS나 clean-HEAD 자격을 뜻하지 않는다.
 
 | 대상 | 확인된 근거 | 남은 판정 |
 |---|---|---|

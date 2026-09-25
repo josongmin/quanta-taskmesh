@@ -178,6 +178,39 @@ fn phases_are_monotonic_and_partition_inflight() {
 }
 
 #[test]
+fn dispatch_reserved_can_lease_directly_to_cleanup_pending_once() {
+    let g = gov();
+    let permit = admit(&g, "cleanup-direct");
+    let token = lease(&g, permit, ExecutionPhase::CleanupPending);
+
+    assert_eq!(g.phase(permit), Some(ExecutionPhase::CleanupPending));
+    let observed = &g.snapshot().classes[&TaskClass::new("c")];
+    assert_eq!(observed.cleanup_pending, 1);
+    assert_eq!(observed.dispatch_reserved, 0);
+    assert_eq!(observed.accepted, 0);
+    assert_eq!(observed.running, 0);
+    assert_eq!(
+        observed.started_total, 1,
+        "cleanup-pending is on the started side of the phase boundary"
+    );
+    assert_projection_matches_records(&g, "direct cleanup-pending lease");
+
+    assert_eq!(
+        g.advance_phase(permit, ExecutionPhase::CleanupPending),
+        AdvanceOutcome::Refused(AdvanceRefusal::NotLater {
+            current: ExecutionPhase::CleanupPending,
+        })
+    );
+    assert_eq!(
+        g.snapshot().classes[&TaskClass::new("c")].started_total,
+        1,
+        "a repeated direct cleanup report must not double-count a start"
+    );
+    assert_eq!(g.release_leased(token), ReleaseOutcome::Released);
+    assert_projection_matches_records(&g, "direct cleanup-pending release");
+}
+
+#[test]
 fn accepted_work_is_visible_rather_than_hidden_as_pending() {
     // An adapter that has taken custody but not started is its own phase. Rolling
     // it into "pending" would understate live commitments; rolling it into

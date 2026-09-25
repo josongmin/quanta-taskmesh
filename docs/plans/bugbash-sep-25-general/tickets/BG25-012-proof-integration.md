@@ -13,10 +13,11 @@
 
 ## 근거
 
-- The historical CI-profile receipt is source-bound to its older audit HEAD and is not reused for this implementation.
-- `test-rayon` executes host lib plus one focused integration test.
+- Historical receipts validate only their recorded committed source. The final ignored artifact must be produced and validated after every tracked change is committed.
+- `test-rayon` declares exact host lib, Rayon, direct/host reservation, and public wire roundtrip selectors required by H18. Actual selected count and exit status come from the final receipt.
 - `fuzz-check` compiles/lints; `bench-gate` is allocation-only.
-- no current modelcheck/TSan/fuzz/mutation receipt exists.
+- Modelcheck/TSan/fuzz campaign/coverage/IAI/mutation remain NOT_RUN and are not implied by this CI profile.
+- Static mapping, recipe selectors, and nightly evidence metadata validation fail closed. Compound oracles use explicit supporting cases where one test cannot honestly prove the whole claim. The 104 MAPPED rows still assert source/case existence only; actual Cargo collection and execution status come from the exact-source receipt.
 
 ## 변경 파일
 
@@ -31,7 +32,7 @@
 2. Query actual Cargo test collection; reject missing, filtered, zero-test, cfg-disabled cases.
 3. Expand Rayon selector to execute new feature integration cases without duplicating default tests unnecessarily.
 4. Update modelcheck producer manifest only for new bounded models.
-5. Run owner-local → `just dev` → clean isolated `just verify-macos-ci` in that order.
+5. Run owner-local → `just dev` → clean `just verify-macos-ci` in that order; repeat after the ticket/document source is committed.
 6. Run nightly only when explicitly authorized; retain every NOT_RUN/failure honestly.
 
 ## DoD
@@ -53,3 +54,4 @@
 - Missing external consumer/ingress ownership leaves that row OPEN.
 - Any required-gate or workflow-trigger policy change requires separate review.
 - Mutation, TSan, fuzz campaign, coverage, and modelcheck are not run without explicit authorization.
+- Freeze all owners' changes, commit the final source, and issue/validate one clean final-HEAD CI-profile receipt. Never attach a receipt from another HEAD/tree/path digest.

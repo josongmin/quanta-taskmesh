@@ -2,7 +2,7 @@
 
 ## Verdict
 
-Repository implementation is complete. The overall packet remains partial until exact-source CI proof, D1–D9 human review, and external ingress/wire adoption are supplied by their respective authorities.
+The 104-row static mapping validates on the current dirty tree. New compound fixtures provide candidate evidence for mixed-substrate overload, independent capacity saturation, staged blocker release, policy interactions, concurrent histories, split child lifetimes, and host/simulator accounting. The in-repository semantic audit retains H04's combined race and H16's failure-schedule replay as explicit residuals. Qualification remains open until one clean exact-source macOS CI-profile receipt passes after the final commit. D1–D9 human review and external ingress/planner/wire adoption remain OPEN under their external authorities.
 
 ## Classification
 
@@ -41,14 +41,28 @@ Repository implementation is complete. The overall packet remains partial until 
 - BG25-012 depends on every implementation ticket.
 - Old `sep-25-engine-coverage` is marked superseded rather than deleted.
 - Existing K fixtures remain baselines; tickets target missing combinations instead of duplicating them.
-- Current receipt and nightly limitations are stated without upgrading historical proof.
+- Historical receipts remain source-bound and are never upgraded to later commits. The final receipt is generated only after all tracked changes are committed.
 
 ## Current qualification boundary
 
+- BG25-008: H01 covers four host dispatch paths and reject-before-work; B05 isolates all four capacity dimensions; H07 combines primary/scavenger/fallback/drop policy; H25 releases four blockers independently; H32 preserves measured cross-class memory pressure after class release; D01 distinguishes zero/one/exact/+1 capacity meanings.
+- BG25-009: H04 links separate finite-history, race-storm, and two-thread candidate cases; the original combined four-way race remains unproved. H06 links independent DRR/WFQ/cancellation/cross-pool references. H13 proves both drain futures reached `Pending` before direct release; H14 covers reentrant snapshot/release and callback panic outside the lock. H16 uses a bounded two-thread input ledger, while failure-schedule replay remains unproved.
+- BG25-003/004/005/006/007/010: compound wire, identity, deadline, stack, child-lifetime, and snapshot claims use explicit supporting cases. H18 additionally depends on the `test-rayon` exact selectors and the separate default+rayon `consumer-msrv` gate.
+- BG25-011: H28 compares host and simulator offered/completed/rejected/max-queue counts under the same finite burst without treating virtual wait as host latency. Quiet-host latency and multi-class performance baselines remain separate performance qualification, not correctness gaps.
+- `MAPPED` remains a static source/case relationship. Execution PASS comes only from the exact-source receipt.
 - The library strict ingress exists; deployment owners must explicitly call it at their untrusted byte boundary.
 - Parent-plan stage membership and detached structured concurrency remain outside the engine contract by D4 and the root-child lifetime fixtures.
 - Nightly modelcheck, TSan, fuzz, coverage, IAI, and mutation are NOT_RUN pending explicit authorization.
 
+## Remaining work, in order
+
+| Owner | Required result | Stop condition |
+|---|---|---|
+| BG25-009/012 | Prove H04's combined four-way race and H16's failure-schedule persistence/replay on their authorized rail. | Separate deterministic cases do not prove the combined interleaving or replay clause. |
+| BG25-001/002/003 | Record human D1–D9 review and the actual deployment ingress, planner, and wire consumer call sites with owner-local execution evidence. | Library-local tests cannot close external adoption. |
+| BG25-011 | Record a quiet-host environment and baseline only if a latency or throughput qualification claim is required. | Simulator admission wait is not host latency; a first baseline is not a regression PASS. |
+| BG25-012 | Freeze all owners' changes, commit the final source, and generate/validate one clean final-HEAD macOS CI-profile receipt with durable artifact custody. | A receipt from any other HEAD/tree/path digest is invalid. |
+
 ## External adoption boundary
 
-The repository library implementation is complete. Deployment owners still choose their bytes ingress call site, validate parent-plan membership before submission, and negotiate downstream wire versions. The manifest records candidate evidence locations and does not prove semantic sufficiency, execution, or deployment adoption.
+The repository library implementation is complete for accepted contracts. Deployment owners still choose their bytes ingress call site, validate parent-plan membership before submission, and negotiate downstream wire versions; see [EXTERNAL-ADOPTION.md](EXTERNAL-ADOPTION.md). The manifest records candidate evidence locations and does not prove execution or deployment adoption.

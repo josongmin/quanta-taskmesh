@@ -427,6 +427,12 @@ fn promotion_reassessment_terminalizes_a_newly_formed_parent_cycle() {
         })
     );
     assert_eq!(g.snapshot().classes[&class("child")].queued, 0);
+    assert_cycle(
+        &g.admit(&queued),
+        HeldCapacity::CapabilityPool {
+            pool: "blocking".to_owned(),
+        },
+    );
     assert_eq!(g.release(parent), ReleaseOutcome::Released);
     assert_eq!(g.snapshot().conservation_violation(), None);
 }

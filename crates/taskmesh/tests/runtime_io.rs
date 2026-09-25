@@ -13,8 +13,28 @@ async fn run_io_happy_path() {
         .await
         .expect("io succeeds");
     assert_eq!(out, 7);
-    // permit released: nothing inflight afterwards
-    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+    let snapshot = rt.snapshot();
+    let class = &snapshot.classes[&TaskClass::new("c")];
+    assert_eq!(
+        (
+            class.inflight,
+            class.queued,
+            class.dispatch_reserved,
+            class.accepted,
+            class.running,
+            class.cleanup_pending,
+        ),
+        (0, 0, 0, 0, 0, 0),
+        "a successful IO result must return every phase to idle"
+    );
+    assert!(
+        snapshot
+            .capabilities
+            .values()
+            .all(|capability| capability.in_use == 0),
+        "run_io must not leave any capability reservation"
+    );
+    assert_eq!(snapshot.conservation_violation(), None);
 }
 
 #[tokio::test]

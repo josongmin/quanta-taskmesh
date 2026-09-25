@@ -1,9 +1,9 @@
 # Bugbash Sep-25 general — final resolution plan
 
-- Status: **PARTIAL** overall. Repository implementation is complete; exact-source CI qualification, D1–D9 human contract review, and external ingress/wire adoption remain separate authorities. The 104-row manifest is a static candidate map, not an execution receipt.
+- Status: **PARTIAL** overall. The 104-row structural validator passes and the in-repository semantic audit has explicit residuals; a clean exact-source CI-profile receipt is required after the final commit. D1–D9 human review and external ingress/planner/wire adoption remain OPEN. The manifest is a static candidate map, not an execution receipt.
 - Audit source: `76559c483bdd1d6b0b5226f7c5b5591b919afae9`, tree `215a968630e9f0675bfd1e42f0919bd2047bded2`. Implementation incorporated the later strict-ingress and cross-Governor reproduction history before final source-bound proof.
 - Scenario source: [104-case audit](../../../misc/tmp-engine-checklist-sep-25.md). Its static result is K 51 / P 34 / G 19; all 53 P/G scenarios are assigned exactly once here.
-- Predecessor: `docs/plans/sep-25-engine-coverage/tickets/` is an untracked draft. This directory is the final bugbash execution packet; do not execute both as separate plans.
+- Predecessor: `docs/plans/sep-25-engine-coverage/tickets/` is a tracked superseded draft. This directory is the final bugbash execution packet; do not execute both as separate plans.
 - Scope: contract, engine, Tokio facade, Rayon adapter, benchmark harness, and proof rails. Distributed scheduling, durable workflow recovery, automatic checkpoint execution, caller-owned fan-out/reduce execution, and undeclared closure waits remain out of scope.
 
 ## Read order
@@ -16,7 +16,8 @@
 6. [VERIFICATION](VERIFICATION.md) — evidence and exact-source closure rules.
 7. [COMMANDS](COMMANDS.md) — exact owner-local and integration commands per ticket.
 8. [FINAL REVIEW](FINAL-REVIEW.md) — SOLID/minimality and last-gap audit.
-9. [plan.json](plan.json) — machine-readable ownership and dependency graph.
+9. [EXTERNAL ADOPTION](EXTERNAL-ADOPTION.md) — observed consumer candidate and unverified deployment boundaries.
+10. [plan.json](plan.json) — machine-readable ownership and dependency graph.
 
 ## Tickets
 
@@ -37,4 +38,4 @@
 
 ## Completion boundary
 
-A ticket's implementation can complete independently of proof and external adoption. The packet remains partial until BG25-012 inventories all 104 scenarios, preserves the 51 existing K baselines, maps the 53 assigned P/G rows, and a clean unchanged-HEAD CI-profile receipt proves the selected gates. D1–D9 human review and external deployment adoption remain explicit open states. Nightly/modelcheck/TSan/fuzz/mutation remain separate explicit-cost proof and are not implied by CI-profile completion.
+A ticket's implementation can complete independently of proof and external adoption. BG25-012 has inventoried all 104 scenarios, preserved the 51 K baselines, and mapped the 53 P/G rows to declared test cases and explicit supporting cases. The validator rejects ignored or feature-disabled cases and verifies exact Rayon selectors; it does not execute tests. Qualification requires a clean unchanged-HEAD macOS CI-profile receipt for the final commit. D1–D9 human review and external deployment adoption remain explicit open states. Nightly/modelcheck/TSan/fuzz/mutation remain separate explicit-cost proof and are not implied by CI-profile completion.

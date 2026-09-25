@@ -14,9 +14,10 @@
 ## 근거
 
 - fairness reference와 promotion-budget/waker panic isolated fixtures는 강하다.
-- differential model은 memory, DRR/WFQ, waker, child, reap, promotion budget을 제외한다.
+- `hardening_queue_history.rs`가 release/promotion/reap/claim/abandon과 clock watermark를 하나의 bounded deterministic history로 검증한다. `hardening_drain.rs`는 두 drain future가 각각 `Pending`까지 poll된 뒤 한 direct release에 함께 깨어나는지 검증한다.
+- 기존 differential model은 memory, DRR/WFQ, waker, child, reap, promotion budget까지 포괄하는 전체 model이 아니다. 이 범위의 modelcheck qualification을 주장하지 않는다.
 - `pending_view`는 현재 assessment를 재계산하며 admission-time blocker를 고정하지 않는다.
-- current HEAD modelcheck receipt는 없다.
+- Deterministic test와 nightly modelcheck는 별도 proof rail이다. current HEAD modelcheck receipt는 없다.
 
 ## 변경 파일
 
@@ -46,8 +47,17 @@
 
 ## 검증
 
-- Default deterministic tests first.
+- Default deterministic tests는 최종 committed HEAD의 BG25-012 receipt에서 판정한다.
 - `just modelcheck` only after producer manifest/scenario set is updated and explicit high-cost run is authorized.
+
+## 최종 의미 감사
+
+- H04는 ManualClock finite history에 actual claim/timeout/abandon race storm과 두-thread release/reap history를 supporting cases로 연결한다. 네 방향 경합을 한 재현 가능한 history에서 독립 ledger로 판정하는 원래 oracle은 아직 입증되지 않았다.
+- H06은 DRR heterogeneous cost/quantum reference를 primary로 두고 WFQ non-head service tag, cross-pool service 뒤 cancellation debt, middle cancellation survivor order를 supporting cases로 연결한다.
+- H13은 direct release/abandon/reap, finite/unbounded drain wake, release 전 양쪽 `Pending` 등록을 확인한 동시 drain caller, 첫 snapshot과 release 경합 cases를 연결한다. H14는 panicking `PermitWaker`, reentrant wake/drop/release, reentrant·panicking `SettlementWaker`, promotion-budget 초과 backlog의 별도 cases를 연결한다.
+- H16은 두 스레드의 동시 admit 및 release/admit/reap 경합을 barrier와 quiescent input ledger로 검사한다. 현재 case는 실패 interleaving의 정확한 기록·재실행을 증명하지 않으므로 해당 DoD는 OPEN이다. modelcheck 등 별도 rail에서 증명하면 source-bound receipt를 연결한다.
+- H25는 class/pool/CPU/memory 네 blocker를 동시에 만든 뒤 pool release→CPU release→memory reconcile→class release를 적용하고 매 단계 full blocker set, primary, queue conservation, 마지막 단일 promotion을 검증한다. 실행 판정은 최종 committed HEAD의 receipt에만 둔다.
+- 모두 현재 소스 결함으로 단정하지 않는다. Nightly modelcheck 미실행도 deterministic CI-profile PASS와 분리한다.
 
 ## 인계 및 중단 조건
 

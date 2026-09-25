@@ -25,8 +25,8 @@ use taskmesh_contract::{
     MemoryReleasePolicy, OverflowPolicy, PermitWaker, ResourceBudget, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
-    AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome,
-    ResolvedCapability, TerminalReason, Ticket, PROMOTION_BUDGET,
+    AbandonOutcome, AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId, PolicySet,
+    ReleaseOutcome, ResolvedCapability, TerminalReason, Ticket, PROMOTION_BUDGET,
 };
 
 const SCHEDULES: usize = 10_000;
@@ -224,8 +224,22 @@ fn randomized_promote_claim_double_abandon_is_exactly_once() {
             let a2 = abandon(Arc::clone(&g));
             promoter.join().unwrap();
             claimer.join().unwrap();
-        let _first_abandon_outcome = a1.join().unwrap();
-        let _second_abandon_outcome = a2.join().unwrap();
+            let first_abandon_outcome = a1.join().unwrap();
+            let second_abandon_outcome = a2.join().unwrap();
+            assert!(matches!(
+                first_abandon_outcome,
+                AbandonOutcome::Abandoned | AbandonOutcome::Invalid
+            ));
+            assert!(matches!(
+                second_abandon_outcome,
+                AbandonOutcome::Abandoned | AbandonOutcome::Invalid
+            ));
+            assert!(
+                usize::from(first_abandon_outcome == AbandonOutcome::Abandoned)
+                    + usize::from(second_abandon_outcome == AbandonOutcome::Abandoned)
+                    <= 1,
+                "only one abandoner may end the ticket"
+            );
 
             assert!(matches!(
                 g.ticket_status(ticket),

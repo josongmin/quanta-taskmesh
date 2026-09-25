@@ -47,6 +47,8 @@ fn estimated_mode_uses_configured_units() {
     // Reconcile is a no-op for estimated mode.
     assert!(g.reconcile_memory(p, 9_999).is_applied());
     assert_eq!(held(&g, &c), 3);
+    assert_eq!(g.release(p), ReleaseOutcome::Released);
+    assert_eq!(held(&g, &c), 0);
 }
 
 #[test]
@@ -57,6 +59,8 @@ fn measured_mode_converts_bytes_to_units() {
                                  // 25 bytes / 10 bytes-per-unit = ceil = 3 units.
     assert!(g.reconcile_memory(p, 25).is_applied());
     assert_eq!(held(&g, &c), 3);
+    assert_eq!(g.release(p), ReleaseOutcome::Released);
+    assert_eq!(held(&g, &c), 0);
 }
 
 #[test]
@@ -72,4 +76,6 @@ fn hybrid_reconcile_keeps_max_of_estimate_and_measured() {
     // measured 30 bytes -> 3 units; max(5, 3) = 5 (never drops below estimate).
     assert!(g.reconcile_memory(p, 30).is_applied());
     assert_eq!(held(&g, &c), 5);
+    assert_eq!(g.release(p), ReleaseOutcome::Released);
+    assert_eq!(held(&g, &c), 0);
 }

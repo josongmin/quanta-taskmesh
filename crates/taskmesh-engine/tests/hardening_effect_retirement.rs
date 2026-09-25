@@ -85,6 +85,23 @@ struct ReentrantPanickingSettlementWaker {
     wakes: AtomicUsize,
 }
 
+struct ReentrantReleaseWaker {
+    governor: Weak<Governor>,
+    permit: PermitId,
+    wakes: Arc<AtomicUsize>,
+}
+
+impl PermitWaker for ReentrantReleaseWaker {
+    fn wake(&self) {
+        let governor = self
+            .governor
+            .upgrade()
+            .expect("governor remains alive while the callback runs");
+        assert_eq!(governor.release(self.permit), ReleaseOutcome::Released);
+        self.wakes.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
 impl SettlementWaker for ReentrantPanickingSettlementWaker {
     fn wake(&self) {
         let governor = self
@@ -306,6 +323,63 @@ fn promotion_wakes_a_reentrant_waker_outside_the_lock() {
         panic!("the queued request must have been promoted");
     };
     assert_eq!(governor.release(permit), ReleaseOutcome::Released);
+}
+
+#[test]
+fn promotion_waker_can_reenter_release_on_an_independent_permit() {
+    let mut classes = BTreeMap::new();
+    for name in ["queued", "independent"] {
+        classes.insert(
+            TaskClass::new(name),
+            ClassPolicy::new()
+                .max_inflight(1)
+                .max_queue_depth(1)
+                .cpu_units(1)
+                .overflow_policy(OverflowPolicy::QueueWithinDepth),
+        );
+    }
+    let governor = Arc::new(
+        Governor::new(
+            PolicySet::new(ResourceBudget::new().cpu_units(2), classes),
+            Arc::new(ManualClock::new(0)),
+        )
+        .expect("valid two-class policy"),
+    );
+    let queued_holder =
+        match governor.admit(&TaskSpec::io(TaskClass::new("queued")).operation("queued-holder")) {
+            AdmissionDecision::Admitted { permit_id } => permit_id,
+            other => panic!("queued class holder must admit: {other:?}"),
+        };
+    let independent = match governor
+        .admit(&TaskSpec::io(TaskClass::new("independent")).operation("independent-holder"))
+    {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("independent holder must admit: {other:?}"),
+    };
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let waker: Arc<dyn PermitWaker> = Arc::new(ReentrantReleaseWaker {
+        governor: Arc::downgrade(&governor),
+        permit: independent,
+        wakes: Arc::clone(&wakes),
+    });
+    let ticket = match governor.admit_waitable(
+        &TaskSpec::io(TaskClass::new("queued")).operation("queued-follower"),
+        waker,
+    ) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("follower must queue: {other:?}"),
+    };
+
+    let releasing = Arc::clone(&governor);
+    with_deadline("promotion callback re-enters release", move || {
+        assert_eq!(releasing.release(queued_holder), ReleaseOutcome::Released);
+    });
+    assert_eq!(wakes.load(Ordering::SeqCst), 1);
+    let ClaimOutcome::Ready(promoted) = governor.claim(ticket) else {
+        panic!("queued follower must already own the promoted slot")
+    };
+    assert_eq!(governor.release(promoted), ReleaseOutcome::Released);
+    assert_eq!(governor.snapshot().conservation_violation(), None);
 }
 
 #[test]

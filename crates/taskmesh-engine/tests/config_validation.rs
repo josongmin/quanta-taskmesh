@@ -395,6 +395,28 @@ fn different_discipline_across_tiers_is_ok() {
     assert_eq!(Governor::validate_policy(&p), Ok(()));
 }
 
+#[test]
+fn disabled_classes_do_not_participate_in_fairness_discipline_agreement() {
+    let p = policy(
+        ResourceBudget::new(),
+        vec![
+            ("active", ClassPolicy::new().fairness(FairnessPolicy::Fifo)),
+            (
+                "disabled",
+                ClassPolicy::new()
+                    .max_inflight(0)
+                    .fairness(FairnessPolicy::DeadlineAware { slack_ms: 1 }),
+            ),
+        ],
+    );
+    assert_eq!(Governor::validate_policy(&p), Ok(()));
+    let governor = Governor::new(p, Arc::new(ManualClock::new(0))).expect("valid policy");
+    assert_eq!(
+        governor.admit(&TaskSpec::io(TaskClass::new("disabled")).operation("disabled")),
+        AdmissionDecision::Rejected(AdmissionVerdict::ClassDisabled)
+    );
+}
+
 /// The three `validate_policy` rejections the coverage report showed no test
 /// reaching. Each one asserts the *named* violation: `is_err()` alone would be
 /// satisfied by any earlier rule tripping on the same fixture.

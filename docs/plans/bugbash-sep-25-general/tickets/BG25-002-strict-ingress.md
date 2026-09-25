@@ -13,10 +13,9 @@ Raw DTO 호환성을 유지하면서 untrusted bytes를 execution/config authori
 
 ## 근거
 
-- `TaskScope::Child.parent_awaits`는 `#[serde(default)]`다.
-- `TaskSpec.stack_size_bytes`는 optional이며 unknown key는 무시된다.
-- topology의 `physical_domains`도 default 가능하다.
-- 현재 validator에는 stage-count와 preparse-byte 상한이 없다.
+- 호환성용 raw DTO는 `parent_awaits`/`stack_size_bytes`/topology default와 unknown field 허용 의미를 유지한다.
+- `crates/taskmesh/src/ingress.rs`의 `parse_task_spec`/`parse_runtime_config`는 byte cap, depth/stage cap, duplicate/unknown 거절, 명시적 wait/dispatch를 별도 strict 경계에서 처리한다.
+- `crates/taskmesh/tests/strict_ingress.rs`의 D04/D21/D22/D25/H33 negative/control fixture가 104행 정적 목록에 연결돼 있다. 외부 배포 bytes 진입점의 실제 호출은 이 저장소의 테스트로 증명되지 않는다.
 
 ## 변경 파일
 
@@ -45,8 +44,12 @@ Raw DTO 호환성을 유지하면서 untrusted bytes를 execution/config authori
 ## 검증
 
 - Owner-local contract+host negative/control fixture.
-- 실제 strict entrypoint가 default `just test`에 수집되는지 확인한다.
+- scenario validator는 다섯 행의 실제 target/case와 test attribute를 확인한다. 실행 PASS는 최종 committed HEAD의 BG25-012 receipt에서만 판정한다.
 - 외부 deployment ingress가 별도면 그 consumer receipt 없이는 integration DoD를 닫지 않는다.
+
+## 최종 감사
+
+- 라이브러리 strict parser와 다섯 negative/control fixture는 존재한다. 로컬 `code-new` Rust 소스 검색에서 배포 측 `parse_task_spec`/`parse_runtime_config` 호출은 확인되지 않았다. 따라서 외부 bytes boundary의 실제 채택은 OPEN이다.
 
 ## 인계 및 중단 조건
 

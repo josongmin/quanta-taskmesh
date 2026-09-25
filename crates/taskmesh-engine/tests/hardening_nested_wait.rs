@@ -26,7 +26,9 @@ use taskmesh_contract::{
     AdmissionVerdict, ClassPolicy, HeldCapacity, ManualClock, MemoryOvercommitPolicy,
     OverflowPolicy, ResourceBudget, TaskClass, TaskSpec, TaskStage,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PermitId, PolicySet, ReleaseOutcome, Ticket};
+use taskmesh_engine::{
+    AbandonOutcome, AdmissionDecision, Governor, PermitId, PolicySet, ReleaseOutcome, Ticket,
+};
 
 fn class(name: &'static str) -> TaskClass {
     TaskClass::new(name)
@@ -389,6 +391,40 @@ fn a_queued_child_does_not_rebind_to_a_reused_parent_operation() {
         panic!("the replacement's release must promote the queued child")
     };
     assert_eq!(g.release(child), ReleaseOutcome::Released);
+}
+
+#[test]
+fn abandoning_a_queued_child_recycles_its_slot_across_parent_generations() {
+    let g = governor(
+        vec![
+            ("parent", Shape::queueing(4)),
+            ("child", Shape::queueing(1)),
+        ],
+        100,
+        100,
+        1,
+    );
+    let old_parent = admit(&g, &root("parent", "root"));
+    let class_holder = admit(&g, &root("child", "class-holder"));
+    let child = TaskSpec::blocking(class("child"))
+        .awaited_child_of("root", "root", TaskStage::new("child"))
+        .operation("child");
+    let ticket = queued("child behind its class holder", g.admit(&child));
+
+    assert_eq!(g.release(old_parent), ReleaseOutcome::Released);
+    let replacement = admit(&g, &blocking_root("parent", "root"));
+    assert_eq!(g.abandon(ticket), AbandonOutcome::Abandoned);
+    refused_as_cycle(
+        "the abandoned child's slot is reusable by the replacement generation",
+        g.admit(&child),
+        &HeldCapacity::CapabilityPool {
+            pool: "blocking".to_owned(),
+        },
+    );
+
+    assert_eq!(g.release(replacement), ReleaseOutcome::Released);
+    assert_eq!(g.release(class_holder), ReleaseOutcome::Released);
+    assert_eq!(g.snapshot().conservation_violation(), None);
 }
 
 #[test]

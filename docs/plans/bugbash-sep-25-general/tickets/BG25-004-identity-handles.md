@@ -2,7 +2,7 @@
 
 - 구현 상태: IMPLEMENTED
 - 증명 상태: STATIC_MAPPED
-- 외부 상태: NOT_APPLICABLE — qualification pending
+- 외부 상태: NOT_APPLICABLE
 - 우선순위: P1
 - 선행: BG25-001 D4–D5
 - 소유: contract/API owner → engine owner → consumer owner
@@ -30,8 +30,8 @@
 1. 두 Governor가 같은 permit/ticket local sequence를 발급하는 control을 고정했다.
 2. foreign release/advance/claim/abandon이 typed negative outcome, state/callback 0임을 고정했다.
 3. Governor authority + local sequence를 private하게 가진 handle과 telemetry sequence를 분리했다.
-4. parent membership은 외부 planner owner와 fixture를 지정한다.
-5. public facade와 MSRV consumer를 migration한다.
+4. parent membership의 검증 책임은 외부 planner에 남는다. 실제 consumer owner와 fixture는 아직 연결되지 않았다.
+5. public facade와 MSRV consumer를 opaque handle로 이전했다.
 
 ## DoD
 
@@ -46,11 +46,14 @@
 - `cargo test --locked -p taskmesh-engine --test identity_authority`
 - Counter exhaustion/wrap은 `IdentityExhausted`이며 ID 재사용이 아님을 세 counter 각각 검증한다.
 
-## 현재 재현 범위 (2026-09-25)
+## 현재 증거 범위
 
-- `cross_governor_ids`의 4개 control이 두 Governor의 raw ID 충돌과 상대 Governor에서의 `release`/`advance_phase`/`claim`/`abandon` 로컬 효과를 각각 재현한다. Focused test 4/4와 해당 target Clippy가 통과했다.
-- 이 테스트는 **현행 결함 재현**이다. foreign 입력을 거절하는 목표 동작, opaque owner-bound handle, public facade migration은 아직 구현되지 않았다.
-- D5의 breaking API/semver 선택은 미결이다. 결정 전에는 raw aliases/outcomes를 교체하거나 재현 테스트를 성공 증거로 승격하지 않는다.
+- `cross_governor_ids`는 이전 raw local-sequence 충돌의 회귀 control이고 `identity_authority::foreign_handles_never_alias_same_sequence_local_state`는 현재 foreign handle의 네 transition 거절을 검증한다.
+- `PermitId`/`Ticket`은 private Governor authority를 가진 opaque handle이며 public facade, fuzz harness, consumer-MSRV fixture가 새 결과형을 사용한다. 실행 결과는 최종 committed HEAD의 BG25-012 receipt에서 판정한다.
+- D5 라이브러리 선택은 [DECISIONS](DECISIONS.md)에 accepted다. 이 티켓은 라이브러리 handle 이전을 담당한다. 외부 consumer의 API/semver migration 승인과 parent-plan membership 검증은 BG25-001/003의 OPEN 경계로 남는다.
+- Header의 `NOT_APPLICABLE`은 이 티켓이 외부 채택을 소유하지 않는다는 뜻이다. 외부 작업 자체는 BG25-001/003에서 OPEN으로 추적한다.
+- B21은 admitted holder의 stage 차이와 함께 `duplicate_identity_is_global_across_classes_and_includes_queued_requests`로 class 차이, queued identity, 종료 후 재사용까지 검증한다.
+- H18은 Rayon CPU soak/drain, physical-domain authority, direct/host multistage reservation, public wire roundtrip과 legacy alias를 `test-rayon` exact selectors로 연결한다. 별도 `consumer-msrv` gate가 default+rayon 외부 fixture를 declared MSRV에서 실행하므로 최종 호환성 판정은 두 gate가 모두 PASS일 때만 성립한다.
 
 ## 인계 및 중단 조건
 

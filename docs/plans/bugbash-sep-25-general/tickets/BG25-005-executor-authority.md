@@ -13,10 +13,9 @@ Builder가 검증한 executor descriptor를 runtime의 단일 불변 authority�
 
 ## 근거
 
-- `builder.rs`는 descriptor를 검증하지만 `runtime.rs::plan`과 public accessor가 다시 조회한다.
-- stateful custom adapter는 domain `None`으로 panic하거나 worker/domain 선언을 바꿀 수 있다.
+- `builder.rs`가 검증한 descriptor는 runtime에 저장되며 `runtime.rs::plan`과 public accessor는 adapter를 재조회하지 않는다. Mutable custom adapter와 domain `None` 회귀는 fixture가 검증한다.
 - default Tokio descriptor는 실제 ambient blocking pool 관측값이 아니라 Taskmesh submission gate 선언이며 `exclusive_pool=false`다.
-- current two-runtime test는 순차 호출과 요청별 새 OS thread라 bounded shared pool을 증명하지 않는다.
+- `hardening_executor_protocol.rs`는 worker 1 shared executor의 두 runtime 합산 peak를 barrier와 독립 counter로 확인한다.
 
 ## 변경 파일
 
@@ -53,7 +52,8 @@ Builder가 검증한 executor descriptor를 runtime의 단일 불변 authority�
 - H15: submit panic, accepted closure hold/drop/execute, caller drop에서 user closure 최대 1회와 lease custody를 검증한다.
 - H27: worker 1 shared executor의 runtime별 gate와 aggregate peak 1을 barrier 기반 독립 counter로 검증한다.
 - D16: portable `Auto` 선언과 build-time resolved executor snapshot을 문서와 accessor에서 구분한다.
-- Default와 Rayon focused control, `just dev`, exact-head macOS CI profile을 BG25-012 evidence rail에서 재실행한다.
+- Default와 Rayon control은 최종 committed HEAD의 BG25-012 receipt에서 함께 판정한다.
+- D16은 현 머신의 detected parallelism과 Auto gate 비교에 RuntimeConfig JSON 왕복 supporting case를 연결한다. 다른 머신의 resolved 값은 동일한 portable 선언을 각 host에서 build할 때 정해지는 환경 결과이며 단일 호스트 CI가 그 값을 미리 고정하지 않는다.
 
 ## 인계 및 중단 조건
 

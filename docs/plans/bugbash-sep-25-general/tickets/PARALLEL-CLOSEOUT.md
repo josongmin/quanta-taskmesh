@@ -1,8 +1,10 @@
 # Sep-25 병렬 잔여 작업 계획
 
-최초 조사 기준: 2026-09-25의 clean `c87e0832db0ec5b29d52c05213e872c442cc7ea3`. 이 커밋의 macOS CI-profile 영수증은 16/16 PASS, `qualified=true`다. **이후 커밋 및 현재 미커밋 변경에는 해당 영수증을 재사용할 수 없다.** 착수·통합 직전에 HEAD, tree, dirty 경로와 각 변경의 소유자를 다시 고정한다.
+최초 조사 기준은 2026-09-25의 clean `c87e0832db0ec5b29d52c05213e872c442cc7ea3`였다. 그 영수증은 이후 변경에 재사용하지 않는다. 통합자는 최종 tracked source를 모두 커밋한 뒤 새 HEAD/tree/path digest로 CI-profile 영수증을 발행한다.
 
 BG25-001~012의 저장소 구현은 위 커밋에 들어갔다. 이 문서는 과거 구현 웨이브를 재실행하는 계획이 아니라, 남은 의미 검증·외부 채택·최종 exact-source 확인의 작업 배치다. `EXECUTION.md`의 W0~W4는 역사적 통합 기록으로 취급한다.
+
+2026-09-25 재감사 갱신: H01/H06/H07/H16/H28/D01의 새 fixture와 supporting-case mapping이 현재 통합 소스에 추가됐다. 후속 감사에서 B05/B21/H25/H32, D05/D13/D14/D15/D16/D20, H04/H11/H13/H14/H18/H21/H35의 복합 주장도 직접 fixture 또는 exact supporting cases로 연결했다. H04의 결합 경합과 H16의 실패 schedule 저장·재실행은 여전히 OPEN이며, 실행 판정은 최종 exact-source receipt에서만 한다.
 
 ## 남은 작업의 종류
 
@@ -10,7 +12,7 @@ BG25-001~012의 저장소 구현은 위 커밋에 들어갔다. 이 문서는 �
 |---|---|---|
 | 저장소 구현 | BG25-001~012 구현됨. 이번 재감사에서 추가 production 결함은 아직 확정되지 않음 | 새로운 source 수정은 결정적 RED 반례가 있을 때만 |
 | 시나리오 의미 검증 | 104/104 `MAPPED`는 테스트 이름이 있는 **정적 후보 매핑**. 실행·oracle 충족을 뜻하지 않음 | 각 주장과 실제 assertion을 대조하고 과장된 행은 좁히거나 최소 fixture를 추가 |
-| 현재 dirty 변경 | 기존 `c87e083` receipt 밖 | 소유자별 focused proof → 직렬 통합 → clean final HEAD receipt |
+| 최종 tracked 변경 | 과거 receipt 밖 | 소유자별 focused proof → 직렬 통합 → clean final HEAD receipt |
 | 배포 채택 | 외부 bytes ingress, parent planner, wire consumer 호출점·소유자 미확인 | 실제 consumer 변경과 그 저장소의 통합 증거. 이 저장소 테스트로 대체 불가 |
 | nightly/release | 미실행 | 별도 명시적 승인 필요. 보통의 Mac-local 작업에 mutation/modelcheck/TSan/fuzz 캠페인 포함 금지 |
 
@@ -27,14 +29,14 @@ BG25-001~012의 저장소 구현은 위 커밋에 들어갔다. 이 문서는 �
 
 ### 우선 의미 검토 대상 (확정 버그 목록 아님)
 
-| ID / owner | 현 매핑 | 우선 확인할 미증명 주장과 최소 처리 |
+| ID / owner | 현 매핑 | 재감사 결과 |
 |---|---|---|
-| H01 / B→C | `crates/taskmesh/tests/e2e_scenarios.rs::overload_is_bounded_and_fail_closed` | 현재 단일 class·IO 포화가 다중 class·네 substrate 과부하까지 증명하는지 확인. 인접 `e2e_chaos.rs`와 `host_open_loop.rs`를 재사용할 수 있는지 먼저 보고, 부족하면 유한한 mixed-substrate 대표 fixture 하나만 추가. |
-| H06 / C | `crates/taskmesh-engine/tests/hardening_fairness_reference.rs::cancelling_from_the_middle_preserves_the_order_of_the_survivors` | 같은 class FIFO 취소와 mixed weight/cost WFQ·DRR, cross-pool follower 순서는 다른 주장. 기존 fairness fixture를 합쳐도 부족한 부분만 보강. |
-| H07 / C | `crates/taskmesh-engine/tests/fairness_best_effort.rs::the_whole_primary_tier_precedes_the_whole_best_effort_tier` | tier 순서 외 scavenger·memory fallback까지 실제 assertion이 있는지 전역 테스트 검색 후 판단. |
-| H16 / C | `crates/taskmesh-engine/tests/differential_model.rs::engine_agrees_with_the_reference_model` | 순차 differential model과 두 스레드 interleaving/replay를 분리. 동시 이력 증거가 없으면 별도 bounded fixture 또는 의미 검토 `GAP`. |
-| H28 / B | `crates/taskmesh/tests/host_open_loop.rs::offered_terminal_unanswered_and_execution_counts_close_exactly` | 현재 작은 단일 class burst의 정확한 계수와 simulator와의 결과 범위 비교는 별개. 비교가 요구사항인지 결정하고 최소 측정 fixture를 추가하거나 과장된 oracle을 정정. |
-| D01 / C | `crates/taskmesh-engine/tests/hardening_admission_matrix.rs::capacity_zero_one_exact_and_plus_one_are_unambiguous` | CPU budget 외 quota/depth/pool 각각의 0/1/exact/+1 근거를 확인. 이미 있는 경계 테스트를 연결하고 빈 경계만 추가. |
+| H01 / B→C | `crates/taskmesh/tests/hardening_mixed_overload.rs::mixed_substrate_open_loop_burst_never_reaches_workers_before_permit` | 네 class·네 dispatch, role/physical occupancy, typed reject, worker side-effect 0, drain/reuse를 직접 검사한다. |
+| H06 / C | `crates/taskmesh-engine/tests/hardening_fairness_reference.rs::drr_selection_matches_the_reference_for_heterogeneous_costs` + supporting cases | DRR/WFQ, middle cancellation, cross-pool service debt를 독립 reference cases로 연결한다. |
+| H07 / C | `hardening_policy_interactions.rs::primary_scavenger_memory_fallback_and_drop_best_effort_keep_their_contracts` | primary/scavenger/fallback/drop을 한 bounded history에서 검사한다. |
+| H16 / C | `crates/taskmesh-engine/tests/hardening_concurrent_history.rs::two_thread_admit_release_and_reap_match_a_quiescent_reference_ledger` | 두 스레드 admit/release/reap과 input-derived quiescent ledger를 검사한다. H16 DoD의 exact failure-schedule persistence/replay는 미해결 nightly rail이다. |
+| H28 / B | `crates/taskmesh-bench/tests/host_simulator_comparison.rs::real_host_and_simulator_agree_on_bounded_burst_accounting` | 동일 finite burst의 host/simulator semantic counts와 max queue를 비교하며 latency 의미를 섞지 않는다. |
+| D01 / C | `hardening_policy_interactions.rs::zero_one_exact_and_plus_one_are_distinct_for_every_capacity_kind` | quota/depth/pool/budget의 zero/one/exact/+1 의미를 명시적으로 구분한다. |
 
 위 여섯 행은 빠른 탐색 출발점일 뿐이다. A/B/C/D는 각자 할당된 **전체 16/18/19/51행**을 감사한다. 새 검증기가 `#[ignore]` 또는 cfg 비수집 함수를 이름만으로 인정하지 않는지도 D가 실제 Cargo 수집과 대조한다.
 

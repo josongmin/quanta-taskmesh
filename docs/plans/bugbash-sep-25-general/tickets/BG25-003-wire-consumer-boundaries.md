@@ -15,7 +15,8 @@
 
 - Snapshot만 schema version을 갖고 derived enum Deserialize는 unknown variant를 거절한다.
 - `conservation_violation()`은 wire snapshot과 live permit ledger의 완전한 일치를 증명하지 않는다.
-- close 전에 malformed/capability preflight가 실행될 수 있는데 rustdoc 표현과 외부 문서가 완전히 정렬되지 않았다.
+- D17 closed-admission preflight 우선순위는 `governor.rs` rustdoc과 `hardening_close_admission.rs`의 무부작용 fixture에 정렬됐다.
+- B18/B24/D03/D13/D14/D17/D23은 104행 정적 목록에 target/case가 연결돼 있다. 외부 wire consumer의 버전 협상과 오류 처리는 별도 채택 증거가 필요하다.
 
 ## 변경 파일
 
@@ -43,8 +44,13 @@
 
 ## 검증
 
-- Contract tests + public facade consumer test + doctest/rustdoc.
+- contract/public facade test와 doctest/rustdoc는 최종 committed HEAD의 BG25-012 receipt에서 판정한다.
 - 외부 consumer가 있으면 해당 버전 조합의 receipt를 별도로 요구한다.
+
+## 최종 감사
+
+- 라이브러리 wire/version/closed-preflight fixture는 정적 목록에 연결돼 있다. 배포 consumer가 Snapshot version·미래 enum decode 실패·opaque handle migration을 어떻게 처리하는지는 이 저장소의 fixture로 검증할 수 없다. 외부 owner의 호출점과 실행 증거가 OPEN이다.
+- D13은 미래 enum decode/Snapshot 버전 case에 TaskSpec, RuntimeConfig, Snapshot, legacy PlanSource 왕복 supporting cases를 연결했다. D14는 허용된 특이 class의 thread label과 NUL·비ASCII·길이 초과 class 거절 case를 함께 연결한다. 외부 consumer의 버전 협상은 여전히 별도 채택 증거가 필요하다.
 
 ## 인계 및 중단 조건
 

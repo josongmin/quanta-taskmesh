@@ -294,6 +294,21 @@ struct PanicAfterEnqueueExecutor {
     enqueued: HeldJobs,
 }
 
+struct DroppingExecutor;
+
+impl CpuExecutor for DroppingExecutor {
+    fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
+        drop(work);
+    }
+
+    fn capabilities(&self) -> ExecutorCapabilities {
+        ExecutorCapabilities::legacy()
+            .nonblocking_submit(true)
+            .declared_workers(1)
+            .physical_domain(PHYSICAL_CPU)
+    }
+}
+
 impl CpuExecutor for PanicAfterEnqueueExecutor {
     fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
         self.enqueued.lock().expect("lock").push(work);
@@ -367,6 +382,40 @@ async fn an_executor_that_panics_after_accepting_does_not_run_the_job_twice() {
     held();
     assert_eq!(ran.load(Ordering::SeqCst), 1, "and it runs exactly once");
     assert_drains(&rt, &TaskClass::new("c"), "panicking adapter").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_executor_that_drops_an_accepted_job_reports_abandonment_and_refunds_custody() {
+    let class = TaskClass::new("c");
+    let rt = Builder::new()
+        .topology(TopologyConfig::new().cpu_fixed(1))
+        .resources(ResourceBudget::new().cpu_units(1).memory_units(1))
+        .class_policy(
+            class.clone(),
+            ClassPolicy::new().max_inflight(1).cpu_units(1),
+        )
+        .cpu_executor(Arc::new(DroppingExecutor))
+        .build()
+        .expect("runtime builds");
+    let ran = Arc::new(AtomicUsize::new(0));
+    let ran_in_work = Arc::clone(&ran);
+
+    let error = rt
+        .run_cpu(
+            TaskSpec::cpu(class.clone()).operation("dropped"),
+            move || {
+                ran_in_work.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, ()>(())
+            },
+        )
+        .await
+        .expect_err("dropping accepted custody must be reported");
+    assert!(matches!(
+        error,
+        RunError::Governor(GovernorError::JobAbandoned { .. })
+    ));
+    assert_eq!(ran.load(Ordering::SeqCst), 0);
+    assert_drains(&rt, &class, "dropped accepted job").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

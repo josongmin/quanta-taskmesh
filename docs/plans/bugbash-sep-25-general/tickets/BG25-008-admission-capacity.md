@@ -14,9 +14,8 @@ class, capability, CPU, measured memory, tier/fallback이 동시에 충돌할 �
 ## 근거
 
 - 현재 intake는 모든 blocker를 계산하고 primary ordering을 적용한다.
-- exact accounting과 single-dimension fixtures는 강하다.
-- 여러 class/resource가 겹치는 direct oracle과 real-host open-loop evidence는 부족하다.
-- engine audit에서 새 source defect는 확인되지 않았으므로 counterexample 우선이다.
+- 기존 exact accounting과 single-dimension fixture에 `hardening_admission_matrix.rs`, 독립 input ledger, real-host `host_open_loop.rs`가 추가됐다.
+- 이 oracle에서 추가 production mismatch는 관측되지 않았다. 성능 상한이나 배포 host 채택까지 증명하는 결과는 아니다.
 
 ## 변경 파일
 
@@ -54,7 +53,17 @@ class, capability, CPU, measured memory, tier/fallback이 동시에 충돌할 �
 - `hardening_admission_matrix`는 compound blocker 전체 집합, primary precedence, queue-policy 전환, rejected side-effect 0, 0/1/exact/+1 경계를 검증한다.
 - `hardening_admission_ledger`는 입력 이벤트에서 독립 계산한 class CPU/memory, inflight, blocking-pool occupancy를 cross-class admit/release마다 대조한다.
 - `host_open_loop`는 실제 host 응답과 worker custody ledger를 분리해 closure, queue, execution accounting을 검증한다.
-- 이 oracle들에서 추가 production mismatch는 관측되지 않았다. 최종 자격은 BG25-012의 clean exact-source receipt에 종속된다.
+- 이 oracle들에서 추가 production mismatch는 관측되지 않았다. 실행 결과는 최종 committed HEAD의 BG25-012 receipt에서 판정한다.
+
+## 최종 의미 감사
+
+- H01은 `1b1d8f6`에서 `hardening_mixed_overload::mixed_substrate_open_loop_burst_never_reaches_workers_before_permit`로 재매핑됐다. 이 case는 네 class/dispatch, capability·physical-domain 점유, 16건 동시 burst의 typed reject, worker side-effect 0, 반환 후 재사용을 assertion으로 확인한다. 대응 fixture와 assertion 후보가 추가됐으며 실행 결과와 전체 oracle 충족은 최종 HEAD 감사/receipt에서 판정한다.
+- A05는 global CPU host contention과 cross-class memory reconcile/promotion의 input-derived ledger case를 함께 연결한다.
+- B05는 class quota, capability pool, CPU budget, memory budget을 다른 한계가 여유인 상태에서 각각 포화시키는 case로 재매핑했다. B20의 primary case는 `local_runtime` 1/1 포화, exact capability blocker, 다른 physical-domain 무변경, unrelated blocking 진전을 검사한다. 같은 파일의 large-stack case는 role pool과 wider dedicated domain의 분리를 별도로 보강한다.
+- H07은 `c238a63`에서 새 `hardening_policy_interactions::primary_scavenger_memory_fallback_and_drop_best_effort_keep_their_contracts`로 재매핑됐다. 이 커밋된 case는 primary, scavenger, memory fallback, explicit drop을 한 이력에서 검사한다. fallback class와 blocker 재평가, tier 순서, 최종 conservation assertion은 있다. 실행 결과는 최종 HEAD receipt에서 판정한다.
+- H32는 다른 class의 measured overcommit, 대상 class holder release 뒤 memory-primary queue 유지, pressure release 뒤 promotion을 한 이력에서 직접 검증한다.
+- D01은 disabled quota와 class 1/+1, queue depth 0/1/+1, pool 0/1/+1, CPU·memory global budget 각각 0/1/+1 및 과대 per-request cost를 명시적으로 구분한다. 경계 의미는 각 capacity kind별 대표 경계이며 모든 필드의 Cartesian 곱은 검증하지 않는다.
+- 위 항목은 최초 매핑에서 발견한 주장 범위 차이를 기존 정확 fixture 연결, 최소 결합 fixture, 또는 명시적 범위 축소로 정리한 결과다. 이 감사에서 추가 production 결함은 확인되지 않았다.
 
 ## 인계 및 중단 조건
 

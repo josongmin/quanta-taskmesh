@@ -13,10 +13,9 @@ caller response, root completion, owned-runtime teardown, blocking child termina
 
 ## 근거
 
-- requested-stack terminal deadline/panic은 teardown 전에 응답한다.
-- 정상 success/task error는 runtime drop 뒤 전송되어 장수 blocking child가 응답을 지연한다.
-- accepted CPU, caller drop, deadline, drain의 개별 fixture는 있으나 하나의 custody ledger로 결합되지 않았다.
-- direct lease preemption은 unit coverage가 있고 host/drain 결합이 없다.
+- 감사 기준의 requested-stack 정상 success/task error는 runtime drop 뒤 전송돼 blocking child가 응답을 지연했다.
+- 현재 `CompleteBy`는 정상 `Ok`와 task `Err`에도 caller 응답 deadline을 적용하고 worker custody는 실제 teardown까지 유지한다.
+- `host_open_loop::caller_terminal_response_and_worker_custody_are_separate_ledgers`가 개별 deadline/cancel/direct-lease fixture와 별도로 응답·worker·lease ledger를 결합한다.
 
 ## 변경 파일
 
@@ -54,6 +53,9 @@ caller response, root completion, owned-runtime teardown, blocking child termina
 - Tokio timer/local service가 필요한 경로는 permit/ticket 전에 typed preflight를 수행한다. pre-cancel/expired deadline처럼 이미 결정된 계약 verdict는 host prerequisite보다 먼저 반환한다.
 - `hardening_deadline_custody`와 `hardening_executor_protocol`의 default/Rayon focused control 및 `just dev`가 통과했다.
 - D05, D15, H11, H12, H19, H20, H31의 개별 fixture에 `host_open_loop::caller_terminal_response_and_worker_custody_are_separate_ledgers`의 결합 ledger를 추가했다.
+- 관련 default tests와 unit tests는 최종 committed HEAD의 BG25-012 receipt에서 함께 판정한다.
+- D05는 checked-add overflow, zero-budget try-once, deadline equality를 별도 case로 연결한다. D15는 0/1/MAX/MAX+1/target-usize validator 경계와 sync/async preflight case를 연결한다.
+- H11은 cancel/deadline/acquire의 동일 tick 우선순위 unit cases를 연결한다. H12/H19는 caller 응답, accepted/started worker custody, RunFor, 다른 요청과 drain의 별도 fixture를 supporting cases로 연결한다.
 
 ## 인계 및 중단 조건
 

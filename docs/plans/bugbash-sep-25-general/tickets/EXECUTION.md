@@ -1,8 +1,8 @@
-# Parallel execution and ownership
+# Parallel execution and ownership — historical integration record
 
-Status as of 2026-09-25: **partially implemented, not qualified**. This is the current execution plan; `plan.json` retains the original 53 P/G assignments and audit baseline, not a claim that every ticket is still untouched. The observed base for this replan is HEAD `63bc5fd1933c359aab66ce8d2fc1806b415586b4`, tree `c3310bf86cb30a25e31c549a2b25bd70aa0f32a5`. The checkout has a one-line, uncommitted Clippy fix in `crates/taskmesh/tests/strict_ingress.rs`; its earlier CI-profile receipt is `qualified=false` and cannot be reused. Re-freeze HEAD, tree, status, and receipt before starting any wave.
+The W0–W4 lanes below describe the historical integration sequence, not active work assignments. The 104-row structural validator passes; semantic review and its explicit H04/H16 residuals are recorded separately. The manifest remains a static candidate map; execution comes from a clean final-HEAD receipt. D1–D9 human review and external ingress/planner/wire adoption remain OPEN. Re-freeze HEAD, tree, dirty paths, and ownership before further work.
 
-## Launch conditions
+## Historical launch conditions
 
 1. The integrator owns the main checkout and its existing dirty `strict_ingress.rs` change. Commit/reconcile that fix separately, then run focused Clippy/ingress proof; do not treat the failed receipt as qualification. Defer the expensive full CI-profile run until W4. No worker stages or overwrites main's dirty path.
 2. Give each production lane a branch/worktree from one recorded base, a disjoint file manifest, and a separate `CARGO_TARGET_DIR`. Workers may prepare test-only fixtures against that base; the integrator rebases and reruns changed selectors after each merge. One Mac Cargo build slot runs at a time. Never use GitHub CI for this plan.
@@ -29,18 +29,18 @@ flowchart LR
   I & W & D & H & M & L --> G[012 proof integration]
 ```
 
-## Work lanes (three workers plus one serial integrator)
+## Historical work lanes (three workers plus one serial integrator)
 
-| Lane | Owns now | Parallel-safe first output | Exclusive write window |
+| Lane | Historical scope | Parallel-safe first output | Exclusive write window |
 |---|---|---|---|
 | A — contract/identity | 001 unresolved D1–D9; 003 consumer/version boundary; 004 cross-Governor collision reproduction and handle design; 002 external adoption inventory | Read-only consumer search, decision sheet, new `cross_governor_ids` RED fixture, wire negatives. The already implemented library parser is not reimplemented. | One writer for `taskmesh-contract/src/**` and both public specs. If D4/semver accepts owner-bound handles, 004 contract → engine → host migration is one serial integration window. |
 | B — host/lifetime | 005 closure audit; 006 combined response/custody timeline; 007 root/child scope; host portion of 011 | New independent timeline and root-scope fixtures in distinct test files; prove existing H34/H30 controls. No runtime patch without a RED counterexample. | One writer for `taskmesh/src/runtime.rs` and `builder.rs`. Wait for 004 host migration before any overlapping runtime change; then 006 → 007. |
 | C — engine/evidence | 008 compound admission; 009 queue/waker histories; 010 memory ledger; 011 simulator per-class ledger | Separate input-derived test/model fixtures and `taskmesh-bench` simulator ledger tests. No production snapshot as expected-value oracle. | One writer for `engine/{governor,state}.rs`: 004 migration → 008 → 009 → 010. Host open-loop fixture is handed to B, not written concurrently. |
 | Integrator — proof rails | 012 evidence schema, scenario mapping, test discovery, selectors, source-bound local receipt | Draft schema/validator and map 51 K + 53 P/G rows to existing or proposed cases; keep missing rows OPEN. Reconcile the dirty Clippy fix and reserve Cargo build slot. | Integrator alone edits `Justfile`, `tools/gates/**`, model producer manifest, release checklist, and main. Wire selectors only after test targets actually collect. |
 
-These are ownership tracks, not unrestricted writers. A proposed change to another lane's source is a handoff, not a parallel edit. Current source-backed implementations: BG25-002 host-library parser/Builder promotion; BG25-003 D17 precedence; BG25-005 executor descriptor/Tokio preflight; BG25-006 H34 response bound. None alone closes deployment adoption, remaining ticket DoD, or final qualification.
+These were ownership tracks, not unrestricted writers. The implemented source and per-ticket limits are recorded in BG25-001–012; this historical handoff table is not a current defect list or permission for concurrent edits. Library-local evidence still does not close deployment adoption.
 
-## Merge and proof waves
+## Historical merge and proof waves
 
 | Wave | Concurrent work | Serial gate |
 |---|---|---|
@@ -59,7 +59,7 @@ These are ownership tracks, not unrestricted writers. A proposed change to anoth
 | `crates/taskmesh-engine/src/engine/{governor,state}.rs` | 004/008/009/010 | 004 migration → 008 → 009 → 010; tests in distinct files can be prepared earlier. |
 | `crates/taskmesh-contract/src/**`, `docs/taskmesh-{library-spec,external-interface}.md` | 001/002/003/004/006/007 | Contract owner merges public type/doc changes; host and engine owners submit contract wording and API requirements. |
 | `crates/taskmesh/tests/host_open_loop.rs` and host capacity fixtures | 008/011 versus 005/006 | Host owner creates or integrates these fixtures after runtime semantics settle; bench owner keeps simulator tests in `taskmesh-bench`. |
-| `Justfile`, `tools/gates/**`, `tools/modelcheck/producer-manifest.json`, `docs/release-checklist.md` | functional lanes versus 012 | 012 owns selector and evidence changes after test collection. The current dirty path is `strict_ingress.rs`, not these files; recheck at handoff. |
+| `Justfile`, `tools/gates/**`, `tools/modelcheck/producer-manifest.json`, `docs/release-checklist.md` | functional lanes versus 012 | 012 owned selector and evidence changes after test collection. The `strict_ingress.rs` dirty path was specific to the historical W0 handoff; recheck current ownership before edits. |
 
 ## Worker handoff
 

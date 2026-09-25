@@ -14,7 +14,7 @@ stage release, measured/hybrid reconcile, promotion, clock activity, leak sweep�
 ## 근거
 
 - epoch, stale report, stage release, live-lease sweep의 isolated tests는 강하다.
-- 기존 independent checks 일부는 production `permit_ledgers()`를 재합산하므로 외부 event oracle과 완전히 독립적이지 않다.
+- 기존 `permit_ledgers()` 재합산 검사의 독립성 공백에 `hardening_memory_ledger::stage_reconcile_promotion_and_sweep_match_an_input_derived_ledger`를 추가했다.
 - forged wire Snapshot은 phase/cumulative equations가 맞아도 held resource inconsistency를 포함할 수 있다.
 
 ## 변경 파일
@@ -40,6 +40,8 @@ stage release, measured/hybrid reconcile, promotion, clock activity, leak sweep�
 
 - Focused engine memory and contract snapshot tests.
 - Reconciliation callback/promotion history includes exact final zero and cumulative counters.
+- 관련 deterministic tests는 최종 committed HEAD의 BG25-012 receipt에서 판정한다.
+- D20은 wire arithmetic 한계, capability limit 위반, 실제 Governor의 input-derived memory ledger case를 함께 연결한다.
 
 ## 인계 및 중단 조건
 

@@ -136,3 +136,44 @@ fn root_attribution_clears_on_release() {
     assert_eq!(g.release(permit), ReleaseOutcome::Released);
     assert!(g.root_attribution("root-3").is_none());
 }
+
+#[test]
+fn queued_child_keeps_root_stage_and_provenance_through_claim() {
+    let g = gov(vec![(
+        "worker",
+        ClassPolicy::new()
+            .max_inflight(1)
+            .max_queue_depth(2)
+            .cpu_units(1)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth),
+    )]);
+    let holder = match g.admit(&TaskSpec::io(TaskClass::new("worker")).operation("holder")) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("holder must admit: {other:?}"),
+    };
+    let source = PlanSource::new("queue-child-proof").expect("valid source");
+    let reason = ClassificationRationale::DerivedFromStageMap;
+    let mut queued_child = TaskSpec::blocking(TaskClass::new("worker"))
+        .child_of("root-q", "parent-q", TaskStage::new("child-stage"))
+        .operation("child-q");
+    queued_child.source = source.clone();
+    queued_child.reason = reason;
+    let ticket = match g.admit(&queued_child) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("child must queue behind the holder: {other:?}"),
+    };
+
+    assert_eq!(g.release(holder), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(child) = g.claim(ticket) else {
+        panic!("queued child must promote and transfer its permit")
+    };
+    assert_eq!(
+        g.permit_provenance(child),
+        Some(Provenance { source, reason })
+    );
+    let root = g.root_attribution("root-q").expect("child root preserved");
+    assert_eq!(root.child_inflight, 1);
+    assert_eq!(root.active_stages, 1);
+    assert_eq!(g.release(child), ReleaseOutcome::Released);
+    assert!(g.root_attribution("root-q").is_none());
+}

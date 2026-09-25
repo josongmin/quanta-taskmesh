@@ -14,15 +14,15 @@ Simulator admission-wait metrics와 실제 public host의 end-to-end response/cu
 ## 근거
 
 - `taskmesh-bench` load generator is a simulator, not Tokio facade execution.
-- current hellgate load tests are primarily single-class.
-- host chaos tests submit fixed workloads but do not independently count offered/terminal/unanswered and post-response worker custody.
+- `hellgate::multiclass_multiseed_population_has_no_unaccounted_request`가 multi-class/seed simulator denominator를 검증한다.
+- `host_open_loop::offered_terminal_unanswered_and_execution_counts_close_exactly`가 public host의 응답·미응답 및 worker custody를 독립 집계한다.
 - allocation/instruction gates are not latency qualification.
 
 ## 변경 파일
 
 - `crates/taskmesh-bench/src/{loadgen,metrics,workload}.rs`
 - `crates/taskmesh-bench/tests/{hellgate,inferno,fairness_property}.rs`
-- 신규 host fixture candidate `crates/taskmesh/tests/host_open_loop.rs`
+- host fixture `crates/taskmesh/tests/host_open_loop.rs`
 - performance policy/evidence docs; no threshold change without baseline evidence
 
 ## 작업 계획
@@ -39,8 +39,13 @@ Simulator admission-wait metrics와 실제 public host의 end-to-end response/cu
 
 ## 검증
 
-- Deterministic correctness tests remain default gate candidates.
+- Deterministic correctness fixtures는 최종 committed HEAD의 BG25-012 receipt에서 판정한다.
 - Performance numbers require a separate quiet-host baseline; first baseline is not a regression PASS.
+
+## 최종 의미 감사
+
+- H28은 `taskmesh-bench/tests/host_simulator_comparison.rs::real_host_and_simulator_agree_on_bounded_burst_accounting`으로 매핑한다. 동일 burst에서 host/simulator의 offered/completed/rejected/max-queue와 host 실행 횟수를 대조한다. `host_open_loop`의 별도 response/worker custody case는 유지됐다.
+- 새 case는 virtual wait를 host latency로 해석하지 않고 동일 9-request burst에서 host와 simulator의 offered/completed/rejected/max-queue를 직접 비교한다. 다중 class/path 성능, warmup/환경 기록, quiet-host latency 비교는 성능 qualification의 별도 범위이며 production 결함은 확인되지 않았다.
 
 ## 인계 및 중단 조건
 

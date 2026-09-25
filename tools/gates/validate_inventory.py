@@ -32,9 +32,8 @@ Fails closed on:
     makes every run NOT_RUN.
 - an action ref that is not a full commit SHA, a workflow default token that
   is not read-only, or a write-capable job reachable outside trusted main.
-- any hosted workflow trigger other than explicit `workflow_dispatch` (ordinary
-  verification is local-only and must not consume runner minutes on push, pull
-  request, or schedule).
+- any automatic hosted trigger outside the bounded `pr-ci.yml` 16-gate profile;
+  full qualification and deep producers remain manual-only.
 - a Cargo/pytest/fuzz test target with no declared gate executor, or a drifted
   feature-only model/IAI target, fuzz producer target, or Justfile selector.
 
@@ -313,9 +312,7 @@ def self_report_markers(recipe: str, text: str | None = None, root: Path = REPO)
     or by its inline shell body. Comments do not establish a verdict."""
     markers: set[str] = set()
     body = "\n".join(
-        line
-        for line in recipe_body(recipe, text).splitlines()
-        if not line.lstrip().startswith("#")
+        line for line in recipe_body(recipe, text).splitlines() if not line.lstrip().startswith("#")
     )
     markers.update(STATUS_MARKER.findall(body))
     for script in recipe_scripts(recipe, text):
@@ -481,7 +478,7 @@ def all_workflow_trust_problems(workflows_dir: Path) -> list[str]:
 
 
 def workflow_trigger_problems(path: Path, document: object) -> list[str]:
-    """Reject every hosted trigger except an explicit manual dispatch.
+    """Keep full workflows manual and admit only the bounded PR CI workflow.
 
     PyYAML follows YAML 1.1 and may decode the plain key ``on`` as boolean
     ``True``. Read both spellings so the guard validates the actual workflow
@@ -496,12 +493,120 @@ def workflow_trigger_problems(path: Path, document: object) -> list[str]:
         names = {str(name) for name in triggers}
     else:
         names = set()
-    if names != {"workflow_dispatch"}:
+    expected = {"pull_request", "push"} if path.name == "pr-ci.yml" else {"workflow_dispatch"}
+    if names != expected:
         return [
-            f"{path.name}: hosted triggers must be exactly workflow_dispatch; "
+            f"{path.name}: hosted triggers must be exactly {sorted(expected)!r}; "
             f"found {sorted(names)!r}"
         ]
+    if path.name == "pr-ci.yml":
+        pull = triggers.get("pull_request")
+        push = triggers.get("push")
+        if pull not in (None, {}) or push != {"branches": ["main"]}:
+            return [f"{path.name}: PR must have no filters and push must select only main"]
     return []
+
+
+# Keep this execution step exact: substring checks accepted echoed commands
+# and could certify a green job that never ran the gates.
+PR_CI_GATE_SCRIPT = (
+    'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"\n'
+    "uv run python tools/gates/run.py --profile ci --require-clean-source \\\n"
+    "  --receipt target/verification/pr-ci-gates.json\n"
+    "uv run python tools/gates/run.py \\\n"
+    "  --validate-receipt target/verification/pr-ci-gates.json \\\n"
+    '  --expected-head "$EXPECTED_SHA"\n'
+)
+PR_CI_EVENT_SHA = "${{ github.event.pull_request.head.sha || github.sha }}"
+
+
+def pr_ci_contract_problems(path: Path, document: object, required: dict) -> list[str]:
+    """The automatic job is one unskippable exact-SHA CI-profile verdict."""
+    if not isinstance(document, dict):
+        return ["pr-ci.yml: workflow is not an object"]
+    problems: list[str] = []
+    ci_ids = set(required.get("required", [])) - set(required.get("nightly_required", []))
+    if len(ci_ids) != 16:
+        problems.append("pr-ci.yml: CI profile must contain exactly 16 required gates")
+    jobs = document.get("jobs")
+    if not isinstance(jobs, dict) or set(jobs) != {"required"}:
+        return [*problems, "pr-ci.yml: exactly one required verdict job is needed"]
+    job = jobs["required"]
+    if not isinstance(job, dict):
+        return [*problems, "pr-ci.yml: required job is malformed"]
+    if "if" in job or job.get("continue-on-error") or job.get("runs-on") != "ubuntu-latest":
+        problems.append("pr-ci.yml: required job may not be conditional or masked")
+    if "defaults" in document or "defaults" in job:
+        problems.append("pr-ci.yml: gate shell must retain the default fail-fast behavior")
+    timeout = job.get("timeout-minutes")
+    if type(timeout) is not int or not 1 <= timeout <= 90:
+        problems.append("pr-ci.yml: required job needs a bounded 90-minute timeout")
+    concurrency = document.get("concurrency")
+    if not isinstance(concurrency, dict) or (
+        "github.event.pull_request.number" not in str(concurrency.get("group", ""))
+        or concurrency.get("cancel-in-progress") != "${{ github.event_name == 'pull_request' }}"
+    ):
+        problems.append("pr-ci.yml: cancel superseded PR runs without cancelling main")
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return [*problems, "pr-ci.yml: steps are malformed"]
+    if any(not isinstance(step, dict) or step.get("continue-on-error") for step in steps):
+        problems.append("pr-ci.yml: no step may mask a failure")
+    checkouts = [
+        step
+        for step in steps
+        if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
+    if len(checkouts) != 1 or checkouts[0].get("with", {}).get("ref") != PR_CI_EVENT_SHA:
+        problems.append("pr-ci.yml: checkout must pin the event head SHA")
+    runs = [str(step.get("run", "")) for step in steps if isinstance(step, dict)]
+    gate_steps = [
+        step
+        for step in steps
+        if isinstance(step, dict) and "tools/gates/run.py --profile ci" in str(step.get("run", ""))
+    ]
+    if len(gate_steps) != 1:
+        problems.append("pr-ci.yml: exactly one complete CI-profile gate run is required")
+    else:
+        gate_step = gate_steps[0]
+        gate_run = str(gate_step["run"])
+        if (
+            "if" in gate_step
+            or gate_step.get("continue-on-error")
+            or "|| true" in gate_run
+            or "set +e" in gate_run
+            or "exit 0" in gate_run
+        ):
+            problems.append("pr-ci.yml: aggregate gate step must be unskippable and fail-capable")
+        if gate_run != PR_CI_GATE_SCRIPT or gate_step.get("shell") is not None:
+            problems.append("pr-ci.yml: gate command must be the exact fail-fast CI recipe")
+        if gate_step.get("env") != {"EXPECTED_SHA": PR_CI_EVENT_SHA}:
+            problems.append("pr-ci.yml: EXPECTED_SHA must bind the checked-out event head")
+    if any("--profile nightly" in run or "--required" in run or "--all" in run for run in runs):
+        problems.append("pr-ci.yml: deep or unbounded gate selector is forbidden")
+    artifacts = [
+        step
+        for step in steps
+        if isinstance(step, dict)
+        and str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    if (
+        len(artifacts) != 1
+        or artifacts[0].get("if") != "always()"
+        or artifacts[0].get("with", {}).get("path") != "target/verification/pr-ci-gates.json"
+    ):
+        problems.append("pr-ci.yml: always upload the exact gate receipt")
+    if len(artifacts) == 1:
+        if artifacts[0].get("with", {}).get("if-no-files-found") != "error":
+            problems.append("pr-ci.yml: missing artifact must fail the job")
+        if (
+            len(gate_steps) != 1
+            or len(steps) < 2
+            or steps[-1] is not artifacts[0]
+            or steps[-2] is not gate_steps[0]
+        ):
+            problems.append("pr-ci.yml: receipt handoff must immediately follow the gate run")
+    return problems
 
 
 def all_workflow_trigger_problems(workflows_dir: Path) -> list[str]:
@@ -786,6 +891,11 @@ def main() -> int:
             *workflow_enforcement_problems(WORKFLOWS, inventory_recipes),
             *all_workflow_trust_problems(WORKFLOWS),
             *all_workflow_trigger_problems(WORKFLOWS),
+            *pr_ci_contract_problems(
+                WORKFLOWS / "pr-ci.yml",
+                yaml.safe_load((WORKFLOWS / "pr-ci.yml").read_text(encoding="utf-8")),
+                required,
+            ),
             *producer_handoff_problems(inventory, WORKFLOWS / "ci.yml"),
         ]
         self_reports = {

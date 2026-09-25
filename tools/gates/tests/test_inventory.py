@@ -260,8 +260,11 @@ def test_workflow_trust_allows_trusted_main_write_job(tmp_path: Path) -> None:
     assert vi.workflow_trust_problems(tmp_path / "bench.yml", document) == []
 
 
-def test_committed_workflows_are_manual_only() -> None:
+def test_only_bounded_pr_ci_has_automatic_triggers() -> None:
     assert vi.all_workflow_trigger_problems(vi.WORKFLOWS) == []
+    path = vi.WORKFLOWS / "pr-ci.yml"
+    document = vi.yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert vi.pr_ci_contract_problems(path, document, vi.load(vi.REQUIRED)) == []
 
 
 def test_automatic_hosted_triggers_are_rejected(tmp_path: Path) -> None:
@@ -273,6 +276,100 @@ def test_automatic_hosted_triggers_are_rejected(tmp_path: Path) -> None:
             path, {"on": {"workflow_dispatch": None, trigger: None}, "jobs": {}}
         )
         assert any(trigger in problem for problem in problems), problems
+
+
+def test_pr_ci_rejects_path_filters_skipped_job_and_deep_profile(tmp_path: Path) -> None:
+    path = tmp_path / "pr-ci.yml"
+    document = vi.yaml.safe_load((vi.WORKFLOWS / "pr-ci.yml").read_text())
+    invalid = copy.deepcopy(document)
+    invalid[True]["pull_request"] = {"paths": ["crates/**"]}
+    assert any("no filters" in problem for problem in vi.workflow_trigger_problems(path, invalid))
+
+    invalid = copy.deepcopy(document)
+    invalid["jobs"]["required"]["if"] = "false"
+    assert any(
+        "conditional" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
+
+    invalid = copy.deepcopy(document)
+    steps = invalid["jobs"]["required"]["steps"]
+    gate = next(step for step in steps if "tools/gates/run.py --profile ci" in step.get("run", ""))
+    gate["if"] = "false"
+    assert any(
+        "unskippable" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
+
+    invalid = copy.deepcopy(document)
+    steps = invalid["jobs"]["required"]["steps"]
+    gate = next(step for step in steps if "tools/gates/run.py --profile ci" in step.get("run", ""))
+    gate["run"] = gate["run"].replace("--profile ci", "--profile nightly")
+    problems = vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    assert any("complete CI-profile" in problem for problem in problems)
+    assert any("deep or unbounded" in problem for problem in problems)
+
+
+def test_pr_ci_rejects_echoed_gate_commands_and_unbound_head(tmp_path: Path) -> None:
+    path = tmp_path / "pr-ci.yml"
+    document = vi.yaml.safe_load((vi.WORKFLOWS / "pr-ci.yml").read_text())
+    invalid = copy.deepcopy(document)
+    gate = next(
+        step
+        for step in invalid["jobs"]["required"]["steps"]
+        if "tools/gates/run.py --profile ci" in step.get("run", "")
+    )
+    gate["run"] = (
+        "\n".join(
+            f"echo {line}" if line and not line.startswith(" ") else line
+            for line in gate["run"].splitlines()
+        )
+        + "\nmkdir -p target/verification\nprintf '{}' > target/verification/pr-ci-gates.json\n"
+    )
+    assert any(
+        "gate command" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
+
+    invalid = copy.deepcopy(document)
+    gate = next(
+        step
+        for step in invalid["jobs"]["required"]["steps"]
+        if "tools/gates/run.py --profile ci" in step.get("run", "")
+    )
+    gate["env"]["EXPECTED_SHA"] = "${{ github.sha }}"
+    assert any(
+        "EXPECTED_SHA" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
+
+    invalid = copy.deepcopy(document)
+    invalid["defaults"] = {"run": {"shell": "bash {0}"}}
+    assert any(
+        "fail-fast" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
+
+
+def test_pr_ci_receipt_handoff_fails_if_missing_or_rewritten(tmp_path: Path) -> None:
+    path = tmp_path / "pr-ci.yml"
+    document = vi.yaml.safe_load((vi.WORKFLOWS / "pr-ci.yml").read_text())
+    invalid = copy.deepcopy(document)
+    upload = invalid["jobs"]["required"]["steps"][-1]
+    upload["with"]["if-no-files-found"] = "warn"
+    assert any(
+        "missing artifact" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
+
+    invalid = copy.deepcopy(document)
+    invalid["jobs"]["required"]["steps"].insert(
+        -1, {"run": "echo '{}' > target/verification/pr-ci-gates.json"}
+    )
+    assert any(
+        "receipt handoff" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
 
 
 def test_trigger_guard_handles_pyyaml_boolean_on_key(tmp_path: Path) -> None:
@@ -502,8 +599,7 @@ def test_tracked_pre_push_hook_requires_exact_local_receipt(tmp_path: Path) -> N
     )
     fake_uv = fake_bin / "uv"
     fake_uv.write_text(
-        "#!/bin/sh\n"
-        'printf "%s\\n" "$*" >> "$UV_LOG"\n',
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$UV_LOG"\n',
         encoding="utf-8",
     )
     fake_git.chmod(0o755)
@@ -1528,8 +1624,13 @@ def test_generated_mutation_timeout_is_bounded_and_inventory_owned() -> None:
 
 def test_doc_fixture_cannot_feature_unify_default_workspace_validation() -> None:
     test_body = vi.recipe_body("test")
-    assert test_body.count("--workspace --exclude taskmesh-doc-examples") == 2
-    assert "cargo test --locked -p taskmesh-doc-examples" in test_body
+    assert "tools/gates/execute_rust_tests.py" in test_body
+    from tools.gates.execute_rust_tests import SELECTORS
+
+    assert SELECTORS == (
+        ("--workspace", "--exclude", "taskmesh-doc-examples", "--lib", "--tests"),
+        ("-p", "taskmesh-doc-examples", "--lib", "--tests"),
+    )
 
     clippy_body = vi.recipe_body("clippy")
     assert clippy_body.count("--exclude taskmesh-doc-examples") == 2

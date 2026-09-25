@@ -16,9 +16,7 @@ MODEL_FEATURES = {
 }
 RECIPE_FRAGMENTS = {
     "test": (
-        "cargo nextest run --locked --workspace --exclude taskmesh-doc-examples --lib --tests",
-        "cargo test --locked --workspace --exclude taskmesh-doc-examples --lib --tests",
-        "cargo test --locked -p taskmesh-doc-examples --lib --tests",
+        "uv run python tools/gates/execute_rust_tests.py",
     ),
     "test-rayon": (
         "cargo test --locked -p taskmesh --features rayon --lib",
@@ -29,7 +27,7 @@ RECIPE_FRAGMENTS = {
         "cargo test --locked --workspace --exclude taskmesh-doc-examples --doc",
         "cargo test --locked -p taskmesh --features rayon --doc",
     ),
-    "py-test": ("pytest tools -q",),
+    "py-test": ("uv run python tools/gates/execute_py_tests.py",),
     "bench-smoke": ("cargo bench --locked -p taskmesh-bench -- --test",),
     "bench-iai": ("bash tools/bench-iai.sh",),
     "modelcheck": ("tools/modelcheck/run.py all",),
@@ -229,12 +227,17 @@ def catalog(
     return records, problems
 
 
-def source_catalog(root: Path, recipes: dict[str, str]) -> tuple[list[dict], list[str]]:
-    python_modules = sorted(
+def python_test_modules(root: Path) -> list[str]:
+    """Discover test entrypoints; support modules are not execution targets."""
+    return sorted(
         path.relative_to(root).as_posix()
         for path in (root / "tools").rglob("*.py")
         if path.name.startswith("test_") or path.name.endswith("_test.py")
     )
+
+
+def source_catalog(root: Path, recipes: dict[str, str]) -> tuple[list[dict], list[str]]:
+    python_modules = python_test_modules(root)
     return catalog(
         metadata(root),
         metadata(root, fuzz=True),

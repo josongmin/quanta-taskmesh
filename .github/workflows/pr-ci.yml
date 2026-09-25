@@ -1,0 +1,56 @@
+name: pr-ci (bounded 16-gate profile)
+
+# The full ci.yml remains manual: it includes mutation, model, fuzz, and
+# release producers. This workflow owns only required.json's CI complement.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  required:
+    name: required 16-gate verdict
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+      - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2
+        with:
+          tool: cargo-deny@0.19.7,cargo-nextest@0.9.104
+      - name: Install Semgrep and consumer MSRV
+        run: |
+          uv tool install "semgrep==$(cat tools/semgrep/version.txt)"
+          rustup toolchain install 1.81.0 --profile minimal
+      - name: Run the complete bounded CI profile
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          uv run python tools/gates/run.py --profile ci --require-clean-source \
+            --receipt target/verification/pr-ci-gates.json
+          uv run python tools/gates/run.py \
+            --validate-receipt target/verification/pr-ci-gates.json \
+            --expected-head "$EXPECTED_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: pr-ci-gates
+          path: target/verification/pr-ci-gates.json
+          if-no-files-found: error

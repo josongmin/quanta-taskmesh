@@ -25,23 +25,7 @@ check:
     cargo check --locked -p taskmesh-doc-examples --all-targets
 
 test:
-    # nextest keeps Cargo's --workspace --lib --tests selection but schedules
-    # independent test binaries concurrently. Four tests keep a 16-core Mac
-    # busy without unbounded fan-out: integration cases create Tokio/OS workers,
-    # so an unbounded process fan-out just trades elapsed time for contention.
-    # A clean bootstrap without cargo-nextest retains the identical Cargo
-    # selection rather than silently skipping the test gate.
-    set -euo pipefail; \
-    cargo_version="$(cargo --version)"; cargo_version="${cargo_version#cargo }"; cargo_version="${cargo_version%% *}"; \
-    if nextest_identity="$(cargo nextest --version 2>/dev/null)"; then \
-        runner=nextest; runner_version="${nextest_identity#cargo-nextest }"; runner_version="${runner_version%% *}"; \
-        CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo nextest run --locked --workspace --exclude taskmesh-doc-examples --lib --tests --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
-    else \
-        runner=cargo; runner_version="${cargo_version}"; \
-        CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked --workspace --exclude taskmesh-doc-examples --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
-    fi; \
-    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked -p taskmesh-doc-examples --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"; \
-    printf 'taskmesh-test status=PASS runner=%s runner_version=%s fixture_runner=cargo cargo_version=%s\n' "$runner" "$runner_version" "$cargo_version"
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" uv run python tools/gates/execute_rust_tests.py
 
 # Laptop feedback excludes benchmark harness tests and the generated README/doc
 # fixture. Their correctness and buildability remain required by full `test`,
@@ -84,7 +68,7 @@ py-lint:
     uv run ruff check tools
 
 py-test:
-    uv run pytest tools -q
+    uv run python tools/gates/execute_py_tests.py
 
 prompt-check:
     uv run python tools/pm/check.py
@@ -95,7 +79,7 @@ dev-python-lint *files:
     uv run ruff check {{files}}
 
 dev-python-tests *tests:
-    uv run pytest {{tests}} -q -m "not qualification"
+    uv run pytest {{tests}} -q --strict-markers -m "not qualification"
 
 dev-python-fast files tests:
     just dev-python-lint {{files}}
@@ -114,9 +98,9 @@ dev-rust-tests package *consumers:
     cargo fmt --package {{package}} --check
     packages=({{package}} {{consumers}}); args=(); for package in "${packages[@]}"; do args+=(-p "$package"); done; CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" cargo test --locked "${args[@]}" --lib --tests -- --test-threads "${TASKMESH_TEST_JOBS:-4}"
 
-# Gate inventory (H16-018): the Justfile, the manual fallback workflows, and the
-# required set must agree. The validator also rejects automatic hosted triggers,
-# so a push, pull request, or schedule cannot silently start spending minutes.
+# Gate inventory (H16-018): the Justfile, hosted workflows, and required set
+# must agree. Only the bounded pr-ci workflow has automatic hosted triggers;
+# the full manual workflow and all deep producers remain dispatch-only.
 gates-inventory:
     uv run python tools/gates/validate_inventory.py
 

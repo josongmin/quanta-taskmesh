@@ -8,7 +8,7 @@ its proof and external-adoption fields have different authorities.
 |---|---|---|
 | BG25-001–003 and each deployment owner | Review D1–D9 applicability, compatibility, migration, actual ingress/planner/wire call sites, and deployed topology | Update [external adoption ledger](EXTERNAL-ADOPTION.md) with owner, exact consumer and Taskmesh source identities, selected tests, and deployment decision; mark non-applicable only with topology evidence |
 | BG25-012 integrator | Qualify each proposed final committed clean Taskmesh HEAD | `just dev`, `just verify-macos-ci`, then validate the receipt with `--expected-head`; require all applicable CI gates PASS, no required NOT_RUN/FAIL, stable HEAD/tree/path digest, and durable receipt custody |
-| CI-plan owner | Finish W3 execution denominator and decide W4 hosted adoption | Update the [verification-stage plan](../../2026-09-24-ci-verification-stages.md) with source-backed implementation and separate exact-source proof |
+| CI-plan owner | Decide W4 required-check adoption after more hosted timing/capacity samples and a main-push trial | The [verification-stage plan](../../2026-09-24-ci-verification-stages.md) records W3 execution proof and the passing non-required PR trial; require a stable aggregate check before changing branch rules |
 | Release owner | Deep nightly and release qualification when explicitly requested | Complete producer denominators, Linux-only gates, compatibility adjudication, and a release decision under the [release checklist](../../../release-checklist.md) |
 | Benchmark owner | Complete H28 host performance qualification **only before making a performance claim**; keep the 9-request host/simulator admission-count test as the deterministic CI proof | Same source/toolchain/features/workload/seed/warmup and quiet-host environment; independently record intended send/offered, each terminal response type, unanswered requests, post-response worker custody, and class/path sample populations. Do not compare simulator counts for terminal types it does not model or label simulator admission wait as host latency |
 
@@ -20,6 +20,9 @@ run did not bind its mutable Taskmesh path dependency to a Taskmesh commit. The
 later pinned-pair run binds clean Semantica `0384053` to clean Taskmesh
 `76295ba` and also passes 2/2, but its authority remains
 `manual_invocation_comparison_only`; deployment adoption remains open.
+The user identified Semantica as the consumer for this audit on 2026-09-26;
+the deployed Semantica binary/source SHA and D1–D9 applicability still need
+deployment evidence. See the [external ledger](EXTERNAL-ADOPTION.md).
 
 After the implementation archive, H31's combined external lease preemption,
 host non-execution, second admission, and drain boundary was added at `6c45345`.

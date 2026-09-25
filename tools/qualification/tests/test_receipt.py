@@ -300,10 +300,132 @@ def passing_gate_results(required: list[str]) -> list[dict]:
             status_line = f"{spec['marker']} {spec['require']}"
             if result["id"] == "test":
                 status_line += (
-                    " runner=cargo runner_version=1.95.0 fixture_runner=cargo cargo_version=1.95.0"
+                    " runner=nextest runner_version=0.9.104 targets=1 selected=1 passed=1"
+                    + " catalog_digest="
+                    + "a" * 64
+                    + " selection_digest="
+                    + "b" * 64
+                    + " execution_digest="
+                    + "b" * 64
+                )
+            if result["id"] == "py-test":
+                status_line += (
+                    " runner=pytest runner_version=8.4.0 modules=1 selected=1 passed=1"
+                    " excluded=0 slow=0 qualification=0"
+                    + " catalog_digest="
+                    + "a" * 64
+                    + " selection_digest="
+                    + "b" * 64
+                    + " execution_digest="
+                    + "b" * 64
                 )
             result["status_line"] = status_line
     return results
+
+
+def attach_execution_fixture(results: list[dict], source: dict) -> None:
+    """Give synthetic release receipts a structurally valid test denominator."""
+    from tools.gates.execute_rust_tests import SELECTORS
+    from tools.gates.execution_evidence import digest
+    from tools.gates.target_catalog import RECIPE_FRAGMENTS, catalog_digest, source_catalog
+    from tools.gates.validate_inventory import recipe_body
+
+    records, problems = source_catalog(REPO, {name: recipe_body(name) for name in RECIPE_FRAGMENTS})
+    assert not problems
+    catalog = catalog_digest(records)
+    report_source = {**source, "isolated_checkout": False}
+    by_id = {result["id"]: result for result in results}
+    rust_targets = sorted(
+        [
+            [record["package"], record["kind"], record["target"]]
+            for record in records
+            if record["executing_gate"] == "test"
+        ]
+    )
+    rust_cases = ["fixture$case"]
+    commands = []
+    for selector in SELECTORS:
+        common = ["--locked", *selector]
+        commands.append(
+            {
+                "list": ["cargo", "nextest", "list", *common, "--message-format", "json"],
+                "run": [
+                    "cargo",
+                    "nextest",
+                    "run",
+                    *common,
+                    "--message-format",
+                    "libtest-json-plus",
+                    "--message-format-version",
+                    "0.1",
+                    "--test-threads",
+                    "2",
+                ],
+            }
+        )
+    rust_report = {
+        "schema_version": 1,
+        "source": report_source,
+        "runner": "nextest",
+        "runner_version": "0.9.104",
+        "experimental_env": {"NEXTEST_EXPERIMENTAL_LIBTEST_JSON": "1"},
+        "commands": commands,
+        "catalog_digest": catalog,
+        "targets": rust_targets,
+        "selected": rust_cases,
+        "passed": rust_cases,
+        "selection_digest": digest(rust_cases),
+        "execution_digest": digest(rust_cases),
+    }
+    modules = sorted(record["path"] for record in records if record["executing_gate"] == "py-test")
+    py_cases = sorted(f"{module}::fixture" for module in modules)
+    py_report = {
+        "schema_version": 1,
+        "source": report_source,
+        "runner": "pytest",
+        "runner_version": "9.0.3",
+        "command": ["pytest", "tools", "-q", "--strict-markers"],
+        "catalog_digest": catalog,
+        "modules": modules,
+        "selected": py_cases,
+        "passed": py_cases,
+        "excluded": [],
+        "slow": [],
+        "qualification": [],
+        "selection_digest": digest(py_cases),
+        "execution_digest": digest({"passed": py_cases, "excluded": []}),
+    }
+    for gate_id, report, fields in (
+        ("test", rust_report, {"targets": len(rust_targets), "selected": 1, "passed": 1}),
+        (
+            "py-test",
+            py_report,
+            {
+                "modules": len(modules),
+                "selected": len(py_cases),
+                "passed": len(py_cases),
+                "excluded": 0,
+                "slow": 0,
+                "qualification": 0,
+            },
+        ),
+    ):
+        if gate_id not in by_id:
+            continue
+        result = by_id[gate_id]
+        result["execution"] = report
+        base = result["status_line"].split(" runner=", 1)[0]
+        result["status_line"] = " ".join(
+            [
+                base,
+                f"runner={report['runner']}",
+                f"runner_version={report['runner_version']}",
+                *(f"{name}={count}" for name, count in fields.items()),
+                f"catalog_digest={catalog}",
+                f"selection_digest={report['selection_digest']}",
+                f"execution_digest={report['execution_digest']}",
+            ]
+        )
 
 
 def qualified_receipt() -> dict:
@@ -316,6 +438,7 @@ def qualified_receipt() -> dict:
         "isolated_checkout": True,
         "paths_digest": "a" * 64,
     }
+    attach_execution_fixture(results, source)
     producers = _producer_records(source, results)
     by_surface = {item["surface"]: item["summary"]["payload"] for item in producers}
     return {
@@ -397,12 +520,19 @@ def test_local_evidence_never_claims_hosted_qualification() -> None:
 def local_qualified_receipt() -> dict:
     r = qualified_receipt()
     source = r["source"]
-    action = receipt.runtime_action(
-        root=REPO,
-        source_head=source["head"],
-        local_workflow=".github/workflows/ci.yml",
-        local_job="local-qualification",
-    )
+    # This fixture models a local producer even when pytest itself runs inside
+    # GitHub Actions, whose GITHUB_SHA names the outer checkout.
+    workflow = ".github/workflows/ci.yml"
+    action = {
+        "context": "local",
+        "workflow": workflow,
+        "workflow_ref": f"local:{workflow}",
+        "workflow_sha256": hashlib.sha256((REPO / workflow).read_bytes()).hexdigest(),
+        "source_sha": source["head"],
+        "job": "local-qualification",
+        "event": "local",
+        "actions": [],
+    }
     r["attestation"] = {
         "kind": "local",
         "hosted_qualification_eligible": False,
@@ -442,6 +572,38 @@ def local_qualified_receipt() -> dict:
 
 def test_explicit_clean_local_full_receipt_qualifies() -> None:
     assert receipt.evaluate(local_qualified_receipt(), CLEAN)["status"] == "QUALIFIED"
+
+
+@pytest.mark.parametrize("gate_id", ["test", "py-test"])
+def test_final_receipt_rejects_missing_execution_denominator(gate_id: str) -> None:
+    value = qualified_receipt()
+    result = next(item for item in value["gates"]["results"] if item["id"] == gate_id)
+    result.pop("execution")
+    verdict = receipt.evaluate(value, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any(f"{gate_id}: execution report is missing" in reason for reason in verdict["reasons"])
+
+
+def test_final_receipt_rejects_changed_executed_cases() -> None:
+    value = qualified_receipt()
+    result = next(item for item in value["gates"]["results"] if item["id"] == "test")
+    result["execution"]["passed"] = ["fixture$other"]
+    verdict = receipt.evaluate(value, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any(
+        "test: execution differs from selected cases" in reason for reason in verdict["reasons"]
+    )
+
+
+def test_final_receipt_rejects_malformed_pytest_markers() -> None:
+    value = qualified_receipt()
+    result = next(item for item in value["gates"]["results"] if item["id"] == "py-test")
+    result["execution"]["qualification"] = [{}]
+    verdict = receipt.evaluate(value, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any(
+        "py-test: marked-case denominator mismatch" in reason for reason in verdict["reasons"]
+    )
 
 
 @pytest.mark.parametrize("exit_code", [1, None, False, "0"])
@@ -1521,6 +1683,7 @@ def test_real_v02_artifacts_share_receipt_source_identity_and_reject_byte_drift(
         }
         required = json.loads((REPO / "tools" / "gates" / "required.json").read_text())["required"]
         results = passing_gate_results(required)
+        attach_execution_fixture(results, source)
         synthetic = _producer_records(source, results)
         by_surface = {record["surface"]: record for record in synthetic}
         for spec in v02_specs:
@@ -1759,6 +1922,7 @@ def test_collect_qualifies_on_a_clean_tree_with_receipts_written_at_the_root(
     )
 
     results = passing_gate_results(required)
+    attach_execution_fixture(results, identity)
     producer_source = {
         "head": identity["head"],
         "paths_digest": identity["paths_digest"],

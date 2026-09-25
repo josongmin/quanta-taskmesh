@@ -607,3 +607,32 @@ pub fn parse_runtime_config(
         .map(StrictRuntimeConfig)
         .map_err(|error| StrictIngressError::Decode(error.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::de::{Error as _, Unexpected};
+
+    #[test]
+    fn scan_visitor_reports_the_expected_shape_in_serde_errors() {
+        let state = ScanState {
+            limits: StrictIngressLimits::default(),
+            failure: RefCell::new(None),
+        };
+
+        for (shape, expected) in [
+            (Shape::Task, "a bounded task JSON value"),
+            (Shape::CpuMode, "a bounded cpu mode JSON value"),
+            (Shape::ClassPolicy, "a bounded class policy JSON value"),
+            (Shape::CapabilityLimits, "a bounded capability_limits JSON value"),
+        ] {
+            let visitor = ScanVisitor(ScanSeed {
+                state: &state,
+                shape,
+                depth: 0,
+            });
+            let error = serde::de::value::Error::invalid_type(Unexpected::Seq, &visitor);
+            assert_eq!(error.to_string(), format!("invalid type: sequence, expected {expected}"));
+        }
+    }
+}

@@ -11,7 +11,8 @@
 > 사용하지 않는다. 현행 allocation gate 설정은 **8 alloc/op**이고,
 > `loadgen::simulate`는 시작한 요청의 가상 admission wait를 raw 기록하며,
 > `.github/workflows/bench.yml`은 수동 전용이다. 실제 Tokio host의 지속 부하
-> 지연·goodput은 아직 자격화되지 않았다. 소스 감사와 정정/구현 순서는
+> 지연·goodput은 아직 자격화되지 않았다. 업계 SOTA 성능 주장을 위한 동등 의미의
+> 경쟁 구현 비교와 재현 가능한 호스트 측정 데이터도 없다. 소스 감사와 정정/구현 순서는
 > [Taskmesh 벤치 계획](../plans/sep-25-taskmesh-benchmark/tickets/README.md)을 따른다.
 
 ## Context

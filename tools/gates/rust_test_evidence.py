@@ -17,6 +17,7 @@ sys.path.insert(0, str(REPO))
 from tools.gates.target_catalog import (  # noqa: E402
     RAYON_SCOPES,
     RECIPE_FRAGMENTS,
+    ZERO_CASE_LIBS,
     catalog_digest,
     source_catalog,
 )
@@ -59,6 +60,7 @@ def listed_cases(
         if target in targets:
             raise ValueError(f"duplicate selected binary {target}")
         targets.add(target)
+        selected_in_suite = 0
         for case, metadata in tests.items():
             if not isinstance(case, str) or not isinstance(metadata, dict):
                 raise ValueError(f"malformed test case in {target}")
@@ -74,6 +76,9 @@ def listed_cases(
             if metadata.get("ignored") is not False or filter_match != {"status": "matches"}:
                 raise ValueError(f"filtered or malformed test case {target}${case}")
             cases.add((package, binary, case))
+            selected_in_suite += 1
+        if selected_in_suite == 0 and (allow_filtered or target not in ZERO_CASE_LIBS):
+            raise ValueError(f"nextest selected no runnable cases in {target}")
     total = value.get("test-count")
     if not targets or not cases or type(total) is not int or total < len(cases):
         raise ValueError("nextest list has an empty or inconsistent test denominator")
@@ -94,6 +99,7 @@ def executed_cases(
     suite_started: set[tuple[str, str]] = set()
     suite_finished: set[tuple[str, str]] = set()
     expected_by_suite: dict[tuple[str, str], int] = {}
+    zero_allowed: dict[tuple[str, str], bool] = {}
     for target in targets:
         fields = target.split("/", 2)
         if len(fields) != 3 or not all(fields):
@@ -102,11 +108,15 @@ def executed_cases(
         if key in expected_by_suite:
             raise ValueError(f"selected targets alias nextest suite identity {key}")
         expected_by_suite[key] = 0
+        zero_allowed[key] = target in ZERO_CASE_LIBS and not allow_filtered
     for package, binary, _case in expected:
         key = (package, binary)
         if key not in expected_by_suite:
             raise ValueError(f"selected case has no selected target {key}")
         expected_by_suite[key] += 1
+    for key, count in expected_by_suite.items():
+        if count == 0 and not zero_allowed[key]:
+            raise ValueError(f"unregistered zero-case target {key}")
     for line in lines.splitlines():
         try:
             event = json.loads(line)

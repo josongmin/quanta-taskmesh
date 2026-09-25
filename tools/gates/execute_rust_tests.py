@@ -16,6 +16,7 @@ if str(REPO) not in sys.path:
 
 from tools.gates.target_catalog import (  # noqa: E402
     RECIPE_FRAGMENTS,
+    ZERO_CASE_LIBS,
     catalog_digest,
     source_catalog,
 )
@@ -67,14 +68,21 @@ def selected_cases(value: object) -> tuple[set[tuple[str, str, str]], set[str]]:
         if not isinstance(cases, dict):
             raise ValueError(f"{identity}: missing testcases")
         case_prefix = f"{package}::{target}" if kind == "lib" else binary_id
+        selected_in_suite = 0
         for name, case in cases.items():
             if not isinstance(case, dict) or not isinstance(name, str):
                 raise ValueError(f"{identity}: malformed testcase")
             match = case.get("filter-match")
             if not isinstance(match, dict):
                 raise ValueError(f"{identity}: missing filter status")
-            if case.get("ignored") is False and match.get("status") == "matches":
-                selected.add(f"{case_prefix}${name}")
+            if case.get("ignored") is True:
+                continue
+            if case.get("ignored") is not False or match != {"status": "matches"}:
+                raise ValueError(f"{identity}: filtered or malformed testcase {name}")
+            selected.add(f"{case_prefix}${name}")
+            selected_in_suite += 1
+        if selected_in_suite == 0 and f"{package}/{kind}/{target}" not in ZERO_CASE_LIBS:
+            raise ValueError(f"{identity}: no runnable cases")
     if value.get("test-count") != len(selected):
         raise ValueError("nextest test-count differs from selected nonignored cases")
     if not selected:
@@ -98,6 +106,12 @@ def executed_cases(
             raise ValueError(f"selected targets alias nextest suite identity {key}")
         prefix = f"{package}::{target}$"
         expected_by_suite[key] = sum(name.startswith(prefix) for name in expected)
+    for package, kind, target in targets:
+        if (
+            expected_by_suite[(package, target)] == 0
+            and f"{package}/{kind}/{target}" not in ZERO_CASE_LIBS
+        ):
+            raise ValueError(f"unregistered zero-case target {(package, kind, target)}")
     for line in lines.splitlines():
         try:
             event = json.loads(line)

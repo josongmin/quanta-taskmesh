@@ -28,17 +28,21 @@ def listed(cases: dict) -> dict:
     }
 
 
-def test_selected_cases_excludes_ignored_and_filtered() -> None:
+def test_selected_cases_excludes_ignored_and_rejects_filtered() -> None:
     case = lambda ignored, status: {  # noqa: E731
         "ignored": ignored, "filter-match": {"status": status}
     }
     targets, selected = selected_cases(listed({
         "runs": case(False, "matches"),
         "ignored": case(True, "matches"),
-        "filtered": case(False, "mismatch"),
     }))
     assert targets == {("pkg", "test", "target")}
     assert selected == {"pkg::target$runs"}
+    with pytest.raises(ValueError, match="filtered or malformed"):
+        selected_cases(listed({
+            "runs": case(False, "matches"),
+            "filtered": case(False, "mismatch"),
+        }))
 
 
 def test_list_count_must_match_selected_denominator() -> None:
@@ -58,11 +62,11 @@ def test_library_case_uses_nextest_execution_name() -> None:
 
 def test_empty_test_filter_is_not_execution_evidence() -> None:
     value = listed({"filtered": {"ignored": False, "filter-match": {"status": "mismatch"}}})
-    with pytest.raises(ValueError, match="no runnable cases"):
+    with pytest.raises(ValueError, match="filtered or malformed"):
         selected_cases(value)
 
 
-def test_zero_case_target_stays_in_target_denominator() -> None:
+def test_only_registered_zero_case_libraries_stay_in_target_denominator() -> None:
     value = listed({"runs": {"ignored": False, "filter-match": {"status": "matches"}}})
     value["rust-suites"]["empty"] = {
         "package-name": "taskmesh-contract",
@@ -75,10 +79,12 @@ def test_zero_case_target_stays_in_target_denominator() -> None:
     targets, cases = selected_cases(value)
     assert ("taskmesh-contract", "lib", "taskmesh_contract") in targets
     assert cases == {"pkg::target$runs"}
-    value["rust-suites"]["empty"]["package-name"] = "unknown"
-    targets, cases = selected_cases(value)
-    assert ("unknown", "lib", "taskmesh_contract") in targets
-    assert cases == {"pkg::target$runs"}
+    value["rust-suites"]["empty"].update({
+        "package-name": "unknown",
+        "kind": "test",
+    })
+    with pytest.raises(ValueError, match="no runnable cases"):
+        selected_cases(value)
 
 
 def test_execution_requires_started_and_ok_for_every_case() -> None:
@@ -112,7 +118,10 @@ def test_execution_requires_started_and_ok_for_every_case() -> None:
 
 def test_execution_accepts_omitted_or_paired_zero_case_suite() -> None:
     cases = {"pkg::target$runs"}
-    targets = {("pkg", "test", "target"), ("empty", "lib", "empty")}
+    targets = {
+        ("pkg", "test", "target"),
+        ("taskmesh-contract", "lib", "taskmesh_contract"),
+    }
     nonempty = '\n'.join([
         '{"type":"suite","event":"started","test_count":1,'
         '"nextest":{"crate":"pkg","test_binary":"target"}}',
@@ -124,9 +133,10 @@ def test_execution_accepts_omitted_or_paired_zero_case_suite() -> None:
     assert executed_cases(nonempty, cases, targets) == (cases, cases)
     zero = '\n'.join([
         '{"type":"suite","event":"started","test_count":0,'
-        '"nextest":{"crate":"empty","test_binary":"empty"}}',
+        '"nextest":{"crate":"taskmesh-contract","test_binary":"taskmesh_contract"}}',
         '{"type":"suite","event":"ok","passed":0,"failed":0,"ignored":0,'
-        '"filtered_out":0,"nextest":{"crate":"empty","test_binary":"empty"}}',
+        '"filtered_out":0,'
+        '"nextest":{"crate":"taskmesh-contract","test_binary":"taskmesh_contract"}}',
     ])
     assert executed_cases(nonempty + "\n" + zero, cases, targets) == (cases, cases)
     with pytest.raises(ValueError, match="unexpected nextest suite"):
@@ -135,6 +145,8 @@ def test_execution_accepts_omitted_or_paired_zero_case_suite() -> None:
             cases,
             targets,
         )
+    with pytest.raises(ValueError, match="unregistered zero-case target"):
+        executed_cases(nonempty, cases, targets | {("unknown", "test", "empty")})
 
 
 def test_rayon_zero_case_target_has_checked_suite_identity() -> None:
@@ -153,9 +165,9 @@ def test_rayon_zero_case_target_has_checked_suite_identity() -> None:
                     }
                 },
             },
-            "empty::empty": {
-                "package-name": "empty",
-                "binary-name": "empty",
+            "taskmesh-contract::taskmesh_contract": {
+                "package-name": "taskmesh-contract",
+                "binary-name": "taskmesh_contract",
                 "kind": "lib",
                 "status": "listed",
                 "testcases": {},
@@ -164,7 +176,7 @@ def test_rayon_zero_case_target_has_checked_suite_identity() -> None:
     }
     cases, targets = rayon_evidence.listed_cases(selection)
     assert cases == {("pkg", "case", "runs")}
-    assert targets == {"pkg/test/case", "empty/lib/empty"}
+    assert targets == {"pkg/test/case", "taskmesh-contract/lib/taskmesh_contract"}
     nonempty = '\n'.join([
         '{"type":"suite","event":"started","test_count":1,'
         '"nextest":{"crate":"pkg","test_binary":"case"}}',
@@ -176,9 +188,10 @@ def test_rayon_zero_case_target_has_checked_suite_identity() -> None:
     assert rayon_evidence.executed_cases(nonempty, cases, targets) == cases
     zero = '\n'.join([
         '{"type":"suite","event":"started","test_count":0,'
-        '"nextest":{"crate":"empty","test_binary":"empty"}}',
+        '"nextest":{"crate":"taskmesh-contract","test_binary":"taskmesh_contract"}}',
         '{"type":"suite","event":"ok","passed":0,"failed":0,"ignored":0,'
-        '"filtered_out":0,"nextest":{"crate":"empty","test_binary":"empty"}}',
+        '"filtered_out":0,'
+        '"nextest":{"crate":"taskmesh-contract","test_binary":"taskmesh_contract"}}',
     ])
     assert rayon_evidence.executed_cases(nonempty + "\n" + zero, cases, targets) == cases
     with pytest.raises(ValueError, match="unexpected nextest suite"):
@@ -186,6 +199,12 @@ def test_rayon_zero_case_target_has_checked_suite_identity() -> None:
             nonempty.replace('"crate":"pkg"', '"crate":"unknown"'),
             cases,
             targets,
+        )
+    with pytest.raises(ValueError, match="unregistered zero-case target"):
+        rayon_evidence.executed_cases(
+            nonempty,
+            cases,
+            targets | {"unknown/test/empty"},
         )
 
 

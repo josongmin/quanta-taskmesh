@@ -313,6 +313,8 @@ dependencies = [
 name = "taskmesh"
 version = "0.3.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "taskmesh-contract",
  "taskmesh-engine",
  "tokio",

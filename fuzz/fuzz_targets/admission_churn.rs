@@ -42,8 +42,8 @@ use taskmesh_contract::{
     TaskClass, TaskSpec, TaskStage,
 };
 use taskmesh_engine::{
-    AdmissionDecision, AdvanceOutcome, ClaimOutcome, Governor, LeaseToken, PermitId, PolicySet,
-    ReleaseOutcome, ResolvedCapability, Ticket,
+    AbandonOutcome, AdmissionDecision, AdvanceOutcome, ClaimOutcome, Governor, LeaseToken,
+    PermitId, PolicySet, ReleaseOutcome, ResolvedCapability, Ticket,
 };
 
 const CLASSES: [&str; 3] = ["alpha", "beta", "gamma"];
@@ -457,14 +457,20 @@ impl Harness {
                 }
                 let at = usize::from(index) % self.tickets.len();
                 let ticket = self.tickets.swap_remove(at);
-                self.governor.abandon(ticket);
+                let before = self.governor.ticket_status(ticket);
+                let outcome = self.governor.abandon(ticket);
                 assert!(
                     matches!(
-                        self.governor.ticket_status(ticket),
-                        ClaimOutcome::Invalid | ClaimOutcome::Terminal(_)
+                        (before, outcome),
+                        (
+                            ClaimOutcome::Pending | ClaimOutcome::Ready(_),
+                            AbandonOutcome::Abandoned
+                        ) | (ClaimOutcome::Terminal(_), AbandonOutcome::TerminalDiscarded)
+                            | (ClaimOutcome::Invalid, AbandonOutcome::Invalid)
                     ),
-                    "ticket {ticket} still claimable after abandon"
+                    "ticket {ticket} abandon outcome disagrees with its prior state"
                 );
+                assert_eq!(self.governor.ticket_status(ticket), ClaimOutcome::Invalid);
             }
             Op::Release(index) => {
                 if self.permits.is_empty() {
@@ -586,7 +592,16 @@ impl Harness {
 
     fn finish(mut self) {
         for ticket in std::mem::take(&mut self.tickets) {
-            self.governor.abandon(ticket);
+            let before = self.governor.ticket_status(ticket);
+            let outcome = self.governor.abandon(ticket);
+            assert!(matches!(
+                (before, outcome),
+                (
+                    ClaimOutcome::Pending | ClaimOutcome::Ready(_),
+                    AbandonOutcome::Abandoned
+                ) | (ClaimOutcome::Terminal(_), AbandonOutcome::TerminalDiscarded)
+                    | (ClaimOutcome::Invalid, AbandonOutcome::Invalid)
+            ));
         }
         for permit in std::mem::take(&mut self.permits) {
             match self.governor.release(permit) {

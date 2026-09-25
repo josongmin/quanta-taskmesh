@@ -260,6 +260,45 @@ fn config_rejects_unknown_and_duplicate_before_builder_promotion() {
     );
 }
 
+#[test]
+fn strict_config_accepts_supported_nested_variant_payloads() {
+    use taskmesh::{
+        CheckpointPolicy, FairnessPolicy, MemoryOvercommitPolicy, RetryAfterPolicy, SubstrateKind,
+        SubstrateRecord,
+    };
+
+    let policy = ClassPolicy::new()
+        .fairness(FairnessPolicy::WeightedFairQueue {
+            weight: 2,
+            burst: 1,
+        })
+        .retry_after_policy(RetryAfterPolicy::FixedMs(7))
+        .memory_overcommit_policy(MemoryOvercommitPolicy::DegradeToLight {
+            fallback_class: TaskClass::new("light"),
+        })
+        .checkpoint_policy(CheckpointPolicy {
+            every_n_work_items: Some(10),
+            before_fan_out: true,
+            before_large_allocation: false,
+            before_stage_boundary: true,
+            before_reduce: true,
+        });
+    let mut value = config();
+    value["classes"]["c"] = json!(policy);
+    value["classes"]["light"] = json!(ClassPolicy::new());
+    value["extra_substrates"] = json!([SubstrateRecord::new(
+        "external",
+        SubstrateKind::CompetingExecution,
+        Some("external-pool"),
+    )]);
+    value["capability_limits"]["external-pool"] = json!(1);
+    parse_runtime_config(
+        &serde_json::to_vec(&value).unwrap(),
+        StrictIngressLimits::default(),
+    )
+    .expect("all currently supported nested config shapes must decode");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn explicit_dispatch_tags_charge_the_actual_worker_domain() {
     use std::time::Duration;

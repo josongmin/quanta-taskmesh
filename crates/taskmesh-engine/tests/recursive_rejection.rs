@@ -141,7 +141,7 @@ fn abandoning_queued_child_clears_the_guard() {
         AdmissionDecision::Queued { ticket } => ticket,
         o => panic!("{o:?}"),
     };
-    g.abandon(ticket);
+    let _ = g.abandon(ticket);
     // After abandoning the queued child, a new child may queue again.
     assert!(matches!(
         g.admit(&child("root")),

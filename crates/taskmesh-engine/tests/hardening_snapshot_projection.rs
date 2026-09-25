@@ -171,7 +171,7 @@ fn phases_are_monotonic_and_partition_inflight() {
 
     // An unknown permit cannot be advanced.
     assert_eq!(
-        g.advance_phase(u64::MAX, ExecutionPhase::Running),
+        g.advance_phase(PermitId::forge(0, u64::MAX), ExecutionPhase::Running),
         AdvanceOutcome::Refused(AdvanceRefusal::UnknownPermit)
     );
     assert_eq!(g.release_leased(token), ReleaseOutcome::Released);
@@ -298,6 +298,6 @@ fn queue_diagnostics_name_what_a_request_is_waiting_on() {
     );
 
     // Once it stops being queued, there is no pending view to read.
-    g.abandon(ticket);
+    let _ = g.abandon(ticket);
     assert!(g.pending_view(ticket).is_none());
 }

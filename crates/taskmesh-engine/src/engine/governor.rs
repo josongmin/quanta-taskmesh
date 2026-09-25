@@ -34,8 +34,8 @@ use taskmesh_contract::{
 };
 
 use crate::engine::state::{
-    AdvanceOutcome, CapacityBlock, ClaimOutcome, GovernedState, GrantRequest, LeaseToken,
-    ReleaseOutcome, TerminalReason, TicketState, TransitionEffects,
+    AbandonOutcome, AdvanceOutcome, CapacityBlock, ClaimOutcome, GovernedState, GrantRequest,
+    LeaseToken, ReleaseOutcome, TerminalReason, TicketState, TransitionEffects,
 };
 use crate::features::memory::{MeasurementSequence, ReconcileOutcome};
 use crate::features::{admission, composite, fairness, inventory, memory};
@@ -45,6 +45,8 @@ use crate::shared::{
     Ticket,
 };
 use crate::sync::{AtomicU64, Mutex, Ordering};
+
+static NEXT_GOVERNOR_AUTHORITY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Permits granted in one promotion pass before the lock is released.
 ///
@@ -66,6 +68,7 @@ enum CycleTerminalization {
 /// guarded state, which would take the mutex inside a formatter (a host
 /// `Debug` in a log line must not contend with admission).
 pub struct Governor {
+    authority: u64,
     policy: PolicySet,
     clock: Arc<dyn Clock>,
     next_permit: AtomicU64,
@@ -94,7 +97,7 @@ impl Governor {
     /// policy can never boot.
     pub fn new(policy: PolicySet, clock: Arc<dyn Clock>) -> Result<Self, GovernorError> {
         Self::validate_policy(&policy)?;
-        Ok(Self::construct(policy, clock, None))
+        Self::construct(policy, clock, None)
     }
 
     /// Construct a validated governor with a host settlement observer. The
@@ -107,7 +110,7 @@ impl Governor {
         settlement_waker: Arc<dyn SettlementWaker>,
     ) -> Result<Self, GovernorError> {
         Self::validate_policy(&policy)?;
-        Ok(Self::construct(policy, clock, Some(settlement_waker)))
+        Self::construct(policy, clock, Some(settlement_waker))
     }
 
     /// Raw constructor (no validation). Private: the validated [`Governor::new`]
@@ -116,8 +119,16 @@ impl Governor {
         policy: PolicySet,
         clock: Arc<dyn Clock>,
         settlement_waker: Option<Arc<dyn SettlementWaker>>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, GovernorError> {
+        let authority = NEXT_GOVERNOR_AUTHORITY
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |current| current.checked_add(1),
+            )
+            .map_err(|_| GovernorError::IdentityAuthorityExhausted)?;
+        Ok(Self {
+            authority,
             policy,
             clock,
             next_permit: AtomicU64::new(1),
@@ -125,7 +136,7 @@ impl Governor {
             next_seq: AtomicU64::new(1),
             state: Mutex::new(GovernedState::default()),
             settlement_waker,
-        }
+        })
     }
 
     /// Construct a governor **without** validating the policy — the caller
@@ -140,6 +151,7 @@ impl Governor {
     #[doc(hidden)]
     pub fn new_unchecked(policy: PolicySet, clock: Arc<dyn Clock>) -> Self {
         Self::construct(policy, clock, None)
+            .expect("test process exhausted the governor authority identity space")
     }
 
     pub fn policy(&self) -> &PolicySet {
@@ -152,12 +164,32 @@ impl Governor {
         self.clock.now_ms()
     }
 
-    fn fresh_ids(&self) -> admission::Ids {
-        admission::Ids {
-            permit_id: self.next_permit.fetch_add(1, Ordering::Relaxed),
-            ticket: self.next_ticket.fetch_add(1, Ordering::Relaxed),
-            seq_no: self.next_seq.fetch_add(1, Ordering::Relaxed),
-        }
+    fn take_sequence(counter: &AtomicU64) -> Option<u64> {
+        counter
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .ok()
+    }
+
+    fn fresh_ids(&self) -> Option<admission::Ids> {
+        let permit = Self::take_sequence(&self.next_permit)?;
+        let ticket = Self::take_sequence(&self.next_ticket)?;
+        let seq_no = Self::take_sequence(&self.next_seq)?;
+        Some(admission::Ids {
+            permit_id: PermitId::new(self.authority, permit),
+            ticket: Ticket::new(self.authority, ticket),
+            seq_no,
+        })
+    }
+
+    /// Set the next local identity sequences for exhaustion-path tests.
+    #[cfg(feature = "test-util")]
+    #[doc(hidden)]
+    pub fn set_identity_counters_for_test(&self, permit: u64, ticket: u64, seq: u64) {
+        self.next_permit.store(permit, Ordering::Relaxed);
+        self.next_ticket.store(ticket, Ordering::Relaxed);
+        self.next_seq.store(seq, Ordering::Relaxed);
     }
 
     /// The capability pool a spec resolves to by its declared substrate hint.
@@ -256,7 +288,12 @@ impl Governor {
         waker: Option<Arc<dyn PermitWaker>>,
     ) -> AdmissionDecision {
         let sampled = self.sample_clock_ms();
-        let ids = self.fresh_ids();
+        let Some(ids) = self.fresh_ids() else {
+            drop(waker);
+            return AdmissionDecision::Rejected(
+                taskmesh_contract::AdmissionVerdict::IdentityExhausted,
+            );
+        };
         let request = admission::AdmissionRequest { spec, capabilities };
         let mut effects = TransitionEffects::default();
         let decision = {
@@ -386,10 +423,10 @@ impl Governor {
 
     /// Abandon a queued/promoted ticket (e.g. on acquire timeout). Releases the
     /// permit if the ticket had already been promoted.
-    pub fn abandon(&self, ticket: Ticket) {
+    pub fn abandon(&self, ticket: Ticket) -> AbandonOutcome {
         let sampled = self.sample_clock_ms();
         let mut effects = TransitionEffects::default();
-        {
+        let outcome = {
             let mut state = self.state.lock();
             let now = state.commit_time(sampled);
             match state.tickets.get(&ticket).cloned() {
@@ -400,6 +437,7 @@ impl Governor {
                     state.forget_terminal_ticket(ticket);
                     let pass = self.promote(&mut state, now);
                     effects.absorb(pass);
+                    AbandonOutcome::Abandoned
                 }
                 Some(TicketState::Queued { class }) => {
                     let mut released_guard = None;
@@ -434,14 +472,17 @@ impl Governor {
                     fairness::on_unserved_removed(&mut state, &class, policy);
                     let pass = self.promote(&mut state, now);
                     effects.absorb(pass);
+                    AbandonOutcome::Abandoned
                 }
                 Some(TicketState::Terminal(_)) => {
                     state.forget_terminal_ticket(ticket);
+                    AbandonOutcome::TerminalDiscarded
                 }
-                None => {}
+                None => AbandonOutcome::Invalid,
             }
-        }
+        };
         self.drain_effects(effects, sampled);
+        outcome
     }
 
     // ---- permit lifecycle -------------------------------------------------
@@ -565,7 +606,7 @@ impl Governor {
                 selection.service_finish_tag,
             );
             state.tickets.remove(&head.ticket);
-            let permit_id = self.next_permit.fetch_add(1, Ordering::Relaxed);
+            let permit_id = head.permit_id;
             let parent_permit_id = head
                 .parent_permit_id
                 .or_else(|| state.parent_permit_for_scope(&head.root_operation_id, &head.scope));

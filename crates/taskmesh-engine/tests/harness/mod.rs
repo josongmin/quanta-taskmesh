@@ -71,7 +71,7 @@ pub fn admit_filler_on(g: &Governor, class: &str) -> PermitId {
 }
 
 /// Enqueue one request on `class`, asserting it queues; returns `(ticket, class)`.
-pub fn queue(g: &Governor, class: &'static str, op: &str) -> (u64, String) {
+pub fn queue(g: &Governor, class: &'static str, op: &str) -> (Ticket, String) {
     match g.admit(&spec_for(class, op)) {
         AdmissionDecision::Queued { ticket } => (ticket, class.to_string()),
         other => panic!("expected queue for {class}, got {other:?}"),
@@ -81,8 +81,8 @@ pub fn queue(g: &Governor, class: &'static str, op: &str) -> (u64, String) {
 /// Drain promotions in order: repeatedly find the promoted ticket, record its
 /// class, and release it (which triggers the next promotion). Returns the class
 /// promotion order.
-pub fn drain(g: &Governor, tickets: &[(u64, String)]) -> Vec<String> {
-    let mut remaining: Vec<(u64, String)> = tickets.to_vec();
+pub fn drain(g: &Governor, tickets: &[(Ticket, String)]) -> Vec<String> {
+    let mut remaining: Vec<(Ticket, String)> = tickets.to_vec();
     let mut order = Vec::new();
     while !remaining.is_empty() {
         let mut found = None;

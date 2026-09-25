@@ -12,7 +12,7 @@ use taskmesh_contract::{
     TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
-    AdmissionDecision, ClaimOutcome, Governor, PolicySet, Provenance, ReleaseOutcome,
+    AdmissionDecision, ClaimOutcome, Governor, PolicySet, Provenance, ReleaseOutcome, Ticket,
 };
 
 fn spec_with(op: &str, source: PlanSource, reason: ClassificationRationale) -> TaskSpec {
@@ -73,7 +73,7 @@ fn promotion_preserves_each_requests_own_provenance() {
             ClassificationRationale::DerivedFromStageMap,
         ),
     ];
-    let mut queued: Vec<(u64, Provenance)> = Vec::new();
+    let mut queued: Vec<(Ticket, Provenance)> = Vec::new();
     for (op, source, reason) in tagged {
         let spec = spec_with(op, source.clone(), reason);
         match g.admit(&spec) {
@@ -126,5 +126,8 @@ fn promotion_preserves_each_requests_own_provenance() {
 #[test]
 fn unknown_permit_has_no_provenance() {
     let g = governor(4, 0);
-    assert_eq!(g.permit_provenance(404), None);
+    assert_eq!(
+        g.permit_provenance(taskmesh_engine::PermitId::forge(0, 404)),
+        None
+    );
 }

@@ -326,7 +326,9 @@ mod tests {
         CapacityAssessment,
     };
     use crate::engine::state::{ClassState, GovernedState};
-    use crate::shared::{CapabilityRequirementSet, PolicySet, Provenance, ResolvedCapability};
+    use crate::shared::{
+        CapabilityRequirementSet, PermitId, PolicySet, Provenance, ResolvedCapability,
+    };
     use std::collections::BTreeMap;
     use taskmesh_contract::{
         ClassPolicy, ResourceBudget, TaskClass, TaskScope, TaskSpec, TaskStage,
@@ -392,7 +394,7 @@ mod tests {
         // Admit the exact parent with zero cost, then inject unrelated pressure.
         // The cycle detector must attribute only capacity held by this parent.
         state.grant(crate::engine::state::GrantRequest {
-            permit_id: 7,
+            permit_id: PermitId::new(1, 7),
             class: &parent_class,
             operation: "parent",
             root_operation_id: "root",

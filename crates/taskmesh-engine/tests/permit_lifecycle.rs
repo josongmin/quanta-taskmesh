@@ -55,7 +55,10 @@ fn permit_and_inflight_move_together() {
 fn release_of_unknown_permit_is_reported_not_swallowed() {
     let g = gov(vec![("c", ClassPolicy::new())]);
     // Must not panic or underflow — and must not pretend it released anything.
-    assert_eq!(g.release(99_999), ReleaseOutcome::UnknownPermit);
+    assert_eq!(
+        g.release(taskmesh_engine::PermitId::forge(0, 99_999)),
+        ReleaseOutcome::UnknownPermit
+    );
     assert_eq!(g.snapshot().classes[&TaskClass::new("c")].inflight, 0);
 }
 

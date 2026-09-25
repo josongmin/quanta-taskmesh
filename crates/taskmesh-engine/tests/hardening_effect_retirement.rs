@@ -23,7 +23,7 @@ use taskmesh_contract::{
 };
 use taskmesh_engine::{
     AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome,
-    ResolvedCapability, TerminalReason,
+    ResolvedCapability, TerminalReason, Ticket,
 };
 
 /// A waker that re-enters the governor from its destructor — the exact shape a
@@ -128,7 +128,7 @@ fn abandoning_a_queued_request_retires_its_waker_outside_the_lock() {
 
     let abandoning = Arc::clone(&governor);
     with_deadline("abandon with a re-entrant waker destructor", move || {
-        abandoning.abandon(ticket);
+        let _ = abandoning.abandon(ticket);
     });
 
     assert_eq!(entered.load(Ordering::SeqCst), 1, "the destructor ran");
@@ -247,7 +247,7 @@ fn a_backlog_larger_than_the_promotion_budget_drains_without_further_events() {
         other => panic!("expected admission, got {other:?}"),
     };
 
-    let tickets: Vec<u64> = (0..backlog)
+    let tickets: Vec<Ticket> = (0..backlog)
         .map(|i| {
             match governor.admit(&TaskSpec::io(TaskClass::new("small")).operation(format!("q{i}")))
             {

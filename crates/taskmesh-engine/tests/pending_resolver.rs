@@ -8,7 +8,7 @@ use taskmesh_contract::{
     TaskSpec, TaskStage,
 };
 use taskmesh_engine::{
-    AdmissionDecision, BlockerSet, CapacityAssessment, ClaimOutcome, Governor, PolicySet,
+    AdmissionDecision, BlockerSet, CapacityAssessment, ClaimOutcome, Governor, PermitId, PolicySet,
     ReleaseOutcome, TerminalReason,
 };
 
@@ -67,7 +67,7 @@ fn grandchild(spec: TaskSpec) -> TaskSpec {
         .operation("grandchild")
 }
 
-fn admitted(g: &Governor, spec: &TaskSpec) -> u64 {
+fn admitted(g: &Governor, spec: &TaskSpec) -> PermitId {
     match g.admit(spec) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("expected admission, got {other:?}"),
@@ -586,6 +586,10 @@ fn invalid_duplicate_stage_is_rejected_before_ids_or_state_change() {
     assert_eq!(g.retained_terminal_tickets(), 0);
 
     let permit = admitted(&g, &TaskSpec::io(class("c")).operation("valid"));
-    assert_eq!(permit, 1, "invalid input did not consume a permit id");
+    assert_eq!(
+        permit.sequence(),
+        1,
+        "invalid input did not consume a permit id"
+    );
     assert_eq!(g.release(permit), ReleaseOutcome::Released);
 }

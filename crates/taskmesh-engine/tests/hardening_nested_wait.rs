@@ -26,7 +26,7 @@ use taskmesh_contract::{
     AdmissionVerdict, ClassPolicy, HeldCapacity, ManualClock, MemoryOvercommitPolicy,
     OverflowPolicy, ResourceBudget, TaskClass, TaskSpec, TaskStage,
 };
-use taskmesh_engine::{AdmissionDecision, Governor, PermitId, PolicySet, ReleaseOutcome};
+use taskmesh_engine::{AdmissionDecision, Governor, PermitId, PolicySet, ReleaseOutcome, Ticket};
 
 fn class(name: &'static str) -> TaskClass {
     TaskClass::new(name)
@@ -129,7 +129,7 @@ fn refused_as_cycle(what: &str, decision: AdmissionDecision, expected: &HeldCapa
     }
 }
 
-fn queued(what: &str, decision: AdmissionDecision) -> u64 {
+fn queued(what: &str, decision: AdmissionDecision) -> Ticket {
     match decision {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("{what}: a wait that can end must queue, got {other:?}"),
@@ -552,7 +552,7 @@ fn a_pool_cpu_or_memory_budget_shared_with_a_stranger_is_a_wait_not_a_cycle() {
     // The class-inflight case above, on the three other kinds of capacity: the
     // root holds part of what the child waits for, a stranger the rest. The
     // stranger can release, so each child queues — and is promoted when it does.
-    let claim = |g: &Governor, ticket: u64, what: &str| {
+    let claim = |g: &Governor, ticket: Ticket, what: &str| {
         let taskmesh_engine::ClaimOutcome::Ready(permit) = g.claim(ticket) else {
             panic!("{what}: the stranger's release promotes the child")
         };

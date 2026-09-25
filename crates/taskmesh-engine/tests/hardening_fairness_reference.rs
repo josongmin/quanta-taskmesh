@@ -178,7 +178,7 @@ fn admit_one(g: &Governor, class: &str, op: &str) -> PermitId {
     }
 }
 
-fn queue_one(g: &Governor, class: &str, op: &str) -> u64 {
+fn queue_one(g: &Governor, class: &str, op: &str) -> Ticket {
     match g.admit(&spec(class, op)) {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected a queued ticket, got {other:?}"),
@@ -188,7 +188,7 @@ fn queue_one(g: &Governor, class: &str, op: &str) -> u64 {
 /// Release `holder` and report which class the freed unit went to.
 fn serve_next(
     g: &Governor,
-    tickets: &mut Vec<(u64, String)>,
+    tickets: &mut Vec<(Ticket, String)>,
     holder: PermitId,
 ) -> (String, PermitId) {
     assert_eq!(g.release(holder), ReleaseOutcome::Released);
@@ -297,7 +297,7 @@ fn drr_selection_matches_the_reference_for_heterogeneous_costs() {
     );
 
     let holder = admit_one(&g, "holder", "holder");
-    let mut tickets: Vec<(u64, String)> = Vec::new();
+    let mut tickets: Vec<(Ticket, String)> = Vec::new();
     for round in 0..per_class {
         for (name, _, cost) in &classes {
             tickets.push((
@@ -392,7 +392,7 @@ fn residual_credit_kept_through_a_capacity_block_is_spent_on_the_first_visit_bac
     // Two holders fill the cpu budget; the backlog queues behind them.
     let h1 = admit_one(&g, "h", "h1");
     let h2 = admit_one(&g, "h", "h2");
-    let mut tickets: Vec<(u64, String)> = Vec::new();
+    let mut tickets: Vec<(Ticket, String)> = Vec::new();
     for op in ["x0", "x1"] {
         tickets.push((queue_one(&g, "x", op), "x".to_string()));
         reference.enqueue("x", 1);
@@ -484,7 +484,7 @@ fn drr_order_is_exact_across_the_promotion_budget_boundary() {
     );
 
     let holder = admit_one(&g, "holder", "holder");
-    let mut tickets: Vec<(u64, String)> = Vec::new();
+    let mut tickets: Vec<(Ticket, String)> = Vec::new();
     let per_class = usize::try_from(total).expect("small") / classes.len() + 1;
     for round in 0..per_class {
         for (name, _) in &classes {
@@ -561,7 +561,7 @@ impl taskmesh_contract::PermitWaker for AbandoningHeadWaker {
         let Some((head, follower)) = self.tickets.lock().expect("lock").take() else {
             return;
         };
-        self.governor.abandon(head);
+        let _ = self.governor.abandon(head);
         *self.follower_before_return.lock().expect("lock") =
             Some(self.governor.ticket_status(follower));
     }
@@ -1771,7 +1771,7 @@ fn cancelled_requests_leave_no_virtual_time_debt() {
     let filler = admit_filler(&g);
     for i in 0..10 {
         let (ticket, _) = queue(&g, "a", &format!("cancelled{i}"));
-        g.abandon(ticket);
+        let _ = g.abandon(ticket);
     }
     let tickets = vec![queue(&g, "a", "real-a"), queue(&g, "b", "real-b")];
     assert_eq!(g.release(filler), ReleaseOutcome::Released);
@@ -1795,7 +1795,7 @@ fn cancelling_a_wfq_head_removes_its_debt_from_live_survivors() {
     let (survivor, _) = queue(&g, "a", "a1");
     let (peer, _) = queue(&g, "b", "b0");
 
-    g.abandon(cancelled);
+    let _ = g.abandon(cancelled);
     assert_eq!(g.release(filler), ReleaseOutcome::Released);
     assert!(
         matches!(g.ticket_status(survivor), ClaimOutcome::Ready(_)),
@@ -1843,7 +1843,7 @@ fn cancellation_preserves_each_survivors_virtual_arrival_floor() {
     };
 
     let (survivor, _) = queue(&g, "a", "a1");
-    g.abandon(victim);
+    let _ = g.abandon(victim);
     let (peer, _) = queue(&g, "b", "b1");
     assert_eq!(g.release(a_holder), ReleaseOutcome::Released);
     assert!(
@@ -2004,7 +2004,7 @@ fn cancellation_after_cross_pool_service_does_not_reprice_an_older_head() {
             else {
                 panic!("victim waits while both CPU units are held");
             };
-            g.abandon(victim);
+            let _ = g.abandon(victim);
         }
 
         let AdmissionDecision::Queued { ticket: peer } =
@@ -2051,9 +2051,9 @@ fn cancelling_from_the_middle_preserves_the_order_of_the_survivors() {
     for victim in 0..4usize {
         let g = contended(vec![("a", weighted_class(1)), ("b", weighted_class(1))]);
         let filler = admit_filler(&g);
-        let queued: Vec<u64> = (0..4).map(|i| queue(&g, "a", &format!("a{i}")).0).collect();
-        g.abandon(queued[victim]);
-        let expected: Vec<u64> = queued
+        let queued: Vec<Ticket> = (0..4).map(|i| queue(&g, "a", &format!("a{i}")).0).collect();
+        let _ = g.abandon(queued[victim]);
+        let expected: Vec<Ticket> = queued
             .iter()
             .copied()
             .enumerate()
@@ -2061,11 +2061,11 @@ fn cancelling_from_the_middle_preserves_the_order_of_the_survivors() {
             .map(|(_, t)| t)
             .collect();
         let mut remaining = expected.clone();
-        let mut served: Vec<u64> = Vec::new();
+        let mut served: Vec<Ticket> = Vec::new();
         let mut holder = filler;
         while !remaining.is_empty() {
             assert_eq!(g.release(holder), ReleaseOutcome::Released);
-            let ready: Vec<u64> = remaining
+            let ready: Vec<Ticket> = remaining
                 .iter()
                 .copied()
                 .filter(|t| matches!(g.ticket_status(*t), ClaimOutcome::Ready(_)))

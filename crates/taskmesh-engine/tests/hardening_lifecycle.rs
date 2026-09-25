@@ -18,6 +18,7 @@ use taskmesh_contract::{
 };
 use taskmesh_engine::{
     AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome, TerminalReason,
+    Ticket,
 };
 
 #[test]
@@ -86,7 +87,7 @@ fn admit(g: &Governor, op: &str) -> PermitId {
     }
 }
 
-fn queue(g: &Governor, op: &str) -> u64 {
+fn queue(g: &Governor, op: &str) -> Ticket {
     match g.admit(&spec(op)) {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected a queued ticket, got {other:?}"),
@@ -175,7 +176,7 @@ fn an_unpromoted_ticket_reports_pending_not_terminal() {
 #[test]
 fn a_never_issued_ticket_is_invalid_not_pending() {
     let (g, _clock, _class) = gov(leak_detecting_single_slot());
-    assert_eq!(g.claim(u64::MAX), ClaimOutcome::Invalid);
+    assert_eq!(g.claim(Ticket::forge(0, u64::MAX)), ClaimOutcome::Invalid);
 }
 
 #[test]
@@ -197,7 +198,7 @@ fn ownership_transfers_exactly_once_across_claim_abandon_release_orders() {
             }
             "abandon" => {
                 // Abandon while still queued: the holder keeps its permit.
-                g.abandon(ticket);
+                let _ = g.abandon(ticket);
                 assert_eq!(g.snapshot().classes[&class].queued, 0);
                 assert_eq!(g.snapshot().classes[&class].inflight, 1);
                 assert_eq!(g.release(holder), ReleaseOutcome::Released);
@@ -209,14 +210,14 @@ fn ownership_transfers_exactly_once_across_claim_abandon_release_orders() {
                 };
                 // Abandoning an already-claimed ticket must not release the
                 // permit the caller now owns.
-                g.abandon(ticket);
+                let _ = g.abandon(ticket);
                 assert_eq!(g.snapshot().classes[&class].inflight, 1);
                 assert_eq!(g.release(permit), ReleaseOutcome::Released);
             }
             _ => {
                 assert_eq!(g.release(holder), ReleaseOutcome::Released);
                 // Abandon after promotion releases the promoted permit.
-                g.abandon(ticket);
+                let _ = g.abandon(ticket);
             }
         }
 
@@ -238,7 +239,10 @@ fn a_foreign_or_repeated_release_does_not_free_another_execution() {
     // Releasing the same permit again refunds nothing — and says so.
     assert_eq!(g.release(first), ReleaseOutcome::UnknownPermit);
     // A permit id that was never issued cannot free anything either.
-    assert_eq!(g.release(u64::MAX), ReleaseOutcome::UnknownPermit);
+    assert_eq!(
+        g.release(PermitId::forge(0, u64::MAX)),
+        ReleaseOutcome::UnknownPermit
+    );
     assert_eq!(g.snapshot().classes[&class].inflight, 1);
 
     assert_eq!(g.release(second), ReleaseOutcome::Released);
@@ -256,7 +260,7 @@ fn terminal_retention_holds_exactly_the_bound_and_evicts_the_oldest_first() {
     let bound = taskmesh_engine::MAX_TERMINAL_TICKETS;
     // One promote-then-reclaim cycle, which is the transition that retains a
     // terminal reason for the unclaimed ticket.
-    let churn = |i: usize| -> u64 {
+    let churn = |i: usize| -> Ticket {
         let holder = admit(&g, &format!("h{i}"));
         let ticket = queue(&g, &format!("q{i}"));
         assert_eq!(g.release(holder), ReleaseOutcome::Released);

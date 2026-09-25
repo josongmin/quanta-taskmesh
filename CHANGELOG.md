@@ -27,6 +27,13 @@ The current operator path is local; hosted attestation remains a compatibility p
 
 ### Breaking changes and migration
 
+- **Governor-bound identities (BG25-004/B28).** `PermitId` and `Ticket` are
+  opaque handles rather than `u64` aliases. Keep and return the handle issued by
+  the same `Governor`; use `sequence()` only for diagnostics. `Governor::abandon`
+  now returns `AbandonOutcome`, including `Invalid` for a foreign or unknown
+  ticket. Foreign same-sequence handles cannot alias local state, and local
+  identity exhaustion rejects with `AdmissionVerdict::IdentityExhausted`
+  instead of wrapping. Code that stored raw numeric IDs must store the handle.
 - **Composite lineage (C01/E04).** The two-argument
   `child_of(root, parent_stage)` / `awaited_child_of(root, parent_stage)`
   builders are replaced with `(root, immediate_parent_operation, parent_stage)`.
@@ -492,11 +499,15 @@ loop {
         ClaimOutcome::Pending => waker.notified().await,
         ClaimOutcome::Terminal(reason) => {
             break Err(GovernorError::TicketClaimTerminated {
-                ticket,
+                ticket: ticket.sequence(),
                 reason: reason.into(),
             })
         }
-        ClaimOutcome::Invalid => break Err(GovernorError::InvalidTicketClaim { ticket }),
+        ClaimOutcome::Invalid => {
+            break Err(GovernorError::InvalidTicketClaim {
+                ticket: ticket.sequence(),
+            })
+        }
     }
 }
 ```

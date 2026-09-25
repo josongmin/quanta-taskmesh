@@ -46,7 +46,7 @@ proptest! {
     ) {
         let g = governor(&[("a", 2, 1), ("b", 3, 2), ("c", 1, 3)]);
         // model of live permits: (permit_id, class_index)
-        let mut live: Vec<(u64, usize)> = Vec::new();
+        let mut live: Vec<(PermitId, usize)> = Vec::new();
 
         for (step, (is_admit, class_sel, rel_sel)) in ops.into_iter().enumerate() {
             if is_admit {
@@ -130,7 +130,7 @@ fn weighted_drain(classes_seq: &[usize], weights: [u32; 3]) -> Vec<usize> {
         unreachable!()
     };
 
-    let mut tickets: Vec<(u64, usize)> = Vec::new();
+    let mut tickets: Vec<(Ticket, usize)> = Vec::new();
     for (i, &ci) in classes_seq.iter().enumerate() {
         let op = format!("{ci}-{i}");
         let ticket = match g.admit(&blocking(CLASSES[ci], &op)) {

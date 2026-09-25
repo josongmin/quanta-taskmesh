@@ -100,6 +100,10 @@ let out = runtime
      폐기되고 caller는 `DeadlineExceeded`를 받으며, 실제 teardown까지 custody는 worker에 남는다.
    - 큐에서 대기하던 요청이 claim 전에 끝나면(leak sweep 회수 등) `GovernorError::TicketClaimTerminated
      { ticket, reason }`로 사유가 보존된다. 알 수 없는 ticket은 `InvalidTicketClaim`이며 둘 다 대기가 아니다.
+   - `PermitId`/`Ticket`은 발급한 Governor authority에 결속된 opaque handle이다. `sequence()`은 로그용 숫자이며
+     handle을 재구성하는 입력이 아니다. 다른 Governor의 handle은 숫자 sequence가 같아도 local permit/ticket과
+     충돌하지 않으며 release/advance/claim/abandon은 typed negative outcome과 side-effect 0을 보장한다.
+     local ID 공간이 소진되면 admission은 `IdentityExhausted`로 거절되고 counter를 wrap/reuse하지 않는다.
 6. substrate hint는 run path와 일치해야 한다(불일치 → `SubstrateMismatch`). requested-stack 크기는
    모든 sync/async 경로에서 admission 전에 단일 validator로 판정된다. topology slot은 실제 동시성
    상한(`0`=무제한)이며 capability 점유는 class inflight·resource budget과 **같은** admission 결정이다:

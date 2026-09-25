@@ -19,8 +19,8 @@ use taskmesh_contract::{
     SubstrateHint, TaskClass, TaskSpec, TaskStage,
 };
 use taskmesh_engine::{
-    AdmissionDecision, ClaimOutcome, Governor, PermitId, ReconcileOutcome, ReleaseOutcome,
-    StageReleaseOutcome, Ticket,
+    AbandonOutcome, AdmissionDecision, ClaimOutcome, Governor, PermitId, ReconcileOutcome,
+    ReleaseOutcome, StageReleaseOutcome, Ticket,
 };
 
 // ---- shared invariant helpers ---------------------------------------------
@@ -123,7 +123,7 @@ fn fuzz_conservation_and_caps_under_adversarial_churn() {
                 2 => {
                     if !pending.is_empty() {
                         let t = pending.swap_remove(rng.gen_range(0..pending.len()));
-                        g.abandon(t);
+                        let _ = g.abandon(t);
                     }
                 }
                 3 => drain_promotions(g, &mut pending, &mut held),
@@ -185,7 +185,7 @@ fn fuzz_conservation_and_caps_under_adversarial_churn() {
                 break;
             }
             if let Some(t) = pending.pop() {
-                g.abandon(t);
+                let _ = g.abandon(t);
             } else if let Some(p) = held.pop() {
                 assert_eq!(g.release(p), ReleaseOutcome::Released);
             }
@@ -608,15 +608,17 @@ fn lifecycle_ops_are_idempotent_and_safe() {
     assert_eq!(g.snapshot().classes[&c].cpu_units_held, 0);
 
     // Unknown handles are all safe.
-    assert_eq!(g.claim(999_999), ClaimOutcome::Invalid);
-    g.abandon(999_999); // unknown ticket: no-op
+    let unknown_ticket = Ticket::forge(0, 999_999);
+    let unknown_permit = PermitId::forge(0, 999_999);
+    assert_eq!(g.claim(unknown_ticket), ClaimOutcome::Invalid);
+    assert_eq!(g.abandon(unknown_ticket), AbandonOutcome::Invalid);
     assert_eq!(
-        g.reconcile_memory(999_999, 100),
+        g.reconcile_memory(unknown_permit, 100),
         ReconcileOutcome::UnknownPermit,
         "reconcile unknown → typed rejection"
     );
     assert_eq!(
-        g.release_stage_memory(999_999, 5),
+        g.release_stage_memory(unknown_permit, 5),
         StageReleaseOutcome::UnknownPermit,
         "stage-release unknown → typed rejection"
     );

@@ -13,7 +13,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use taskmesh_contract::{ClassPolicy, ManualClock, ResourceBudget, TaskClass, TaskSpec};
-use taskmesh_engine::{AdmissionDecision, Governor, PolicySet, ReleaseOutcome};
+use taskmesh_engine::{AdmissionDecision, Governor, PermitId, PolicySet, ReleaseOutcome};
 
 fn governor(class: &str, policy: ClassPolicy, cpu_budget: u32) -> Arc<Governor> {
     let mut classes = BTreeMap::new();
@@ -40,7 +40,7 @@ fn concurrent_admit_release_grants_globally_unique_permits() {
     const THREADS: usize = 8;
     const OPS: usize = 500;
 
-    let all: Vec<Vec<u64>> = thread::scope(|scope| {
+    let all: Vec<Vec<PermitId>> = thread::scope(|scope| {
         let handles: Vec<_> = (0..THREADS)
             .map(|tid| {
                 let g = Arc::clone(&g);

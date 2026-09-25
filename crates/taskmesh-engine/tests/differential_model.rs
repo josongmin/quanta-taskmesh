@@ -60,6 +60,14 @@ use taskmesh_engine::{
 type ModelPermit = u64;
 type ModelTicket = u64;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ModelClaimOutcome {
+    Ready(ModelPermit),
+    Pending,
+    Terminal(TerminalReason),
+    Invalid,
+}
+
 const CLASS_NAMES: [&str; 3] = ["a", "b", "c"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,22 +275,22 @@ impl Model {
 
     /// `Ready` transfers the permit and consumes the ticket; `Terminal` is
     /// reported once and then forgotten; anything unknown is `Invalid`.
-    fn claim(&mut self, ticket: ModelTicket) -> ClaimOutcome {
+    fn claim(&mut self, ticket: ModelTicket) -> ModelClaimOutcome {
         match self.tickets.get(&ticket).cloned() {
-            Some(TicketState::Queued(_)) => ClaimOutcome::Pending,
+            Some(TicketState::Queued(_)) => ModelClaimOutcome::Pending,
             Some(TicketState::Ready(permit)) => {
                 self.tickets.remove(&ticket);
                 self.live
                     .get_mut(&permit)
                     .expect("ready implies live")
                     .unclaimed = None;
-                ClaimOutcome::Ready(permit)
+                ModelClaimOutcome::Ready(permit)
             }
             Some(TicketState::Terminal(reason)) => {
                 self.tickets.remove(&ticket);
-                ClaimOutcome::Terminal(reason)
+                ModelClaimOutcome::Terminal(reason)
             }
-            None => ClaimOutcome::Invalid,
+            None => ModelClaimOutcome::Invalid,
         }
     }
 
@@ -524,7 +532,7 @@ impl Binding {
         &self,
         outcome: ClaimOutcome,
         step: usize,
-    ) -> Result<ClaimOutcome, TestCaseError> {
+    ) -> Result<ModelClaimOutcome, TestCaseError> {
         match outcome {
             ClaimOutcome::Ready(engine) => self.permits.get(&engine).copied().map_or_else(
                 || {
@@ -532,9 +540,11 @@ impl Binding {
                         "step {step}: claim returned engine permit {engine} that was never observed"
                     )))
                 },
-                |model| Ok(ClaimOutcome::Ready(model)),
+                |model| Ok(ModelClaimOutcome::Ready(model)),
             ),
-            other => Ok(other),
+            ClaimOutcome::Pending => Ok(ModelClaimOutcome::Pending),
+            ClaimOutcome::Terminal(reason) => Ok(ModelClaimOutcome::Terminal(reason)),
+            ClaimOutcome::Invalid => Ok(ModelClaimOutcome::Invalid),
         }
     }
 }
@@ -675,7 +685,7 @@ fn check_agreement(
 }
 
 fn abandon_both(g: &Governor, model: &mut Model, binding: &Binding, model_ticket: ModelTicket) {
-    g.abandon(binding.engine_ticket(model_ticket));
+    let _ = g.abandon(binding.engine_ticket(model_ticket));
     model.abandon(model_ticket);
 }
 

@@ -186,7 +186,7 @@ fn stage_release_reports_unknown_and_duplicate_events() {
         .memory_units(10)
         .memory_release_policy(MemoryReleasePolicy::OnStageBoundary));
     assert_eq!(
-        g.release_stage_memory(u64::MAX, 1),
+        g.release_stage_memory(PermitId::forge(0, u64::MAX), 1),
         StageReleaseOutcome::UnknownPermit
     );
 
@@ -319,11 +319,12 @@ fn stage_release_outcomes_report_their_freed_units() {
 fn reconciling_an_unknown_permit_applies_nothing() {
     let (g, _clock) = gov(ClassPolicy::new().max_inflight(4).memory_units(4));
     assert!(
-        !g.reconcile_memory(u64::MAX, 1).is_applied(),
+        !g.reconcile_memory(PermitId::forge(0, u64::MAX), 1)
+            .is_applied(),
         "a reconcile against a permit that does not exist is not applied"
     );
     assert_eq!(
-        g.reconcile_memory_at(u64::MAX, 1, 1),
+        g.reconcile_memory_at(PermitId::forge(0, u64::MAX), 1, 1),
         ReconcileOutcome::UnknownPermit
     );
     assert!(!ReconcileOutcome::UnknownPermit.is_applied());

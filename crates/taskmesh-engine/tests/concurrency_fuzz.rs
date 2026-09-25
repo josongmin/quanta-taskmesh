@@ -21,7 +21,7 @@ use taskmesh_contract::{
     ClassPolicy, ManualClock, MemoryPermitMode, ResourceBudget, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
-    AdmissionDecision, Governor, PolicySet, ReleaseOutcome, StageReleaseOutcome,
+    AdmissionDecision, Governor, PermitId, PolicySet, ReleaseOutcome, StageReleaseOutcome,
 };
 
 struct Lcg(u64);
@@ -75,16 +75,16 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
     const OPS: usize = 3_000;
     let g = governor();
 
-    let per_thread: Vec<Vec<u64>> = thread::scope(|scope| {
+    let per_thread: Vec<Vec<PermitId>> = thread::scope(|scope| {
         let handles: Vec<_> = (0..THREADS)
             .map(|tid| {
                 let g = Arc::clone(&g);
                 scope.spawn(move || {
                     let mut lcg = Lcg(0x9E37_79B9_7F4A_7C15 ^ tid as u64);
                     // permits this thread currently holds: (id, class_idx)
-                    let mut held: Vec<(u64, usize)> = Vec::new();
+                    let mut held: Vec<(PermitId, usize)> = Vec::new();
                     // every id this thread was ever granted (uniqueness proof)
-                    let mut granted_ids: Vec<u64> = Vec::new();
+                    let mut granted_ids: Vec<PermitId> = Vec::new();
 
                     for step in 0..OPS {
                         let roll = lcg.next() % 8;

@@ -1,6 +1,6 @@
 # BG25-004 — identity·parent plan·owner-bound handle
 
-- 상태: PLANNED
+- 상태: IMPLEMENTED — qualification pending
 - 우선순위: P1
 - 선행: BG25-001 D4–D5
 - 소유: contract/API owner → engine owner → consumer owner
@@ -11,9 +11,9 @@
 
 ## 근거
 
-- `PermitId`/`Ticket`은 `u64`; 각 Governor의 counter는 1부터 시작한다.
-- raw transition API는 local map에서 숫자로 조회한다.
-- 기존 foreign test는 충돌 값을 상대 Governor API에 직접 제출하지 않는다.
+- `PermitId`/`Ticket`은 private authority와 local sequence를 가진 opaque handle이다.
+- transition API는 전체 handle로 local map을 조회한다.
+- `identity_authority.rs`가 같은 local sequence의 foreign handle을 상대 Governor API에 직접 제출한다.
 - engine은 다른 요청의 full parent plan registry를 보유하지 않는다.
 
 ## 변경 파일
@@ -25,9 +25,9 @@
 
 ## 작업 계획
 
-1. 두 Governor가 같은 permit/ticket 숫자를 발급하는 control을 만든다.
-2. foreign raw release/advance/claim/abandon의 현행 local effect를 각각 재현한다.
-3. Governor authority + local sequence를 private하게 가진 handle과 telemetry ID를 분리한다.
+1. 두 Governor가 같은 permit/ticket local sequence를 발급하는 control을 고정했다.
+2. foreign release/advance/claim/abandon이 typed negative outcome, state/callback 0임을 고정했다.
+3. Governor authority + local sequence를 private하게 가진 handle과 telemetry sequence를 분리했다.
 4. parent membership은 외부 planner owner와 fixture를 지정한다.
 5. public facade와 MSRV consumer를 migration한다.
 
@@ -41,7 +41,8 @@
 ## 검증
 
 - Engine identity tests, host public-surface tests, Rayon feature tests, consumer-MSRV.
-- Counter exhaustion/wrap은 ID 재사용이 아니라 typed exhaustion으로 판정한다.
+- `cargo test --locked -p taskmesh-engine --test identity_authority`
+- Counter exhaustion/wrap은 `IdentityExhausted`이며 ID 재사용이 아님을 세 counter 각각 검증한다.
 
 ## 현재 재현 범위 (2026-09-25)
 

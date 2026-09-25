@@ -52,7 +52,7 @@ fn drain_indices(fx: &Fixture, names: &[String], queue: &[usize]) -> Vec<usize> 
         AdmissionDecision::Admitted { permit_id } => permit_id,
         o => panic!("filler must occupy the slot, got {o:?}"),
     };
-    let mut tickets: Vec<(u64, usize)> = Vec::new();
+    let mut tickets: Vec<(taskmesh_engine::Ticket, usize)> = Vec::new();
     for (i, &cidx) in queue.iter().enumerate() {
         let op = format!("q{i}");
         match g.admit(&root_spec(&names[cidx], &op)) {

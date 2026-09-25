@@ -138,7 +138,13 @@ described below; these rules do not weaken its live-worker lease fence.
    activity (the sweep's staleness clock restarts at the claim). `release`
    returns `ReleaseOutcome` (`#[must_use]`): `UnknownPermit` is a double release
    or a reclaimed lease, never a silent no-op
-4c.1. memory reporters use `MeasurementSequence::checked_next`; implicit
+4c.1. `PermitId` and `Ticket` are opaque `(governor authority, local sequence)`
+   handles. Their numeric `sequence()` is diagnostics only and cannot recreate
+   authority. Foreign release/advance/claim/abandon calls return typed negative
+   outcomes without changing local state or invoking a waiter. Admission
+   reserves both permit and ticket identity up front; counter exhaustion rejects
+   with `IdentityExhausted` instead of wrapping or failing during promotion.
+4c.2. memory reporters use `MeasurementSequence::checked_next`; implicit
    `reconcile_memory` and explicit `reconcile_memory_at` both return typed
    `ReconcileOutcome`. `EpochExhausted` at `u64::MAX` cannot be retried for that
    permit, does not change held memory/activity, and still requires permit release

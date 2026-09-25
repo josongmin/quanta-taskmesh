@@ -19,6 +19,7 @@ use taskmesh_contract::{
 };
 use taskmesh_engine::{
     AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome, TerminalReason,
+    Ticket,
 };
 
 fn governor(max_inflight: u32) -> (Governor, Arc<ManualClock>) {
@@ -70,7 +71,7 @@ fn admit(g: &Governor, spec: &TaskSpec) -> PermitId {
     }
 }
 
-fn queue(g: &Governor, spec: &TaskSpec) -> u64 {
+fn queue(g: &Governor, spec: &TaskSpec) -> Ticket {
     match g.admit(spec) {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected a queued ticket, got {other:?}"),
@@ -91,7 +92,7 @@ fn an_abandoned_queued_child_frees_its_recursion_slot() {
     // Attribution starts at grant, not at queue: nothing is charged yet.
     assert!(g.root_attribution("R").is_none());
 
-    g.abandon(ticket);
+    let _ = g.abandon(ticket);
     // The slot is free again: the same child can be queued afresh.
     let again = queue(&g, &child("R", "map"));
     assert!(matches!(g.ticket_status(again), ClaimOutcome::Pending));

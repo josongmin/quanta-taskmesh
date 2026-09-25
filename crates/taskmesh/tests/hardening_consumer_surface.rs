@@ -107,7 +107,7 @@ fn a_pending_request_key_is_readable_through_the_facade() {
     assert_eq!(key.as_str(), queued.root_operation_id);
     assert_eq!(key.to_string(), queued.root_operation_id);
     assert_eq!(key, &RequestKey::from_root(&queued.root_operation_id));
-    g.abandon(ticket);
+    let _ = g.abandon(ticket);
     assert_eq!(g.release(permit_id), ReleaseOutcome::Released);
 }
 

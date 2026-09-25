@@ -5,16 +5,16 @@ mod harness;
 use harness::*;
 
 use taskmesh_contract::{ClassPolicy, FairnessPolicy, OverflowPolicy};
-use taskmesh_engine::{ClaimOutcome, Governor, ReleaseOutcome};
+use taskmesh_engine::{ClaimOutcome, Governor, PermitId, ReleaseOutcome, Ticket};
 
 /// Release the current holder, claim whoever the governor just promoted, record
 /// its class, and return the new permit. Returns `None` when nothing promotes.
 fn step(
     g: &Governor,
-    current: u64,
-    pool: &mut Vec<(u64, String)>,
+    current: PermitId,
+    pool: &mut Vec<(Ticket, String)>,
     order: &mut Vec<String>,
-) -> Option<u64> {
+) -> Option<PermitId> {
     assert_eq!(g.release(current), ReleaseOutcome::Released);
     for i in 0..pool.len() {
         match g.claim(pool[i].0) {
@@ -123,7 +123,7 @@ fn wfq_idle_reset_prevents_a_returning_class_from_jumping_the_queue() {
     let g = contended(vec![("a", weighted_class(1)), ("b", weighted_class(1))]);
     let filler = admit_filler(&g);
 
-    let mut pool: Vec<(u64, String)> = Vec::new();
+    let mut pool: Vec<(Ticket, String)> = Vec::new();
     for i in 0..4 {
         pool.push(queue(&g, "a", &format!("a{i}")));
     }

@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use hdrhistogram::Histogram;
 use taskmesh_contract::ClassPolicy;
-use taskmesh_engine::{AdmissionDecision, ClaimOutcome, PermitId, ReleaseOutcome};
+use taskmesh_engine::{AdmissionDecision, ClaimOutcome, PermitId, ReleaseOutcome, Ticket};
 
 use crate::workload::{fixture, root_spec, Fixture, ValidatedArrivals, WorkloadError};
 
@@ -185,7 +185,7 @@ pub fn simulate(
     let g = &*fx.governor;
     let mut latency = LatencyRecorder::raw();
     let mut heap: BinaryHeap<Reverse<Completion>> = BinaryHeap::new();
-    let mut pending: BTreeMap<u64, u64> = BTreeMap::new(); // ticket -> arrival_ns
+    let mut pending: BTreeMap<Ticket, u64> = BTreeMap::new(); // ticket -> arrival_ns
     let mut res = SimResult {
         offered: arrivals.len(),
         ..Default::default()
@@ -275,7 +275,7 @@ fn claim_promoted(
     fx: &Fixture,
     now_ns: u64,
     completion_at: &dyn Fn(u64) -> Result<u64, WorkloadError>,
-    pending: &mut BTreeMap<u64, u64>,
+    pending: &mut BTreeMap<Ticket, u64>,
     heap: &mut BinaryHeap<Reverse<Completion>>,
     latency: &mut LatencyRecorder,
     res: &mut SimResult,

@@ -38,6 +38,9 @@ pub const MAX_TERMINAL_TICKETS: usize = 4096;
 
 /// A request waiting in a class queue for capacity.
 pub struct PendingRequest {
+    /// Permit identity reserved at intake. Promotion consumes this exact
+    /// identity, so it cannot fail later after the request has entered a queue.
+    pub permit_id: PermitId,
     pub ticket: Ticket,
     pub seq_no: Seq,
     pub class: TaskClass,
@@ -281,6 +284,18 @@ pub enum ClaimOutcome {
     Invalid,
 }
 
+/// Result of abandoning a queued or promoted ticket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "an invalid ticket means the requested abandon did not occur; handle the outcome"]
+pub enum AbandonOutcome {
+    /// A queued request was removed or its promoted permit was released.
+    Abandoned,
+    /// A retained terminal result was explicitly discarded.
+    TerminalDiscarded,
+    /// The ticket is unknown to this governor. No state or callback changed.
+    Invalid,
+}
+
 /// The result of releasing a permit.
 ///
 /// A release that finds no permit is one of two things: a double release
@@ -324,9 +339,9 @@ pub enum ReleaseOutcome {
 /// being spent leaves its capacity charged for good — hence `#[must_use]`.
 ///
 /// The token is not `Clone` or `Copy`: one execution, one proof, spent once.
-/// Its nonce is drawn from a process-wide counter, so two governors in one
-/// process never mint the same proof for the same permit id. It is a guard
-/// against *accidental* misuse — sequential permit ids are easy to confuse —
+/// Its nonce is drawn from a process-wide counter, independently of the
+/// governor authority already embedded in each permit handle. It is a guard
+/// against accidental misuse of custody proofs,
 /// not a security boundary: an embedder that reaches for engine internals is
 /// trusted by construction, and nothing here is meant to stop a hostile one.
 ///
@@ -1034,15 +1049,17 @@ mod mutation_semantics {
     fn operation_index_distinguishes_root_descendant_and_absence() {
         let mut operations = RootOperationPermits::default();
         assert!(operations.is_empty());
-        operations.insert("root", "root", 11);
-        operations.insert("root", "child", 12);
+        let root = PermitId::new(1, 11);
+        let child = PermitId::new(1, 12);
+        operations.insert("root", "root", root);
+        operations.insert("root", "child", child);
         assert!(!operations.is_empty());
-        assert_eq!(operations.get("root", "root"), Some(11));
-        assert_eq!(operations.get("root", "child"), Some(12));
+        assert_eq!(operations.get("root", "root"), Some(root));
+        assert_eq!(operations.get("root", "child"), Some(child));
         assert_eq!(operations.get("root", "missing"), None);
-        assert_eq!(operations.remove("root", "root"), Some(11));
+        assert_eq!(operations.remove("root", "root"), Some(root));
         assert!(!operations.is_empty());
-        assert_eq!(operations.remove("root", "child"), Some(12));
+        assert_eq!(operations.remove("root", "child"), Some(child));
         assert!(operations.is_empty());
     }
 
@@ -1050,7 +1067,8 @@ mod mutation_semantics {
     fn governed_state_operation_identity_uses_exact_root_and_operation() {
         let mut state = GovernedState::default();
         let mut operations = RootOperationPermits::default();
-        operations.insert("root", "child", 7);
+        let permit_id = PermitId::new(1, 7);
+        operations.insert("root", "child", permit_id);
         state
             .operation_permits
             .insert("root".to_owned(), operations);
@@ -1065,7 +1083,8 @@ mod mutation_semantics {
         let class = TaskClass::new("queued");
         let spec = taskmesh_contract::TaskSpec::io(class.clone()).operation("queue-root");
         state.class_mut(&class).queue.push_back(PendingRequest {
-            ticket: 1,
+            permit_id: PermitId::new(1, 8),
+            ticket: Ticket::new(1, 1),
             seq_no: 1,
             class,
             request_key: RequestKey::from_root("queue-root"),

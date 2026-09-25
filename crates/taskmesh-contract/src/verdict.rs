@@ -36,6 +36,11 @@ pub enum AdmissionVerdict {
     /// totals (a sticky accounting fault). Neither is a backpressure hint:
     /// there is no retry-after, and retrying does not help.
     RuntimeUnavailable,
+    /// The governor cannot issue another unique permit/ticket identity. No
+    /// queue or resource ledger was changed. Reusing a wrapped identity would
+    /// make stale handles capable of mutating unrelated work, so exhaustion is
+    /// terminal for new admission on this governor.
+    IdentityExhausted,
     ClassificationFailed,
     PermitAcquireTimedOut {
         retry_after_ms: Option<u64>,
@@ -130,6 +135,7 @@ impl fmt::Display for AdmissionVerdict {
             Self::ClassDisabled => f.write_str("class disabled"),
             Self::UnknownClass { class } => write!(f, "unknown class: {class}"),
             Self::RuntimeUnavailable => f.write_str("runtime unavailable"),
+            Self::IdentityExhausted => f.write_str("governor identity space exhausted"),
             Self::ClassificationFailed => f.write_str("classification failed"),
             Self::PermitAcquireTimedOut { .. } => f.write_str("permit acquire timed out"),
             Self::CancelledBeforeSubmit => f.write_str("cancelled before submit"),
@@ -204,6 +210,9 @@ pub enum GovernorError {
     /// an unrepresentable slot count, a zero fixed CPU pool). Reported as a typed
     /// value rather than a panic inside a resolver.
     InvalidTopology(crate::topology::TopologyError),
+    /// The process cannot assign another unique governor authority. No
+    /// governor was constructed; callers must not retry in the same process.
+    IdentityAuthorityExhausted,
     /// The in-flight work was cooperatively cancelled (the class's
     /// [`crate::CancellationPolicy`] permits mid-run cancellation and the
     /// submission's cancel token fired). Distinct from a task error.
@@ -277,6 +286,9 @@ impl fmt::Display for GovernorError {
             Self::LocalRuntimeUnavailable => f.write_str("local runtime substrate unavailable"),
             Self::PolicyViolation(message) => write!(f, "policy violation: {message}"),
             Self::InvalidTopology(error) => write!(f, "invalid topology: {error}"),
+            Self::IdentityAuthorityExhausted => {
+                f.write_str("governor authority identity space exhausted")
+            }
             Self::Cancelled => f.write_str("work cooperatively cancelled"),
             Self::DeadlineExceeded => f.write_str("work exceeded its run deadline"),
             Self::DeadlineUnsupported { class, policy } => write!(

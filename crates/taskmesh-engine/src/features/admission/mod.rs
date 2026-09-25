@@ -344,6 +344,7 @@ fn enqueue_or_full(
     let (finish_tag, wfq_arrival_tag, deadline_ms) =
         fairness::enqueue_tags(state, class, policy, cost.cpu_units, now_ms);
     state.class_mut(class).queue.push_back(PendingRequest {
+        permit_id: ids.permit_id,
         ticket: ids.ticket,
         seq_no: ids.seq_no,
         class: class.clone(),

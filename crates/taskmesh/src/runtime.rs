@@ -41,7 +41,7 @@ use taskmesh_contract::{
     SubstrateHint, TaskSpec, TopologyError,
 };
 use taskmesh_engine::{
-    AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId, ReleaseOutcome,
+    AdmissionDecision, CapacityBlock, ClaimOutcome, Governor, PermitId, ReleaseOutcome, Ticket,
 };
 use tokio::sync::oneshot;
 use tokio::time::Instant;
@@ -209,7 +209,7 @@ impl TokioRuntime {
     /// invalid), never to sneak a late permit through.
     async fn await_promotion(
         &self,
-        ticket: u64,
+        ticket: Ticket,
         waker: &TokioPermitWaker,
         arbiter: &AcquisitionArbiter,
     ) -> Result<PermitId, GovernorError> {
@@ -227,10 +227,12 @@ impl TokioRuntime {
                         matches!(current_blocker, Some(CapacityBlock::Capability)),
                     )),
                     ClaimOutcome::Terminal(reason) => Err(GovernorError::TicketClaimTerminated {
-                        ticket,
+                        ticket: ticket.sequence(),
                         reason: reason.into(),
                     }),
-                    ClaimOutcome::Invalid => Err(GovernorError::InvalidTicketClaim { ticket }),
+                    ClaimOutcome::Invalid => Err(GovernorError::InvalidTicketClaim {
+                        ticket: ticket.sequence(),
+                    }),
                 };
             }
             match self.governor.claim(ticket) {
@@ -240,11 +242,15 @@ impl TokioRuntime {
                 ClaimOutcome::Pending => {}
                 ClaimOutcome::Terminal(reason) => {
                     return Err(GovernorError::TicketClaimTerminated {
-                        ticket,
+                        ticket: ticket.sequence(),
                         reason: reason.into(),
                     });
                 }
-                ClaimOutcome::Invalid => return Err(GovernorError::InvalidTicketClaim { ticket }),
+                ClaimOutcome::Invalid => {
+                    return Err(GovernorError::InvalidTicketClaim {
+                        ticket: ticket.sequence(),
+                    });
+                }
             }
             let cancel = arbiter.cancel_token();
             let wake_deadline = arbiter.wake_deadline().map(Instant::from_std);
@@ -1210,7 +1216,9 @@ impl ExecutionLease {
 
         let permit = self.permit_id;
         if matches!(self.custody, Custody::Gone) {
-            return Err(GovernorError::LeaseReclaimed { permit_id: permit });
+            return Err(GovernorError::LeaseReclaimed {
+                permit_id: permit.sequence(),
+            });
         }
         match self.governor.advance_phase(permit, phase) {
             AdvanceOutcome::Leased(token) => {
@@ -1239,7 +1247,9 @@ impl ExecutionLease {
             }
             AdvanceOutcome::Refused(AdvanceRefusal::UnknownPermit) => {
                 self.custody = Custody::Gone;
-                Err(GovernorError::LeaseReclaimed { permit_id: permit })
+                Err(GovernorError::LeaseReclaimed {
+                    permit_id: permit.sequence(),
+                })
             }
             // The permit is live and refused the move: the host declared a
             // phase that is not later than the current one. The host's sequence
@@ -1297,7 +1307,7 @@ impl Drop for ExecutionLease {
 /// is successfully claimed (ownership then passes to an [`ExecutionLease`]).
 struct TicketGuard {
     governor: Arc<Governor>,
-    ticket: Option<u64>,
+    ticket: Option<Ticket>,
 }
 
 impl TicketGuard {
@@ -1309,7 +1319,7 @@ impl TicketGuard {
 impl Drop for TicketGuard {
     fn drop(&mut self) {
         if let Some(ticket) = self.ticket {
-            self.governor.abandon(ticket);
+            let _ = self.governor.abandon(ticket);
         }
     }
 }

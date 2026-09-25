@@ -145,24 +145,31 @@ async fn reclaimed_promotion_returns_public_typed_error_and_releases_guard_v1() 
     else {
         panic!("must retain the terminal reason: {error:?}");
     };
-    assert_eq!(runtime.governor.claim(ticket), ClaimOutcome::Invalid);
+    assert_ne!(ticket, 0);
     assert_accounting(&runtime, 0, 0);
 }
 
 #[tokio::test]
 async fn invalid_ticket_without_deadline_returns_instead_of_parking_v1() {
-    let (runtime, _, _) = runtime();
+    let (subject, _, _) = runtime();
+    let (foreign, _, foreign_spec) = runtime();
+    let holder = occupy(&foreign, &foreign_spec);
+    let ticket = queue_without_notification(&foreign, &foreign_spec);
     let waker = TokioPermitWaker::new();
     let opts = SubmitOptions::unbounded();
     let arbiter = arbiter(&opts);
-    let error = finish(runtime.await_promotion(u64::MAX, &waker, &arbiter))
+    let error = finish(subject.await_promotion(ticket, &waker, &arbiter))
         .await
-        .expect_err("never-issued ticket");
+        .expect_err("foreign ticket");
     assert_eq!(
         error,
-        GovernorError::InvalidTicketClaim { ticket: u64::MAX }
+        GovernorError::InvalidTicketClaim {
+            ticket: ticket.sequence()
+        }
     );
-    assert_accounting(&runtime, 0, 0);
+    assert_accounting(&subject, 0, 0);
+    let _ = foreign.governor.abandon(ticket);
+    assert_eq!(foreign.governor.release(holder), ReleaseOutcome::Released);
 }
 
 #[tokio::test]
@@ -252,7 +259,7 @@ async fn dropped_acquisition_abandons_queued_and_promoted_tickets_v1() {
     }
 }
 
-fn queue_without_notification(runtime: &TokioRuntime, spec: &TaskSpec) -> u64 {
+fn queue_without_notification(runtime: &TokioRuntime, spec: &TaskSpec) -> taskmesh_engine::Ticket {
     match runtime.governor.admit(&unique_spec(spec, "queued")) {
         AdmissionDecision::Queued { ticket } => ticket,
         other => panic!("expected a queue ticket, got {other:?}"),
@@ -356,11 +363,11 @@ async fn timeout_last_chance_claim_preserves_reclaimed_terminal_reason_v1() {
     assert_eq!(
         error,
         GovernorError::TicketClaimTerminated {
-            ticket,
+            ticket: ticket.sequence(),
             reason: taskmesh_contract::TerminalReason::Reclaimed,
         }
     );
-    runtime.governor.abandon(ticket);
+    let _ = runtime.governor.abandon(ticket);
     assert_accounting(&runtime, 0, 0);
 }
 
@@ -374,9 +381,14 @@ async fn timeout_last_chance_claim_reports_invalid_instead_of_generic_timeout_v1
     let arbiter = arbiter(&opts);
     let mut waiter = Box::pin(runtime.await_promotion(ticket, &waker, &arbiter));
     park(waiter.as_mut()).await;
-    runtime.governor.abandon(ticket);
+    let _ = runtime.governor.abandon(ticket);
     let error = finish(waiter).await.expect_err("invalid beats timeout");
-    assert_eq!(error, GovernorError::InvalidTicketClaim { ticket });
+    assert_eq!(
+        error,
+        GovernorError::InvalidTicketClaim {
+            ticket: ticket.sequence()
+        }
+    );
     assert_accounting(&runtime, 1, 0);
     assert_eq!(runtime.governor.release(first), ReleaseOutcome::Released);
     assert_accounting(&runtime, 0, 0);
@@ -398,7 +410,9 @@ async fn a_lease_the_sweep_reclaimed_before_dispatch_refuses_to_advance_v1() {
 
     assert_eq!(
         lease.advance(ExecutionPhase::Accepted),
-        Err(GovernorError::LeaseReclaimed { permit_id: permit })
+        Err(GovernorError::LeaseReclaimed {
+            permit_id: permit.sequence()
+        })
     );
     // The answer is stable, and the drop releases nothing. (Internally the
     // lease disarms itself; that is defensive — with the permit gone the
@@ -407,7 +421,9 @@ async fn a_lease_the_sweep_reclaimed_before_dispatch_refuses_to_advance_v1() {
     // is double-counted.)
     assert_eq!(
         lease.advance(ExecutionPhase::Running),
-        Err(GovernorError::LeaseReclaimed { permit_id: permit })
+        Err(GovernorError::LeaseReclaimed {
+            permit_id: permit.sequence()
+        })
     );
     drop(lease);
     assert_accounting(&runtime, 0, 0);

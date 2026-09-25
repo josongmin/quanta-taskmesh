@@ -144,6 +144,10 @@ fn governor_errors_render_one_line_each() {
         "invalid topology: topology cpu.mode = Fixed(0) cannot execute any work"
     );
     assert_eq!(
+        format!("{}", GovernorError::IdentityAuthorityExhausted),
+        "governor authority identity space exhausted"
+    );
+    assert_eq!(
         format!("{}", GovernorError::Cancelled),
         "work cooperatively cancelled"
     );
@@ -225,6 +229,10 @@ fn admission_verdicts_and_terminal_reasons_render_one_line_each() {
             "unknown class: ghost",
         ),
         (AdmissionVerdict::RuntimeUnavailable, "runtime unavailable"),
+        (
+            AdmissionVerdict::IdentityExhausted,
+            "governor identity space exhausted",
+        ),
         (
             AdmissionVerdict::ClassificationFailed,
             "classification failed",
@@ -387,6 +395,7 @@ fn every_backpressure_verdict_carries_its_hint_and_no_other_verdict_does() {
         AdmissionVerdict::MalformedTask,
         AdmissionVerdict::CancelledBeforeSubmit,
         AdmissionVerdict::RuntimeUnavailable,
+        AdmissionVerdict::IdentityExhausted,
         AdmissionVerdict::NestedWaitCycle {
             held_by_root: HeldCapacity::CpuBudget,
         },

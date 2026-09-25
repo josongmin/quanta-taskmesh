@@ -66,7 +66,7 @@ fn promotion_order(weights: &[(&'static str, u32)], rounds: usize) -> Vec<&'stat
     // a naive FIFO-by-arrival would dispatch the whole first burst before the
     // second and fail the windowed-fairness gate, while WFQ interleaves by finish
     // tag. Round-robin enqueue would let even FIFO look fair (tautological gate).
-    let mut tickets: Vec<(u64, &'static str)> = Vec::new();
+    let mut tickets: Vec<(taskmesh_engine::Ticket, &'static str)> = Vec::new();
     for (name, _) in weights {
         for round in 0..rounds {
             let op = format!("{name}-{round}");

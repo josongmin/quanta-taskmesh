@@ -10,8 +10,45 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use taskmesh_contract::{ClassPolicy, ResourceBudget, SubstrateRecord, TaskClass};
 
-/// Identity of a granted permit.
-pub type PermitId = u64;
+/// Opaque identity of a granted permit.
+///
+/// The authority component binds the handle to the [`crate::Governor`] that
+/// issued it. A numerically equal local sequence from another governor is a
+/// different key and therefore cannot mutate this governor's state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PermitId {
+    authority: u64,
+    sequence: u64,
+}
+
+impl PermitId {
+    pub(crate) const fn new(authority: u64, sequence: u64) -> Self {
+        Self {
+            authority,
+            sequence,
+        }
+    }
+
+    /// Governor-local sequence for diagnostics and telemetry only.
+    ///
+    /// This value is not a usable permit identity by itself.
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    /// Construct an arbitrary handle for negative-path tests.
+    #[cfg(feature = "test-util")]
+    #[doc(hidden)]
+    pub const fn forge(authority: u64, sequence: u64) -> Self {
+        Self::new(authority, sequence)
+    }
+}
+
+impl std::fmt::Display for PermitId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.authority, self.sequence)
+    }
+}
 
 /// Name of a capability pool, shared cheaply between pending requests, permits,
 /// and the occupancy ledger.
@@ -190,8 +227,44 @@ impl CapabilityRequirementSet {
     }
 }
 
-/// Identity of a queued request awaiting promotion.
-pub type Ticket = u64;
+/// Opaque identity of a queued request awaiting promotion.
+///
+/// Like [`PermitId`], a ticket is bound to its issuing governor. Callers can
+/// pass a foreign ticket to an API, but it never aliases local queue state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Ticket {
+    authority: u64,
+    sequence: u64,
+}
+
+impl Ticket {
+    pub(crate) const fn new(authority: u64, sequence: u64) -> Self {
+        Self {
+            authority,
+            sequence,
+        }
+    }
+
+    /// Governor-local sequence for diagnostics and telemetry only.
+    ///
+    /// This value is not a usable ticket identity by itself.
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    /// Construct an arbitrary handle for negative-path tests.
+    #[cfg(feature = "test-util")]
+    #[doc(hidden)]
+    pub const fn forge(authority: u64, sequence: u64) -> Self {
+        Self::new(authority, sequence)
+    }
+}
+
+impl std::fmt::Display for Ticket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.authority, self.sequence)
+    }
+}
 
 /// Monotonic admission sequence number (also used as the FIFO arrival key).
 pub type Seq = u64;

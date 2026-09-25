@@ -28,8 +28,8 @@ mod sync;
 
 pub use engine::governor::{PendingView, PermitLedgerView, PROMOTION_BUDGET};
 pub use engine::state::{
-    AdvanceOutcome, AdvanceRefusal, CapacityBlock, ClaimOutcome, LeaseToken, ReleaseOutcome,
-    TerminalReason, MAX_TERMINAL_TICKETS,
+    AbandonOutcome, AdvanceOutcome, AdvanceRefusal, CapacityBlock, ClaimOutcome, LeaseToken,
+    ReleaseOutcome, TerminalReason, MAX_TERMINAL_TICKETS,
 };
 pub use engine::Governor;
 pub use features::admission::pending::{BlockerSet, CapacityAssessment, CycleWitness};

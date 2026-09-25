@@ -248,7 +248,7 @@ fn randomized_waiters_are_never_parked_past_their_promotion() {
         || {
             let g = governor(3, 8, Arc::new(ManualClock::new(1_000)));
             let holders: Vec<PermitId> = (0..3).map(|i| admit(&g, &format!("h{i}"))).collect();
-            let queued: Vec<(u64, Arc<CountingWaker>)> = (0..3)
+            let queued: Vec<(Ticket, Arc<CountingWaker>)> = (0..3)
                 .map(|i| queue_with_waker(&g, &format!("q{i}")))
                 .collect();
 

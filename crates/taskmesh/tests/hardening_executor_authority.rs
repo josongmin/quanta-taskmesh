@@ -70,7 +70,16 @@ fn job(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[cfg(not(feature = "rayon"))]
 async fn blocking_maintenance_and_cpu_fallback_share_one_finite_domain() {
-    let class = TaskClass::new("c");
+    let blocking_class = TaskClass::new("blocking");
+    let maintenance_class = TaskClass::new("maintenance");
+    let cpu_class = TaskClass::new("cpu");
+    let policy = || {
+        ClassPolicy::new()
+            .max_inflight(8)
+            .max_queue_depth(8)
+            .cpu_units(1)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth)
+    };
     let rt = Builder::new()
         .topology(
             TopologyConfig::new()
@@ -78,14 +87,9 @@ async fn blocking_maintenance_and_cpu_fallback_share_one_finite_domain() {
                 .shared_blocking_domain(PhysicalDomainMode::Fixed(2)),
         )
         .resources(ResourceBudget::new().cpu_units(100).memory_units(100))
-        .class_policy(
-            class.clone(),
-            ClassPolicy::new()
-                .max_inflight(8)
-                .max_queue_depth(8)
-                .cpu_units(1)
-                .overflow_policy(OverflowPolicy::QueueWithinDepth),
-        )
+        .class_policy(blocking_class.clone(), policy())
+        .class_policy(maintenance_class.clone(), policy())
+        .class_policy(cpu_class.clone(), policy())
         .build()
         .expect("finite physical topology builds");
 
@@ -118,7 +122,7 @@ async fn blocking_maintenance_and_cpu_fallback_share_one_finite_domain() {
         );
         tokio::spawn(async move {
             rt.run_blocking(
-                TaskSpec::blocking(TaskClass::new("c")).operation("blocking"),
+                TaskSpec::blocking(TaskClass::new("blocking")).operation("blocking"),
                 run,
             )
             .await
@@ -134,7 +138,7 @@ async fn blocking_maintenance_and_cpu_fallback_share_one_finite_domain() {
         );
         tokio::spawn(async move {
             rt.run_blocking(
-                TaskSpec::base(TaskClass::new("c"), SubstrateHint::BackgroundOnly)
+                TaskSpec::base(TaskClass::new("maintenance"), SubstrateHint::BackgroundOnly)
                     .operation("maintenance"),
                 run,
             )
@@ -147,7 +151,7 @@ async fn blocking_maintenance_and_cpu_fallback_share_one_finite_domain() {
     // to be occupied. A spawned future alone gives no ordering guarantee that
     // admission has happened by the time the snapshot is read.
     let mut cpu = Box::pin(rt.run_cpu(
-        TaskSpec::cpu(TaskClass::new("c")).operation("cpu"),
+        TaskSpec::cpu(TaskClass::new("cpu")).operation("cpu"),
         job(
             started_tx,
             Arc::clone(&gate),
@@ -162,7 +166,27 @@ async fn blocking_maintenance_and_cpu_fallback_share_one_finite_domain() {
     .await;
     let saturated = rt.snapshot();
     assert_eq!(saturated.capabilities[PHYSICAL_SHARED_BLOCKING].in_use, 2);
-    assert_eq!(saturated.classes[&class].queued, 1);
+    assert_eq!(
+        (
+            saturated.classes[&blocking_class].inflight,
+            saturated.classes[&blocking_class].queued
+        ),
+        (1, 0)
+    );
+    assert_eq!(
+        (
+            saturated.classes[&maintenance_class].inflight,
+            saturated.classes[&maintenance_class].queued
+        ),
+        (1, 0)
+    );
+    assert_eq!(
+        (
+            saturated.classes[&cpu_class].inflight,
+            saturated.classes[&cpu_class].queued
+        ),
+        (0, 1)
+    );
     assert_eq!(peak.load(Ordering::SeqCst), 2);
 
     release_on_drop.0.release();
@@ -173,8 +197,15 @@ async fn blocking_maintenance_and_cpu_fallback_share_one_finite_domain() {
     assert_eq!(peak.load(Ordering::SeqCst), 2, "aggregate bound held");
     let drained = rt.snapshot();
     assert_eq!(drained.capabilities[PHYSICAL_SHARED_BLOCKING].in_use, 0);
-    assert_eq!(drained.classes[&class].inflight, 0);
-    assert_eq!(drained.classes[&class].queued, 0);
+    for class in [&blocking_class, &maintenance_class, &cpu_class] {
+        assert_eq!(
+            (
+                drained.classes[class].inflight,
+                drained.classes[class].queued
+            ),
+            (0, 0)
+        );
+    }
     assert_eq!(drained.conservation_violation(), None);
 }
 

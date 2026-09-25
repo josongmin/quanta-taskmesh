@@ -1,7 +1,7 @@
 # Taskmesh verification stages: 2026 audit and implementation plan
 
-Status: **W3 execution-denominator implementation under final qualification;
-W4 bounded PR workflow under hosted trial; W5 release qualification open**.
+Status: **W3 execution denominator implemented and qualified at `9c0ab11`;
+W4 bounded PR trial passed, required-check adoption open; W5 release qualification open**.
 Audit baseline: `main@e5aa4b63a1fedb3b416d33d1ea7ff364258002b5`, clean
 before this plan was created on 2026-09-24. The initial draft was untracked and
 had no test or CI qualification. A later clean `main@934230d` produced a valid
@@ -316,8 +316,8 @@ claiming a production invariant.
 W1 and the W3 static slice were tracked by `934230d`, whose clean-source local
 macOS CI-profile receipt passed all 16 required gates. That historical receipt
 does not qualify later source changes and does not establish nightly or release
-qualification. W3 execution-denominator work, W4 hosted adoption, and W5 full
-release qualification remain open.
+qualification. W4 required-check adoption and W5 full release qualification
+remain open.
 
 The W3 static slice made `gates-inventory` derive Cargo/Python/fuzz target
 records and reject unowned feature targets or missing declared selectors. The
@@ -328,7 +328,20 @@ gate receipt embeds both reports and rejects missing, stale, or inconsistent
 selection, command, catalog, and execution fields. Focused clean runs observed
 94 Rust targets and 631/631 cases, then 24 Python modules and 734/734 cases;
 those are candidate-source observations, not qualification of later edits.
-The final exact-source CI receipt remains the W3 closure gate.
+The local macOS CI profile passed 16/16 gates at clean Taskmesh `c9d7f0b`.
+At clean Taskmesh `9c0ab1125adc9aa8c2165c788c93ce90287c7c72`, the non-required hosted PR trial
+[`36156653615`](https://github.com/josongmin/quanta-taskmesh/actions/runs/36156653615)
+passed its single 16-gate job in 4m54s with about 3s queue time. The hosted
+receipt's source is clean at that exact HEAD/tree; Rust selected and passed
+631/631 cases, and pytest selected and passed 744/744 with no exclusions. Its
+SHA-256 is `487041a96e94437bc1305e05d41435f6520da3163c85ce963dd0607e12c76646`.
+The saved receipt was revalidated against the same source on macOS with the
+recorded Linux platform. The first hosted trial
+[`36155319507`](https://github.com/josongmin/quanta-taskmesh/actions/runs/36155319507)
+failed because a synthetic local-receipt test inherited GitHub's `GITHUB_SHA`;
+the fixture now constructs an explicit local action. These receipts qualify
+only their named commits. One passing trial is not a median/p95 or main-push
+proof, and the check is not yet required by a branch rule.
 
 ### W3 implementation contract
 

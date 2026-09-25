@@ -7,7 +7,7 @@
 //!
 //! Robustness rules followed here: no assertions on cross-thread ordering (only
 //! on completion, conservation, drain-to-zero, and forward progress), and every
-//! randomized scenario is driven by a fixed-seed LCG so failures reproduce.
+//! timing-sensitive scenarios use explicit completion and cancellation cohorts.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -35,21 +35,6 @@ async fn bounded_storm<F: std::future::Future>(what: &str, future: F) -> F::Outp
 
 fn cls(name: &str) -> TaskClass {
     TaskClass::new(name.to_string())
-}
-
-/// Deterministic PRNG so "random" scenarios reproduce exactly on failure.
-struct Lcg(u64);
-impl Lcg {
-    fn next(&mut self) -> u64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        self.0
-    }
-    fn below(&mut self, n: u64) -> u64 {
-        self.next() % n.max(1)
-    }
 }
 
 fn assert_drained(rt: &TokioRuntime, classes: &[&str]) {
@@ -92,19 +77,24 @@ async fn cancellation_chaos_never_leaks() {
         let rt = rt.clone();
         let completed = completed.clone();
         let cancelled = cancelled.clone();
-        // Deterministic per-task work/deadline so the run reproduces.
-        let mut lcg = Lcg(0xDEAD_BEEF_0000_0000 ^ i as u64);
-        let work_ms = lcg.below(20);
-        let deadline_ms = 1 + lcg.below(15);
+        // Keep both outcomes meaningful under host contention. The completion
+        // cohort has a wide budget; the cancellation cohort cannot finish its
+        // deliberately long sleep before its timeout.
+        let (work, deadline) = if i % 2 == 0 {
+            (Duration::ZERO, Duration::from_secs(1))
+        } else {
+            (Duration::from_millis(50), Duration::from_millis(1))
+        };
         handles.push(tokio::spawn(async move {
             let spec = TaskSpec::io(cls("c")).operation(format!("c-{i}"));
             let fut = rt.run_io(spec, async move {
-                tokio::time::sleep(Duration::from_millis(work_ms)).await;
+                tokio::time::sleep(work).await;
                 Ok::<_, ()>(i)
             });
-            match tokio::time::timeout(Duration::from_millis(deadline_ms), fut).await {
+            match tokio::time::timeout(deadline, fut).await {
                 Ok(Ok(_)) => completed.fetch_add(1, Ordering::SeqCst),
-                _ => cancelled.fetch_add(1, Ordering::SeqCst),
+                Err(_) => cancelled.fetch_add(1, Ordering::SeqCst),
+                Ok(Err(error)) => panic!("unexpected runtime failure: {error:?}"),
             };
         }));
     }

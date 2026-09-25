@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use taskmesh::ext::{
-    AdmissionDecision, AdvanceOutcome, AdvanceRefusal, ClaimOutcome, CpuExecutor,
+    AbandonOutcome, AdmissionDecision, AdvanceOutcome, AdvanceRefusal, ClaimOutcome, CpuExecutor,
     ExecutorCapabilities, Governor, ManualClock, PolicySet, ReconcileOutcome, ReleaseOutcome,
     StageReleaseOutcome, BUILTIN_SUBSTRATES,
 };
@@ -23,8 +23,10 @@ use taskmesh::{
     AdmissionVerdict, Builder, CancellationPolicy, ClassPolicy, ExecutionPhase, GovernorError,
     HeldCapacity, MemoryReleasePolicy, MemoryUnitScale, OverflowPolicy, ResourceBudget, RunError,
     Runtime, SubmitOptions, TaskClass, TaskScope, TaskSpec, TaskStage, TokioRuntime,
-    TopologyConfig, TopologyError, PHYSICAL_CPU, PHYSICAL_SHARED_BLOCKING,
+    TopologyConfig, TopologyError, PHYSICAL_CPU,
 };
+#[cfg(not(feature = "rayon"))]
+use taskmesh::PHYSICAL_SHARED_BLOCKING;
 
 /// The wire schema a 0.2.0 consumer must expect. The literal is the consumer's
 /// own knowledge (what its deserializer was written against); the facade's
@@ -66,6 +68,24 @@ fn build() -> TokioRuntime {
         )
         .build()
         .expect("consumer configuration builds")
+}
+
+fn direct_governor() -> Governor {
+    let mut classes = std::collections::BTreeMap::new();
+    classes.insert(
+        retrieval(),
+        ClassPolicy::new()
+            .max_inflight(1)
+            .max_queue_depth(4)
+            .cpu_units(1)
+            .memory_units(1)
+            .overflow_policy(OverflowPolicy::QueueWithinDepth),
+    );
+    Governor::new(
+        PolicySet::new(ResourceBudget::new().cpu_units(8).memory_units(8), classes),
+        Arc::new(ManualClock::new(0)),
+    )
+    .expect("queueing policy builds")
 }
 
 // ---- CHANGELOG: `GovernorError` new variants + `non_exhaustive` ------------
@@ -593,39 +613,50 @@ fn governor_outcomes() {
         ),
         "unknown class rejects at the engine boundary"
     );
+    let foreign = direct_governor();
+    let foreign_permit = match foreign.admit(&TaskSpec::io(retrieval()).operation("foreign")) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => {
+            check!(false, "foreign permit admits, got {other:?}");
+            unreachable!()
+        }
+    };
+    let foreign_ticket = match foreign.admit(&TaskSpec::io(retrieval()).operation("foreign-wait")) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => {
+            check!(false, "foreign ticket queues, got {other:?}");
+            unreachable!()
+        }
+    };
     check!(
-        governor.claim(u64::MAX) == ClaimOutcome::Invalid,
-        "claim of a never-issued ticket"
+        governor.claim(foreign_ticket) == ClaimOutcome::Invalid,
+        "claim of a foreign ticket"
     );
     // `ReleaseOutcome` is `#[must_use]`: a consumer inspects it.
     check!(
-        governor.release(u64::MAX) == ReleaseOutcome::UnknownPermit,
-        "release of a never-granted permit"
+        governor.release(foreign_permit) == ReleaseOutcome::UnknownPermit,
+        "release of a foreign permit"
     );
     check!(
-        governor.advance_phase(u64::MAX, ExecutionPhase::Running)
+        governor.advance_phase(foreign_permit, ExecutionPhase::Running)
             == AdvanceOutcome::Refused(AdvanceRefusal::UnknownPermit),
-        "phase of no permit is refused as unknown"
+        "phase of a foreign permit is refused as unknown"
     );
     check!(
         governor.reap_leaks().retained_active == 0,
         "leak sweep reports retained_active"
     );
+    check!(
+        foreign.abandon(foreign_ticket) == AbandonOutcome::Abandoned,
+        "foreign fixture ticket is returned"
+    );
+    check!(
+        foreign.release(foreign_permit) == ReleaseOutcome::Released,
+        "foreign fixture permit is returned"
+    );
 
     // A real queue → promote → claim → release cycle.
-    let mut classes = std::collections::BTreeMap::new();
-    classes.insert(
-        retrieval(),
-        ClassPolicy::new()
-            .max_inflight(1)
-            .max_queue_depth(4)
-            .cpu_units(1)
-            .memory_units(1)
-            .overflow_policy(OverflowPolicy::QueueWithinDepth),
-    );
-    let policy = PolicySet::new(ResourceBudget::new().cpu_units(8).memory_units(8), classes);
-    let governor =
-        Governor::new(policy, Arc::new(ManualClock::new(0))).expect("queueing policy builds");
+    let governor = direct_governor();
 
     let first = match governor.admit(&TaskSpec::io(retrieval()).operation("first")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
@@ -894,6 +925,14 @@ fn memory_outcomes() {
     );
     let policy = PolicySet::new(ResourceBudget::new().cpu_units(8).memory_units(64), classes);
     let governor = Governor::new(policy, Arc::new(ManualClock::new(0))).expect("builds");
+    let foreign = direct_governor();
+    let foreign_permit = match foreign.admit(&TaskSpec::io(retrieval()).operation("foreign-memory")) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => {
+            check!(false, "foreign memory permit admits, got {other:?}");
+            unreachable!()
+        }
+    };
 
     let staged = match governor.admit(&TaskSpec::io(TaskClass::new("staged")).operation("s")) {
         AdmissionDecision::Admitted { permit_id } => permit_id,
@@ -933,8 +972,9 @@ fn memory_outcomes() {
         "refusal frees nothing"
     );
     check!(
-        governor.release_stage_memory(u64::MAX, 1) == StageReleaseOutcome::UnknownPermit,
-        "stage release of no permit"
+        governor.release_stage_memory(foreign_permit, 1)
+            == StageReleaseOutcome::UnknownPermit,
+        "stage release of a foreign permit"
     );
     // Explicit sequence numbers reject replayed stage events.
     check!(
@@ -976,8 +1016,8 @@ fn memory_outcomes() {
         "epoch 1 replayed is stale"
     );
     check!(
-        governor.reconcile_memory_at(u64::MAX, 0, 1) == ReconcileOutcome::UnknownPermit,
-        "reconcile of no permit"
+        governor.reconcile_memory_at(foreign_permit, 0, 1) == ReconcileOutcome::UnknownPermit,
+        "reconcile of a foreign permit"
     );
     // The `bool` form is still there for callers that do not order reporters.
     check!(
@@ -992,6 +1032,10 @@ fn memory_outcomes() {
     check!(
         governor.release(whole) == ReleaseOutcome::Released,
         "release whole"
+    );
+    check!(
+        foreign.release(foreign_permit) == ReleaseOutcome::Released,
+        "release foreign memory fixture"
     );
 
     // `units_for` is checked on both edges instead of saturating.

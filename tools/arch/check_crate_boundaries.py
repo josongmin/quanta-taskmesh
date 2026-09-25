@@ -48,7 +48,16 @@ ALLOWED_EDGES: dict[str, set[str]] = {
     # loom / shuttle are `[target.'cfg(loom)'.dependencies]`: present in the
     # graph, compiled only under the model-check cfgs (see engine `src/sync.rs`).
     "taskmesh-engine": {"taskmesh-contract", "parking_lot", "loom", "shuttle"},
-    "taskmesh": {"taskmesh-contract", "taskmesh-engine", "tokio", "tokio-util"},
+    # JSON is an opt-in untrusted-bytes adapter in the host. Keep it out of the
+    # contract and engine; neither may depend on a wire parser to govern work.
+    "taskmesh": {
+        "taskmesh-contract",
+        "taskmesh-engine",
+        "serde",
+        "serde_json",
+        "tokio",
+        "tokio-util",
+    },
     "taskmesh-rayon": {"taskmesh-contract", "rayon"},
     # The bench harness is `publish = false` and sits outside the shipped graph;
     # it is allowed to depend on the whole workspace plus measurement crates.

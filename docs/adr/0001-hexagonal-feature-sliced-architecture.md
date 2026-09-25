@@ -37,6 +37,13 @@ primitive, IO, 시계, 메모리 측정 같은 부작용과 섞이면 결정성�
 | `taskmesh` | host facade. tokio 어댑터 + Builder (semi-hexagonal) | contract, engine, tokio |
 | `taskmesh-rayon` | rayon Executor 어댑터 | contract, rayon |
 
+BG25-002의 untrusted JSON bytes ingress는 host facade의 opt-in 어댑터로 둔다.
+따라서 `taskmesh`에만 `serde`/`serde_json` 직접 의존을 허용한다.
+`taskmesh-contract`의 shipped dependency는 계속 `serde`뿐이고,
+`taskmesh-engine`은 JSON 파서에 의존하지 않는다. raw DTO 역직렬화의
+호환 동작을 바꾸지 않으면서 strict bytes 검사를 host에서 선행하기 위한
+경계 확장이다.
+
 - `taskmesh-core`는 `taskmesh-engine`으로 개명한다.
 - facade는 `crates/taskmesh-tokio/`에서 `crates/taskmesh/`로 이동하되,
   package 이름은 `taskmesh`를 유지한다.

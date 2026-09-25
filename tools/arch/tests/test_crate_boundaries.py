@@ -55,6 +55,8 @@ def known_good() -> dict:
                 [
                     dep("taskmesh-contract"),
                     dep("taskmesh-engine"),
+                    dep("serde"),
+                    dep("serde_json"),
                     dep("tokio"),
                     dep("tokio-util"),
                     dep("taskmesh-rayon", optional=True),
@@ -104,6 +106,15 @@ def test_engine_depending_on_tokio_is_reported() -> None:
             pkg["dependencies"].append(dep("tokio"))
     violations = arch.check_edges(graph)
     assert any("'taskmesh-engine' -> 'tokio'" in v for v in violations), violations
+
+
+def test_json_ingress_dependency_stays_outside_the_engine() -> None:
+    graph = known_good()
+    for pkg in graph["packages"]:
+        if pkg["name"] == "taskmesh-engine":
+            pkg["dependencies"].append(dep("serde_json"))
+    violations = arch.check_edges(graph)
+    assert any("'taskmesh-engine' -> 'serde_json'" in v for v in violations), violations
 
 
 def test_engine_depending_on_the_bench_harness_is_reported() -> None:

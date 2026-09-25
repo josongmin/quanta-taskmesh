@@ -2,8 +2,10 @@
 
 use serde_json::{json, Value};
 use taskmesh::{
-    parse_runtime_config, parse_task_spec, ClassPolicy, ResourceBudget, StrictIngressError,
-    StrictIngressLimits, SubstrateHint, TaskClass, TaskSpec, TaskStage, TopologyConfig,
+    parse_runtime_config, parse_task_spec, ClassPolicy, DeterministicReducePolicy,
+    DuplicateMergePolicy, ErrorAggregationPolicy, PartialResultOrdering, ResourceBudget,
+    StrictIngressError, StrictIngressLimits, SubstrateHint, TaskClass, TaskSpec, TaskStage,
+    TieBreakPolicy, TopologyConfig,
 };
 
 fn task() -> Value {
@@ -342,6 +344,74 @@ fn duplicate_and_unknown_keys_reject_at_every_nested_boundary() {
             key: "stack_size_byte".into()
         })
     );
+}
+
+#[test]
+fn strict_ingress_accepts_complete_reduce_policy_and_rejects_field_errors() {
+    let policy = json!({
+        "stable_sort_key": "document_id",
+        "duplicate_merge": "KeepLastStable",
+        "tie_break": "Lexicographic",
+        "error_aggregation": "AllStable",
+        "partial_result_ordering": "StableStageOrder"
+    });
+    let mut value = task();
+    value["stages"][0]["fan_out"] = json!(true);
+    value["stages"][0]["reduce_policy"] = policy.clone();
+
+    let mut expected = TaskSpec::blocking(TaskClass::new("c")).operation("root");
+    expected.stages[0].fan_out = true;
+    expected.stages[0].reduce_policy = Some(DeterministicReducePolicy {
+        stable_sort_key: "document_id".into(),
+        duplicate_merge: DuplicateMergePolicy::KeepLastStable,
+        tie_break: TieBreakPolicy::Lexicographic,
+        error_aggregation: ErrorAggregationPolicy::AllStable,
+        partial_result_ordering: PartialResultOrdering::StableStageOrder,
+    });
+    let parsed = parse(&value, StrictIngressLimits::default()).expect("complete reduce policy");
+    assert_eq!(
+        parsed,
+        expected.validate().expect("independent builder policy")
+    );
+    assert_eq!(
+        serde_json::to_value(&parsed.as_spec().stages[0].reduce_policy).unwrap(),
+        policy
+    );
+
+    for field in [
+        "stable_sort_key",
+        "duplicate_merge",
+        "tie_break",
+        "error_aggregation",
+        "partial_result_ordering",
+    ] {
+        let mut typo = value.clone();
+        let reduce = typo["stages"][0]["reduce_policy"].as_object_mut().unwrap();
+        let original = reduce.remove(field).unwrap();
+        let misspelled = format!("{field}_typo");
+        reduce.insert(misspelled.clone(), original);
+        assert_eq!(
+            parse(&typo, StrictIngressLimits::default()),
+            Err(StrictIngressError::UnknownKey {
+                object: "reduce_policy",
+                key: misspelled,
+            }),
+            "unknown {field} variant must be rejected before typed decode"
+        );
+
+        let mut missing = value.clone();
+        missing["stages"][0]["reduce_policy"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            matches!(
+                parse(&missing, StrictIngressLimits::default()),
+                Err(StrictIngressError::Decode(_))
+            ),
+            "missing {field} must not silently take a default"
+        );
+    }
 }
 
 #[test]

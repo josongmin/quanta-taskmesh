@@ -1,16 +1,17 @@
-# Final plan review
+# Plan review and implementation status
 
 ## Verdict
 
-The packet is implementable without treating all 53 incomplete scenarios as defects. It has one canonical owner, an acyclic dependency graph, single-writer boundaries, and explicit stop conditions. Production changes are limited to reproduced contract failures.
+The packet remains implementable without treating all 53 incomplete scenarios as defects. Implementation has started, and production changes remain limited to reproduced contract failures.
 
 ## Classification
 
 | Class | Tickets | Source-change rule |
 |---|---|---|
 | Contract decision | BG25-001, 003, 007 | Documentation/fixtures first; production behavior changes only after compatibility decision. |
-| Confirmed structural defect | BG25-005 H30 | RED fixture first, then freeze the validated descriptor; no scheduler redesign. |
-| Conditional contract defect | BG25-002, BG25-006 H34 | Implement only after official ingress/deadline boundary is accepted. |
+| Resolved structural defect | BG25-005 H30/B25/H27 | `bf03efc` and `3e57f1a` freeze executor authority, preflight Tokio-backed dispatch, and prove aggregate shared-executor bounds. |
+| Resolved deadline defect | BG25-006 H34 | `74a18f7` enforces `CompleteBy` at caller response while retaining worker custody through teardown. |
+| Conditional contract defect | BG25-002 | Implement only after the official untrusted-byte ingress boundary is identified. |
 | Authority migration | BG25-004 B28 | Reproduce collision, choose semver path, then introduce owner-bound handles. |
 | Proof-first | BG25-008, 009, 010 | Do not edit production source unless the independent oracle finds a mismatch. |
 | Measurement/evidence | BG25-011, 012 | Do not alter runtime semantics to make metrics or gates pass. |
@@ -40,6 +41,13 @@ The packet is implementable without treating all 53 incomplete scenarios as defe
 - Old `sep-25-engine-coverage` is marked superseded rather than deleted.
 - Existing K fixtures remain baselines; tickets target missing combinations instead of duplicating them.
 - Current receipt and nightly limitations are stated without upgrading historical proof.
+
+## Current open boundary
+
+- BG25-004 raw identity handles still require an API/semver choice before source changes.
+- BG25-002 strict ingress still requires the actual external bytes owner and compatibility boundary.
+- BG25-006 remains partial until its independent combined event-ledger oracle covers D05, D15, H11, H12, H19, H20, and H31 together.
+- BG25-008/009/010 and BG25-011 remain proof or measurement work. They are not confirmed source defects without a failing independent oracle.
 
 ## Remaining external dependencies
 

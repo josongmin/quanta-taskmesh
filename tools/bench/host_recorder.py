@@ -49,6 +49,7 @@ def verified_run(
             artifacts["binary"],
             artifacts["topology"],
             artifacts["resources"],
+            runner_mode="minimal",
         )
         raw = host_perf.parse_object(artifacts["raw"], "minimal raw")
         if (

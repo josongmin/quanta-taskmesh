@@ -40,6 +40,8 @@ def test_real_minimal_control_binds_same_host_binary_and_rejects_fabricated_late
     assert raw["response_latency_available"] is False
     assert "caller_response_ns" not in raw["records"][0]
     assert provenance["status"] == "complete"
+    assert provenance["runner_mode"] == "minimal"
+    assert provenance["runner_flags"] == ["--recorder-minimal"]
     host_perf.validate_with_rust(
         scenario_bytes, raw_bytes, [], topology_bytes, raw_kind="minimal"
     )
@@ -51,7 +53,21 @@ def test_real_minimal_control_binds_same_host_binary_and_rejects_fabricated_late
         binary_bytes,
         topology_bytes,
         resource_bytes,
+        runner_mode="minimal",
     )
+    forged_flags = dict(provenance)
+    forged_flags["runner_flags"] = []
+    with pytest.raises(host_perf.ReceiptError, match="runner mode or flags"):
+        host_perf.validate_execution_provenance(
+            json.dumps(forged_flags).encode(),
+            raw_bytes,
+            scenario_bytes,
+            provenance["end_identity"],
+            binary_bytes,
+            topology_bytes,
+            resource_bytes,
+            runner_mode="minimal",
+        )
     raw["response_latency_available"] = True
     with pytest.raises(host_perf.ReceiptError, match="Rust scenario preflight failed"):
         host_perf.validate_with_rust(

@@ -172,7 +172,7 @@ def main() -> int:
         elif not raw_valid:
             reason = f"runner wrote invalid raw artifact: {raw_problem or 'status is not complete'}"
         provenance = {
-            "schema_version": 3,
+            "schema_version": 4,
             "status": "invalid" if reason else "complete",
             "reason": reason,
             "scenario_sha256": host_perf.sha256(scenario_bytes),
@@ -184,6 +184,8 @@ def main() -> int:
             "resources_sha256": host_perf.sha256(resource_bytes),
             "resources_artifact": resource_path.name,
             "runner_pid": runner_pid,
+            "runner_mode": "full",
+            "runner_flags": [],
             "build_command": build_command,
             "build_artifact_features": artifact_features,
             "start_identity": start_identity,

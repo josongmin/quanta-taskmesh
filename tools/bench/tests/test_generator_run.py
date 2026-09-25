@@ -34,6 +34,8 @@ def test_real_generator_control_binds_binary_topology_and_raw(tmp_path: Path) ->
     resource_bytes = raw_path.with_name(raw_path.name + ".resources.json").read_bytes()
     provenance = host_perf.parse_object(provenance_bytes, "generator provenance")
     assert provenance["status"] == "complete"
+    assert provenance["runner_mode"] == "generator"
+    assert provenance["runner_flags"] == []
     assert host_perf.sha256(raw_bytes) == provenance["raw_sha256"]
     assert host_perf.sha256(binary_bytes) == provenance["binary_sha256"]
     host_perf.validate_with_rust(
@@ -48,8 +50,9 @@ def test_real_generator_control_binds_binary_topology_and_raw(tmp_path: Path) ->
         topology_bytes,
         resource_bytes,
         example_name="host_generator_probe",
+        runner_mode="generator",
     )
-    with pytest.raises(host_perf.ReceiptError, match="build command"):
+    with pytest.raises(host_perf.ReceiptError, match="runner mode or flags"):
         host_perf.validate_execution_provenance(
             provenance_bytes,
             raw_bytes,
@@ -58,6 +61,20 @@ def test_real_generator_control_binds_binary_topology_and_raw(tmp_path: Path) ->
             binary_bytes,
             topology_bytes,
             resource_bytes,
+        )
+    forged_mode = dict(provenance)
+    forged_mode["runner_mode"] = "full"
+    with pytest.raises(host_perf.ReceiptError, match="runner mode"):
+        host_perf.validate_execution_provenance(
+            json.dumps(forged_mode).encode(),
+            raw_bytes,
+            scenario_bytes,
+            provenance["end_identity"],
+            binary_bytes,
+            topology_bytes,
+            resource_bytes,
+            example_name="host_generator_probe",
+            runner_mode="generator",
         )
     tampered = json.loads(raw_bytes)
     tampered["records"][0]["scheduled_lag_ns"] += 1

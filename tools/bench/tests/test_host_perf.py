@@ -186,7 +186,7 @@ def complete() -> tuple[bytes, bytes, bytes, dict, dict]:
 
 def provenance(raw: bytes, scenario: bytes, identity: dict) -> dict:
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "status": "complete",
         "reason": None,
         "scenario_sha256": host_perf.sha256(scenario),
@@ -198,6 +198,8 @@ def provenance(raw: bytes, scenario: bytes, identity: dict) -> dict:
         "resources_sha256": host_perf.sha256(synthetic_resources()),
         "resources_artifact": "synthetic-raw.json.resources.json",
         "runner_pid": 1234,
+        "runner_mode": "full",
+        "runner_flags": [],
         "build_command": [
             "cargo",
             "build",

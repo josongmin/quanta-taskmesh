@@ -47,6 +47,8 @@ PROVENANCE_KEYS = {
     "resources_sha256",
     "resources_artifact",
     "runner_pid",
+    "runner_mode",
+    "runner_flags",
     "build_command",
     "build_artifact_features",
     "start_identity",
@@ -420,13 +422,23 @@ def validate_execution_provenance(
     topology_bytes: Optional[bytes],
     resource_bytes: Optional[bytes],
     example_name: str = "host_load_probe",
+    runner_mode: str = "full",
 ) -> None:
     if example_name not in ("host_load_probe", "host_generator_probe"):
         raise ReceiptError("unsupported benchmark runner")
+    expected_flags = {
+        ("host_load_probe", "full"): [],
+        ("host_load_probe", "minimal"): ["--recorder-minimal"],
+        ("host_generator_probe", "generator"): [],
+    }.get((example_name, runner_mode))
+    if expected_flags is None:
+        raise ReceiptError("unsupported benchmark runner mode")
     provenance = parse_object(data, "execution provenance")
     exact_keys(provenance, PROVENANCE_KEYS, "execution provenance")
-    if provenance["schema_version"] != 3 or provenance["status"] != "complete":
+    if provenance["schema_version"] != 4 or provenance["status"] != "complete":
         raise ReceiptError("execution provenance is invalid or incomplete")
+    if provenance["runner_mode"] != runner_mode or provenance["runner_flags"] != expected_flags:
+        raise ReceiptError("execution provenance runner mode or flags differ")
     if provenance["reason"] is not None or provenance["runner_exit_code"] != 0:
         raise ReceiptError("execution provenance contains a failed runner")
     if provenance["scenario_sha256"] != sha256(scenario_bytes) or provenance[

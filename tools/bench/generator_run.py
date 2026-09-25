@@ -105,7 +105,7 @@ def main(
             except host_perf.ReceiptError as error:
                 reason = f"control raw validation failed: {error}"
         provenance = {
-            "schema_version": 3,
+            "schema_version": 4,
             "status": "invalid" if reason else "complete",
             "reason": reason,
             "scenario_sha256": host_perf.sha256(scenario_bytes),
@@ -119,6 +119,8 @@ def main(
             "resources_sha256": host_perf.sha256(resource_bytes),
             "resources_artifact": resource_path.name,
             "runner_pid": runner_pid,
+            "runner_mode": raw_kind,
+            "runner_flags": [runner_flag] if runner_flag is not None else [],
             "build_command": build_command,
             "build_artifact_features": artifact_features,
             "start_identity": start_identity,
@@ -137,6 +139,7 @@ def main(
                     topology_bytes,
                     resource_bytes,
                     example_name=example_name,
+                    runner_mode=raw_kind,
                 )
             except host_perf.ReceiptError as error:
                 reason = f"control provenance validation failed: {error}"

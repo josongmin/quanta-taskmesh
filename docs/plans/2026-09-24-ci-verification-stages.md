@@ -1,7 +1,7 @@
 # Taskmesh verification stages: 2026 audit and implementation plan
 
-Status (2026-09-26): **W3 execution-denominator implementation and W4 bounded
-hosted trial are staged locally. Final candidate-HEAD proof, hosted trial,
+Status (2026-09-26): **W3 execution-denominator implementation has clean-HEAD
+macOS CI proof. W4's bounded workflow is staged locally; hosted trial,
 branch-rule decision, and W5 release qualification remain separate.**
 Audit baseline: `main@e5aa4b63a1fedb3b416d33d1ea7ff364258002b5`, clean
 before this plan was created on 2026-09-24. The initial draft was untracked and
@@ -322,20 +322,32 @@ validated against that HEAD; its durable copy is under
 `/Users/songmin/.codex/artifacts/taskmesh-ss-3700f3f/macos-gates.json`.
 Neither receipt qualifies subsequent edits, nightly, or release.
 
+The later clean `2a2f9bd688fd249f26d1a80b0fb035669530fbad` completed
+all 16 CI-profile gates. Its source-bound receipt is
+`/Users/songmin/.codex/artifacts/taskmesh-ss-2a2f9bd/macos-gates.json`
+(SHA-256 `0cc13daf39ac4537b40d619c0b06aa942bb9a5000a5946681914911e4222d57a`).
+A subsequent documentation commit `bca879a621f7780de01127a6cc694021a54ae356`
+also completed 16/16 and validated against its exact HEAD; its receipt is
+`/Users/songmin/.codex/artifacts/taskmesh-ss-bca879a/macos-gates.json`
+(SHA-256 `8d21a9adc6fdb1b98bf6840f32857bbde282b74eaaafabf6dbc7f186d98843aa`).
+For any later checkout, qualify the current HEAD independently with
+`just verify-macos-ci` and `uv run python tools/gates/run.py --validate-receipt
+target/verification/macos-gates.json --expected-head "$(git rev-parse HEAD)"`.
+
 The historical W3 static slice made `gates-inventory` derive 113
 Cargo/Python/fuzz target records and rejects unowned feature targets or
 missing declared recipe selectors. The `test` gate reports its selected
 runner/version, and saved PASS validation requires those fields. This does
 not establish compiled target selection, case execution, pytest collection,
-or a reusable receipt for a different source. The current candidate extends
+or a reusable receipt for a different source. The W3 implementation extends
 that slice as follows:
 
 - `test` checks Cargo metadata ownership against the nextest binary list and
   verifies every selected non-ignored case started and ended `ok`. It runs
   the regular workspace and doc fixture separately so features do not unify.
   The two existing zero-case library binaries are explicit exceptions; an
-  unknown empty target fails. The focused candidate run selected 94 targets
-  and completed 632 cases.
+  unknown empty target fails. The clean CI run selected 94 targets and
+  completed 632 cases.
 - `test-rayon` checks its ten explicit feature/exact scopes, including the
   nonzero exact-filter denominator. The focused run selected seven distinct
   targets and completed 33 cases. Filtered-out cases are disclosed in each
@@ -354,8 +366,9 @@ that slice as follows:
   fields, and bounded workflow trigger bypasses. Existing Semgrep and
   required-set parity fixtures remain in force.
 
-These are candidate-tree checks. The final committed HEAD still needs its own
-full CI-profile receipt. `doctest`, `bench-smoke`, modelcheck, fuzz, and other
+The counts above were recorded by the exact-HEAD CI profile, not merely by
+static mapping. Each new commit still needs its own CI-profile receipt.
+`doctest`, `bench-smoke`, modelcheck, fuzz, and other
 special producers retain their separate gate/producer contracts rather than
 being counted as ordinary nextest or pytest cases.
 

@@ -51,6 +51,29 @@ fn task_limits_reject_before_typed_decode_or_stage_allocation() {
         parse_task_spec(
             &bytes,
             StrictIngressLimits {
+                max_bytes: 0,
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Err(StrictIngressError::InvalidLimit("max_bytes"))
+    );
+    assert_eq!(
+        parse_task_spec(
+            &bytes,
+            StrictIngressLimits {
+                max_bytes: 1,
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Err(StrictIngressError::ByteLimit {
+            actual: bytes.len(),
+            max: 1
+        })
+    );
+    assert_eq!(
+        parse_task_spec(
+            &bytes,
+            StrictIngressLimits {
                 max_bytes: bytes.len() - 1,
                 ..StrictIngressLimits::default()
             }
@@ -68,6 +91,21 @@ fn task_limits_reject_before_typed_decode_or_stage_allocation() {
         }
     )
     .is_ok());
+    let mut over_bytes = bytes.clone();
+    over_bytes.push(b' ');
+    assert_eq!(
+        parse_task_spec(
+            &over_bytes,
+            StrictIngressLimits {
+                max_bytes: bytes.len(),
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Err(StrictIngressError::ByteLimit {
+            actual: bytes.len() + 1,
+            max: bytes.len()
+        })
+    );
     assert_eq!(
         parse_task_spec(
             &bytes,
@@ -77,6 +115,26 @@ fn task_limits_reject_before_typed_decode_or_stage_allocation() {
             }
         ),
         Err(StrictIngressError::InvalidLimit("max_stages"))
+    );
+    assert_eq!(
+        parse_task_spec(
+            &bytes,
+            StrictIngressLimits {
+                max_depth: 0,
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Err(StrictIngressError::InvalidLimit("max_depth"))
+    );
+    assert_eq!(
+        parse_task_spec(
+            &bytes,
+            StrictIngressLimits {
+                max_depth: 1,
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Err(StrictIngressError::DepthLimit { max: 1 })
     );
     assert_eq!(
         parse_task_spec(
@@ -112,6 +170,22 @@ fn task_limits_reject_before_typed_decode_or_stage_allocation() {
         ),
         Err(StrictIngressError::StageLimit { max: 1 })
     );
+    two["stages"][1] = json!({"unknown": {"deep": [1, 2, 3]}});
+    assert_eq!(
+        parse(
+            &two,
+            StrictIngressLimits {
+                max_stages: 1,
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Err(StrictIngressError::StageLimit { max: 1 }),
+        "the over-limit body must not be decoded"
+    );
+    two["stages"][1] = json!({
+        "class": "c", "stage": "second", "substrate_hint": "BlockingPool",
+        "fan_out": false, "reduce_policy": null
+    });
     assert!(parse(
         &two,
         StrictIngressLimits {

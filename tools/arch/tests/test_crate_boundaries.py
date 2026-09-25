@@ -176,19 +176,23 @@ def test_a_missing_required_source_directory_is_reported(tmp_path: Path) -> None
     assert any("taskmesh-engine/src" in v for v in violations), violations
 
 
-def test_an_unreadable_source_file_is_reported(tmp_path: Path) -> None:
+def test_an_unreadable_source_file_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A file the checker could not open is a file it did not check."""
     for relative in arch.REQUIRED_SOURCE_DIRS:
         (tmp_path / "crates" / relative).mkdir(parents=True)
     unreadable = tmp_path / "crates" / "taskmesh-engine" / "src" / "locked.rs"
     unreadable.write_text("pub fn f() {}\n", encoding="utf-8")
-    unreadable.chmod(0o000)
-    try:
-        violations = arch.check_source_usages(tmp_path)
-    finally:
-        unreadable.chmod(0o644)
-    if not violations:
-        pytest.skip("filesystem grants read access regardless of mode (running as root?)")
+    original_read_text = Path.read_text
+
+    def read_text(path: Path, *args: object, **kwargs: object) -> str:
+        if path == unreadable:
+            raise PermissionError("permission denied by deterministic test oracle")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    violations = arch.check_source_usages(tmp_path)
     assert any("could not read" in v for v in violations), violations
 
 

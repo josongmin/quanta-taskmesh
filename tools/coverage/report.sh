@@ -66,6 +66,12 @@ fi
 
 out_dir="target/coverage"
 mkdir -p "${out_dir}"
+# Coverage rewrites every workspace crate with a shared set of instrumentation
+# flags.  Serialise that build by default: highly parallel builds on bind-mounted
+# workspaces have produced transient E0463 metadata reads while one feature
+# variant replaces another crate artifact.  Callers may still opt into a proven
+# higher value explicitly.
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
 # Start from this build only. `cargo llvm-cov` reports every instrumented
 # object left in its target dir, and a test executable built from an older
 # source — here once a doc-examples binary from before that crate was

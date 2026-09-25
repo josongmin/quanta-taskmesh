@@ -27,6 +27,7 @@ use taskmesh_contract::{
 };
 use taskmesh_engine::{
     AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome, TerminalReason,
+    Ticket,
 };
 
 const CLASS: &str = "c";
@@ -111,7 +112,7 @@ impl PermitWaker for CountingWaker {
     }
 }
 
-fn queue_with_waker(g: &Governor, op: &str) -> (u64, Arc<CountingWaker>) {
+fn queue_with_waker(g: &Governor, op: &str) -> (Ticket, Arc<CountingWaker>) {
     let waker = Arc::new(CountingWaker(AtomicUsize::new(0)));
     let port: Arc<dyn PermitWaker> = waker.clone();
     match g.admit_waitable(&spec(op), port) {
@@ -198,7 +199,7 @@ fn promote_claim_abandon_three_way_is_exactly_once() {
         };
         releaser.join().unwrap();
         let claimed = claimer.join().unwrap();
-        abandoner.join().unwrap();
+        let _abandon_outcome = abandoner.join().unwrap();
 
         // Whoever ended the ticket, it is over: a late look never says "wait".
         assert!(

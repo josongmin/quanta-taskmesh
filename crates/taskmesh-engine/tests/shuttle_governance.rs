@@ -102,7 +102,7 @@ impl PermitWaker for CountingWaker {
     }
 }
 
-fn queue_with_waker(g: &Governor, op: &str) -> (u64, Arc<CountingWaker>) {
+fn queue_with_waker(g: &Governor, op: &str) -> (Ticket, Arc<CountingWaker>) {
     let waker = Arc::new(CountingWaker(AtomicUsize::new(0)));
     let port: Arc<dyn PermitWaker> = waker.clone();
     match g.admit_waitable(&spec(op), port) {
@@ -224,8 +224,8 @@ fn randomized_promote_claim_double_abandon_is_exactly_once() {
             let a2 = abandon(Arc::clone(&g));
             promoter.join().unwrap();
             claimer.join().unwrap();
-            a1.join().unwrap();
-            a2.join().unwrap();
+        let _first_abandon_outcome = a1.join().unwrap();
+        let _second_abandon_outcome = a2.join().unwrap();
 
             assert!(matches!(
                 g.ticket_status(ticket),

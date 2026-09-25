@@ -1,0 +1,91 @@
+"""Regression tests for the BG25 static scenario mapping validator."""
+
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[3]
+VALIDATOR = (
+    REPO
+    / "docs"
+    / "plans"
+    / "bugbash-sep-25-general"
+    / "tickets"
+    / "validate_scenario_evidence.py"
+)
+SPEC = importlib.util.spec_from_file_location("validate_scenario_evidence", VALIDATOR)
+assert SPEC is not None and SPEC.loader is not None
+VALIDATE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(VALIDATE)
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "#[test]\nfn named_case() {}\n",
+        "#[tokio::test]\nasync fn named_case() {}\n",
+        '#[tokio::test(flavor = "multi_thread")]\nasync fn named_case() {}\n',
+        "#[test]\n#[ignore]\nfn named_case() {}\n",
+    ],
+)
+def test_test_case_exists_accepts_only_declared_tests(
+    tmp_path: Path, declaration: str
+) -> None:
+    source = tmp_path / "case.rs"
+    source.write_text(declaration, encoding="utf-8")
+    assert VALIDATE.test_case_exists(source, "named_case")
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "fn named_case() {}\n",
+        "async fn named_case() {}\n",
+        "// #[test]\nfn named_case() {}\n",
+        "#[tokio::test_case]\nasync fn named_case() {}\n",
+        "#[test]\nfn different_case() {}\nfn named_case() {}\n",
+    ],
+)
+def test_test_case_exists_rejects_helpers_and_misattributed_attributes(
+    tmp_path: Path, declaration: str
+) -> None:
+    source = tmp_path / "case.rs"
+    source.write_text(declaration, encoding="utf-8")
+    assert not VALIDATE.test_case_exists(source, "named_case")
+
+
+def test_committed_scenario_mapping_uses_real_test_functions() -> None:
+    VALIDATE.main()
+
+
+def test_repository_file_rejects_absolute_traversal_and_external_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    owned = repository / "owned.rs"
+    owned.write_text("#[test]\nfn owned() {}\n", encoding="utf-8")
+    external = tmp_path / "external.rs"
+    external.write_text("#[test]\nfn external() {}\n", encoding="utf-8")
+    (repository / "linked.rs").symlink_to(external)
+    monkeypatch.setattr(VALIDATE, "REPO", repository)
+
+    assert VALIDATE.repository_file("owned.rs", "fixture") == owned
+    for path in (str(external), "../external.rs", "linked.rs"):
+        with pytest.raises(ValueError, match="repository-relative|outside"):
+            VALIDATE.repository_file(path, "fixture")
+
+
+def test_nightly_inventory_rejects_duplicate_gate_rows() -> None:
+    rows = [
+        {"gate": gate, "status": "NOT_RUN", "reason": "not run"}
+        for gate in sorted(VALIDATE.NIGHTLY_GATES)
+    ]
+    VALIDATE.validate_nightly(rows)
+    with pytest.raises(ValueError, match="missing or duplicate"):
+        VALIDATE.validate_nightly([*rows, rows[0]])
+    with pytest.raises(ValueError, match="unknown or missing fields"):
+        VALIDATE.validate_nightly([{**rows[0], "receipt": "forged"}, *rows[1:]])

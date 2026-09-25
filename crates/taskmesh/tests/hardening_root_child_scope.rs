@@ -6,6 +6,15 @@ use std::time::Duration;
 
 use taskmesh::*;
 
+const HANG: Duration = Duration::from_secs(5);
+
+async fn bounded<F: std::future::Future>(what: &str, future: F) -> F::Output {
+    let Ok(output) = tokio::time::timeout(HANG, future).await else {
+        panic!("{what}: the caller was still waiting after {HANG:?}");
+    };
+    output
+}
+
 fn class() -> TaskClass {
     TaskClass::new("c")
 }
@@ -32,13 +41,15 @@ async fn declared_later_stages_and_reduce_do_not_execute_without_caller_submissi
             DeterministicReducePolicy::keyed("stable_id"),
         );
 
-    let result: usize = rt
-        .run_io(staged, async move {
+    let result: usize = bounded(
+        "declared root stage",
+        rt.run_io(staged, async move {
             root_count.fetch_add(1, Ordering::SeqCst);
             Ok::<_, ()>(7)
-        })
-        .await
-        .expect("bootstrap stage runs");
+        }),
+    )
+    .await
+    .expect("bootstrap stage runs");
     assert_eq!(result, 7);
     assert_eq!(executions.load(Ordering::SeqCst), 1);
     let snapshot = rt.snapshot();
@@ -47,13 +58,15 @@ async fn declared_later_stages_and_reduce_do_not_execute_without_caller_submissi
     assert_eq!(snapshot.capabilities["cpu"].in_use, 0);
 
     let later_count = Arc::clone(&executions);
-    let later: usize = rt
-        .run_cpu(TaskSpec::cpu(class()).operation("later"), move || {
+    let later: usize = bounded(
+        "separately submitted later stage",
+        rt.run_cpu(TaskSpec::cpu(class()).operation("later"), move || {
             later_count.fetch_add(1, Ordering::SeqCst);
             Ok::<_, ()>(11)
-        })
-        .await
-        .expect("caller submits later work separately");
+        }),
+    )
+    .await
+    .expect("caller submits later work separately");
     assert_eq!(later, 11);
     assert_eq!(executions.load(Ordering::SeqCst), 2);
     assert_eq!(rt.snapshot().classes[&class()].admitted_total, 2);
@@ -68,18 +81,21 @@ async fn ambient_tokio_child_outlives_governed_root_and_drain() {
     let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
     let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
 
-    rt.run_io(
-        TaskSpec::io(class()).operation("ambient-root"),
-        async move {
-            let _detached = tokio::spawn(async move {
-                let _observer_gone = started_tx.send(());
-                release_rx.await.expect("test releases ambient child");
-                child_completed.store(true, Ordering::SeqCst);
-                let _observer_gone = done_tx.send(());
-            });
-            started_rx.await.expect("ambient child starts");
-            Ok::<(), ()>(())
-        },
+    bounded(
+        "ambient root completion",
+        rt.run_io(
+            TaskSpec::io(class()).operation("ambient-root"),
+            async move {
+                let _detached = tokio::spawn(async move {
+                    let _observer_gone = started_tx.send(());
+                    release_rx.await.expect("test releases ambient child");
+                    child_completed.store(true, Ordering::SeqCst);
+                    let _observer_gone = done_tx.send(());
+                });
+                started_rx.await.expect("ambient child starts");
+                Ok::<(), ()>(())
+            },
+        ),
     )
     .await
     .expect("root completes independently");
@@ -125,7 +141,9 @@ async fn panicked_root_refunds_its_lease_but_not_ambient_child_custody() {
         )
         .await
     });
-    let failure = root.await.expect_err("root panic reaches its caller");
+    let failure = bounded("panicked root join", root)
+        .await
+        .expect_err("root panic reaches its caller");
     assert!(failure.is_panic());
     assert_eq!(rt.snapshot().classes[&class()].inflight, 0);
     rt.drain(Duration::from_secs(1))
@@ -157,10 +175,15 @@ async fn aborted_caller_root_refunds_only_its_own_lease() {
         )
         .await
     });
-    started_rx.await.expect("root holds its permit");
+    bounded("aborted root admission", started_rx)
+        .await
+        .expect("root holds its permit");
     assert_eq!(rt.snapshot().classes[&class()].inflight, 1);
     root.abort();
-    assert!(root.await.expect_err("caller aborted").is_cancelled());
+    assert!(bounded("aborted root join", root)
+        .await
+        .expect_err("caller aborted")
+        .is_cancelled());
     assert_eq!(rt.snapshot().classes[&class()].inflight, 0);
     rt.drain(Duration::from_secs(1))
         .await
@@ -185,18 +208,21 @@ async fn unawaited_local_child_is_dropped_with_the_root_local_set() {
     let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
     let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
 
-    rt.run_local(
-        TaskSpec::local(class()).operation("local-root"),
-        async move {
-            let _unawaited = tokio::task::spawn_local(async move {
-                let _notice = DropNotice(child_dropped);
-                let _observer_gone = started_tx.send(());
-                let _released = release_rx.await;
-                child_completed.store(true, Ordering::SeqCst);
-            });
-            started_rx.await.expect("local child starts");
-            Ok::<(), ()>(())
-        },
+    bounded(
+        "local root completion",
+        rt.run_local(
+            TaskSpec::local(class()).operation("local-root"),
+            async move {
+                let _unawaited = tokio::task::spawn_local(async move {
+                    let _notice = DropNotice(child_dropped);
+                    let _observer_gone = started_tx.send(());
+                    let _released = release_rx.await;
+                    child_completed.store(true, Ordering::SeqCst);
+                });
+                started_rx.await.expect("local child starts");
+                Ok::<(), ()>(())
+            },
+        ),
     )
     .await
     .expect("root completes");

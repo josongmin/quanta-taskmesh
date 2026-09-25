@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-from collections import Counter
 import json
-from pathlib import Path
 import re
 import sys
+from collections import Counter
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parents[3]
@@ -35,10 +35,46 @@ def checklist_ids() -> set[str]:
     return set(re.findall(r"^\| ([ABHD]\d{2}) \|", CHECKLIST.read_text(), re.M))
 
 
+def repository_file(relative: str, context: str) -> Path:
+    path = Path(relative)
+    if path.is_absolute() or ".." in path.parts:
+        fail(f"{context}: path must be repository-relative without traversal: {relative!r}")
+    candidate = REPO / path
+    try:
+        repository = REPO.resolve(strict=True)
+        resolved = candidate.resolve(strict=True)
+    except FileNotFoundError:
+        fail(f"{context}: missing file {relative!r}")
+    if repository != resolved and repository not in resolved.parents:
+        fail(f"{context}: path resolves outside the repository: {relative!r}")
+    if not candidate.is_file():
+        fail(f"{context}: not a file: {relative!r}")
+    return candidate
+
+
 def test_case_exists(path: Path, case: str) -> bool:
-    text = path.read_text(encoding="utf-8")
-    declaration = re.compile(rf"^\s*(?:async\s+)?fn\s+{re.escape(case)}\s*\(", re.M)
-    return declaration.search(text) is not None
+    lines = path.read_text(encoding="utf-8").splitlines()
+    declaration = re.compile(rf"^\s*(?:async\s+)?fn\s+{re.escape(case)}\s*\(")
+    attribute = re.compile(r"^\s*#\[(?P<body>[^]]+)]\s*$")
+    for index, line in enumerate(lines):
+        if declaration.search(line) is None:
+            continue
+        cursor = index - 1
+        is_test = False
+        while cursor >= 0:
+            match = attribute.fullmatch(lines[cursor])
+            if match is None:
+                break
+            body = match.group("body")
+            is_test |= (
+                body == "test"
+                or body == "tokio::test"
+                or body.startswith("tokio::test(")
+            )
+            cursor -= 1
+        if is_test:
+            return True
+    return False
 
 
 def recipe_body(justfile: str, recipe: str) -> str:
@@ -52,13 +88,33 @@ def recipe_body(justfile: str, recipe: str) -> str:
     return match.group("body")
 
 
+def validate_nightly(nightly: object) -> None:
+    if not isinstance(nightly, list) or not all(isinstance(row, dict) for row in nightly):
+        fail("nightly qualification inventory must be a list of objects")
+    required = {"gate", "status", "reason"}
+    for row in nightly:
+        if set(row) != required:
+            drift = sorted(set(row) ^ required)
+            fail(f"nightly qualification row has unknown or missing fields: {drift}")
+    gates = [row.get("gate") for row in nightly]
+    if len(gates) != len(NIGHTLY_GATES) or len(set(gates)) != len(gates):
+        fail("nightly qualification inventory contains missing or duplicate gates")
+    if set(gates) != NIGHTLY_GATES:
+        fail("nightly qualification inventory drift")
+    if any(row.get("status") != "NOT_RUN" or not row.get("reason") for row in nightly):
+        fail("unexecuted nightly gates must remain explicit NOT_RUN entries with reasons")
+
+
 def main() -> None:
     data = json.loads(MANIFEST.read_text(encoding="utf-8"))
     plan = json.loads(PLAN.read_text(encoding="utf-8"))
     if data.get("schema_version") != 2:
         fail("scenario evidence schema_version must be 2")
     expected_semantics = {
-        "MAPPED": "static candidate mapping only: the named target and test case exist; semantic sufficiency and execution are not asserted",
+        "MAPPED": (
+            "static candidate mapping only: the named target and test case exist; "
+            "semantic sufficiency and execution are not asserted"
+        ),
         "OPEN": "the scenario has no accepted implementation or oracle yet",
         "NOT_RUN": "the selected execution proof was not run",
         "OUT_OF_SCOPE": "the scenario is outside the accepted product boundary",
@@ -129,6 +185,9 @@ def main() -> None:
             fail(f"{scenario}: unsupported feature/platform selector")
         if row["gate"] not in known_gates:
             fail(f"{scenario}: selecting gate {row['gate']!r} is not inventoried")
+        if not isinstance(row["target"], str):
+            fail(f"{scenario}: target must be a repository-relative path")
+        target = repository_file(row["target"], f"{scenario}: target")
         if row["feature"] == "rayon":
             selector = (
                 f"--test {Path(row['target']).stem} {row['case']} -- --exact"
@@ -139,11 +198,11 @@ def main() -> None:
         if not isinstance(sources, list) or not sources or row["target"] not in sources:
             fail(f"{scenario}: source must include its target")
         for source in sources:
-            if not isinstance(source, str) or not (REPO / source).is_file():
-                fail(f"{scenario}: missing source {source!r}")
+            if not isinstance(source, str):
+                fail(f"{scenario}: source paths must be strings")
+            repository_file(source, f"{scenario}: source")
         if row["status"] == "MAPPED":
-            target = REPO / row["target"]
-            if not target.is_file() or not test_case_exists(target, row["case"]):
+            if not test_case_exists(target, row["case"]):
                 fail(
                     f"{scenario}: MAPPED target/case does not exist: "
                     f"{row['target']}::{row['case']}"
@@ -158,12 +217,7 @@ def main() -> None:
     if data.get("scenario_count") != 104:
         fail("scenario_count must be 104")
 
-    nightly = data.get("qualification", {}).get("nightly", [])
-    nightly_by_gate = {row.get("gate"): row for row in nightly if isinstance(row, dict)}
-    if set(nightly_by_gate) != NIGHTLY_GATES:
-        fail("nightly qualification inventory drift")
-    if any(row.get("status") != "NOT_RUN" or not row.get("reason") for row in nightly):
-        fail("unexecuted nightly gates must remain explicit NOT_RUN entries with reasons")
+    validate_nightly(data.get("qualification", {}).get("nightly", []))
 
     print(
         "scenario mapping PASS: 104 unique MAPPED rows; "

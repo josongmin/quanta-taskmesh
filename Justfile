@@ -174,6 +174,11 @@ bench-host scenario raw summary calibration:
 bench-generator scenario raw:
     uv run python tools/bench/generator_run.py {{scenario}} {{raw}}
 
+# Same host executable/workload with per-request timestamps disabled. Counts
+# remain typed and bounded; response latency is unavailable by construction.
+bench-host-minimal scenario raw:
+    uv run python tools/bench/minimal_run.py {{scenario}} {{raw}}
+
 # Repeated fresh-process A/A study; output remains diagnostic until measured
 # generator/observer calibration and a predeclared noise policy are present.
 bench-host-aa scenario calibration directory *ARGS:
@@ -182,6 +187,11 @@ bench-host-aa scenario calibration directory *ARGS:
 # Balanced Snapshot-on/off host pairs, with the same body and executable.
 bench-host-snapshot scenario calibration directory *ARGS:
     uv run python tools/bench/host_observer.py {{scenario}} {{calibration}} {{directory}} {{ARGS}}
+
+# Balanced full/minimal recorder pairs with the same host executable and
+# Snapshot sampling disabled in both arms.
+bench-host-recorder scenario calibration directory *ARGS:
+    uv run python tools/bench/host_recorder.py {{scenario}} {{calibration}} {{directory}} {{ARGS}}
 
 # Deterministic allocation gate (ADR 9000 / P2). Runs anywhere — no valgrind.
 bench-gate:

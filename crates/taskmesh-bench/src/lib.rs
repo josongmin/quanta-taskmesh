@@ -12,4 +12,5 @@ pub mod host_load;
 pub mod host_scenarios;
 pub mod loadgen;
 pub mod metrics;
+pub mod minimal_host;
 pub mod workload;

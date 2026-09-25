@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Acquire a diagnostic null-work producer control with retained execution bytes."""
+# ruff: noqa: UP045 -- pyproject supports Python 3.9, which lacks PEP 604 unions.
+"""Acquire a diagnostic control with retained execution bytes.
+
+The default entry point is generator-only. The minimal host recorder reuses
+this exact artifact custody path with a different typed Rust raw validator.
+"""
 
 from __future__ import annotations
 
@@ -8,13 +13,24 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import host_perf
 from host_run import build_runner, retain_executable, write_new
 from process_resource import sample_subprocess
 
 
-def main() -> int:
+def main(
+    *,
+    example_name: str = "host_generator_probe",
+    raw_kind: str = "generator",
+    runner_flag: Optional[str] = None,
+) -> int:
+    if (example_name, raw_kind, runner_flag) not in (
+        ("host_generator_probe", "generator", None),
+        ("host_load_probe", "minimal", "--recorder-minimal"),
+    ):
+        raise ValueError("unsupported diagnostic control")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("scenario", type=Path)
     parser.add_argument("raw", type=Path)
@@ -29,17 +45,15 @@ def main() -> int:
             path.exists()
             for path in (args.raw, provenance_path, executable_path, topology_path, resource_path)
         ):
-            raise host_perf.ReceiptError("generator artifact paths must be fresh")
+            raise host_perf.ReceiptError("control artifact paths must be fresh")
         scenario_bytes = args.scenario.read_bytes()
         scenario = host_perf.parse_object(scenario_bytes, "scenario")
         features = sorted(set(args.feature))
         build_start_identity = host_perf.local_identity(scenario, features)
-        binary, artifact_features, build_command = build_runner(
-            features, "host_generator_probe"
-        )
+        binary, artifact_features, build_command = build_runner(features, example_name)
         if host_perf.local_identity(scenario, features) != build_start_identity:
             raise host_perf.ReceiptError("source, toolchain or host identity changed during build")
-        with tempfile.TemporaryDirectory(prefix="taskmesh-generator-binary-") as binary_dir:
+        with tempfile.TemporaryDirectory(prefix="taskmesh-control-binary-") as binary_dir:
             sealed_binary = Path(binary_dir) / binary.name
             sealed_scenario = Path(binary_dir) / "scenario.json"
             shutil.copy2(binary, sealed_binary)
@@ -47,16 +61,19 @@ def main() -> int:
             binary_digest = host_perf.sha256(sealed_binary.read_bytes())
             executable_bytes = retain_executable(sealed_binary, executable_path)
             if host_perf.sha256(executable_bytes) != binary_digest:
-                raise host_perf.ReceiptError("retained generator differs from sealed executable")
+                raise host_perf.ReceiptError("retained control differs from sealed executable")
             start_identity = host_perf.local_identity(scenario, features)
+            runner_command = [
+                str(sealed_binary),
+                str(sealed_scenario),
+                str(args.raw),
+                "--topology-out",
+                str(topology_path),
+            ]
+            if runner_flag is not None:
+                runner_command.append(runner_flag)
             runner_exit_code, runner_pid, runner_stderr, resources = sample_subprocess(
-                [
-                    str(sealed_binary),
-                    str(sealed_scenario),
-                    str(args.raw),
-                    "--topology-out",
-                    str(topology_path),
-                ],
+                runner_command,
                 cwd=host_perf.REPO,
             )
             resource_bytes = host_perf.canonical(resources) + b"\n"
@@ -71,11 +88,11 @@ def main() -> int:
         elif (
             not binary_unchanged or host_perf.sha256(executable_path.read_bytes()) != binary_digest
         ):
-            reason = "sealed or retained generator changed during run"
+            reason = "sealed or retained control changed during run"
         elif runner_exit_code != 0:
-            reason = f"generator exited {runner_exit_code}: {runner_stderr[-1000:]}"
+            reason = f"control exited {runner_exit_code}: {runner_stderr[-1000:]}"
         elif raw_bytes is None or topology_bytes is None:
-            reason = "generator did not write raw and topology artifacts"
+            reason = "control did not write raw and topology artifacts"
         else:
             try:
                 host_perf.validate_with_rust(
@@ -83,10 +100,10 @@ def main() -> int:
                     raw_bytes,
                     features,
                     topology_bytes,
-                    raw_kind="generator",
+                    raw_kind=raw_kind,
                 )
             except host_perf.ReceiptError as error:
-                reason = f"generator raw validation failed: {error}"
+                reason = f"control raw validation failed: {error}"
         provenance = {
             "schema_version": 3,
             "status": "invalid" if reason else "complete",
@@ -119,23 +136,23 @@ def main() -> int:
                     executable_bytes,
                     topology_bytes,
                     resource_bytes,
-                    example_name="host_generator_probe",
+                    example_name=example_name,
                 )
             except host_perf.ReceiptError as error:
-                reason = f"generator provenance validation failed: {error}"
+                reason = f"control provenance validation failed: {error}"
                 provenance["status"] = "invalid"
                 provenance["reason"] = reason
         write_new(provenance_path, host_perf.canonical(provenance) + b"\n")
         if reason is not None:
             raise host_perf.ReceiptError(reason)
         print(
-            f"STRUCTURALLY_VALID control=UNQUALIFIED raw={args.raw} "
+            f"STRUCTURALLY_VALID control={raw_kind} performance=UNQUALIFIED raw={args.raw} "
             f"provenance={provenance_path} runner={executable_path} "
             f"topology={topology_path} resources={resource_path}"
         )
         return 0
     except (OSError, host_perf.ReceiptError) as error:
-        print(f"generator run rejected: {error}", file=sys.stderr)
+        print(f"{raw_kind} control rejected: {error}", file=sys.stderr)
         return 1
 
 

@@ -531,7 +531,7 @@ impl RawHostRun {
     }
 }
 
-type Slot = Arc<Mutex<RawHostRecord>>;
+pub(crate) type Slot = Arc<Mutex<RawHostRecord>>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProducerDecision {
@@ -596,7 +596,7 @@ fn mutate(slot: &Slot, f: impl FnOnce(&mut RawHostRecord)) {
     f(&mut row);
 }
 
-struct OutstandingGuard(Arc<AtomicUsize>);
+pub(crate) struct OutstandingGuard(pub(crate) Arc<AtomicUsize>);
 
 impl Drop for OutstandingGuard {
     fn drop(&mut self) {
@@ -635,10 +635,11 @@ fn options(offer: &HostOffer, cancel: CancellationToken) -> SubmitOptions {
     opts
 }
 
-async fn execute(
+pub(crate) async fn execute(
     runtime: TokioRuntime,
     offer: HostOffer,
-    slot: Slot,
+    slot: Option<Slot>,
+    offer_id: usize,
     origin: Instant,
     submit_at: Instant,
     test_gate: Option<Arc<HostHarnessTestGate>>,
@@ -663,7 +664,7 @@ async fn execute(
         HostPath::Blocking => TaskSpec::blocking(class),
         HostPath::Cpu => TaskSpec::cpu(class),
     }
-    .operation(format!("bench-{}", slot.lock().expect("record lock").id));
+    .operation(format!("bench-{offer_id}"));
     match (offer.path, &offer.body) {
         (HostPath::Io, HostBody::Noop | HostBody::AsyncSleep { .. }) => {
             let sleep = match &offer.body {
@@ -672,11 +673,15 @@ async fn execute(
             };
             runtime
                 .run_io_with(spec, opts, async move {
-                    mutate(&slot, |row| row.body_started_ns = Some(since(origin)));
+                    if let Some(slot) = &slot {
+                        mutate(slot, |row| row.body_started_ns = Some(since(origin)));
+                    }
                     if sleep != 0 {
                         tokio::time::sleep(Duration::from_millis(sleep)).await;
                     }
-                    mutate(&slot, |row| row.body_finished_ns = Some(since(origin)));
+                    if let Some(slot) = &slot {
+                        mutate(slot, |row| row.body_finished_ns = Some(since(origin)));
+                    }
                     Ok(())
                 })
                 .await
@@ -686,18 +691,21 @@ async fn execute(
                 HostBody::BlockingSleep { millis } => *millis,
                 _ => 0,
             };
-            let gate =
-                test_gate.filter(|gate| gate.offer_id == slot.lock().expect("record lock").id);
+            let gate = test_gate.filter(|gate| gate.offer_id == offer_id);
             runtime
                 .run_blocking_with(spec, opts, move || {
-                    mutate(&slot, |row| row.body_started_ns = Some(since(origin)));
+                    if let Some(slot) = &slot {
+                        mutate(slot, |row| row.body_started_ns = Some(since(origin)));
+                    }
                     if let Some(gate) = gate {
                         gate.wait_for_release();
                     }
                     if sleep != 0 {
                         std::thread::sleep(Duration::from_millis(sleep));
                     }
-                    mutate(&slot, |row| row.body_finished_ns = Some(since(origin)));
+                    if let Some(slot) = &slot {
+                        mutate(slot, |row| row.body_finished_ns = Some(since(origin)));
+                    }
                     Ok(())
                 })
                 .await
@@ -709,13 +717,17 @@ async fn execute(
             };
             runtime
                 .run_cpu_with(spec, opts, move || {
-                    mutate(&slot, |row| row.body_started_ns = Some(since(origin)));
+                    if let Some(slot) = &slot {
+                        mutate(slot, |row| row.body_started_ns = Some(since(origin)));
+                    }
                     let mut value = 0_u64;
                     for i in 0..iterations {
                         value = value.wrapping_add(black_box(i).rotate_left(7));
                     }
                     black_box(value);
-                    mutate(&slot, |row| row.body_finished_ns = Some(since(origin)));
+                    if let Some(slot) = &slot {
+                        mutate(slot, |row| row.body_finished_ns = Some(since(origin)));
+                    }
                     Ok(())
                 })
                 .await
@@ -963,7 +975,15 @@ async fn run_host_scenario_inner(
                 let gated_drop = gate
                     .as_ref()
                     .is_some_and(|gate| gate.offer_id == slot.lock().expect("record lock").id);
-                let run = execute(runtime, offer, Arc::clone(&slot), origin, submit_at, gate.clone());
+                let run = execute(
+                    runtime,
+                    offer,
+                    Some(Arc::clone(&slot)),
+                    id,
+                    origin,
+                    submit_at,
+                    gate.clone(),
+                );
                 if let Some(ms) = drop_after {
                     let drop_gate = gate.clone();
                     tokio::select! {

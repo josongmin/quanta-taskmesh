@@ -167,7 +167,7 @@ def validate_with_rust(
     raw_kind: str = "host",
 ) -> None:
     """Use the runner's typed scenario, raw ledger and Builder rules."""
-    if raw_kind not in ("host", "generator"):
+    if raw_kind not in ("host", "generator", "minimal"):
         raise ReceiptError("unsupported Rust raw validation kind")
     try:
         with tempfile.TemporaryDirectory(prefix="taskmesh-host-receipt-") as temp_dir:
@@ -177,7 +177,11 @@ def validate_with_rust(
             command = ["cargo", "run", "--locked", "--quiet", "-p", "taskmesh-bench"]
             if features:
                 command.extend(["--features", ",".join(features)])
-            raw_flag = "--raw" if raw_kind == "host" else "--generator-raw"
+            raw_flag = {
+                "host": "--raw",
+                "generator": "--generator-raw",
+                "minimal": "--minimal-raw",
+            }[raw_kind]
             command.extend(["--example", "host_scenario_validate", "--", raw_flag, str(raw_path)])
             if topology_bytes is not None:
                 topology_path.write_bytes(topology_bytes)

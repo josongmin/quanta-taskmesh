@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use taskmesh_bench::host_load::{run_host_scenario_with_topology, HostHarnessFault};
 use taskmesh_bench::host_scenarios::HostScenario;
+use taskmesh_bench::minimal_host::run_minimal_host_scenario;
 
 fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     if path.exists() {
@@ -31,15 +32,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let mut fault = None;
     let mut topology_path = None;
+    let mut recorder_minimal = false;
     while let Some(flag) = args.next() {
         if flag == "--inject-producer-before-first-offer" && fault.is_none() {
             fault = Some(HostHarnessFault::ProducerBeforeOffer(0));
+        } else if flag == "--recorder-minimal" && !recorder_minimal {
+            recorder_minimal = true;
         } else if flag == "--topology-out" && topology_path.is_none() {
             topology_path = Some(PathBuf::from(
                 args.next().ok_or("--topology-out requires a path")?,
             ));
         } else {
-            return Err("usage: host_load_probe SCENARIO RAW_OUT [--topology-out PATH] [--inject-producer-before-first-offer]".into());
+            return Err("usage: host_load_probe SCENARIO RAW_OUT [--topology-out PATH] [--inject-producer-before-first-offer] [--recorder-minimal]".into());
         }
     }
     if topology_path
@@ -50,6 +54,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let bytes = fs::read(&scenario_path)?;
     let scenario = HostScenario::from_json(&bytes)?;
+    if recorder_minimal {
+        let (run, topology) = run_minimal_host_scenario(&scenario, fault).await?;
+        write_new(&output_path, &serde_json::to_vec_pretty(&run)?)?;
+        if let Some(path) = topology_path {
+            write_new(&path, &serde_json::to_vec_pretty(&topology)?)?;
+        }
+        if let Err(error) = run.validate_against(&scenario) {
+            return Err(
+                format!("minimal raw {} is invalid: {error}", output_path.display()).into(),
+            );
+        }
+        println!(
+            "MINIMAL_HOST scenario={} intended={} submitted={} responded={} dropped={} latency=UNAVAILABLE raw={}",
+            run.scenario_id,
+            run.counts.intended,
+            run.counts.submitted,
+            run.counts.responded,
+            run.counts.caller_dropped,
+            output_path.display()
+        );
+        return Ok(());
+    }
     let (run, topology) = run_host_scenario_with_topology(&scenario, fault).await?;
     let raw = serde_json::to_vec_pretty(&run)?;
     write_new(&output_path, &raw)?;

@@ -14,7 +14,7 @@
     {
       "id": "SEP22-T01",
       "finding": "TO-01",
-      "file": "SEP22-T01-capability-binding-oracle.md",
+      "file": "../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T01-capability-binding-oracle.md",
       "status": "LOCALLY_VERIFIED",
       "priority": "P0",
       "lane": "runtime-cancel",
@@ -24,7 +24,7 @@
     {
       "id": "SEP22-T02",
       "finding": "TO-02",
-      "file": "SEP22-T02-cancellation-handshakes.md",
+      "file": "../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T02-cancellation-handshakes.md",
       "status": "LOCALLY_VERIFIED",
       "priority": "P1",
       "lane": "cancellation-sequencing",
@@ -37,7 +37,7 @@
     {
       "id": "SEP22-T03",
       "finding": "TO-03",
-      "file": "SEP22-T03-backpressure-handshake.md",
+      "file": "../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T03-backpressure-handshake.md",
       "status": "LOCALLY_VERIFIED",
       "priority": "P1",
       "lane": "e2e-scenarios",
@@ -47,7 +47,7 @@
     {
       "id": "SEP22-T04",
       "finding": "TO-04",
-      "file": "SEP22-T04-drain-completion-boundary.md",
+      "file": "../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T04-drain-completion-boundary.md",
       "status": "LOCALLY_VERIFIED",
       "priority": "P2",
       "lane": "e2e-scenarios",
@@ -60,7 +60,7 @@
     {
       "id": "SEP22-T05",
       "finding": "TO-05",
-      "file": "SEP22-T05-python-floor.md",
+      "file": "../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T05-python-floor.md",
       "status": "LOCALLY_VERIFIED",
       "priority": "P0",
       "lane": "python-compat",
@@ -75,7 +75,7 @@
     {
       "id": "SEP22-T06",
       "finding": "TO-06",
-      "file": "SEP22-T06-semgrep-scan-ssot.md",
+      "file": "../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T06-semgrep-scan-ssot.md",
       "status": "LOCALLY_VERIFIED",
       "priority": "P1",
       "lane": "semgrep-proof",
@@ -85,7 +85,7 @@
     {
       "id": "SEP22-T07",
       "finding": "TO-07",
-      "file": "SEP22-T07-rayon-bounded-rendezvous.md",
+      "file": "../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T07-rayon-bounded-rendezvous.md",
       "status": "LOCALLY_VERIFIED",
       "priority": "P1",
       "lane": "rayon-adapter-test",
@@ -95,7 +95,7 @@
     {
       "id": "SEP22-T08",
       "finding": "TO-08",
-      "file": "SEP22-T08-hellgate-structural-budget.md",
+      "file": "../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T08-hellgate-structural-budget.md",
       "status": "LOCALLY_VERIFIED",
       "priority": "P1",
       "lane": "bench-validity",

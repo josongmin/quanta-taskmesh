@@ -228,7 +228,7 @@
 
 ## 공백 해소 실행 계획
 
-P 34개와 G 19개의 계약 결정·구조 변경·개별 acceptance·의존성·gate 연결은 [Sep-25 engine coverage tickets](../plans/sep-25-engine-coverage/tickets/README.md)에서 관리한다. 이 체크리스트는 시나리오와 현재 정적 감사 상태만 보존한다.
+P 34개와 G 19개의 최종 정적 매핑은 [BG25 execution packet](../plans/bugbash-sep-25-general/tickets/README.md)과 `scenario-evidence.json`에서 관리한다. [S25 초안](../archive/2026-09-25/sep-25-engine-coverage/tickets/README.md)은 대체된 계획 이력이다. 이 체크리스트는 시나리오와 원래 정적 감사 상태를 보존한다.
 
 ## 근거 위치
 

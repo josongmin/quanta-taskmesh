@@ -4,7 +4,7 @@
 - 날짜: 2026-06-04
 - 결정자: Song Min
 - 선행: [0001 — Feature-sliced 헥사고날 아키텍처](0001-hexagonal-feature-sliced-architecture.md)
-- 관련 티켓: [T04 — core fairness and retry-after](../plans/jun-4-startup/T04-core-fairness-and-retry-after.md)
+- 관련 티켓: [T04 — core fairness and retry-after](../archive/2026-09-25/jun-4-startup/T04-core-fairness-and-retry-after.md)
 
 ## Context
 

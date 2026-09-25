@@ -4,8 +4,11 @@
 - 날짜: 2026-09-16
 - 결정자: Song Min
 - 선행: [0001 — Feature-sliced 헥사고날 아키텍처](0001-hexagonal-feature-sliced-architecture.md), [0002 — DRR proportional ring](0002-drr-proportional-fairness.md)
-- 관련 계획: [Sep-16 structural hardening](../plans/sep-16-hardening/tickets/README.md)
+- 관련 계획: [Sep-16 structural hardening](../archive/2026-09-25/sep-16-hardening/tickets/README.md)
 - 원본 감사: [Sep-16 general audit](../bugbash/sep-16-general/tickets/README.md)
+- 후속 결정: [0005 — 실행 권한·응답·custody](0005-sep-25-execution-response-and-custody.md)는
+  Sep-25 라이브러리의 `CompleteBy` caller-response fence와 executor preflight를 명시한다.
+  아래 Sep-21 후보 절의 release 승인을 소급 확정하지 않는다.
 
 ## Context
 
@@ -291,7 +294,7 @@ regression이 hang이 아니라 assertion으로 나타난다.
 
 ## D11 — PM는 validate → render plan → apply로 분리한다
 
-[H16-020](../plans/sep-16-hardening/tickets/H16-020-pm-validated-render-plan.md) 참조.
+[H16-020](../archive/2026-09-25/sep-16-hardening/tickets/H16-020-pm-validated-render-plan.md) 참조.
 lint는 읽기 전용이고, target identity는 basename이 아닌 검증된 relative path이며,
 중복 YAML key는 dict로 접히기 *전에* 거절한다. 실제 repo target overwrite는 이 결정의
 범위가 아니며 별도 승인이 필요하다.

@@ -7,9 +7,11 @@
 ## Context
 
 `taskmesh`는 분석 시스템과 서비스 런타임을 위한 governed execution
-control-plane이다. 현재는 compileable skeleton 단계이며, `taskmesh-contract`
-(public 타입), `taskmesh-core`(Governor), `taskmesh-tokio`(facade) 3개 crate로
-구성되어 있다.
+control-plane이다. 이 결정 당시의 출발점은 compileable skeleton이었고,
+`taskmesh-contract`(public 타입), `taskmesh-core`(Governor),
+`taskmesh-tokio`(facade) 3개 crate로 구성되어 있었다. 아래 4-crate 경계가
+이후 구현된 구조다. Sep-25 strict ingress의 권한과 호환성은
+[ADR 0004](0004-sep-25-ingress-plan-identity-and-wire.md)가 구체화한다.
 
 skeleton을 usable governed runtime으로 끌어올리는 과정에서 다음 성질을 구조적으로
 강제하고 싶다.
@@ -37,7 +39,7 @@ primitive, IO, 시계, 메모리 측정 같은 부작용과 섞이면 결정성�
 | `taskmesh` | host facade. tokio 어댑터 + Builder (semi-hexagonal) | contract, engine, tokio |
 | `taskmesh-rayon` | rayon Executor 어댑터 | contract, rayon |
 
-BG25-002의 untrusted JSON bytes ingress는 host facade의 opt-in 어댑터로 둔다.
+Untrusted JSON bytes ingress는 host facade의 opt-in 어댑터로 둔다.
 따라서 `taskmesh`에만 `serde`/`serde_json` 직접 의존을 허용한다.
 `taskmesh-contract`의 shipped dependency는 계속 `serde`뿐이고,
 `taskmesh-engine`은 JSON 파서에 의존하지 않는다. raw DTO 역직렬화의
@@ -161,4 +163,4 @@ crates/
 
 - [RFC 0001 — Governed Runtime](../rfcs/0001-governed-runtime.md)
 - [Library Spec](../taskmesh-library-spec.md)
-- [Jun-4 Startup Ticket Set](../plans/jun-4-startup/README.md)
+- [Jun-4 Startup Ticket Set](../archive/2026-09-25/jun-4-startup/README.md)

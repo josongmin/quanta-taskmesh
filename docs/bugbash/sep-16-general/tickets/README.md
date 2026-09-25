@@ -1,5 +1,9 @@
 # September 16 general audit — ticket index
 
+> In-place evidence archive. The 40 finding files retain their original paths
+> and SHA-256 values because the Sep-16 manifest binds them as audit inputs.
+> This index describes the historical observation, not the current defect set.
+
 - Source HEAD: `9ae9547216c70458f54f37368a67661321060886`.
 - 감사 시작 시 clean main. 문서 및 standalone observation harness만 추가했다.
 - 4개 병렬 audit lane 결과를 main이 소스/재현으로 통합하고 중복 원인의 증상은 합쳤다.

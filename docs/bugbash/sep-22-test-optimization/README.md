@@ -25,10 +25,10 @@ At `main@146233665942d75b73e2b724f781be7e105fd7c4` plus the dirty overlay,
 the re-audit identified two test-code boundaries, now repaired locally:
 
 - TO-02: first-poll/spawn handshakes are present, but the local cancellation result and stalled
-  CPU caller join remain unbounded. See [T02](tickets/SEP22-T02-cancellation-handshakes.md).
+  CPU caller join remain unbounded. See [T02](../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T02-cancellation-handshakes.md).
 - TO-03: the initial saturation is observed, but retry is released before holder completion and
   a loop with `yield_now()` covers that race. The default `OverflowPolicy::Reject`, not queue depth
-  alone, causes immediate `CpuSaturated`. See [T03](tickets/SEP22-T03-backpressure-handshake.md).
+  alone, causes immediate `CpuSaturated`. See [T03](../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T03-backpressure-handshake.md).
 
 T02/T03 owner-local tests pass on the repaired dirty source. T04–T08 code changes are also
 present on the current source; T05 has a Python 3.9 floor proof, while T04/T08 repeated local
@@ -45,7 +45,7 @@ only established cheaper execution of a weak smoke, not a unique correctness ora
 current audit removed the real-thread USL smoke entirely: loadgen verifies exact completed
 admit/release counts and finite positive throughput, metrics verifies known USL coefficients
 and empirical peak, and Criterion owns actual contention timing. The five other Hellgate
-tests retain distinct open-loop semantic oracles. See [T08](tickets/SEP22-T08-hellgate-structural-budget.md)
+tests retain distinct open-loop semantic oracles. See [T08](../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T08-hellgate-structural-budget.md)
 for the explicit coverage loss and focused verification. Clean-source gate/matrix and the
 current-source `verify-macos-ci` receipt remain separate qualification work; nightly
 and release qualification require explicit authorization.

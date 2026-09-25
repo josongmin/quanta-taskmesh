@@ -539,3 +539,6 @@ lease를 돌려준다 — 그 뒤로는 `release_leased(token)`만 permit을 끝
 1. [RFC](docs/rfcs/0001-governed-runtime.md)
 2. [Library Spec](docs/taskmesh-library-spec.md)
 3. [External Interface](docs/taskmesh-external-interface.md)
+4. [Accepted ADR index](docs/adr/README.md)
+5. [Completed work archive](docs/archive/2026-09-25/README.md)
+6. [Open BG25 follow-ups](docs/plans/bugbash-sep-25-general/tickets/OPEN-FOLLOWUPS.md)

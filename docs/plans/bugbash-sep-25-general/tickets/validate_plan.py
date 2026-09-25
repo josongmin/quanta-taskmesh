@@ -180,7 +180,10 @@ def main() -> None:
             fail(f"coverage table drift: {ticket['id']}")
         if not re.search(rf"^\| {re.escape(ticket['id'])} \|", commands, re.M):
             fail(f"verification command row missing: {ticket['id']}")
-    predecessor = ROOT.parent.parent / "sep-25-engine-coverage" / "tickets" / "plan.json"
+    predecessor = (
+        ROOT.parents[3]
+        / "docs/archive/2026-09-25/sep-25-engine-coverage/tickets/plan.json"
+    )
     predecessor_data = json.loads(predecessor.read_text())
     if predecessor_data.get("status") != "SUPERSEDED":
         fail("predecessor plan remains an active duplicate authority")

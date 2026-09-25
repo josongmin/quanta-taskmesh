@@ -1,6 +1,6 @@
 """The Sep-16 plan's bookkeeping is validated by the gate, not by hand.
 
-`docs/plans/sep-16-hardening/tickets/validate_plan.py` checks the manifest,
+`docs/archive/2026-09-25/sep-16-hardening/tickets/validate_plan.py` checks the manifest,
 the ticket structure, links, acceptance-id inventory, and — in the implemented
 state — that every unchecked box in a ticket is a registered exception
 (`EXCEPTIONS.md`) rather than an unfinished item. Nothing ran it before this
@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-VALIDATOR = REPO / "docs" / "plans" / "sep-16-hardening" / "tickets" / "validate_plan.py"
+VALIDATOR = REPO / "docs" / "archive" / "2026-09-25" / "sep-16-hardening" / "tickets" / "validate_plan.py"
 
 _spec = importlib.util.spec_from_file_location("validate_plan", VALIDATOR)
 assert _spec and _spec.loader

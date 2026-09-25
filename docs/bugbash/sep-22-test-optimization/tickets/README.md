@@ -1,5 +1,9 @@
 # SEP-22 test optimization execution tickets
 
+> The eight locally verified implementation tickets are archived under
+> [`docs/archive/2026-09-25/sep-22-test-optimization/tickets/`](../../../archive/2026-09-25/sep-22-test-optimization/tickets/README.md).
+> Qualification and release work remains open below.
+
 Baseline: `main@7023e945e1c9b3e7e7cca1b26f7af8467df6ab60`, tree
 `e49ed06e109525a9da243c47b9207919a74ed15e`.
 
@@ -20,14 +24,14 @@ exact-source receipt. The baseline and waves below preserve the original campaig
 
 | Ticket | Finding | Priority | Owner lane | Depends on |
 | --- | --- | --- | --- | --- |
-| [SEP22-T01](SEP22-T01-capability-binding-oracle.md) | TO-01 | P0 | runtime-cancel | — |
-| [SEP22-T02](SEP22-T02-cancellation-handshakes.md) | TO-02 | P1 | cancellation-sequencing | — |
-| [SEP22-T03](SEP22-T03-backpressure-handshake.md) | TO-03 | P1 | e2e-scenarios | — |
-| [SEP22-T04](SEP22-T04-drain-completion-boundary.md) | TO-04 | P2 | e2e-scenarios | T03 |
-| [SEP22-T05](SEP22-T05-python-floor.md) | TO-05 | P0 | python-compat | — |
-| [SEP22-T06](SEP22-T06-semgrep-scan-ssot.md) | TO-06 | P1 | semgrep-proof | — |
-| [SEP22-T07](SEP22-T07-rayon-bounded-rendezvous.md) | TO-07 | P1 | rayon-adapter-test | — |
-| [SEP22-T08](SEP22-T08-hellgate-structural-budget.md) | TO-08 | P1 | bench-validity | — |
+| [SEP22-T01](../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T01-capability-binding-oracle.md) | TO-01 | P0 | runtime-cancel | — |
+| [SEP22-T02](../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T02-cancellation-handshakes.md) | TO-02 | P1 | cancellation-sequencing | — |
+| [SEP22-T03](../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T03-backpressure-handshake.md) | TO-03 | P1 | e2e-scenarios | — |
+| [SEP22-T04](../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T04-drain-completion-boundary.md) | TO-04 | P2 | e2e-scenarios | T03 |
+| [SEP22-T05](../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T05-python-floor.md) | TO-05 | P0 | python-compat | — |
+| [SEP22-T06](../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T06-semgrep-scan-ssot.md) | TO-06 | P1 | semgrep-proof | — |
+| [SEP22-T07](../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T07-rayon-bounded-rendezvous.md) | TO-07 | P1 | rayon-adapter-test | — |
+| [SEP22-T08](../../../archive/2026-09-25/sep-22-test-optimization/tickets/SEP22-T08-hellgate-structural-budget.md) | TO-08 | P1 | bench-validity | — |
 
 ## Execution waves
 

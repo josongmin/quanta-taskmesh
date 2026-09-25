@@ -2,15 +2,30 @@
 
 This ledger separates a discovered Rust consumer from deployment acceptance. The source observation below is pinned to the consumer checkout and must be refreshed before a final adoption claim.
 
-2026-09-26 재확인: 공유 Semantica checkout HEAD는
+2026-09-26 첫 재확인: 공유 Semantica checkout HEAD는
 `74ef258b55ba79a4767d35da487eb847f6ca0695`이고 다른 소유 경로에
 미커밋 변경이 있다. `quanta-runtime/Cargo.toml`의 optional Taskmesh path
 dependency와 `taskmesh-governance` feature, governance adapter의 typed
-`run_io`/`run_blocking_with`/`run_cpu` 호출은 여전히 보인다. 현재 checkout과
-이번 Taskmesh 후보의 고정 페어 소비자 실행은 아직 없으며, 이전 `0384053` ×
-`76295ba`의 2/2는 최신 페어 증거로 재사용할 수 없다. 배포 바이너리 목록,
+`run_io`/`run_blocking_with`/`run_cpu` 호출은 여전히 보였다. 이 시점에는
+이번 Taskmesh 후보의 고정 페어 실행이 없었고 이전 `0384053` ×
+`76295ba`의 2/2를 최신 페어 증거로 재사용할 수 없었다. 배포 바이너리 목록,
 실제 feature 활성화, D1–D9 적용성 승인은 여전히 deployment owner의
 권한이다. 공유 checkout의 미커밋 파일은 건드리지 않았다.
+
+2026-09-26 후속 고정 페어: clean detached Semantica
+`1bc28dc8e06a5d148b932b82fcab1d142f2d51a5`의
+`taskmesh_query_async_support_contract`를 clean Taskmesh
+`2a2f9bd688fd249f26d1a80b0fb035669530fbad` path dependency로 QBC
+lane `taskmesh-consumer-2a2f9bd`에서 실행했다. QBC run
+`20260925T164307.714095Z-4e5053d1f127`은 exit 0, 테스트 2/2 PASS.
+컴파일 로그의 `taskmesh-contract`, `taskmesh-engine`, `taskmesh` manifest는
+모두 해당 Taskmesh checkout을 가리키며 세 artifact 모두 `fresh=false`였다.
+양쪽 HEAD/tree/clean 상태, 실제 dependency 해석 경로, 실행 명령과 로그
+해시는 `/Users/songmin/.codex/artifacts/taskmesh-ss-2a2f9bd/consumer-provenance.json`
+(SHA-256 `4a12f74cd1d8f87c850f7b0136b48a2463d8524c427095d3b5ef204028cf8b58`)
+에 보관했다. 권한은 `manual_invocation_comparison_only`이며 배포 owner
+승인, D1–D9 실제 topology, 다른 소비자 부재, wire 경계는 증명하지 않는다.
+이 문서가 포함된 후속 Taskmesh 커밋은 위 고정 페어와 별도 소스다.
 
 2026-09-25 재감사: Semantica의 공유 checkout HEAD `038405343fe50ebc1216dbc52de9148a4cb52710`에는 다른 경로의 미커밋 변경이 있다. 같은 HEAD의 분리된 clean checkout에서 QBC run `20260925T131235.134873Z-a517eb9b83f2`가 governance contract test 2/2를 실행해 exit 0이었다. 이 실행은 `da5356b` 비교로 기록됐지만 영수증의 `command_cwd_v1`는 `semantica-taskmesh-consumer-2555aca`이고, Cargo path dependency는 변경 가능한 공유 `quanta-taskmesh` checkout을 가리킨다. 영수증에는 Taskmesh dependency SHA가 없으며 `source_snapshot_digest`도 앞선 `2555aca` 실행과 동일하다. 따라서 이 영수증만으로 실제 빌드된 Taskmesh commit을 확정할 수 없다. 권한 역시 `manual_invocation_comparison_only`이므로 최종 Taskmesh source/owner/deployment qualification은 OPEN이다. 영수증은 `/Users/songmin/.codex/artifacts/taskmesh-bugbash-sep25-da5356b/semantica-consumer/receipt.json`에 보관했다. 확인한 `packages/`, `apps/`, `crates/` 범위에서 `parse_task_spec`, `parse_runtime_config`, `awaited_child_of`, `parent_stage` 호출은 발견되지 않았다. 이 검색은 배포 topology나 다른 소비자의 부재 증거가 아니다.
 
@@ -35,7 +50,7 @@ dependency와 `taskmesh-governance` feature, governance adapter의 typed
 | D2 awaited child | No child submission was found in the inspected governance scope. | Identify deployed child JSON ingress and test explicit `parent_awaits`, or record this consumer path as not applicable. |
 | D3 blocking dispatch | Typed Rust builders select blocking and requested-stack paths in the adapter. | If deployed bytes declare dispatch, test explicit `shared_blocking`/`requested_stack` decode and the selected worker domain. |
 | D4 parent membership | Inspected builders submit root specs; no child or parent-stage caller was found in that scope. | Identify any external planner that submits children and rejects undeclared stages before submission; otherwise record this consumer path as not applicable. |
-| D5 opaque handles | This adapter uses `TokioRuntime`, not raw Governor permit/ticket construction. Its focused concurrent helper test passes 2/2 on clean Semantica `0384053` against clean Taskmesh `76295ba` in the pinned pair above. | Obtain owner/deployment qualification beyond the manual QBC comparison rail and inspect any other deployed consumers before declaring migration complete. |
+| D5 opaque handles | This adapter uses `TokioRuntime`, not raw Governor permit/ticket construction. Its focused concurrent helper test passes 2/2 on clean Semantica `1bc28dc` against clean Taskmesh `2a2f9bd` in the pinned pair above. | Obtain owner/deployment qualification beyond the manual QBC comparison rail and inspect any other deployed consumers before declaring migration complete. |
 | D6 response and custody | The adapter forwards an absolute deadline through `run_blocking_with`; the consumer's response/custody assumptions are not proved by source inspection. | Run consumer deadline/cancellation tests against the final Taskmesh commit or add a focused consumer assertion if the path is deployed. |
 | D7 Tokio context | The inspected adapter constructs one lazily initialized `TokioRuntime`. | Prove the feature-selected caller supplies its required Tokio context or observes the typed preflight refusal. |
 | D8 shared executor | No shared custom executor was observed on the inspected path. | Confirm the deployment topology and any externally shared executor capacity authority; record not applicable if the built-in runtime is the only path. |

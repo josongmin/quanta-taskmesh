@@ -52,10 +52,10 @@
 
 ## 최종 의미 감사
 
-- H04는 ManualClock finite history에 actual claim/timeout/abandon race storm과 두-thread release/reap history를 supporting cases로 연결한다. 네 방향 경합을 한 재현 가능한 history에서 독립 ledger로 판정하는 원래 oracle은 아직 입증되지 않았다.
+- H04는 `release_claim_timeout_cancel_and_sweep_preserve_one_owner`에서 한 Governor의 stale holder와 세 waiter를 만든 뒤 release·claim·timeout abandon·cancel abandon·sweep를 같은 barrier 뒤 병행한다. 32개 bounded attempt마다 release와 sweep의 단일 소유권, claimant의 최종 permit, 취소된 ticket의 무효화, admitted/terminated/queued/CPU 원장을 quiescent cut에서 판정한다. ManualClock finite history와 실제 host timeout race storm은 supporting cases다. 이 fixture는 모든 내부 interleaving의 exhaustive modelcheck를 뜻하지 않는다.
 - H06은 DRR heterogeneous cost/quantum reference를 primary로 두고 WFQ non-head service tag, cross-pool service 뒤 cancellation debt, middle cancellation survivor order를 supporting cases로 연결한다.
 - H13은 direct release/abandon/reap, finite/unbounded drain wake, release 전 양쪽 `Pending` 등록을 확인한 동시 drain caller, 첫 snapshot과 release 경합 cases를 연결한다. H14는 panicking `PermitWaker`, reentrant wake/drop/release, reentrant·panicking `SettlementWaker`, promotion-budget 초과 backlog의 별도 cases를 연결한다.
-- H16은 두 스레드의 동시 admit 및 release/admit/reap 경합을 barrier와 quiescent input ledger로 검사한다. 현재 case는 실패 interleaving의 정확한 기록·재실행을 증명하지 않으므로 해당 DoD는 OPEN이다. modelcheck 등 별도 rail에서 증명하면 source-bound receipt를 연결한다.
+- H16은 두 스레드의 동시 admit 및 release/admit/reap 경합을 barrier와 quiescent input ledger로 검사한다. `model_replay_fixture.rs`는 같은 production `sync` seam의 실제 Governor에서 두 admission의 순서가 역전될 때 의도적으로 거짓인 선착순 가정을 실패시키고, Shuttle의 저장된 schedule로 같은 sentinel 실패를 재실행한다. 이 fixture는 실패 기록·재생 파이프라인의 좁은 증거이며 Governor 결함이나 전체 nightly modelcheck PASS가 아니다. 최종 source-bound modelcheck receipt는 별도다.
 - H25는 class/pool/CPU/memory 네 blocker를 동시에 만든 뒤 pool release→CPU release→memory reconcile→class release를 적용하고 매 단계 full blocker set, primary, queue conservation, 마지막 단일 promotion을 검증한다. 실행 판정은 최종 committed HEAD의 receipt에만 둔다.
 - 모두 현재 소스 결함으로 단정하지 않는다. Nightly modelcheck 미실행도 deterministic CI-profile PASS와 분리한다.
 

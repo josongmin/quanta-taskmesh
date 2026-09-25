@@ -35,7 +35,7 @@
     }
   },
   "replay": {
-    "model_id": "shuttle.replay_fixture.v1",
+    "model_id": "shuttle.governor_replay_fixture.v1",
     "seed": 1511520785,
     "result": "same_failure",
     "artifact_glob": "target/modelcheck/replay/schedule*.txt"

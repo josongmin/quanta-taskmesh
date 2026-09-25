@@ -1,40 +1,61 @@
 #![cfg(shuttle)]
 
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use shuttle::scheduler::RandomScheduler;
-use shuttle::sync::atomic::{AtomicUsize, Ordering};
 use shuttle::thread;
 use shuttle::{Config, FailurePersistence, Runner};
+use taskmesh_contract::{
+    ClassPolicy, ManualClock, OverflowPolicy, ResourceBudget, TaskClass, TaskSpec,
+};
+use taskmesh_engine::{AdmissionDecision, Governor, PolicySet};
 
-const FAILURE_MODEL_ID: &str = "shuttle.replay_fixture.v1";
+const FAILURE_MODEL_ID: &str = "shuttle.governor_replay_fixture.v1";
 const FAILURE_SEED: u64 = 0x5a17_fa11;
-const SENTINEL: &str = "taskmesh-v03-replay-sentinel";
+const SENTINEL: &str = "taskmesh-governor-replay-sentinel";
 
 fn schedule_sensitive_failure() {
-    let value = Arc::new(AtomicUsize::new(0));
-    let first_value = Arc::clone(&value);
+    let class = TaskClass::new("replay");
+    let governor = Arc::new(
+        Governor::new(
+            PolicySet::new(
+                ResourceBudget::new().cpu_units(1),
+                BTreeMap::from([(
+                    class.clone(),
+                    ClassPolicy::new()
+                        .max_inflight(1)
+                        .max_queue_depth(1)
+                        .cpu_units(1)
+                        .overflow_policy(OverflowPolicy::QueueWithinDepth),
+                )]),
+            ),
+            Arc::new(ManualClock::new(1_000)),
+        )
+        .expect("valid one-slot policy"),
+    );
+    let first_governor = Arc::clone(&governor);
+    let first_class = class.clone();
     let first = thread::spawn(move || {
-        let observed = first_value.load(Ordering::SeqCst);
+        // This yield makes the documented first-submitter-wins assumption
+        // schedule-sensitive while the real Governor resolves both calls.
         thread::yield_now();
-        first_value.store(observed + 1, Ordering::SeqCst);
+        first_governor.admit(&TaskSpec::io(first_class).operation("first"))
     });
-    let second_value = Arc::clone(&value);
-    let second = thread::spawn(move || {
-        let observed = second_value.load(Ordering::SeqCst);
-        thread::yield_now();
-        second_value.store(observed + 1, Ordering::SeqCst);
-    });
-    first.join().expect("first model thread joins");
-    second.join().expect("second model thread joins");
-    assert_eq!(
-        value.load(Ordering::SeqCst),
-        2,
-        "{SENTINEL}: replayed schedule loses one read-modify-write update"
+    let second_governor = Arc::clone(&governor);
+    let second =
+        thread::spawn(move || second_governor.admit(&TaskSpec::io(class).operation("second")));
+    let first_outcome = first.join().expect("first model thread joins");
+    let second_outcome = second.join().expect("second model thread joins");
+    assert!(
+        matches!(first_outcome, AdmissionDecision::Admitted { .. })
+            && matches!(second_outcome, AdmissionDecision::Queued { .. }),
+        "{SENTINEL}: intentionally false first-submitter-wins assumption: \
+         first={first_outcome:?} second={second_outcome:?}"
     );
 }
 

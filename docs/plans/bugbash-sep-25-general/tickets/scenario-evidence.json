@@ -1234,9 +1234,9 @@
       "status": "MAPPED",
       "owner_ticket": "BG25-009",
       "contract": "docs/misc/tmp-engine-checklist-sep-25.md::H04",
-      "target": "crates/taskmesh-engine/tests/hardening_queue_history.rs",
-      "case": "release_promotion_reap_claim_and_abandon_form_one_finite_history",
-      "oracle": "capacity release ↔ queued promotion ↔ waiter cancel/claim/timeout/sweep 네 방향 경합",
+      "target": "crates/taskmesh-engine/tests/hardening_concurrent_history.rs",
+      "case": "release_claim_timeout_cancel_and_sweep_preserve_one_owner",
+      "oracle": "한 Governor에서 release·promotion·claim·timeout abandon·cancel abandon·sweep를 barrier 뒤 병행하고 종료 후 입력 원장으로 단일 소유권 판정",
       "feature": "default",
       "platform": "any",
       "gate": "test",
@@ -1246,6 +1246,10 @@
         "crates/taskmesh-engine/tests/hardening_concurrent_history.rs"
       ],
       "supporting_cases": [
+        {
+          "target": "crates/taskmesh-engine/tests/hardening_queue_history.rs",
+          "case": "release_promotion_reap_claim_and_abandon_form_one_finite_history"
+        },
         {
           "target": "crates/taskmesh/tests/e2e_chaos.rs",
           "case": "claim_timeout_abandon_race_storm"

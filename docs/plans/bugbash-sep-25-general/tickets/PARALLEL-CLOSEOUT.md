@@ -4,7 +4,7 @@
 
 BG25-001~012의 저장소 구현은 위 커밋에 들어갔다. 이 문서는 과거 구현 웨이브를 재실행하는 계획이 아니라, 남은 의미 검증·외부 채택·최종 exact-source 확인의 작업 배치다. `EXECUTION.md`의 W0~W4는 역사적 통합 기록으로 취급한다.
 
-2026-09-25 재감사 갱신: H01/H06/H07/H16/H28/D01의 새 fixture와 supporting-case mapping이 현재 통합 소스에 추가됐다. 후속 감사에서 B05/B21/H25/H32, D05/D13/D14/D15/D16/D20, H04/H11/H13/H14/H18/H21/H35의 복합 주장도 직접 fixture 또는 exact supporting cases로 연결했다. H04의 결합 경합과 H16의 실패 schedule 저장·재실행은 여전히 OPEN이며, 실행 판정은 최종 exact-source receipt에서만 한다.
+2026-09-25 재감사 갱신: H01/H06/H07/H16/H28/D01의 새 fixture와 supporting-case mapping이 현재 통합 소스에 추가됐다. 후속 감사에서 B05/B21/H25/H32, D05/D13/D14/D15/D16/D20, H04/H11/H13/H14/H18/H21/H35의 복합 주장도 직접 fixture 또는 exact supporting cases로 연결했다. H04의 bounded 결합 경합 fixture가 추가됐고, H16의 실제 Governor admission 순서 역전 failure schedule은 focused Shuttle 실행에서 저장·재실행됐다. 전체 modelcheck 자격과 실행 판정은 최종 exact-source receipt에서만 한다.
 
 ## 남은 작업의 종류
 
@@ -34,7 +34,7 @@ BG25-001~012의 저장소 구현은 위 커밋에 들어갔다. 이 문서는 �
 | H01 / B→C | `crates/taskmesh/tests/hardening_mixed_overload.rs::mixed_substrate_open_loop_burst_never_reaches_workers_before_permit` | 네 class·네 dispatch, role/physical occupancy, typed reject, worker side-effect 0, drain/reuse를 직접 검사한다. |
 | H06 / C | `crates/taskmesh-engine/tests/hardening_fairness_reference.rs::drr_selection_matches_the_reference_for_heterogeneous_costs` + supporting cases | DRR/WFQ, middle cancellation, cross-pool service debt를 독립 reference cases로 연결한다. |
 | H07 / C | `hardening_policy_interactions.rs::primary_scavenger_memory_fallback_and_drop_best_effort_keep_their_contracts` | primary/scavenger/fallback/drop을 한 bounded history에서 검사한다. |
-| H16 / C | `crates/taskmesh-engine/tests/hardening_concurrent_history.rs::two_thread_admit_release_and_reap_match_a_quiescent_reference_ledger` | 두 스레드 admit/release/reap과 input-derived quiescent ledger를 검사한다. H16 DoD의 exact failure-schedule persistence/replay는 미해결 nightly rail이다. |
+| H16 / C | `crates/taskmesh-engine/tests/hardening_concurrent_history.rs::two_thread_admit_release_and_reap_match_a_quiescent_reference_ledger` + `crates/taskmesh-engine/tests/model_replay_fixture.rs::failure_schedule_replays_the_same_failure` | 두 스레드 admit/release/reap의 input-derived quiescent ledger와 실제 Governor admission 순서 역전의 저장·재생을 별도로 검사한다. 전체 nightly modelcheck 완료는 별도 영수증이 필요하다. |
 | H28 / B | `crates/taskmesh-bench/tests/host_simulator_comparison.rs::real_host_and_simulator_agree_on_bounded_burst_accounting` | 동일 finite burst의 host/simulator semantic counts와 max queue를 비교하며 latency 의미를 섞지 않는다. |
 | D01 / C | `hardening_policy_interactions.rs::zero_one_exact_and_plus_one_are_distinct_for_every_capacity_kind` | quota/depth/pool/budget의 zero/one/exact/+1 의미를 명시적으로 구분한다. |
 

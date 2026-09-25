@@ -11,7 +11,8 @@ use taskmesh_contract::{
     ResourceBudget, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
-    AdmissionDecision, ClaimOutcome, Governor, PolicySet, ReleaseOutcome, TerminalReason, Ticket,
+    AbandonOutcome, AdmissionDecision, ClaimOutcome, Governor, LeakSweepReport, PolicySet,
+    ReleaseOutcome, TerminalReason, Ticket,
 };
 
 const HANG: Duration = Duration::from_secs(5);
@@ -164,6 +165,155 @@ fn two_thread_admit_release_and_reap_match_a_quiescent_reference_ledger() {
         assert_eq!(governor.release(permit), ReleaseOutcome::Released);
         assert_ledger(&governor, 3, 3, 0);
     } else {
+        assert_ledger(&governor, 2, 2, 0);
+    }
+}
+
+#[derive(Debug)]
+enum Settlement {
+    Release(ReleaseOutcome),
+    Claim(ClaimOutcome),
+    Timeout(AbandonOutcome),
+    Cancel(AbandonOutcome),
+    Sweep(LeakSweepReport),
+}
+
+#[test]
+fn release_claim_timeout_cancel_and_sweep_preserve_one_owner() {
+    // All five calls begin behind one barrier. The first queued ticket is the
+    // only possible successor to the holder; the two later tickets are
+    // independently removed by a timeout and an explicit cancellation.
+    // A stale, undispatched holder may be ended by release or the sweep, but
+    // exactly one of those operations can return its capacity.
+    for attempt in 0..32 {
+        let clock = Arc::new(ManualClock::new(1_000));
+        let governor_clock: Arc<dyn Clock> = Arc::<ManualClock>::clone(&clock);
+        let governor = Arc::new(
+            Governor::new(
+                PolicySet::new(
+                    ResourceBudget::new().cpu_units(1),
+                    BTreeMap::from([(
+                        TaskClass::new("c"),
+                        ClassPolicy::new()
+                            .max_inflight(1)
+                            .max_queue_depth(3)
+                            .cpu_units(1)
+                            .overflow_policy(OverflowPolicy::QueueWithinDepth)
+                            .memory_release_policy(MemoryReleasePolicy::LeakDetecting),
+                    )]),
+                ),
+                governor_clock,
+            )
+            .expect("valid one-slot policy"),
+        );
+        let holder = match governor.admit(&spec("holder")) {
+            AdmissionDecision::Admitted { permit_id } => permit_id,
+            other => panic!("attempt {attempt}: holder must admit: {other:?}"),
+        };
+        let mut queued = Vec::new();
+        for operation in ["claim", "timeout", "cancel"] {
+            match governor.admit(&spec(operation)) {
+                AdmissionDecision::Queued { ticket } => queued.push(ticket),
+                other => panic!("attempt {attempt}: {operation} must queue: {other:?}"),
+            }
+        }
+        let [claim_ticket, timeout_ticket, cancel_ticket]: [Ticket; 3] =
+            queued.try_into().expect("three queued tickets");
+        assert_ledger(&governor, 1, 0, 3);
+        clock.advance(100);
+
+        let start = Arc::new(Barrier::new(6));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let operations: Vec<Box<dyn FnOnce() -> Settlement + Send>> = vec![
+            Box::new({
+                let governor = Arc::clone(&governor);
+                move || Settlement::Release(governor.release(holder))
+            }),
+            Box::new({
+                let governor = Arc::clone(&governor);
+                move || Settlement::Claim(governor.claim(claim_ticket))
+            }),
+            Box::new({
+                let governor = Arc::clone(&governor);
+                move || Settlement::Timeout(governor.abandon(timeout_ticket))
+            }),
+            Box::new({
+                let governor = Arc::clone(&governor);
+                move || Settlement::Cancel(governor.abandon(cancel_ticket))
+            }),
+            Box::new({
+                let governor = Arc::clone(&governor);
+                move || Settlement::Sweep(governor.reap_leaks_with(10))
+            }),
+        ];
+        let mut workers = Vec::new();
+        for operation in operations {
+            let worker_start = Arc::clone(&start);
+            let worker_sender = sender.clone();
+            workers.push(std::thread::spawn(move || {
+                worker_start.wait();
+                worker_sender
+                    .send(operation())
+                    .expect("settlement observer alive");
+            }));
+        }
+        drop(sender);
+        start.wait();
+        let results: Vec<_> = (0..5)
+            .map(|_| {
+                receiver
+                    .recv_timeout(HANG)
+                    .expect("each racing settlement terminates")
+            })
+            .collect();
+        for worker in workers {
+            worker.join().expect("settlement worker does not panic");
+        }
+
+        let mut release = None;
+        let mut claim = None;
+        let mut timeout = None;
+        let mut cancel = None;
+        let mut sweep = None;
+        for result in results {
+            match result {
+                Settlement::Release(value) => release = Some(value),
+                Settlement::Claim(value) => claim = Some(value),
+                Settlement::Timeout(value) => timeout = Some(value),
+                Settlement::Cancel(value) => cancel = Some(value),
+                Settlement::Sweep(value) => sweep = Some(value),
+            }
+        }
+        let release = release.expect("release result");
+        let sweep = sweep.expect("sweep result");
+        assert_eq!(
+            u32::from(release == ReleaseOutcome::Released) + sweep.reclaimed_permits,
+            1,
+            "attempt {attempt}: holder capacity returns exactly once"
+        );
+        assert!(matches!(
+            release,
+            ReleaseOutcome::Released | ReleaseOutcome::UnknownPermit
+        ));
+        assert_eq!(timeout, Some(AbandonOutcome::Abandoned));
+        assert_eq!(cancel, Some(AbandonOutcome::Abandoned));
+        assert_eq!(governor.claim(timeout_ticket), ClaimOutcome::Invalid);
+        assert_eq!(governor.claim(cancel_ticket), ClaimOutcome::Invalid);
+
+        let successor = match claim.expect("claim result") {
+            ClaimOutcome::Ready(permit) => permit,
+            ClaimOutcome::Pending => match governor.claim(claim_ticket) {
+                ClaimOutcome::Ready(permit) => permit,
+                other => {
+                    panic!("attempt {attempt}: pending claimant did not become ready: {other:?}")
+                }
+            },
+            other => panic!("attempt {attempt}: claimant lost ownership: {other:?}"),
+        };
+        assert_ne!(successor, holder);
+        assert_eq!(governor.claim(claim_ticket), ClaimOutcome::Invalid);
+        assert_ledger(&governor, 2, 1, 0);
+        assert_eq!(governor.release(successor), ReleaseOutcome::Released);
         assert_ledger(&governor, 2, 2, 0);
     }
 }

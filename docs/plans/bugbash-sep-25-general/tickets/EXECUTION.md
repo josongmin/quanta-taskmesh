@@ -1,6 +1,6 @@
 # Parallel execution and ownership — historical integration record
 
-The W0–W4 lanes below describe the historical integration sequence, not active work assignments. The 104-row structural validator passes; semantic review and its explicit H04/H16 residuals are recorded separately. The manifest remains a static candidate map; execution comes from a clean final-HEAD receipt. D1–D9 human review and external ingress/planner/wire adoption remain OPEN. Re-freeze HEAD, tree, dirty paths, and ownership before further work.
+The W0–W4 lanes below describe the historical integration sequence, not active work assignments. The 104-row structural validator passes; semantic review records bounded H04 evidence and focused H16 Governor replay separately. The manifest remains a static candidate map; CI and nightly execution require their own clean final-HEAD receipts. D1–D9 human review and external ingress/planner/wire adoption remain OPEN. Re-freeze HEAD, tree, dirty paths, and ownership before further work.
 
 ## Historical launch conditions
 

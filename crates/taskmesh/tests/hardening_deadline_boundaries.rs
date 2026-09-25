@@ -190,12 +190,9 @@ async fn started_sync_runfor_overflow_keeps_worker_custody_until_completion() {
         .expect("worker started")
         .expect("worker announced start");
     assert_eq!(rt.snapshot().classes[&class()].inflight, 1);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(30), &mut caller)
-            .await
-            .is_err(),
-        "an unrepresentable RunFor must not answer while the worker is held"
-    );
+    tokio::time::timeout(Duration::from_millis(30), &mut caller)
+        .await
+        .expect_err("an unrepresentable RunFor must not answer while the worker is held");
     assert!(!completed.load(Ordering::SeqCst));
     assert_eq!(rt.snapshot().classes[&class()].inflight, 1);
 
@@ -219,10 +216,11 @@ async fn started_sync_runfor_overflow_keeps_worker_custody_until_completion() {
         "a live worker retains the only class slot: {second:?}"
     );
     assert!(!rejected_work_ran.load(Ordering::SeqCst));
-    assert!(
-        rt.drain(Duration::ZERO).await.is_err(),
-        "drain cannot succeed before the held worker terminates"
-    );
+    let not_drained = rt
+        .drain(Duration::ZERO)
+        .await
+        .expect_err("drain cannot succeed before the held worker terminates");
+    assert_eq!(not_drained.classes[&class()].inflight, 1);
 
     release.release();
     let result = tokio::time::timeout(HANG, caller)

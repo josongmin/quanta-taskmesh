@@ -73,7 +73,7 @@ async fn real_host_and_simulator_agree_on_bounded_burst_accounting() {
                         started_tx.send(()).expect("holder observer alive");
                         // A dropped sender also releases this worker if an
                         // assertion fails before the explicit release.
-                        let _ = release_rx.recv();
+                        release_rx.recv().unwrap_or(());
                         Ok::<_, ()>(())
                     },
                 )

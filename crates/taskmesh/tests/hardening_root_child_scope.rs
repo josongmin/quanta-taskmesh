@@ -208,9 +208,10 @@ fn local_caller_panic_and_drop_refund_the_root_without_worker_reclassification()
             }),
         )
     }));
-    assert!(
-        panic.is_err(),
-        "caller panic must not be converted to RunError"
+    let payload = panic.expect_err("caller panic must not be converted to RunError");
+    assert_eq!(
+        payload.downcast_ref::<&str>(),
+        Some(&"local caller panics while it owns the root lease")
     );
     assert_eq!(rt.snapshot().classes[&class()].inflight, 0);
 

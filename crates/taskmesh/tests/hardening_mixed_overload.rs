@@ -85,7 +85,7 @@ async fn mixed_substrate_open_loop_burst_never_reaches_workers_before_permit() {
         tokio::spawn(async move {
             rt.run_io(TaskSpec::io(class("io")).operation("held-io"), async move {
                 started.send("io").expect("observer alive");
-                let _ = io_hold.await;
+                io_hold.await.unwrap_or(());
                 Ok::<(), ()>(())
             })
             .await

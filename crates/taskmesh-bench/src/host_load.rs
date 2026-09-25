@@ -555,8 +555,40 @@ pub fn producer_decision(
     }
 }
 
-fn since(origin: Instant) -> u64 {
+pub(crate) fn since(origin: Instant) -> u64 {
     u64::try_from(origin.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
+
+/// The only wall-clock pacing and cap decision used by host and null-work
+/// controls. The absolute intended time remains the authority for both.
+pub(crate) fn pace_offer(
+    origin: Instant,
+    intended_ns: u64,
+    injection_ns: u64,
+    outstanding: &AtomicUsize,
+    cap: usize,
+) -> (u64, ProducerDecision) {
+    let due = origin + Duration::from_nanos(intended_ns);
+    while let Some(delay) = due.checked_duration_since(Instant::now()) {
+        if delay.is_zero() {
+            break;
+        }
+        std::thread::sleep(delay);
+    }
+    let observed_ns = since(origin);
+    let decision = if observed_ns >= injection_ns {
+        ProducerDecision::NotSubmitted {
+            lag_ns: observed_ns.saturating_sub(intended_ns),
+        }
+    } else {
+        producer_decision(
+            intended_ns,
+            observed_ns,
+            outstanding.load(Ordering::Acquire),
+            cap,
+        )
+    };
+    (observed_ns, decision)
 }
 
 fn mutate(slot: &Slot, f: impl FnOnce(&mut RawHostRecord)) {
@@ -773,6 +805,50 @@ pub async fn run_host_scenario_with_test_gate(
         .map(|(run, _)| run)
 }
 
+pub(crate) async fn warmup_runtime(
+    scenario: &HostScenario,
+    runtime: &TokioRuntime,
+) -> Result<(), String> {
+    if scenario.load.warmup_ms == 0 {
+        return Ok(());
+    }
+    // Control and host warm the same class/path set before their measured cut.
+    let mut warmed = Vec::new();
+    for offer in &scenario.offers {
+        if warmed.contains(&(offer.class.as_str(), offer.path)) {
+            continue;
+        }
+        warmed.push((offer.class.as_str(), offer.path));
+        let class = TaskClass::new(offer.class.clone());
+        let result = match offer.path {
+            HostPath::Io => {
+                runtime
+                    .run_io(TaskSpec::io(class).operation("bench-warmup"), async {
+                        Ok::<(), ()>(())
+                    })
+                    .await
+            }
+            HostPath::Blocking => {
+                runtime
+                    .run_blocking(TaskSpec::blocking(class).operation("bench-warmup"), || {
+                        Ok::<(), ()>(())
+                    })
+                    .await
+            }
+            HostPath::Cpu => {
+                runtime
+                    .run_cpu(TaskSpec::cpu(class).operation("bench-warmup"), || {
+                        Ok::<(), ()>(())
+                    })
+                    .await
+            }
+        };
+        result.map_err(|error| format!("warmup failed: {error:?}"))?;
+    }
+    tokio::time::sleep(Duration::from_millis(scenario.load.warmup_ms)).await;
+    Ok(())
+}
+
 async fn run_host_scenario_inner(
     scenario: &HostScenario,
     fault: Option<HostHarnessFault>,
@@ -781,42 +857,7 @@ async fn run_host_scenario_inner(
     scenario.validate()?;
     let runtime = scenario.build_runtime()?;
     let resolved_topology = ResolvedHostTopology::from_runtime(&runtime);
-    if scenario.load.warmup_ms != 0 {
-        // Warm each measured class/path on this host, then subtract its counters.
-        let mut warmed = Vec::new();
-        for offer in &scenario.offers {
-            if warmed.contains(&(offer.class.as_str(), offer.path)) {
-                continue;
-            }
-            warmed.push((offer.class.as_str(), offer.path));
-            let class = TaskClass::new(offer.class.clone());
-            let result = match offer.path {
-                HostPath::Io => {
-                    runtime
-                        .run_io(TaskSpec::io(class).operation("bench-warmup"), async {
-                            Ok::<(), ()>(())
-                        })
-                        .await
-                }
-                HostPath::Blocking => {
-                    runtime
-                        .run_blocking(TaskSpec::blocking(class).operation("bench-warmup"), || {
-                            Ok::<(), ()>(())
-                        })
-                        .await
-                }
-                HostPath::Cpu => {
-                    runtime
-                        .run_cpu(TaskSpec::cpu(class).operation("bench-warmup"), || {
-                            Ok::<(), ()>(())
-                        })
-                        .await
-                }
-            };
-            result.map_err(|error| format!("warmup failed: {error:?}"))?;
-        }
-        tokio::time::sleep(Duration::from_millis(scenario.load.warmup_ms)).await;
-    }
+    warmup_runtime(scenario, &runtime).await?;
     let baseline = runtime.snapshot();
     if baseline.conservation_violation().is_some()
         || baseline
@@ -889,27 +930,15 @@ async fn run_host_scenario_inner(
             if fault == Some(HostHarnessFault::ProducerBeforeOffer(id)) {
                 panic!("injected producer failure before offer {id}");
             }
-            let due = origin + Duration::from_nanos(offer.send_time_ns);
-            while let Some(delay) = due.checked_duration_since(Instant::now()) {
-                if delay.is_zero() {
-                    break;
-                }
-                std::thread::sleep(delay);
-            }
             let slot = Arc::clone(&slots_for_producer[id]);
-            if origin.elapsed() >= injection {
-                mutate(&slot, |row| {
-                    row.scheduled_lag_ns = Some(since(origin).saturating_sub(row.intended_ns));
-                    row.disposition = CallerDisposition::NotSubmitted;
-                });
-                continue;
-            }
-            match producer_decision(
+            let (_, decision) = pace_offer(
+                origin,
                 offer.send_time_ns,
-                since(origin),
-                outstanding_for_producer.load(Ordering::Acquire),
+                u64::try_from(injection.as_nanos()).unwrap_or(u64::MAX),
+                &outstanding_for_producer,
                 max_outstanding,
-            ) {
+            );
+            match decision {
                 ProducerDecision::NotSubmitted { lag_ns } => {
                     mutate(&slot, |row| {
                         row.scheduled_lag_ns = Some(lag_ns);

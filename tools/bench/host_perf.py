@@ -164,8 +164,11 @@ def validate_with_rust(
     raw_bytes: bytes,
     features: list[str],
     topology_bytes: Optional[bytes] = None,
+    raw_kind: str = "host",
 ) -> None:
     """Use the runner's typed scenario, raw ledger and Builder rules."""
+    if raw_kind not in ("host", "generator"):
+        raise ReceiptError("unsupported Rust raw validation kind")
     try:
         with tempfile.TemporaryDirectory(prefix="taskmesh-host-receipt-") as temp_dir:
             raw_path = Path(temp_dir) / "raw.json"
@@ -174,7 +177,8 @@ def validate_with_rust(
             command = ["cargo", "run", "--locked", "--quiet", "-p", "taskmesh-bench"]
             if features:
                 command.extend(["--features", ",".join(features)])
-            command.extend(["--example", "host_scenario_validate", "--", "--raw", str(raw_path)])
+            raw_flag = "--raw" if raw_kind == "host" else "--generator-raw"
+            command.extend(["--example", "host_scenario_validate", "--", raw_flag, str(raw_path)])
             if topology_bytes is not None:
                 topology_path.write_bytes(topology_bytes)
                 command.extend(["--topology", str(topology_path)])
@@ -411,7 +415,10 @@ def validate_execution_provenance(
     binary_bytes: Optional[bytes],
     topology_bytes: Optional[bytes],
     resource_bytes: Optional[bytes],
+    example_name: str = "host_load_probe",
 ) -> None:
+    if example_name not in ("host_load_probe", "host_generator_probe"):
+        raise ReceiptError("unsupported benchmark runner")
     provenance = parse_object(data, "execution provenance")
     exact_keys(provenance, PROVENANCE_KEYS, "execution provenance")
     if provenance["schema_version"] != 3 or provenance["status"] != "complete":
@@ -483,7 +490,7 @@ def validate_execution_provenance(
         "-p",
         "taskmesh-bench",
         "--example",
-        "host_load_probe",
+        example_name,
         "--message-format=json",
     ]
     if requested_features:

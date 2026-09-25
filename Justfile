@@ -169,6 +169,11 @@ bench:
 bench-host scenario raw summary calibration:
     uv run python tools/bench/host_run.py {{scenario}} {{raw}} {{summary}} {{calibration}}
 
+# Null-work producer control for the same typed host scenario. Diagnostic only:
+# a valid control is necessary but does not qualify a host performance claim.
+bench-generator scenario raw:
+    uv run python tools/bench/generator_run.py {{scenario}} {{raw}}
+
 # Deterministic allocation gate (ADR 9000 / P2). Runs anywhere — no valgrind.
 bench-gate:
     bash tools/bench-gate.sh

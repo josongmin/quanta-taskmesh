@@ -17,7 +17,11 @@ import host_perf
 from process_resource import sample_subprocess
 
 
-def build_runner(features: list[str]) -> tuple[Path, list[str], list[str]]:
+def build_runner(
+    features: list[str], example_name: str = "host_load_probe"
+) -> tuple[Path, list[str], list[str]]:
+    if example_name not in ("host_load_probe", "host_generator_probe"):
+        raise host_perf.ReceiptError("unsupported benchmark runner")
     command = [
         "cargo",
         "build",
@@ -25,7 +29,7 @@ def build_runner(features: list[str]) -> tuple[Path, list[str], list[str]]:
         "-p",
         "taskmesh-bench",
         "--example",
-        "host_load_probe",
+        example_name,
         "--message-format=json",
     ]
     if features:
@@ -43,7 +47,7 @@ def build_runner(features: list[str]) -> tuple[Path, list[str], list[str]]:
             continue
         if (
             item.get("reason") == "compiler-artifact"
-            and item.get("target", {}).get("name") == "host_load_probe"
+            and item.get("target", {}).get("name") == example_name
             and "example" in item.get("target", {}).get("kind", [])
             and item.get("executable")
         ):

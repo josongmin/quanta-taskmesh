@@ -73,11 +73,14 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   raw v2에 intended, submitted, caller terminal/drop, body start/finish, cut/settlement,
   sampled Snapshot과 실패 시 `invalid` 원시 행을 기록한다. Rust typed
   scenario/raw/Builder 검증과 Python 구조 검증이 연결돼 있다.
-- `just bench-host`는 진단 raw/summary를 만든다. 현재 calibration 파일의 boolean은
+- `just bench-host`는 진단 raw/summary와 실행 출처 sidecar를 만든다. 실행 전후
+  소스·호스트 식별자, 빌드 명령/feature, 고정 복사본의 바이너리 digest,
+  fixture/raw digest가 기록된다. 바이너리 bytes의 독립 검증, 실제 resolved
+  topology, 전력 상태는 아직 묶이지 않았다. 현재 calibration 파일의 boolean은
   실측 증거가 아니므로 `host_perf.py --require-performance`는 fail closed다.
-  실행 전후 소스·바이너리 식별자, 실제 calibration, 외부 resource sampler,
-  repeated comparison, closed-loop, local/requested-stack/Rayon, H0–H8 인덱스와
-  대표 H7은 남아 있다. 상세 목적·파일·DoD는 위 티켓이 소유한다.
+  실측 calibration, 외부 resource sampler, repeated comparison, closed-loop,
+  local/requested-stack/Rayon, H0–H8 인덱스와 대표 H7은 남아 있다.
+  상세 목적·파일·DoD는 위 티켓이 소유한다.
 - `just bench-gate`는 allocation, `just bench-smoke`는 bench 실행 smoke,
   `just bench-iai`는 Linux의 지정된 instruction 사례다. 어느 것도 host 성능
   PASS나 업계 SOTA 자격을 대신하지 않는다.

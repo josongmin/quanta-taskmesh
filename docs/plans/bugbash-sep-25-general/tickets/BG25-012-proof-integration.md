@@ -9,8 +9,8 @@
 
 ## 2026-09-25 재감사 잔여
 
-- **직전 clean source:** `da5356b253fc69450e98869a2c94e4a3e770747e`의 `target/verification/macos-gates.json`을 `--validate-receipt --expected-head`로 재검증했다. macOS CI profile 필수 16/16 PASS, required NOT_RUN/FAIL 0, HEAD/tree/path digest 전후 일치. 이는 해당 commit에만 유효하다.
-- **필수 마지막 단계:** `scenario-evidence.json`과 `hardening_effect_retirement.rs`는 `605070d`에 별도 커밋했고 B27 focused 1/1 및 두 plan validator가 PASS였다. 남은 tracked 티켓 문서를 검토·커밋해 clean HEAD를 고정한 뒤 `just dev`와 `just verify-macos-ci`를 다시 실행하고 저장된 영수증을 그 HEAD로 재검증한다. 그 전까지 `RECEIPT_REQUIRED`를 유지한다. 104 `MAPPED`는 정적 후보이며 새 영수증과도 의미상 동치가 아니다.
+- **통합 증거:** `scenario-evidence.json`의 여섯 과장된 oracle과 B27 destructor-panic fixture는 `605070d`에 커밋했다. B27 focused 1/1, plan validator 12 tickets, scenario validator 104 rows가 PASS였다. `a23dcda`에서 `just dev` 554/554 및 macOS CI profile 16/16 required gates PASS를 확인하고 영수증의 HEAD/tree/path digest를 재검증했다. 이 사실은 그 commit에만 유효하다.
+- **현재 HEAD 판정:** tracked 문서는 영수증을 내장하거나 실행 자격을 스스로 선언하지 않으므로 `RECEIPT_REQUIRED`를 유지한다. 최종 커밋의 `just dev` → `just verify-macos-ci` 결과와 `uv run python tools/gates/run.py --validate-receipt target/verification/macos-gates.json --expected-head "$(git rev-parse HEAD)"`가 모두 PASS이고, source before/after가 clean·동일한 경우에만 외부 CI-profile 자격이 성립한다. 영수증 사본은 저장소 밖에 보관한다. 104 `MAPPED`는 정적 후보이며 CI 영수증과도 의미상 동치가 아니다.
 - **별도 범위:** 외부 D1–D9 채택은 BG25-001~003; full nightly/modelcheck·TSan·fuzz·mutation 및 release는 명시적 자격 요청이 있을 때만 실행한다. 의도적으로 꺼진 hosted workflow를 이 티켓의 미완료 게이트로 세지 않는다.
 
 ## 목적

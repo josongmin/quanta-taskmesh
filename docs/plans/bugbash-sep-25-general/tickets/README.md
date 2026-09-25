@@ -1,6 +1,6 @@
 # Bugbash Sep-25 general — final resolution plan
 
-- Status: **PARTIAL** overall. BG25-001–012의 저장소 구현은 완료됐고 104행 정적 매핑은 통과했다. Clean HEAD `da5356b253fc69450e98869a2c94e4a3e770747e`의 macOS CI profile 16/16 PASS 영수증도 검증됐다. 현재 tracked 문서·테스트 변경은 그 영수증의 source 범위를 벗어나므로 최종 clean HEAD에서 재발행한다. D1–D9 사람 검토·외부 채택은 OPEN이고 nightly/release는 미실행이다. [최종 재감사](FINAL-REVIEW.md)를 참조한다.
+- Status: **PARTIAL** overall. BG25-001–012의 저장소 구현과 104행 정적 매핑은 완료됐다. 저장소 CI 자격은 BG25-012의 현재 clean HEAD 외부 영수증 검증으로만 판정한다. D1–D9 사람 검토·외부 채택은 OPEN이고 nightly/release는 미실행이다. [최종 재감사](FINAL-REVIEW.md)를 참조한다.
 - Audit source: `76559c483bdd1d6b0b5226f7c5b5591b919afae9`, tree `215a968630e9f0675bfd1e42f0919bd2047bded2`. Implementation incorporated the later strict-ingress and cross-Governor reproduction history before final source-bound proof.
 - Scenario source: [104-case audit](../../../misc/tmp-engine-checklist-sep-25.md). Its static result is K 51 / P 34 / G 19; all 53 P/G scenarios are assigned exactly once here.
 - Predecessor: `docs/plans/sep-25-engine-coverage/tickets/` is a tracked superseded draft. This directory is the final bugbash execution packet; do not execute both as separate plans.
@@ -38,4 +38,4 @@
 
 ## Completion boundary
 
-A ticket's implementation can complete independently of proof and external adoption. BG25-012 has inventoried all 104 scenarios, preserved the 51 K baselines, and mapped the 53 P/G rows to declared test cases and explicit supporting cases. The validator rejects ignored or feature-disabled cases and verifies exact Rayon selectors; it does not execute tests. `da5356b`의 clean macOS CI receipt는 16 required gates PASS를 증명했지만 이후 tracked 문서 변경을 포함하지 않는다. BG25-012는 최종 clean HEAD 재발행을 소유한다. D1–D9 외부 채택은 OPEN이다. Nightly/modelcheck/TSan/fuzz/mutation은 별도 요청과 증거가 필요하다.
+A ticket's implementation can complete independently of proof and external adoption. BG25-012 has inventoried all 104 scenarios, preserved the 51 K baselines, and mapped the 53 P/G rows to declared test cases and explicit supporting cases. The validator rejects ignored or feature-disabled cases and verifies exact Rayon selectors; it does not execute tests. 현재 HEAD의 clean macOS CI 자격은 저장소 외부 영수증을 `--expected-head`로 재검증해서만 확정한다. D1–D9 외부 채택은 OPEN이다. Nightly/modelcheck/TSan/fuzz/mutation은 별도 요청과 증거가 필요하다.

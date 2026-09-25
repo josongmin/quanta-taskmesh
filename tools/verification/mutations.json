@@ -366,7 +366,7 @@
       "package": "taskmesh-engine",
       "test_target": "config_validation",
       "expect_failing_test": "degrade_to_a_disabled_fallback_is_rejected",
-      "expect_message": "disabled fallback must be rejected"
+      "expect_message": "class heavy degrades to disabled fallback light"
     },
     {
       "id": "budget-ignored-on-a-racing-promotion",
@@ -721,7 +721,7 @@
       "package": "taskmesh-engine",
       "test_target": "config_validation",
       "expect_failing_test": "per_request_memory_limit_overflow_fails",
-      "expect_message": "a class costing more memory than the per-request cap must be rejected"
+      "expect_message": "class c exceeds per-request memory limit"
     },
     {
       "id": "every-class-can-queue-in-the-gap",
@@ -829,7 +829,7 @@
       "package": "taskmesh-engine",
       "test_target": "config_validation",
       "expect_failing_test": "a_degrade_chain_is_rejected",
-      "expect_message": "a fallback that itself degrades must be rejected"
+      "expect_message": "class a degrades to fallback b, which itself degrades"
     },
     {
       "id": "has-runnable-always-true",
@@ -939,7 +939,7 @@
       "replace": "                if fallback_class == class && false {",
       "test_target": "config_validation",
       "expect_failing_test": "a_class_that_degrades_to_itself_is_rejected",
-      "expect_message": "a self-fallback must be refused by name",
+      "expect_message": "class a degrades to itself",
       "package": "taskmesh-engine"
     },
     {
@@ -1175,14 +1175,14 @@
       "id": "lease-token-nonce-not-unique",
       "finding": "A5-lease-token",
       "runner": "cargo",
-      "rationale": "Two governors in one process issue the same sequential permit ids; only the process-wide nonce keeps their leases apart. A constant nonce lets one governor's token release the other's permit.",
+      "rationale": "Every live lease carries its own custody proof independently of the permit authority. Replacing the process-wide increment with a load gives concurrently live leases the same nonce and defeats that uniqueness contract.",
       "file": "crates/taskmesh-engine/src/engine/state.rs",
       "find": "    LEASE_NONCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)",
       "replace": "    LEASE_NONCES.load(std::sync::atomic::Ordering::Relaxed)",
       "package": "taskmesh-engine",
       "test_target": "hardening_lease_token",
-      "expect_failing_test": "a_token_from_another_governor_is_not_this_permits_lease",
-      "expect_message": "another governor's lease for the same permit id must not release this permit"
+      "expect_failing_test": "nonce_accessor_reproduces_distinct_live_lease_proofs",
+      "expect_message": "nonce accessor must distinguish two live lease proofs"
     },
     {
       "id": "runtime-lease-runs-under-a-lease-it-does-not-hold",

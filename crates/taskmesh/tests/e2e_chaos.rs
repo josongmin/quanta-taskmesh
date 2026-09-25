@@ -95,6 +95,7 @@ async fn global_budget_cross_class_contention_makes_progress() {
         .class_policy(cls("gamma"), policy())
         .build()
         .unwrap();
+    assert_eq!(rt.config().resources.max_cpu_units, 4);
 
     let (alpha_started_tx, alpha_started_rx) = tokio::sync::oneshot::channel();
     let (release_alpha_tx, release_alpha_rx) = tokio::sync::oneshot::channel();
@@ -130,7 +131,7 @@ async fn global_budget_cross_class_contention_makes_progress() {
     })
     .await;
 
-    let (gamma_started_tx, gamma_started_rx) = tokio::sync::oneshot::channel();
+    let (gamma_started_tx, mut gamma_started_rx) = tokio::sync::oneshot::channel();
     let (release_gamma_tx, release_gamma_rx) = tokio::sync::oneshot::channel();
     let gamma_rt = rt.clone();
     let gamma = tokio::spawn(async move {
@@ -145,7 +146,12 @@ async fn global_budget_cross_class_contention_makes_progress() {
             )
             .await
     });
-    wait_for_class_state(&rt, "gamma", 0, 1).await;
+    tokio::select! {
+        _ = wait_for_class_state(&rt, "gamma", 0, 1) => {}
+        result = &mut gamma_started_rx => {
+            panic!("gamma started before global CPU capacity was released: {result:?}");
+        }
+    }
     let saturated = rt.snapshot();
     assert_eq!(
         saturated

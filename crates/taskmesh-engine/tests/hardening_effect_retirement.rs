@@ -290,6 +290,40 @@ fn a_rejected_admission_retires_its_waker_outside_the_lock() {
         assert!(matches!(decision, AdmissionDecision::Rejected(_)));
     });
     assert_eq!(completed.load(Ordering::SeqCst), 1);
+
+    // The malformed waitable path must also retire a final reference outside
+    // the mutex when the host destructor panics. No admission can be charged
+    // before validation, and the same Governor must remain usable afterwards.
+    let before = governor.snapshot();
+    let panicked_wakes = Arc::new(AtomicUsize::new(0));
+    let panicked_drops = Arc::new(AtomicUsize::new(0));
+    let panicking_waker: Arc<dyn PermitWaker> = Arc::new(DropPanickingWaker {
+        woke: Arc::clone(&panicked_wakes),
+        dropped: Arc::clone(&panicked_drops),
+    });
+    let rejecting = Arc::clone(&governor);
+    with_deadline(
+        "malformed admission with a panicking waker destructor",
+        move || {
+            let malformed = TaskSpec::io(TaskClass::new("")).operation("invalid-class");
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                rejecting.admit_waitable(&malformed, panicking_waker)
+            }))
+            .expect_err("the final host destructor panic must remain observable");
+            assert_eq!(
+                panic.downcast_ref::<&str>(),
+                Some(&"final host reference destructor failed")
+            );
+        },
+    );
+    assert_eq!(panicked_wakes.load(Ordering::SeqCst), 0);
+    assert_eq!(panicked_drops.load(Ordering::SeqCst), 1);
+    assert_eq!(governor.snapshot(), before);
+    let successor = match governor.admit(&spec("successor")) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("governor remains usable after host destructor panic: {other:?}"),
+    };
+    assert_eq!(governor.release(successor), ReleaseOutcome::Released);
 }
 
 #[test]

@@ -113,12 +113,10 @@ The current operator path is local; hosted attestation remains a compatibility p
   receipt integration and V02 mutation producer are implemented but not
   hosted/full-denominator qualified. V03 producer has local semantic fuzz and
   model evidence; hosted replay remains separate.
-- The exact `1378383` local `taskmesh-rayon` generated subset had 10 planned:
-  5 caught, 0 missed, 5 unviable, 0 timeout/equivalent. This is **FAIL** under
-  the current generated quality rule, not a workspace score. One unviable
-  `try_new -> Ok(Default::default())` replacement cannot compile because the
-  executor intentionally has no `Default`. Full workspace generated results
-  remain NOT_RUN for this candidate.
+- Generated mutation status is taken only from the final candidate's
+  exact-source `receipt.generated-mutations.json`. Subset, focused, interrupted,
+  or earlier-HEAD campaigns remain diagnostic evidence and never qualify the
+  workspace, even when every executed mutant was caught.
 - Coverage is descriptive, not a correctness threshold. Line/region/function/
   instantiation percentages and collected state are preserved separately;
   branch/MCDC count zero is `NOT_COLLECTED`, not 0% coverage.

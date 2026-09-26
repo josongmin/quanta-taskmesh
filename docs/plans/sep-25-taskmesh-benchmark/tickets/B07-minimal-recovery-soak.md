@@ -1,6 +1,10 @@
 # B07 — 필요한 recovery / soak 안정성 검증
 
 - 상태: **IMPLEMENTED — owner-local 진단은 이전 source snapshot에 한정; 현재 source의 CI 영수증은 별도 확인**
+- 현재 replay는 보관 bundle의 runner를 실행하지 않는다. 별도로 빌드한 local
+  validator로 typed artifact를 검사한다. 일반 `verify`는 self-declared digest의
+  구조 검증이고, `--require-current-source`는 현재 source/host와 runner digest의
+  일치까지 요구한다. 이전 snapshot 영수증은 이 변경의 실행 증거가 아니다.
 - 기준 소스: `61d4e47b0dc6009bb511704292e2a830c29c4287` + owner working delta (2026-09-27)
 - 우선순위: 안정성 coverage 보완. 현재 확인된 엔진 결함이나 release blocker로 분류하지 않는다.
 - 선행: [B04](B04-remaining-audit.md)의 실행·metadata·artifact 경계 보완은 구현됨.

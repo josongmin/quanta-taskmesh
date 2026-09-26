@@ -294,9 +294,13 @@ uv run python tools/bench/host_stability.py run \
 uv run python tools/bench/host_stability.py verify /tmp/taskmesh-h2-stability-stress
 ```
 
-Use a new directory outside the checkout each time. `verify --require-current-source`
-also compares live source/host identity; plain verify replays the retained historical
-bundle. Diagnostic runner build uses the existing build-witness selector when
+Use a new directory outside the checkout each time. Plain `verify` checks the
+retained bundle's self-declared digests and typed structure with a separately
+built local validator; it never executes the runner stored in the bundle.
+`verify --require-current-source` additionally compares live source/host identity
+and requires the retained runner digest to match that local validator. A plain
+historical replay is structural evidence, not authenticated source custody.
+Diagnostic runner build uses the existing build-witness selector when
 `TASKMESH_BENCH_BUILD_WITNESSES` is configured. A default debug acquisition is
 owner-local evidence; it is not an independently rebuilt optimized performance run.
 

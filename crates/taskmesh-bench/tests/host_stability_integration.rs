@@ -24,7 +24,10 @@ async fn acquire(manifest: &StabilityManifest) -> Vec<StabilityCycle> {
     for (index, cycle) in cycles.iter().enumerate() {
         cycle.validate(manifest, &previous, index as u32).unwrap();
         assert!(!cycle.window.drain_ok);
-        assert!(cycle.window.validate_against(&manifest.scenario).is_err());
+        assert_eq!(
+            cycle.window.validate_against(&manifest.scenario).unwrap_err(),
+            "complete host run did not settle owned engine capacity"
+        );
         previous = cycle.after_canaries.clone();
     }
     summary.validate(manifest, &previous).unwrap();
@@ -88,9 +91,16 @@ async fn each_used_path_has_real_canary_and_corruptions_reject() {
             }
             _ => bad.window.drain_ok = true,
         }
-        assert!(
+        let expected = match mutation {
+            0 | 1 | 4 => "cycle sequence, host continuity or admission differs",
+            2 | 3 => "canary population or execution failed",
+            5 | 6 => "checkpoint has invalid catalog, conservation or live owned work",
+            _ => "complete host run did not settle owned engine capacity",
+        };
+        assert_eq!(
             bad.validate(&manifest, &cycles[0].after_canaries, 1)
-                .is_err(),
+                .unwrap_err(),
+            expected,
             "mutation {mutation}"
         );
     }
@@ -110,7 +120,12 @@ fn budgets_and_unsupported_paths_reject_before_host_creation() {
             3 => bad.min_duration_ms = 1_200_001,
             _ => bad.scenario.offers[0].path = HostPath::RequestedStackBlocking,
         }
-        assert!(bad.validate().is_err());
+        let expected = if mutation == 4 {
+            "requested-stack offers require a finite large_stack_slots limit"
+        } else {
+            "invalid stability version, duration, cycle or record budget"
+        };
+        assert_eq!(bad.validate().unwrap_err(), expected, "mutation {mutation}");
     }
 }
 
@@ -125,7 +140,7 @@ async fn writer_failure_does_not_emit_success_summary() {
         Err("disk failure".into())
     })
     .await;
-    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), "disk failure");
     assert_eq!(attempts, 1);
 }
 
@@ -140,7 +155,10 @@ fn global_snapshot_budget_includes_summary_endpoints() {
     manifest.scenario.load.interval_ms = 1;
     manifest.scenario.load.snapshot_ms = 1;
     manifest.scenario.validate().unwrap();
-    assert!(manifest.validate().is_err());
+    assert_eq!(
+        manifest.validate().unwrap_err(),
+        "invalid stability version, duration, cycle or record budget"
+    );
     manifest.scenario.load.injection_ms = 996;
     manifest.validate().unwrap();
 }

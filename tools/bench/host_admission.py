@@ -216,6 +216,11 @@ def admit(
         raise host_perf.ReceiptError(
             "build witness source/target differs from frozen full-host claim"
         )
+    profile = host_build.verified_profile(build_root, witness)
+    if profile["opt_level"] not in ("2", "3") or profile["debug_assertions"] or profile["test"]:
+        raise host_perf.ReceiptError(
+            "measured admission requires optimized non-test build without debug assertions"
+        )
     runs, windows, identities, populations, assessments, resource_bounds = [], [], [], {}, {}, []
     control_inputs, control_identities, boots, cadences = {}, [], set(), set()
     for rate in frozen["rate_grid"]:
@@ -398,6 +403,12 @@ def admit(
     host_build.verify(build_root, rebuild=True)
     env = dict(os.environ)
     env["CARGO_TARGET_DIR"] = str(build_root.resolve() / "target")
+    oracle_profile = {
+        "CARGO_PROFILE_TEST_OPT_LEVEL": profile["opt_level"],
+        "CARGO_PROFILE_TEST_DEBUG_ASSERTIONS": str(profile["debug_assertions"]).lower(),
+        "CARGO_PROFILE_TEST_OVERFLOW_CHECKS": str(profile["overflow_checks"]).lower(),
+    }
+    env.update(oracle_profile)
     process = subprocess.run(
         ORACLE, cwd=build_root / "source", env=env, capture_output=True, check=False
     )
@@ -439,9 +450,12 @@ def admit(
         "contract_sha256": host_perf.sha256(contract_bytes),
         "ledger": ledger,
         "build_witness_sha256": host_perf.sha256(witness_bytes),
+        "build_profile": profile,
+        "build_environment": witness["build_environment"],
         "controls": assessments,
         "oracle": {
             "command": ORACLE,
+            "profile_overrides": oracle_profile,
             "stdout_sha256": host_perf.sha256(process.stdout),
             "stderr_sha256": host_perf.sha256(process.stderr),
         },

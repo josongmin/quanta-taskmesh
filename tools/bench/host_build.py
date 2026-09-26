@@ -164,6 +164,42 @@ def cold_build(
     return binary, sorted(artifacts[0]["features"]), process.stdout, process.stderr
 
 
+def cargo_profile(log: bytes, example: str) -> dict[str, Any]:
+    profiles = []
+    for line in log.splitlines():
+        item = host_perf.parse_object(line, "frozen Cargo event")
+        if (
+            item.get("reason") == "compiler-artifact"
+            and item.get("target", {}).get("name") == example
+            and "example" in item.get("target", {}).get("kind", [])
+        ):
+            profiles.append(item.get("profile"))
+    if len(profiles) != 1 or not isinstance(profiles[0], dict):
+        raise host_perf.ReceiptError("frozen Cargo log has no unique build profile")
+    profile = profiles[0]
+    if (
+        not isinstance(profile.get("opt_level"), str)
+        or type(profile.get("debug_assertions")) is not bool
+        or type(profile.get("test")) is not bool
+        or type(profile.get("overflow_checks")) is not bool
+    ):
+        raise host_perf.ReceiptError("frozen Cargo profile is malformed")
+    return profile
+
+
+def verified_profile(root: Path, proof: dict) -> dict[str, Any]:
+    profiles = []
+    for index in range(2):
+        name = f"build-{index}.stdout"
+        data = (root / name).read_bytes()
+        if host_perf.sha256(data) != proof["logs_sha256"][name]:
+            raise host_perf.ReceiptError("frozen profile log digest changed")
+        profiles.append(cargo_profile(data, proof["example"]))
+    if profiles[0] != profiles[1]:
+        raise host_perf.ReceiptError("cold rebuild profile changed")
+    return profiles[0]
+
+
 def acquire(root: Path, features: list[str], example: str) -> dict[str, Any]:
     root = root.resolve()
     features = sorted(set(features))
@@ -268,7 +304,7 @@ def verify(root: Path, *, rebuild: bool = False) -> dict[str, Any]:
     ):
         raise host_perf.ReceiptError("frozen toolchain/build environment differs")
     if rebuild:
-        binary, features, _, _ = cold_build(root, proof["features"], proof["example"])
+        binary, features, stdout, _ = cold_build(root, proof["features"], proof["example"])
         check_source(root / "source", members)
         if (
             host_perf.sha256(binary.read_bytes()) != proof["binary_sha256"]
@@ -277,6 +313,8 @@ def verify(root: Path, *, rebuild: bool = False) -> dict[str, Any]:
             raise host_perf.ReceiptError(
                 "independent cold rebuild differs from retained executable"
             )
+        if cargo_profile(stdout, proof["example"]) != verified_profile(root, proof):
+            raise host_perf.ReceiptError("independent cold rebuild profile differs")
     return proof
 
 

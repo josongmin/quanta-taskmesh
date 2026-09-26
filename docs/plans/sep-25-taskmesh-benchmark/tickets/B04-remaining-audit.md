@@ -24,6 +24,20 @@ It reports highest **tested** passing rate and conditional p99 rank intervals.
 Sampled CPU per injection-cohort success is retained only as a whole-trial lower
 bound; exact CPU/resource-efficiency comparisons remain unsupported.
 
+Measured admission also rejects unoptimized/debug/test executables based on the
+actual digest-bound Cargo artifact profile. Oracle test-profile flags are matched
+to optimization/debug/overflow semantics of the measured build.
+
+Validation checkpoint at clean `065f6be`: all 218 benchmark Python tests passed;
+active IO drain Criterion smoke and local v3 real structural receipt passed.
+Two cold builds plus a third actual rebuild produced the same host executable
+SHA256. A two-attempt collector smoke used that executable and retained complete
+accounting. All these artifacts are diagnostic, not a measured performance series.
+Follow-up profile/build/admission checks passed 27 focused Python regressions;
+strengthened Rust assertions passed all 6 local/artifact tests. Semgrep passed
+with 175 scanned Rust files and zero findings; Python lint, formatting and gate
+inventory passed. This checkpoint is not full current-HEAD CI.
+
 Operational contract and remaining real inputs:
 [host-series workflow](../../../benchmarks/host-series.md).
 

@@ -29,14 +29,14 @@ fn concurrent_publish_has_one_winner_and_never_replaces_bytes() {
         .collect();
     assert_eq!(winners.len(), 1);
     assert_eq!(fs::read(&path).unwrap(), vec![winners[0].0; 4096]);
-    assert!(outcomes
-        .iter()
-        .filter(|(_, result)| result.is_err())
-        .all(|(_, result)| {
-            result.as_ref().unwrap_err().kind() == std::io::ErrorKind::AlreadyExists
-        }));
+    for (_, result) in &outcomes {
+        if let Err(error) = result {
+            assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        }
+    }
     assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
-    assert!(write_new(&path, b"replacement").is_err());
+    assert!(write_new(&path, b"replacement")
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists));
     assert_eq!(fs::read(&path).unwrap(), vec![winners[0].0; 4096]);
     fs::remove_dir_all(directory).unwrap();
 }

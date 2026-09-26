@@ -34,10 +34,22 @@ and retain the same setting through all acquisitions. This variable is part of
 execution identity. Each example has its own directory:
 
 ```sh
+# Freeze these settings before acquiring witnesses or any measured controls.
+export CARGO_PROFILE_DEV_OPT_LEVEL=3
+export CARGO_PROFILE_DEV_DEBUG_ASSERTIONS=false
 export TASKMESH_BENCH_BUILD_WITNESSES=/tmp/taskmesh-series-builds
 just bench-build acquire "$TASKMESH_BENCH_BUILD_WITNESSES/host_load_probe"
 just bench-build acquire "$TASKMESH_BENCH_BUILD_WITNESSES/host_generator_probe" --example host_generator_probe
 ```
+
+The unchanged Cargo recipe uses the dev profile with the declared overrides.
+Without an optimized actual Cargo artifact profile (level 2/3, debug assertions
+off, non-test executable), the witness is structural only and measured admission
+rejects it. The profile is derived from digest-bound Cargo logs and compared with
+the independent rebuild; an operator-supplied `optimized: true` flag is not used.
+The output exposes the actual profile and build environment. This is a named
+build configuration, not an assumption that every release/deployment build is
+equivalent.
 
 Host, minimal, A/A, Snapshot and sampler wrappers then use the retained
 `host_load_probe` binary; generator uses the separately frozen generator binary.
@@ -148,7 +160,8 @@ just bench-host-admit /tmp/contract.json /tmp/taskmesh-series \
 Admission requires the exact clean source checkout for typed raw reconstruction,
 rechecks the ledger and measured controls, and runs a third cold build. It then
 executes the four named Taskmesh engine/facade oracle suites from the frozen
-source. At least 45 passing tests across all four suite results, zero ignored,
+source, with test-profile optimization, debug assertions and overflow checking
+explicitly matched to the measured artifact. At least 45 passing tests across all four suite results, zero ignored,
 failed or filtered tests are required. Oracle stdout/stderr are retained; copied
 PASS receipts or zero-test runs do not satisfy this step. Mutable input custody
 and source identity are rechecked before publishing `admission.json`.

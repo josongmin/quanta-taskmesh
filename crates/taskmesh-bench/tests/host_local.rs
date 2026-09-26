@@ -51,7 +51,9 @@ fn local_preflight_validates_snapshot_cadence_and_rejects_old_schema() {
     scenario.load.snapshot_ms = 10;
     scenario.validate().expect("local Snapshot is supported");
     scenario.load.snapshot_ms = 17;
-    assert!(scenario.validate().is_err());
+    assert!(scenario
+        .validate()
+        .is_err_and(|error| error.contains("snapshot_ms must divide injection_ms")));
     scenario.load.snapshot_ms = 0;
     scenario.schema_version = 2;
     assert!(scenario

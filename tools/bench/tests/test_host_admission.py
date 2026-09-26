@@ -39,6 +39,17 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
         "binary_sha256": "b" * 64,
         "features": [],
     }
+    witness["build_environment"] = {}
+    monkeypatch.setattr(
+        admission.host_build,
+        "verified_profile",
+        lambda *_args: {
+            "opt_level": "3",
+            "debug_assertions": False,
+            "test": False,
+            "overflow_checks": False,
+        },
+    )
     calls = []
 
     def verify(_root: Path, *, rebuild: bool = False) -> dict:
@@ -250,3 +261,21 @@ def test_unfrozen_contract_values_reject(
     contract[field] = value
     with pytest.raises(host_perf.ReceiptError):
         admission.contract(host_perf.canonical(contract))
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        {"opt_level": "0", "debug_assertions": False, "test": False, "overflow_checks": False},
+        {"opt_level": "3", "debug_assertions": True, "test": False},
+        {"opt_level": "3", "debug_assertions": False, "test": True},
+    ],
+)
+def test_debug_and_test_profiles_cannot_admit_measurements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: dict
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(admission.host_build, "verified_profile", lambda *_args: profile)
+    with pytest.raises(host_perf.ReceiptError, match="requires optimized non-test build"):
+        admission.admit(*args[:6])
+    assert not args[5].exists()

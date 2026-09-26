@@ -121,3 +121,32 @@ def test_runner_binds_clean_source_features_and_executable(
     (root / "runner-1").write_bytes(b"changed")
     with pytest.raises(host_perf.ReceiptError, match="executable changed"):
         host_build.verify(root)
+
+
+@pytest.mark.parametrize(
+    "profile", [None, {}, {"opt_level": "3", "debug_assertions": 0, "test": False}]
+)
+def test_cargo_profile_cannot_be_inferred_or_forged(profile: object) -> None:
+    data = host_perf.canonical(
+        {
+            "reason": "compiler-artifact",
+            "target": {"name": "host_load_probe", "kind": ["example"]},
+            "profile": profile,
+        }
+    )
+    with pytest.raises(host_perf.ReceiptError, match="build profile|profile is malformed"):
+        host_build.cargo_profile(data, "host_load_probe")
+
+
+def test_cargo_profile_is_read_from_the_actual_named_artifact() -> None:
+    profile = {"opt_level": "3", "debug_assertions": False, "test": False, "overflow_checks": False}
+    data = host_perf.canonical(
+        {
+            "reason": "compiler-artifact",
+            "target": {"name": "host_load_probe", "kind": ["example"]},
+            "profile": profile,
+        }
+    )
+    assert host_build.cargo_profile(data, "host_load_probe") == profile
+    with pytest.raises(host_perf.ReceiptError, match="no unique build profile"):
+        host_build.cargo_profile(data + b"\n" + data, "host_load_probe")

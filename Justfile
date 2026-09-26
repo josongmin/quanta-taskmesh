@@ -233,8 +233,12 @@ bench-host-controls scenario host_raw host_summary generator_raw aa_dir snapshot
 
 # Compare revalidated control observations to a source/scenario-bound budget.
 # Passing this diagnostic does not grant host performance qualification.
-bench-host-control-assess policy scenario host_raw host_summary generator_raw aa_dir snapshot_dir recorder_dir control_bundle output:
-    uv run python tools/bench/host_control_assess.py {{policy}} {{scenario}} {{host_raw}} {{host_summary}} {{generator_raw}} {{aa_dir}} {{snapshot_dir}} {{recorder_dir}} {{control_bundle}} {{output}}
+bench-host-control-assess policy scenario host_raw host_summary generator_raw aa_dir snapshot_dir recorder_dir sampler_dir control_bundle output:
+    uv run python tools/bench/host_control_assess.py {{policy}} {{scenario}} {{host_raw}} {{host_summary}} {{generator_raw}} {{aa_dir}} {{snapshot_dir}} {{recorder_dir}} {{sampler_dir}} {{control_bundle}} {{output}}
+
+# Balanced external resource-sampler on/off diagnostic on one source and binary.
+bench-host-sampler scenario calibration directory max_span_seconds *ARGS:
+    uv run python tools/bench/host_sampler.py {{scenario}} {{calibration}} {{directory}} --max-span-seconds {{max_span_seconds}} {{ARGS}}
 
 # Revalidate independent baseline/candidate raw pairs at each absolute rate.
 # Its run-level interval is descriptive; B00/B04 qualification is still absent.

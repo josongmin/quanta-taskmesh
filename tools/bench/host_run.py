@@ -99,6 +99,7 @@ def main() -> int:
     parser.add_argument("summary", type=Path)
     parser.add_argument("calibration", type=Path)
     parser.add_argument("--feature", action="append", default=[])
+    parser.add_argument("--no-resource-sampling", action="store_true")
     args = parser.parse_args()
     provenance_path = args.raw.with_name(args.raw.name + ".provenance.json")
     executable_path = args.raw.with_name(args.raw.name + ".runner")
@@ -148,6 +149,7 @@ def main() -> int:
                     str(topology_path),
                 ],
                 cwd=host_perf.REPO,
+                sample_resources=not args.no_resource_sampling,
             )
             resource_bytes = host_perf.canonical(resources) + b"\n"
             write_new(resource_path, resource_bytes)

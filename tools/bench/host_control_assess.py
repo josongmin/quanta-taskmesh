@@ -13,8 +13,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import host_aa
 import host_controls
 import host_perf
+import host_sampler
 from host_run import write_new
 
 SCHEMA_VERSION = 1
@@ -29,6 +31,7 @@ POLICY_KEYS = {
     "max_aa_relative_delta",
     "max_snapshot_relative_delta",
     "max_recorder_response_fraction_delta",
+    "max_sampler_relative_delta",
 }
 
 
@@ -61,6 +64,7 @@ def parse_policy(data: bytes) -> dict[str, Any]:
         "max_aa_relative_delta",
         "max_snapshot_relative_delta",
         "max_recorder_response_fraction_delta",
+        "max_sampler_relative_delta",
     ):
         finite_fraction(policy[key], f"control budget {key}")
     return policy
@@ -122,6 +126,7 @@ def assess(
     aa_directory: Path,
     snapshot_directory: Path,
     recorder_directory: Path,
+    sampler_directory: Path,
     bundle_path: Path,
 ) -> dict[str, Any]:
     policy = parse_policy(policy_bytes)
@@ -151,6 +156,37 @@ def assess(
     recorder = host_perf.parse_object(
         (recorder_directory / "recorder-bundle.json").read_bytes(), "recorder bundle"
     )
+    sampler_bytes = (sampler_directory / "sampler-bundle.json").read_bytes()
+    sampler = host_sampler.verify_bundle(sampler_bytes, sampler_directory, scenario_bytes)
+    if (
+        sampler["identity"] != identity
+        or sampler["binary_sha256"] != bundle["host_binary_sha256"]
+        or sampler["scenario_sha256"] != policy["scenario_sha256"]
+        or sampler["runs"][0]["boot_time_ns"] != bundle["boot_time_ns"]
+        or sampler["runs"][0]["resource_cadence_ms"] != bundle["resource_cadence_ms"]
+    ):
+        raise host_perf.ReceiptError("sampler source, binary, boot or cadence differs")
+    resource_paths = [
+        host_controls.sidecars(host_raw)["resources"],
+        host_controls.sidecars(generator_raw)["resources"],
+    ]
+    for directory, runs in (
+        (aa_directory, aa["runs"]),
+        (snapshot_directory, snapshot["runs"]),
+        (recorder_directory, recorder["runs"]),
+    ):
+        resource_paths.extend(
+            host_aa.paths(directory, index)["resources"] for index in range(len(runs))
+        )
+    windows = []
+    for path in resource_paths:
+        resource = host_perf.parse_object(path.read_bytes(), "control resources")
+        windows.append((resource["sampling_started_epoch_ns"], resource["sampling_ended_epoch_ns"]))
+    windows.extend(tuple(run["window_epoch_ns"]) for run in sampler["runs"])
+    windows.sort()
+    if any(previous[1] > current[0] for previous, current in zip(windows, windows[1:])):
+        raise host_perf.ReceiptError("sampler and control process windows overlap")
+    combined_span_ns = windows[-1][1] - windows[0][0]
     aa_effects = [
         rate_effects(first, second, f"A/A pair {index}")
         for index, (first, second) in enumerate(pair_runs(aa["runs"], policy["min_pairs"], "A/A"))
@@ -168,6 +204,13 @@ def assess(
     max_aa = max(value for pair in aa_effects for value in pair.values())
     max_snapshot = max(value for pair in snapshot_effects for value in pair.values())
     max_recorder = max(recorder_effects)
+    sampler_effects = []
+    for index, (first, second) in enumerate(
+        pair_runs(sampler["runs"], policy["min_pairs"], "sampler")
+    ):
+        off, on = (first, second) if first["mode"] == "off" else (second, first)
+        sampler_effects.append(rate_effects(off, on, f"sampler pair {index}"))
+    max_sampler = max(value for pair in sampler_effects for value in pair.values())
     observations = {
         "generator_not_submitted": bundle["generator_not_submitted"],
         "host_not_submitted": bundle["host_not_submitted"],
@@ -176,20 +219,26 @@ def assess(
         "max_aa_relative_delta": max_aa,
         "max_snapshot_relative_delta": max_snapshot,
         "max_recorder_response_fraction_delta": max_recorder,
+        "max_sampler_relative_delta": max_sampler,
         "aa_pairs": len(aa_effects),
         "snapshot_pairs": len(snapshot_effects),
         "recorder_pairs": len(recorder_effects),
+        "sampler_pairs": len(sampler_effects),
+        "combined_span_ns": combined_span_ns,
     }
     violations = []
     for key in ("generator_not_submitted", "host_not_submitted"):
         if observations[key] != 0:
             violations.append(key)
+    if combined_span_ns > policy["max_span_ns"]:
+        violations.append("combined_span_ns")
     for observed, limit in (
         ("generator_max_lag_ns", "max_generator_lag_ns"),
         ("host_max_lag_ns", "max_host_lag_ns"),
         ("max_aa_relative_delta", "max_aa_relative_delta"),
         ("max_snapshot_relative_delta", "max_snapshot_relative_delta"),
         ("max_recorder_response_fraction_delta", "max_recorder_response_fraction_delta"),
+        ("max_sampler_relative_delta", "max_sampler_relative_delta"),
     ):
         if observations[observed] > policy[limit]:
             violations.append(observed)
@@ -197,9 +246,10 @@ def assess(
         "schema_version": SCHEMA_VERSION,
         "status": "BUDGET_PASS_DIAGNOSTIC" if not violations else "BUDGET_FAIL",
         "performance": "UNQUALIFIED",
-        "reason": "B00 contract, sampler distortion and fixed-host series require separate proof",
+        "reason": "B00 contract and fixed-host rate series require separate proof",
         "policy_sha256": host_perf.sha256(policy_bytes),
         "bundle_sha256": host_perf.sha256(bundle_bytes),
+        "sampler_bundle_sha256": host_perf.sha256(sampler_bytes),
         "scenario_sha256": policy["scenario_sha256"],
         "source_head": policy["source_head"],
         "observations": observations,
@@ -217,6 +267,7 @@ def main() -> int:
     parser.add_argument("aa_directory", type=Path)
     parser.add_argument("snapshot_directory", type=Path)
     parser.add_argument("recorder_directory", type=Path)
+    parser.add_argument("sampler_directory", type=Path)
     parser.add_argument("control_bundle", type=Path)
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
@@ -231,6 +282,7 @@ def main() -> int:
             args.aa_directory,
             args.snapshot_directory,
             args.recorder_directory,
+            args.sampler_directory,
             args.control_bundle,
         )
     except (OSError, ValueError, KeyError, TypeError, host_perf.ReceiptError) as error:

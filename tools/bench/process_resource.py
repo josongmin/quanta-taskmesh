@@ -92,9 +92,12 @@ class ProcessResourceSampler:
 
 
 def sample_subprocess(
-    command: list[str], cwd: Path, cadence_ms: int = 250
+    command: list[str], cwd: Path, cadence_ms: int = 250, *, sample_resources: bool = True
 ) -> tuple[int, int, str, dict[str, Any]]:
-    """Run one child and preserve its bounded external resource observations."""
+    """Run one child, optionally omitting the observer for a paired control."""
+    started_ns = time.monotonic_ns()
+    started_epoch_ns = time.time_ns()
+    boot_time_ns = round(psutil.boot_time() * 1_000_000_000)
     child = subprocess.Popen(
         command,
         cwd=cwd,
@@ -102,10 +105,27 @@ def sample_subprocess(
         stderr=subprocess.PIPE,
         text=True,
     )
-    sampler = ProcessResourceSampler(child.pid, cadence_ms=cadence_ms)
-    sampler.start()
-    try:
+    if sample_resources:
+        sampler = ProcessResourceSampler(child.pid, cadence_ms=cadence_ms)
+        sampler.start()
+        try:
+            _, stderr = child.communicate()
+        finally:
+            resources = sampler.stop()
+    else:
         _, stderr = child.communicate()
-    finally:
-        resources = sampler.stop()
+        resources = {
+            "schema_version": 2,
+            "status": "unavailable",
+            "reason": "resource sampling intentionally disabled for paired control",
+            "pid": child.pid,
+            "process_create_time_ns": None,
+            "boot_time_ns": boot_time_ns,
+            "cadence_ms": cadence_ms,
+            "sampling_started_monotonic_ns": started_ns,
+            "sampling_ended_monotonic_ns": time.monotonic_ns(),
+            "sampling_started_epoch_ns": started_epoch_ns,
+            "sampling_ended_epoch_ns": time.time_ns(),
+            "samples": [],
+        }
     return child.returncode, child.pid, stderr, resources

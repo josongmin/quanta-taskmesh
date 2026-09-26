@@ -7,7 +7,7 @@ receipts were acquired under `/tmp`. They are not repository-retained and all
 report `UNQUALIFIED`. This benchmark change set preserves a
 separate invalid H6 raw on parent timeout/failure and add a source/scenario-bound
 control-budget evaluator; neither has a clean exact-HEAD receipt yet. B00 values,
-measured sampler distortion, fixed-host rate series, H7 and an equivalent peer
+measured sampler distortion budget, fixed-host rate series, H7 and an equivalent peer
 remain open. The older checkpoint notes below are historical and must not be
 used as current qualification evidence.
 
@@ -287,12 +287,15 @@ before the runner starts still has only a rejection record.
 
 ### B04 — Add performance qualification after a stable measurement contract
 
-Code update: `just bench-host-control-assess` revalidates the v3 control bundle
+Code update: `just bench-host-sampler` acquires balanced external resource-sampler
+on/off runs with one scenario, source and binary. `just bench-host-control-assess`
+revalidates that study and the v3 control bundle
 and evaluates explicitly supplied clean-source/scenario budgets for producer
 lag and omission, A/A SLO-goodput spread, Snapshot effect, and recorder response
-fraction. It retains a pass/fail/rejected diagnostic report. The budget policy
-must be frozen before candidate acquisition; this evaluator does not measure
-external resource-sampler distortion, establish B00, or grant performance
+fraction plus sampler SLO-goodput change. It retains a pass/fail/rejected
+diagnostic report. The budget policy
+must be frozen before candidate acquisition; this evaluator does not establish
+B00 or grant performance
 qualification.
 
 - **Purpose:** Prevent noisy hosted timing from becoming a misleading PR gate while retaining cheap correctness checks.

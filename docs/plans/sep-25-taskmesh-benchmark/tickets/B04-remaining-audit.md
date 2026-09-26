@@ -36,7 +36,10 @@ accounting. All these artifacts are diagnostic, not a measured performance serie
 Follow-up profile/build/admission checks passed 27 focused Python regressions;
 strengthened Rust assertions passed all 6 local/artifact tests. Semgrep passed
 with 175 scanned Rust files and zero findings; Python lint, formatting and gate
-inventory passed. This checkpoint is not full current-HEAD CI.
+inventory passed. The follow-up code checkpoint is `acc9297`. At that checkpoint, the four named
+engine oracle suites also passed 45/45 with test optimization level 3, debug
+assertions off and overflow checks off. This is focused source correctness
+proof; it neither admits a measured series nor supplies full current-HEAD CI.
 
 Operational contract and remaining real inputs:
 [host-series workflow](../../../benchmarks/host-series.md).

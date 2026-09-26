@@ -102,11 +102,10 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   schema에는 외생 intended-arrival 시각이 없으므로 open-loop의 overload tail이나
   intended-arrival SLO-goodput과 합치지 않는다.
   `local_host.rs`는 current-thread LocalSet에서 `!Send` payload를 실행하고,
-  같은 caller thread의 finite pacer 지연/미제출을 별도 raw에 남긴다. Snapshot,
-  deadline, cancel/drop은 이 진단 schema에서 지원하지 않으며 IO 경로로 대체하지
-  않는다. local schema v2는 미제출 offer도 pacer 관측 시각을 보관하고 lag와
-  재계산해 대조한다. v1 raw는 이 검사를 제공하지 않으므로 v2 증거로 승격할 수 없다.
-  비교 측정은 없다.
+  같은 caller thread의 finite pacer 지연/미제출을 별도 raw에 남긴다. 현재 local
+  schema v3는 Snapshot, deadline, cancel/drop도 지원하며 caller 종료와 worker
+  settlement를 구분한다. 미제출 offer의 pacer 관측 시각과 lag도 재계산한다.
+  v1/v2 raw는 v3 증거로 승격할 수 없다. 반복 성능 admission과 비교 측정은 없다.
   `composite_host.rs`는 H6에서 부모의 reduce 선언과 별도 공개 호출로 제출한
   IO/blocking/CPU 자식 세 건을 진단한다. 한 자식의 작업 오류에도 caller가
   성공 키를 정렬해 합치며, 자식별 시각·결과, class 정산, root attribution 소멸을
@@ -138,7 +137,7 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   `null`이며 자원 효율 우위를 주장하지 않는다.
   별도 sampler on/off 균형쌍은 동일 시나리오·소스·바이너리에서 외부 자원
   관측의 영향을 진단한다. control-budget evaluator는 시나리오·clean HEAD에
-  묶인 예산으로 generator lag/미제출, A/A, Snapshot, recorder 응답수 및
+  묶인 예산으로 generator lag/미제출, A/A, Snapshot, recorder 응답수·전체 probe 시간 및
   sampler on/off SLO-goodput 및 성공 응답 p99 변화를 계산한다. A/A와 Snapshot도
   동일하게 p99 변화와 각 class/path의 최소 성공 표본 수를 검사한다. 예산 통과도 `UNQUALIFIED`이며
   evaluator는 검증한 control bundle의 scenario·bundle·resource digest를 다시
@@ -194,3 +193,25 @@ The executable workflow and proof limits are in
 [host-series acquisition and admission](../benchmarks/host-series.md). Actual
 B00 values, quiet-host repeated measurements, consumer H7 and matched peers
 remain inputs to acquire; code presence is not a performance result.
+
+## 2026-09-27 code audit disposition
+
+- Measured admission and descriptive comparison share an exact workload
+  signature: topology, class policy, work bodies and proportional offer mix stay
+  fixed across rates. Only arrival timestamps and population-dependent
+  `max_records` are excluded. Per-rate digest preregistration alone is insufficient.
+- Measured admission explicitly rejects public paths outside IO/blocking/CPU;
+  requested-stack diagnostics cannot silently expand the admitted scope.
+- Admission parses and hashes the same control-bundle bytes. Special-mode
+  revalidation executes private copies of digest-checked inputs and validator,
+  with a 120-second supervised deadline; timeout/interruption cannot pass.
+- Standalone control acquisition and direct diagnostic build/probe subprocesses
+  still contain unbounded waits. Collector timeouts cover collected attempts,
+  not every independent control acquisition. This is an open implementation gap.
+- Dedicated repeated admission for other modes and longitudinal soak/recovery
+  qualification remain separate implementation work. Finite-run settlement
+  conservation and sampled resource maxima do not prove long-term stability.
+
+Current defects, file owners, DoD and proof boundaries are retained in
+[B04 remaining audit](../plans/sep-25-taskmesh-benchmark/tickets/B04-remaining-audit.md).
+No whole-engine completion or SOTA performance qualification follows from this audit.

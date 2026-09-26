@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -12,6 +11,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import host_perf  # noqa: E402
 import host_special_run  # noqa: E402
+
+from tools.process_supervisor import SupervisedProcess  # noqa: E402
 
 
 def receipt_directory(tmp_path: Path) -> Path:
@@ -67,11 +68,11 @@ def test_special_receipt_checks_digest_then_retained_typed_validator(
     monkeypatch.setattr(host_perf, "validate_resource_artifact", lambda _data, _pid: None)
     calls = []
 
-    def checked(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def checked(command: list[str], **_kwargs: object) -> SupervisedProcess:
         calls.append(command)
-        return subprocess.CompletedProcess(command, 0, "valid", "")
+        return SupervisedProcess(0, "valid", "", False, None)
 
-    monkeypatch.setattr(host_special_run.subprocess, "run", checked)
+    monkeypatch.setattr(host_special_run, "run_process", checked)
     assert host_special_run.verify_receipt(directory)["performance_status"] == "UNQUALIFIED"
     assert len(calls) == 1
 
@@ -84,10 +85,10 @@ def test_special_receipt_checks_digest_then_retained_typed_validator(
     receipt["raw_sha256"] = host_perf.sha256((directory / "raw").read_bytes())
     (directory / "receipt.json").write_text(json.dumps(receipt))
     monkeypatch.setattr(
-        host_special_run.subprocess,
-        "run",
-        lambda command, **_kwargs: subprocess.CompletedProcess(
-            command, 1, "", "caller-owned keyed reduction differs"
+        host_special_run,
+        "run_process",
+        lambda command, **_kwargs: SupervisedProcess(
+            1, "", "caller-owned keyed reduction differs", False, None
         ),
     )
     with pytest.raises(host_perf.ReceiptError, match="typed special raw/topology rejected"):
@@ -117,9 +118,68 @@ def test_special_receipt_rejects_malformed_identity_fields(
     monkeypatch.setattr(host_perf, "validate_identity", lambda _identity: None)
     monkeypatch.setattr(host_perf, "validate_resource_artifact", lambda _data, _pid: None)
     monkeypatch.setattr(
-        host_special_run.subprocess,
-        "run",
-        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, "valid", ""),
+        host_special_run,
+        "run_process",
+        lambda command, **_kwargs: SupervisedProcess(0, "valid", "", False, None),
     )
     with pytest.raises(host_perf.ReceiptError, match=error):
         host_special_run.verify_receipt(directory)
+
+
+def test_special_validator_uses_only_digest_checked_snapshot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    directory = receipt_directory(tmp_path)
+    monkeypatch.setattr(host_perf, "validate_identity", lambda _identity: None)
+    monkeypatch.setattr(host_perf, "validate_resource_artifact", lambda _data, _pid: None)
+
+    def checked(command: list[str], **kwargs: object) -> SupervisedProcess:
+        (directory / "raw").write_bytes(b"changed after digest check")
+        (directory / "validator").write_bytes(b"changed executable")
+        assert Path(command[0]).read_bytes() == b"validator"
+        assert Path(command[3]).read_bytes() == b'{"checksum": 4}'
+        assert Path(command[0]).parent != directory
+        assert kwargs["timeout_seconds"] == host_special_run.VALIDATOR_TIMEOUT_SECONDS
+        return SupervisedProcess(0, "valid", "", False, None)
+
+    monkeypatch.setattr(host_special_run, "run_process", checked)
+    assert host_special_run.verify_receipt(directory)["performance_status"] == "UNQUALIFIED"
+    with pytest.raises(host_perf.ReceiptError, match="raw digest differs"):
+        host_special_run.verify_receipt(directory)
+
+
+@pytest.mark.parametrize("timed_out,signum", [(True, None), (False, 15)])
+def test_special_validator_timeout_or_interrupt_cannot_complete(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, timed_out: bool, signum: object
+) -> None:
+    directory = receipt_directory(tmp_path)
+    monkeypatch.setattr(host_perf, "validate_identity", lambda _identity: None)
+    monkeypatch.setattr(host_perf, "validate_resource_artifact", lambda _data, _pid: None)
+    monkeypatch.setattr(
+        host_special_run,
+        "run_process",
+        lambda *a, **k: SupervisedProcess(0, "partial", "timeout or interrupt", timed_out, signum),
+    )
+    with pytest.raises(host_perf.ReceiptError, match="typed special raw/topology rejected"):
+        host_special_run.verify_receipt(directory)
+
+
+def test_special_snapshot_executes_a_real_retained_validator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    directory = receipt_directory(tmp_path)
+    monkeypatch.setattr(host_perf, "validate_identity", lambda _identity: None)
+    monkeypatch.setattr(host_perf, "validate_resource_artifact", lambda _data, _pid: None)
+    validator = b"""#!/usr/bin/env python3
+import pathlib
+import sys
+assert sys.argv[1] == "composite"
+assert pathlib.Path(sys.argv[2]).read_bytes() == b"{}"
+assert pathlib.Path(sys.argv[3]).read_bytes() == b'{"checksum": 4}'
+assert pathlib.Path(sys.argv[4]).read_bytes() == b"{}"
+"""
+    (directory / "validator").write_bytes(validator)
+    receipt = json.loads((directory / "receipt.json").read_bytes())
+    receipt["validator_sha256"] = host_perf.sha256(validator)
+    (directory / "receipt.json").write_text(json.dumps(receipt))
+    assert host_special_run.verify_receipt(directory)["status"] == "complete"

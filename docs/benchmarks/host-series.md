@@ -80,9 +80,8 @@ rebuild at another location. This is local reproducibility evidence, not an
 external attestation, hermetic dependency build, or independent peer rerun.
 Compiler/build-system compromise and source tampering followed by restoration
 between endpoint checks are outside its proof. Use an isolated owner checkout
-for acquisition. Build-witness schema v2 includes ancestor configuration custody;
-v1 witnesses
-must be reacquired. Every cold build and engine oracle has a 1,800-second limit
+for acquisition. Build-witness schema v3 includes ancestor configuration and actual Cargo tool
+executable custody; v1/v2 witnesses must be reacquired. Every cold build and engine oracle has a 1,800-second limit
 plus the supervisor termination grace. Use a separately declared `CARGO_HOME`
 when the normal host configuration injects unsupported rustflags; set it before
 acquiring witnesses and keep it identical for collection and admission. Timeout, interruption, or orphaned-group
@@ -117,6 +116,13 @@ the result includes this assumption. A thin tail with an unbounded interval
 cannot pass. SLO fraction uses **all intended arrivals**, including rejection and
 late completion. Intentional cancel/drop/deadline fixtures are separate stress
 populations and cannot enter this capacity admission path.
+
+Across every rate and repetition, admission requires the same topology, full
+class policies, work bodies, load settings and exact proportional offer mix.
+Only arrival timestamps and population-dependent `max_records` may differ.
+Distinct preregistered scenario hashes cannot authorize different workloads in
+one capacity grid. This check is shared with the descriptive comparator.
+Requested-stack or other public paths explicitly reject in this admission lane.
 
 Controls have an exact per-rate manifest. The manifest's root is an object keyed
 by decimal rate; each value names these relative paths under its directory:
@@ -234,3 +240,20 @@ qualification are separate rails; this command does not run mutation testing.
   for exact efficiency, and an independent external rerun.
 - Separate repeated admission contracts for local, closed-loop, composite and
   nondefault feature comparisons if those claims are requested.
+
+## Open execution and longitudinal boundaries
+
+The study collector, cold builds and admission oracle have owned supervised
+execution. Standalone A/A, Snapshot, recorder and sampler acquisition wrappers,
+non-witness diagnostic builds and directly launched probes still use unbounded
+subprocess waits. They can hang before publishing terminal accounting; do not
+interpret collector supervision as coverage of those independent commands.
+Special-mode receipt revalidation is now bounded at 120 seconds plus supervisor
+termination grace and uses a private copy of digest-checked inputs/executable.
+Its separate acquisition path still belongs to the execution hardening gap.
+
+Finite-run validation checks settlement and residual ownership. There is no
+separate longitudinal recovery/soak admission contract or trend gate for resource
+growth. Long runs and resource samples alone do not close that gap. Its DoD and
+other mode extensions are tracked in B04; all structural receipts remain
+`UNQUALIFIED`.

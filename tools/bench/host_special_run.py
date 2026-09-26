@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import shutil
 import stat
 import subprocess
@@ -14,7 +15,10 @@ from pathlib import Path
 
 import host_perf
 import host_run
+from host_build import run_process
 from process_resource import sample_subprocess
+
+VALIDATOR_TIMEOUT_SECONDS = 120
 
 RUNNERS = {
     "closed_loop": "host_closed_loop_probe",
@@ -131,37 +135,43 @@ def verify_receipt(directory: Path, *, require_current_source: bool = False) -> 
         or receipt["validator_exit_code"] != 0
     ):
         raise host_perf.ReceiptError("special runner or validator exit is not zero")
+    artifacts = {}
     for name in ("scenario", "raw", "topology", "runner", "validator", "resources"):
-        actual = host_perf.sha256((directory / name).read_bytes())
+        artifacts[name] = (directory / name).read_bytes()
+        actual = host_perf.sha256(artifacts[name])
         if actual != receipt[f"{name}_sha256"]:
             raise host_perf.ReceiptError(f"special {name} digest differs")
-    host_perf.validate_resource_artifact(
-        (directory / "resources").read_bytes(), receipt["runner_pid"]
-    )
+    host_perf.validate_resource_artifact(artifacts["resources"], receipt["runner_pid"])
     if require_current_source:
         if source_content_sha256() != receipt["source_content_sha256"]:
             raise host_perf.ReceiptError("current checkout differs from acquired special source")
         source = receipt["end_identity"]
         current = host_perf.local_identity(
-            host_perf.parse_object((directory / "scenario").read_bytes(), "scenario"),
+            host_perf.parse_object(artifacts["scenario"], "scenario"),
             receipt["features"],
         )
         for field in ("source_head", "source_tree", "source_dirty", "lock_sha256", "rustc"):
             if current[field] != source[field]:
                 raise host_perf.ReceiptError(f"current source/toolchain {field} differs")
-    result = subprocess.run(
-        [
-            str(directory / "validator"),
-            receipt["mode"],
-            str(directory / "scenario"),
-            str(directory / "raw"),
-            str(directory / "topology"),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
+    # Execute the digest-checked bytes, never reopen mutable receipt inputs.
+    with tempfile.TemporaryDirectory(prefix="taskmesh-special-verify-") as temporary:
+        sealed = Path(temporary)
+        for name in ("scenario", "raw", "topology", "validator"):
+            host_run.write_new(sealed / name, artifacts[name])
+            (sealed / name).chmod(0o500 if name == "validator" else 0o400)
+        result = run_process(
+            [
+                str(sealed / "validator"),
+                receipt["mode"],
+                str(sealed / "scenario"),
+                str(sealed / "raw"),
+                str(sealed / "topology"),
+            ],
+            cwd=host_perf.REPO,
+            env=dict(os.environ),
+            timeout_seconds=VALIDATOR_TIMEOUT_SECONDS,
+        )
+    if result.returncode != 0 or result.timed_out or result.interrupted_by_signal is not None:
         raise host_perf.ReceiptError(
             f"typed special raw/topology rejected: {result.stderr[-1000:]}"
         )

@@ -1,6 +1,19 @@
 # Taskmesh benchmark qualification: source audit and work plan
 
-## Current checkpoint — additional audit at `f41862d`
+## Current checkpoint — code audit at integration base `031d7b9`, 2026-09-27
+
+Code is **not fully complete**. The latest pass repairs cross-rate workload
+consistency, explicit measured-path scope, control bundle byte custody and
+special-validator input/execution custody. Remaining code owners and DoD cover
+standalone acquisition process ownership, longitudinal recovery/soak gates, and
+conditional mode-specific repeated admission. B00/H7/quiet-host/peer inputs and
+clean-source CI/optimized end-to-end proof remain distinct open requirements.
+The shared checkout advanced from initial base `f00c039` during verification;
+incoming source-content regressions were preserved when resolving the additive
+admission-test conflict. Build witness v3 is current; older v2 proof is historical.
+See [B04 current audit](B04-remaining-audit.md).
+
+## Previous checkpoint — additional audit at `f41862d`
 
 [B04 remaining audit](B04-remaining-audit.md) now separates repaired acquisition
 defects and implemented measurement infrastructure from still-missing measured

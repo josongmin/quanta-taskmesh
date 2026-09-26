@@ -5,6 +5,104 @@ HEAD moved to `52f7c008e7ad761e9efb67bedd357c50551aa628`; that commit changes on
 ingress test formatting. Benchmark source is unchanged. This audit does not
 qualify the engine or its performance.
 
+## Current code audit — 2026-09-27, initial base `f00c039`, integration base `031d7b9`
+
+**Disposition: code work is not fully complete.** This pass covers benchmark
+scenario/probe validators, acquisition wrappers, control assessment, build/study
+custody, comparison and measured admission. It does not establish whole-engine
+correctness, complete current-source CI or an acquired performance series.
+Other-owner dirty governance/bugbash/PM files were excluded from edits.
+The shared checkout advanced to `031d7b9f5bf070e884fbd6244f201caa5ae60be5`
+during verification; stash restoration conflicted in `test_host_admission.py`.
+Preserve both incoming source-content/dirty-source regressions and this pass's
+path/workload/byte-custody regressions. The conflict is resolved additively.
+The incoming build witness is schema v3, adding actual Cargo tool-context custody;
+v2 is now historical and insufficient for current admission.
+
+### Repaired in this pass
+
+| Boundary | Concrete defect | Fix / regression DoD |
+|---|---|---|
+| Same workload across rates | Per-rate digest checks permit preregistered body, policy or mix changes, producing an invalid capacity grid. | `host_compare.py` exposes one workload signature/mix check used by `host_admission.py`. Preserve topology, full class policies, work bodies and proportional offer mix. Regressions independently vary body, mix, policy, topology and load settings while keeping synthetic preregistration custody valid; each rejects before rebuild/oracle. |
+| Admitted public paths | The documented IO/blocking/CPU lane had no explicit path rejection; the underlying host validator also supports requested-stack paths. | Reject requested-stack and other paths before expensive proof execution. Separate async/blocking requested-stack regressions plus a local-path guard test. This restricts claim scope; it does not remove diagnostic support. |
+| Control bundle byte custody | Parsed bundle bytes and hashed bundle bytes came from separate reads. | Read once, hash and parse that exact value. A replacement-between-reads regression rejects the altered first read. |
+| Special-mode validator input custody | Digest checks precede a validator that reopens mutable scenario/raw/topology/executable paths. | `host_special_run.py` revalidates private copies of the checked bytes. Supervise the validator with a 120-second deadline. Regressions replace original raw/executable after digest checks and verify the frozen copies, then reject the changed original on a later verification. Timeout/interruption cannot return a complete verification. |
+| Documentation consistency | The main ADR still described local v2 without Snapshot/cancel/deadline/drop, contradicting its appended v3 update. | Replace the stale as-is paragraph and recorder-cost description with current source behavior. |
+
+These regressions test admission orchestration and custody, using synthetic
+measurements. They do not measure performance or execute the real optimized
+oracle/profile pipeline. Focused post-integration checks: 51/51 tests passed in `test_host_admission.py`,
+`test_host_compare.py` and `test_host_special.py`, including a real private-copy
+validator execution. Ruff passed. These are shared working-checkout checks,
+not exact-clean-source CI. The broader run crossed the HEAD transition and
+ended 228 PASS / 14 FAIL / 38 deselected; it cannot qualify either snapshot.
+Its failures required a rerun, not automatic dismissal as drift.
+
+The post-integration broader run ended **268 PASS / 1 FAIL / 71 deselected**
+(`uv run pytest -q tools/bench/tests -m 'not slow and not qualification'`).
+The sole failing A/A acquisition retained the concrete reason: source/toolchain/
+host identity changed between build and launch. This audit edited tracked docs
+while that run was acquiring its binary; the source guard correctly rejected it.
+After stopping source edits, that exact test passed **1/1** on rerun. This is
+split working-checkout evidence, not a single clean 269/269 suite receipt.
+The broad log is `/tmp/taskmesh-bench-audit-031d7b9-pytest.log`.
+Final focused 51/51, Ruff, worktree/index whitespace checks and additive conflict
+resolution passed. No mutation campaign, full CI, optimized cold build,
+performance acquisition, remote push or release qualification ran in this pass.
+
+### Remaining code work, in priority order
+
+1. **P1 — standalone acquisition execution ownership.**
+   Purpose: terminate hung control/build/probe commands and retain failed or
+   interrupted terminal accounting, independently of `host_study`.
+   Owner files: `tools/bench/process_resource.py`, `host_run.py`,
+   `host_special_run.py`, `host_aa.py`, `host_observer.py`, `host_recorder.py`,
+   `host_sampler.py`; inspect `generator_run.py` / `minimal_run.py` shared callers.
+   Current source: resource sampling has a sample cap but
+   `sample_subprocess()` waits on unbounded `communicate()`; A/A, observer,
+   recorder and sampler use unbounded `subprocess.run()`; non-witness Cargo
+   builds and special acquisition validators are also unbounded.
+   The supervised study collector bounds its attempts only, so independent
+   controls can still hang. This is a liveness/cleanup defect, not evidence of a
+   wrongly admitted performance result.
+   DoD: positive declared deadlines, one explicit process owner per acquisition,
+   bounded capture and descendant cleanup, preserved logs/failure accounting;
+   no later planned arm after interruption. Real subprocess regressions must
+   cover hung builds/probes, closed-pipe surviving descendants, SIGINT/SIGTERM
+   and parent success with live work. Preserve sampling PID/window identity;
+   nested sessions must not escape the owning collector's cleanup.
+2. **P2 — longitudinal recovery/soak qualification.**
+   Purpose: establish recovery and bounded sustained resource use beyond one
+   finite run. Owner files: benchmark scenario/probe modules,
+   `tools/bench/host_perf.py`, `host_study.py`, `host_admission.py`, new focused
+   tests and `docs/benchmarks/host-series.md`.
+   Current finite runs validate settlement/residual ownership and retain resource
+   observations, but no mode-specific longitudinal trend/recovery gate exists.
+   DoD: preregister overload/recovery phases, intended populations, recovery
+   deadline, permitted residual state and resource-growth estimand; analyze
+   complete time series without request pooling, retain unavailable/capped
+   sampler states, and reject recovery failures. Application/measurement owners
+   must supply limits; no universal RSS slope or recovery threshold is invented.
+3. **P2 / conditional scope — other repeated admission modes.**
+   Local, closed-loop, composite, requested-stack and Rayon measurements need
+   separately declared estimands/contracts and mode-specific raw/control
+   validation. Reuse build/study custody without interpreting closed-loop
+   response tails as external-arrival overload latency. Their current diagnostic
+   support is not missing engine functionality; their performance admission is
+   unimplemented. DoD is the separately repeated, budgeted population, plus
+   mode-specific correctness and scope-rejection regressions.
+
+### Verification and input gaps
+
+- Current-source clean CI and optimized v3 cold-build / actual oracle-profile
+  end-to-end proof remain open; the interrupted `381311e` receipts below remain
+  historical and NOT_QUALIFIED.
+- Frozen B00 values, a quiet host with measured controls/series, H7 consumer
+  provenance, equivalent peer data and external rerun remain missing inputs.
+- A finite-grid capacity claim, longitudinal stability claim and industry
+  superiority claim have different completion requirements. None is inferred
+  from code presence or synthetic tests.
+
 ## Additional boundary audit — base `f41862d`
 
 The following reachable defects are repaired in this change set. These are
@@ -99,7 +197,9 @@ failed/interrupted attempts cannot supply final CI proof.
    structural receipts do not close this implementation/measurement gap.
 
 Items 1–4 require measurement or external input, rather than fabricated code
-defaults. Item 5 is an explicit scope-extension implementation gap. No industry
+defaults. Item 5 is an explicit scope-extension implementation gap. The current
+2026-09-27 section additionally records standalone execution and longitudinal
+qualification code gaps; this older list is not exhaustive. No industry
 SOTA performance claim is admitted by this change set.
 
 ## Implementation checkpoint — 2026-09-26

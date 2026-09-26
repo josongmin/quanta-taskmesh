@@ -96,6 +96,39 @@ def read_run(root: Path, files: Any, scenario: bytes, label: str) -> dict[str, A
     }
 
 
+def workload_signature(scenario: dict[str, Any], label: str) -> tuple[dict, Counter[bytes]]:
+    """Rate may change arrival times/population, never work semantics or mixture."""
+    load, offers = scenario.get("load"), scenario.get("offers")
+    if not isinstance(load, dict) or not isinstance(offers, list) or not offers:
+        raise host_perf.ReceiptError(f"{label}: nonempty workload required")
+    offer_mix = Counter(
+        host_perf.canonical({key: value for key, value in offer.items() if key != "send_time_ns"})
+        for offer in offers
+        if isinstance(offer, dict)
+    )
+    if sum(offer_mix.values()) != len(offers):
+        raise host_perf.ReceiptError(f"{label}: malformed offer")
+    shape = {
+        "topology": scenario.get("topology"),
+        "classes": scenario.get("classes"),
+        "load": {key: value for key, value in load.items() if key != "max_records"},
+        "offer_kinds": sorted(offer_mix),
+    }
+    return shape, offer_mix
+
+
+def require_same_workload(
+    reference: tuple[dict, Counter[bytes]], current: tuple[dict, Counter[bytes]], label: str
+) -> None:
+    shape, mix = current
+    reference_shape, reference_mix = reference
+    if shape != reference_shape:
+        raise host_perf.ReceiptError(f"{label}: workload body or topology changed across rates")
+    total, reference_total = sum(mix.values()), sum(reference_mix.values())
+    if any(reference_mix[kind] * total != mix[kind] * reference_total for kind in mix):
+        raise host_perf.ReceiptError(f"{label}: workload mix changed across rates")
+
+
 def effect_interval(differences: list[float]) -> dict[str, Any]:
     if len(differences) < 4:
         raise host_perf.ReceiptError("at least four independent pairs are required")
@@ -132,8 +165,7 @@ def compare(manifest_bytes: bytes, root: Path) -> dict[str, Any]:
     arm_binaries: dict[str, str] = {}
     boot_times: set[int] = set()
     resource_cadences: set[int] = set()
-    workload_shape: Optional[dict[str, Any]] = None
-    reference_mix: Optional[Counter[bytes]] = None
+    workload_reference: Optional[tuple[dict, Counter[bytes]]] = None
     run_artifacts = []
     result_points = []
     for point_index, point in enumerate(points):
@@ -160,31 +192,11 @@ def compare(manifest_bytes: bytes, root: Path) -> dict[str, Any]:
             )
         ):
             raise host_perf.ReceiptError(f"{label}: declared rate differs from intended arrivals")
-        offer_mix = Counter(
-            host_perf.canonical(
-                {key: value for key, value in offer.items() if key != "send_time_ns"}
-            )
-            for offer in offers
-            if isinstance(offer, dict)
-        )
-        if sum(offer_mix.values()) != len(offers):
-            raise host_perf.ReceiptError(f"{label}: malformed offer")
-        shape = {
-            "topology": scenario.get("topology"),
-            "classes": scenario.get("classes"),
-            "load": {key: value for key, value in load.items() if key != "max_records"},
-            "offer_kinds": sorted(offer_mix),
-        }
-        if workload_shape is None:
-            workload_shape = shape
-            reference_mix = offer_mix
-        elif shape != workload_shape:
-            raise host_perf.ReceiptError(f"{label}: workload body or topology changed across rates")
-        elif reference_mix is not None and any(
-            reference_mix[kind] * len(offers) != offer_mix[kind] * sum(reference_mix.values())
-            for kind in offer_mix
-        ):
-            raise host_perf.ReceiptError(f"{label}: workload mix changed across rates")
+        current_workload = workload_signature(scenario, label)
+        if workload_reference is None:
+            workload_reference = current_workload
+        else:
+            require_same_workload(workload_reference, current_workload, label)
         pairs = point["pairs"]
         if not isinstance(pairs, list) or len(pairs) < 4:
             raise host_perf.ReceiptError(f"{label}: at least four pairs required")

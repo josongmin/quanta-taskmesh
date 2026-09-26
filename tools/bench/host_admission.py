@@ -253,9 +253,10 @@ def admit(
             or assessment["scenario_sha256"] != frozen["scenario_sha256_by_rate"][str(rate)]
         ):
             raise host_perf.ReceiptError("measured calibration source/scenario differs")
-        bundle = host_perf.parse_object(paths["bundle_path"].read_bytes(), "bound controls")
+        bundle_bytes = paths["bundle_path"].read_bytes()
+        bundle = host_perf.parse_object(bundle_bytes, "bound controls")
         if (
-            host_perf.sha256(paths["bundle_path"].read_bytes()) != assessment["bundle_sha256"]
+            host_perf.sha256(bundle_bytes) != assessment["bundle_sha256"]
             or bundle["host_binary_sha256"] != witness["binary_sha256"]
         ):
             raise host_perf.ReceiptError(
@@ -269,6 +270,7 @@ def admit(
         windows.extend(tuple(window) for window in assessment["process_windows_epoch_ns"])
     orders = {rate: [] for rate in frozen["rate_grid"]}
     last_series_end = 0
+    workload_reference = None
     for attempt in ledger["attempts"]:
         rate, arm = attempt["rate_per_second"], attempt["arm"]
         if rate not in orders:
@@ -287,6 +289,13 @@ def admit(
             raise host_perf.ReceiptError("scenario window or arrival rate differs")
         if {c["name"]: c["slo_ms"] for c in scenario["classes"]} != frozen["slo_ms_by_class"]:
             raise host_perf.ReceiptError("scenario class SLO catalog differs")
+        current_workload = host_compare.workload_signature(scenario, attempt["id"])
+        if workload_reference is None:
+            workload_reference = current_workload
+        else:
+            host_compare.require_same_workload(workload_reference, current_workload, attempt["id"])
+        if any(o.get("path") not in {"io", "blocking", "cpu"} for o in scenario["offers"]):
+            raise host_perf.ReceiptError("measured admission supports only io/blocking/cpu paths")
         if any(
             o.get(k) is not None
             for o in scenario["offers"]

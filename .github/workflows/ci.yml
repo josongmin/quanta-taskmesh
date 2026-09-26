@@ -254,7 +254,7 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: target/iai
-          key: iai-v5-${{ runner.os }}-${{ steps.fingerprint.outputs.value }}
+          key: iai-v6-${{ runner.os }}-${{ steps.fingerprint.outputs.value }}
       # Baseline python3 keeps a failed optional tool install from suppressing
       # the NOT_QUALIFIED receipt. Checkout/runner failure is irreducible here:
       # without receipt.py on disk no in-repository collector can execute.

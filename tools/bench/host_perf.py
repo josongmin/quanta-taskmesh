@@ -22,10 +22,18 @@ from pathlib import Path
 from typing import Any, Optional
 
 REPO = Path(__file__).resolve().parents[2]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from tools.qualification import evidence as source_evidence  # noqa: E402
+
+SUMMARY_VERSION = 3
+PROVENANCE_VERSION = 5
 IDENTITY_KEYS = {
     "source_head",
     "source_tree",
     "source_dirty",
+    "source_content_sha256",
     "lock_sha256",
     "rustc",
     "features",
@@ -305,6 +313,30 @@ def build_environment() -> dict[str, str]:
     }
 
 
+def source_identity() -> dict[str, Any]:
+    """Inspect actual checkout bytes, independently of Git index hints."""
+    try:
+        head = _git("rev-parse", "HEAD")
+        tree = _git("rev-parse", "HEAD^{tree}")
+        paths = source_evidence.git_source_paths(REPO)
+        dirty = bool(_git("status", "--porcelain=v1")) or bool(
+            source_evidence.head_worktree_mismatches(REPO)
+        )
+        digest = source_evidence.source_tree_digest(REPO, paths)
+        lock = sha256((REPO / "Cargo.lock").read_bytes())
+        if _git("rev-parse", "HEAD") != head or _git("rev-parse", "HEAD^{tree}") != tree:
+            raise ReceiptError("source HEAD changed during custody inspection")
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+        raise ReceiptError(f"source custody inspection failed: {error}") from error
+    return {
+        "source_head": head,
+        "source_tree": tree,
+        "source_dirty": dirty,
+        "source_content_sha256": digest,
+        "lock_sha256": lock,
+    }
+
+
 def local_identity(scenario: dict[str, Any], features: list[str]) -> dict[str, Any]:
     topology = scenario.get("topology")
     if not isinstance(topology, dict):
@@ -314,10 +346,7 @@ def local_identity(scenario: dict[str, Any], features: list[str]) -> dict[str, A
     ).stdout.strip()
     environment = host_environment()
     return {
-        "source_head": _git("rev-parse", "HEAD"),
-        "source_tree": _git("rev-parse", "HEAD^{tree}"),
-        "source_dirty": bool(_git("status", "--porcelain=v1")),
-        "lock_sha256": sha256((REPO / "Cargo.lock").read_bytes()),
+        **source_identity(),
         "rustc": rustc,
         "features": sorted(features),
         "topology_fingerprint": sha256(canonical(topology)),
@@ -340,6 +369,13 @@ def validate_identity(identity: Any) -> None:
     exact_keys(identity, IDENTITY_KEYS, "identity")
     if type(identity["source_dirty"]) is not bool:
         raise ReceiptError("identity.source_dirty must be boolean")
+    digest = identity["source_content_sha256"]
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise ReceiptError("identity.source_content_sha256 must be a lowercase sha256")
     if (
         not isinstance(identity["features"], list)
         or not all(isinstance(feature, str) and feature for feature in identity["features"])
@@ -452,7 +488,11 @@ def validate_execution_provenance(
         raise ReceiptError("unsupported benchmark runner mode")
     provenance = parse_object(data, "execution provenance")
     exact_keys(provenance, PROVENANCE_KEYS, "execution provenance")
-    if provenance["schema_version"] != 4 or provenance["status"] != "complete":
+    if (
+        type(provenance["schema_version"]) is not int
+        or provenance["schema_version"] != PROVENANCE_VERSION
+        or provenance["status"] != "complete"
+    ):
         raise ReceiptError("execution provenance is invalid or incomplete")
     if provenance["runner_mode"] != runner_mode or provenance["runner_flags"] != expected_flags:
         raise ReceiptError("execution provenance runner mode or flags differ")
@@ -926,7 +966,7 @@ def make_summary(
         else:
             population["p99_status"] = "available"
     return {
-        "schema_version": 2,
+        "schema_version": SUMMARY_VERSION,
         "raw_sha256": sha256(raw_bytes),
         "scenario_sha256": sha256(scenario_bytes),
         "execution_provenance_sha256": sha256(provenance_bytes) if provenance_bytes else None,

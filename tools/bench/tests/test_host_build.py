@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import sys
 import tarfile
 from pathlib import Path
@@ -12,6 +13,31 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import host_build  # noqa: E402
 import host_perf  # noqa: E402
+
+
+@pytest.mark.parametrize("index_hint", ["--assume-unchanged", "--skip-worktree"])
+def test_frozen_build_rejects_index_hidden_source_before_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, index_hint: str
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    lock = source / "Cargo.lock"
+    lock.write_text("committed lock\n")
+    for args in (
+        ["init", "-q"],
+        ["add", "Cargo.lock"],
+        ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+         "commit", "-qm", "fixture"],
+        ["update-index", index_hint, "Cargo.lock"],
+    ):
+        subprocess.run(["git", *args], cwd=source, check=True, capture_output=True)
+    lock.write_text("uncommitted lock\n")
+    assert subprocess.check_output(["git", "status", "--porcelain=v1"], cwd=source) == b""
+    monkeypatch.setattr(host_perf, "REPO", source)
+    witness = tmp_path / "witness"
+    with pytest.raises(host_perf.ReceiptError, match="clean committed source"):
+        host_build.acquire(witness, [], "host_load_probe")
+    assert not witness.exists()
 
 
 def archive(name: str = "Cargo.lock", kind: bytes = tarfile.REGTYPE) -> bytes:
@@ -69,6 +95,12 @@ def setup_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         return (args[0] + " version").encode()
 
     monkeypatch.setattr(host_build, "command_output", command)
+    monkeypatch.setattr(host_perf, "source_identity", lambda: {
+        "source_dirty": False,
+        "source_head": "a" * 40,
+        "source_tree": "b" * 40,
+        "source_content_sha256": "c" * 64,
+    })
     monkeypatch.setattr(host_perf, "build_environment", lambda: {})
 
     def build(root: Path, _features: list, _example: str) -> tuple:

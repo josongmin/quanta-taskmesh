@@ -20,6 +20,12 @@ async fn composite_child_failure_keeps_keyed_reduce_and_governance() {
     assert_eq!(raw.class_counters["parent"].started, 1);
     assert_eq!(raw.class_counters["child"].started, 3);
     assert_eq!(topology.schema_version, 1);
+    let mut wrong_capabilities = raw.clone();
+    wrong_capabilities.final_capabilities =
+        std::collections::BTreeMap::from([("unregistered".into(), 0)]);
+    assert!(wrong_capabilities
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("capability catalog")));
 
     raw.checksum += 1;
     assert!(raw
@@ -65,6 +71,24 @@ async fn composite_timeout_retains_typed_invalid_raw_and_settlement_observation(
     assert_eq!(raw.children.len(), 3);
     assert!(raw.drain_ok);
     assert!(raw.conservation_ok);
+    let mut unsettled = raw.clone();
+    unsettled.drain_ok = false;
+    unsettled.conservation_ok = false;
+    *unsettled.final_capabilities.values_mut().next().unwrap() = 1;
+    unsettled
+        .validate_against(&scenario)
+        .expect("typed INVALID diagnostic may retain registered owned capacity");
+    let mut wrong_capabilities = raw.clone();
+    wrong_capabilities.final_capabilities =
+        std::collections::BTreeMap::from([("unregistered".into(), 0)]);
+    assert!(wrong_capabilities
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("capability catalog")));
+    let retained =
+        serde_json::to_vec(&wrong_capabilities).expect("invalid diagnostic is retainable");
+    let restored: taskmesh_bench::composite_host::CompositeFailureRaw =
+        serde_json::from_slice(&retained).unwrap();
+    assert!(restored.validate_against(&scenario).is_err());
     assert_eq!(
         *failure.topology.expect("failure topology must be retained"),
         scenario.resolved_topology().expect("scenario topology")

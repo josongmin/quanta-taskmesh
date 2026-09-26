@@ -30,6 +30,9 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
     for root in (build, study, controls):
         root.mkdir()
     monkeypatch.setattr(host_perf, "_git", lambda *args: "a" * 40 if args[0] == "rev-parse" else "")
+    monkeypatch.setattr(
+        host_perf, "source_identity", lambda: {"source_head": "a" * 40, "source_dirty": False}
+    )
     witness_bytes = b'{"test": "synthetic witness"}'
     (build / "build-witness.json").write_bytes(witness_bytes)
     identity = {"source_head": "a" * 40, "source_dirty": False, "features": []}
@@ -279,3 +282,34 @@ def test_debug_and_test_profiles_cannot_admit_measurements(
     with pytest.raises(host_perf.ReceiptError, match="requires optimized non-test build"):
         admission.admit(*args[:6])
     assert not args[5].exists()
+
+
+def test_admission_rejects_actual_dirty_source_before_proof_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        host_perf, "source_identity", lambda: {"source_head": "a" * 40, "source_dirty": True}
+    )
+    with pytest.raises(host_perf.ReceiptError, match="exact clean frozen source"):
+        admission.admit(*args[:6])
+    assert args[6] == []
+    assert not args[5].exists()
+
+
+def test_admission_rejects_content_drift_after_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    identity = {"source_head": "a" * 40, "source_dirty": False}
+    sources = iter(
+        [
+            {**identity, "source_content_sha256": "a" * 64},
+            {**identity, "source_content_sha256": "b" * 64},
+        ]
+    )
+    monkeypatch.setattr(host_perf, "source_identity", lambda: next(sources))
+    with pytest.raises(host_perf.ReceiptError, match="source checkout changed"):
+        admission.admit(*args[:6])
+    assert (args[5] / "oracle.stdout").exists()
+    assert not (args[5] / "admission.json").exists()

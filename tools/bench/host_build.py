@@ -204,11 +204,12 @@ def acquire(root: Path, features: list[str], example: str) -> dict[str, Any]:
     root = root.resolve()
     features = sorted(set(features))
     recipe(features, example)
-    if command_output(["git", "status", "--porcelain=v1"]).strip():
+    identity = host_perf.source_identity()
+    if identity["source_dirty"]:
         raise host_perf.ReceiptError("frozen build requires a clean committed source")
     root.mkdir(parents=True, exist_ok=False)
-    head = command_output(["git", "rev-parse", "HEAD"]).decode().strip()
-    tree = command_output(["git", "rev-parse", "HEAD^{tree}"]).decode().strip()
+    head = identity["source_head"]
+    tree = identity["source_tree"]
     archive = command_output(["git", "archive", "--format=tar", head])
     members = archive_members(archive)
     write_new(root / "source.tar", archive)

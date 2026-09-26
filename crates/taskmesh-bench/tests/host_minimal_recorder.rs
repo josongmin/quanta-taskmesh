@@ -75,7 +75,13 @@ async fn minimal_recorder_conserves_intended_and_terminal_rows_without_latencies
     missing_capabilities.final_capabilities.clear();
     assert!(missing_capabilities
         .validate_against(&scenario)
-        .is_err_and(|error| error.contains("minimal host final governor ledger differs")));
+        .is_err_and(|error| error.contains("capability catalog")));
+    let mut wrong_capabilities = raw.clone();
+    wrong_capabilities.final_capabilities =
+        std::collections::BTreeMap::from([("unregistered".into(), 0)]);
+    assert!(wrong_capabilities
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("capability catalog")));
     let mut wrong_id = raw;
     wrong_id.records[0].id = 7;
     assert!(wrong_id

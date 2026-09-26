@@ -186,9 +186,8 @@ def admit(
     output: Path,
 ) -> dict:
     frozen = contract(contract_bytes)
-    if host_perf._git("rev-parse", "HEAD") != frozen["source_head"] or host_perf._git(
-        "status", "--porcelain=v1"
-    ):
+    source = host_perf.source_identity()
+    if source["source_head"] != frozen["source_head"] or source["source_dirty"]:
         raise host_perf.ReceiptError(
             "typed validation requires the exact clean frozen source checkout"
         )
@@ -434,9 +433,7 @@ def admit(
             raise host_perf.ReceiptError("control budget artifact changed during admission")
         if host_control_assess.assess(policy, **paths) != assessments[rate]:
             raise host_perf.ReceiptError("measured controls changed during admission")
-    if host_perf._git("rev-parse", "HEAD") != frozen["source_head"] or host_perf._git(
-        "status", "--porcelain=v1"
-    ):
+    if host_perf.source_identity() != source:
         raise host_perf.ReceiptError("source checkout changed during measured admission")
     passing = [p["rate_per_second"] for p in points if p["passes_every_run_and_cohort"]]
     report = {

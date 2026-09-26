@@ -130,6 +130,8 @@ pub struct LocalHostRun {
 impl LocalHostRun {
     pub fn validate_against(&self, scenario: &LocalHostScenario) -> Result<(), String> {
         scenario.validate()?;
+        let topology = scenario.resolved_topology()?;
+        topology.validate_capability_usage(&self.final_capabilities, "local final inventory")?;
         if self.schema_version != LOCAL_HOST_VERSION
             || self.mode != "caller_affine_local_open_loop"
             || self.scenario_id != scenario.id
@@ -152,6 +154,10 @@ impl LocalHostRun {
         }
         let mut last_observed = 0;
         for (index, sample) in self.snapshots.iter().enumerate() {
+            topology.validate_capability_usage(
+                &sample.capabilities,
+                &format!("local snapshot {index}"),
+            )?;
             if sample.intended_ns != index as u64 * self.snapshot_cadence_ns
                 || sample.observed_ns < sample.intended_ns
                 || sample.observed_ns < last_observed

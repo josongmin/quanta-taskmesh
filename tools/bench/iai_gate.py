@@ -29,11 +29,16 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
 REPO = Path(__file__).resolve().parents[2]
 CONFIG = REPO / "tools" / "bench" / "perf-gate.json"
 RUNNER = "iai-callgrind-runner"
-BASELINE_MANIFEST_VERSION = 3
-COMPARISON_MANIFEST_VERSION = 3
+BASELINE_MANIFEST_VERSION = 4
+COMPARISON_MANIFEST_VERSION = 4
 BASELINE_MANIFEST = "baseline-manifest.json"
 COMPARISON_MANIFEST = "comparison-manifest.json"
 
@@ -118,8 +123,30 @@ def detect_runner_version() -> tuple[str | None, str]:
     return path_version, "; ".join(tried)
 
 
+def linker_from_flags(flags: object, role: str) -> str | None:
+    if isinstance(flags, str):
+        arguments = flags.split()
+    elif isinstance(flags, list) and all(isinstance(arg, str) for arg in flags):
+        arguments = flags
+    else:
+        raise ValueError(f"cannot resolve rustflags executable control {role}")
+    linker = None
+    for index, argument in enumerate(arguments):
+        option = argument[2:] if argument.startswith("-C") else ""
+        if argument == "-C" and index + 1 < len(arguments):
+            option = arguments[index + 1]
+        if option.startswith("linker="):
+            linker = option[len("linker=") :]
+    return linker
+
+
 def cargo_build_context(root: Path, runner_executable: Path | None = None) -> dict[str, object]:
-    """Capture build inputs that can change codegen without changing rustc -Vv."""
+    """Bind Cargo configuration and selected tool executable bytes.
+
+    Rustup proxies are resolved to the active Cargo/compiler as well as retaining
+    launcher bytes. This boundary does not recursively attest script interpreters,
+    dynamically loaded libraries, remote compiler services or wrapper payloads.
+    """
     names = {
         "RUSTFLAGS",
         "CARGO_ENCODED_RUSTFLAGS",
@@ -127,12 +154,14 @@ def cargo_build_context(root: Path, runner_executable: Path | None = None) -> di
         "RUSTC_WRAPPER",
         "RUSTC_WORKSPACE_WRAPPER",
         "RUSTC_BOOTSTRAP",
+        "RUSTUP_TOOLCHAIN",
         "CARGO_INCREMENTAL",
         "CARGO_HOME",
         "CARGO_BUILD_RUSTFLAGS",
         "CARGO_BUILD_TARGET",
         "CARGO_BUILD_RUSTC",
         "CARGO_BUILD_RUSTC_WRAPPER",
+        "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
         "CC",
         "CXX",
         "CFLAGS",
@@ -151,11 +180,61 @@ def cargo_build_context(root: Path, runner_executable: Path | None = None) -> di
     directories = [cargo_home]
     directories.extend(parent / ".cargo" for parent in (root.resolve(), *root.resolve().parents))
     configs: dict[str, str] = {}
-    for directory in directories:
-        for name in ("config", "config.toml"):
-            path = directory / name
-            if path.is_file():
-                configs[str(path.resolve())] = hashlib.sha256(path.read_bytes()).hexdigest()
+    configuration_tools: dict[str, tuple[object, Path]] = {}
+    configuration_flags: dict[str, tuple[object, Path]] = {}
+    configured_target: object = None
+    # Cargo merges farther ancestors first; CARGO_HOME has lowest precedence.
+    ordered_directories = [cargo_home, *reversed(directories[1:])]
+    for directory in ordered_directories:
+        # Cargo uses the extensionless file when both names exist.
+        candidates = [directory / "config", directory / "config.toml"]
+        for path in next(([candidate] for candidate in candidates if candidate.is_file()), []):
+            data = path.read_bytes()
+            configs[str(path.resolve())] = hashlib.sha256(data).hexdigest()
+            document = tomllib.loads(data.decode("utf-8"))
+            build = document.get("build", {})
+            target_config = document.get("target", {})
+            if not isinstance(build, dict) or not isinstance(target_config, dict):
+                raise ValueError("Cargo build/target executable controls must be tables")
+            configured_environment = document.get("env", {})
+            if not isinstance(configured_environment, dict):
+                raise ValueError("Cargo environment controls must be a table")
+            for name in configured_environment:
+                if (
+                    name in names
+                    or name == "PATH"
+                    or name.startswith(("CARGO_TARGET_", "CARGO_PROFILE_"))
+                ):
+                    # force/relative and nested table merges alter Cargo's child
+                    # environment after this process starts. Until that resolver
+                    # is represented exactly, do not admit such configurations.
+                    raise ValueError(f"unattested Cargo [env] build control {name}")
+            configured_target = build.get("target", configured_target)
+            for key in ("rustc", "rustc-wrapper", "rustc-workspace-wrapper"):
+                if key in build:
+                    configuration_tools[f"build.{key}"] = (build[key], directory.parent)
+            if "rustflags" in build:
+                flags = build["rustflags"]
+                prior = configuration_flags.get("build.rustflags", (None, root))[0]
+                if isinstance(prior, list) and isinstance(flags, list):
+                    flags = [*prior, *flags]
+                configuration_flags["build.rustflags"] = (flags, root)
+            for target, values in target_config.items():
+                if not isinstance(values, dict):
+                    raise ValueError(f"invalid Cargo target configuration {target}")
+                if "rustflags" in values:
+                    role = f"target.{target}.rustflags"
+                    flags = values["rustflags"]
+                    prior = configuration_flags.get(role, (None, root))[0]
+                    if isinstance(prior, list) and isinstance(flags, list):
+                        flags = [*prior, *flags]
+                    configuration_flags[role] = (flags, root)
+                for key in ("linker", "runner"):
+                    if key in values:
+                        configuration_tools[f"target.{target}.{key}"] = (
+                            values[key],
+                            directory.parent,
+                        )
     if runner_executable is None:
         located = shutil.which(RUNNER)
         runner_executable = Path(located) if located else None
@@ -164,10 +243,127 @@ def cargo_build_context(root: Path, runner_executable: Path | None = None) -> di
         if runner_executable is not None and runner_executable.is_file()
         else None
     )
+    controls: dict[str, tuple[object, Path]] = dict(configuration_tools)
+    for key in ("rustc", "rustc-wrapper", "rustc-workspace-wrapper"):
+        ordinary = key.upper().replace("-", "_")
+        cargo_name = "CARGO_BUILD_" + ordinary
+        role = f"build.{key}"
+        if ordinary in os.environ:
+            controls[role] = (os.environ[ordinary], root)
+        elif cargo_name in os.environ:
+            controls[role] = (os.environ[cargo_name], root)
+    controls.setdefault("build.rustc", ("rustc", root))
+    controls["build.cargo"] = ("cargo", root)
+    selected_target = os.environ.get("CARGO_BUILD_TARGET", configured_target)
+    if selected_target is None:
+        supported_default = sys.platform in ("linux", "darwin")
+    else:
+        supported_default = isinstance(selected_target, str) and (
+            "-linux-" in selected_target or "-apple-darwin" in selected_target
+        )
+    if not supported_default:
+        raise ValueError("cannot attest default linker for an unsupported build target")
+    controls["build.default-linker"] = ("cc", root)
+    if "CARGO_ENCODED_RUSTFLAGS" in os.environ:
+        configuration_flags = {
+            "CARGO_ENCODED_RUSTFLAGS": (os.environ["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"), root)
+        }
+    elif "RUSTFLAGS" in os.environ:
+        configuration_flags = {"RUSTFLAGS": (os.environ["RUSTFLAGS"], root)}
+    else:
+        if "CARGO_BUILD_RUSTFLAGS" in os.environ:
+            configuration_flags["build.rustflags"] = (os.environ["CARGO_BUILD_RUSTFLAGS"], root)
+        for name, value in environment.items():
+            if name.startswith("CARGO_TARGET_") and name.endswith("_RUSTFLAGS"):
+                configuration_flags[name] = (value, root)
+    for role, (flags, base) in configuration_flags.items():
+        linker = linker_from_flags(flags, role)
+        if linker is not None:
+            controls[f"{role}.linker"] = (linker, base)
+    for key, value in environment.items():
+        if key.startswith("CARGO_TARGET_") and key.endswith(("_LINKER", "_RUNNER")):
+            # Also retain cfg(...) controls: Cargo may choose them for a matching
+            # target. Hashing an inactive tool is conservative, never admitting
+            # a changed effective executable under an existing fingerprint.
+            suffix = "linker" if key.endswith("_LINKER") else "runner"
+            target = key[len("CARGO_TARGET_") : -len(suffix) - 1]
+            for role in list(controls):
+                if role.startswith("target.") and role.endswith("." + suffix):
+                    configured_target = role[len("target.") : -len(suffix) - 1]
+                    if configured_target.upper().replace("-", "_").replace(".", "_") == target:
+                        del controls[role]
+            controls[key] = (value, root)
+    for key in ("CC", "CXX", "AR", "RANLIB"):
+        if key in environment:
+            controls[key] = (environment[key], root)
+    tools = {}
+    for role, (command, base) in sorted(controls.items()):
+        if command == "" and role in ("build.rustc-wrapper", "build.rustc-workspace-wrapper"):
+            continue  # Cargo explicitly disables wrappers with an empty value.
+        if role.endswith((".runner", "_RUNNER")):
+            if isinstance(command, str):
+                command = command.split()
+            if (
+                not isinstance(command, list)
+                or not command
+                or not all(isinstance(arg, str) for arg in command)
+            ):
+                raise ValueError(f"invalid executable control {role}")
+            command = command[0]
+        if not isinstance(command, str) or not command:
+            raise ValueError(f"invalid executable control {role}")
+        if "/" in command or "\\" in command:
+            executable = Path(command)
+            if not executable.is_absolute():
+                executable = base / executable
+        else:
+            search_path = os.pathsep.join(
+                str(Path(entry) if Path(entry).is_absolute() else root / entry)
+                for entry in os.environ.get("PATH", os.defpath).split(os.pathsep)
+            )
+            located = shutil.which(command, path=search_path)
+            if located is None:
+                raise ValueError(f"cannot resolve executable control {role}: {command}")
+            executable = Path(located)
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            raise ValueError(f"executable control is missing or not executable: {role}")
+        launcher = executable.resolve()
+        if role in ("build.rustc", "build.cargo"):
+            rustup = shutil.which("rustup")
+            is_proxy = launcher.name == "rustup" or (
+                rustup is not None and os.path.samefile(executable, rustup)
+            )
+            if is_proxy:
+                tools[role + ".launcher"] = {
+                    "path": str(launcher),
+                    "sha256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
+                }
+                process = subprocess.run(
+                    [str(launcher), "which", role.removeprefix("build.")],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=30,
+                )
+                compiler = Path(process.stdout.strip())
+                if (
+                    process.returncode != 0
+                    or not compiler.is_absolute()
+                    or not compiler.is_file()
+                    or not os.access(compiler, os.X_OK)
+                ):
+                    raise ValueError(f"cannot resolve active rustup executable {role}")
+                executable = compiler
+        tools[role] = {
+            "path": str(executable.resolve()),
+            "sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
+        }
     return {
         "environment": environment,
         "cargo_configs": dict(sorted(configs.items())),
         "runner_sha256": runner_sha256,
+        "tool_executables": tools,
     }
 
 
@@ -176,12 +372,26 @@ def build_context_valid(value: object) -> bool:
         "environment",
         "cargo_configs",
         "runner_sha256",
+        "tool_executables",
     }:
         return False
     environment = value["environment"]
     configs = value["cargo_configs"]
+    tools = value["tool_executables"]
     return (
-        isinstance(value["runner_sha256"], str)
+        isinstance(tools, dict)
+        and {"build.rustc", "build.cargo", "build.default-linker"}.issubset(tools)
+        and all(
+            isinstance(role, str)
+            and isinstance(record, dict)
+            and set(record) == {"path", "sha256"}
+            and isinstance(record["path"], str)
+            and Path(record["path"]).is_absolute()
+            and isinstance(record["sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is not None
+            for role, record in tools.items()
+        )
+        and isinstance(value["runner_sha256"], str)
         and re.fullmatch(r"[0-9a-f]{64}", value["runner_sha256"]) is not None
         and isinstance(environment, dict)
         and all(isinstance(key, str) and isinstance(item, str) for key, item in environment.items())

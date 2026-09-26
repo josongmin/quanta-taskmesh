@@ -133,7 +133,7 @@ def main(
             except host_perf.ReceiptError as error:
                 reason = f"control raw validation failed: {error}"
         provenance = {
-            "schema_version": 4,
+            "schema_version": host_perf.PROVENANCE_VERSION,
             "status": "invalid" if reason else "complete",
             "reason": reason,
             "scenario_sha256": host_perf.sha256(scenario_bytes),

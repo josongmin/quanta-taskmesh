@@ -34,12 +34,7 @@ def build_runner(
     if witness_home:
         import host_build
 
-        identity = {
-            "source_dirty": bool(host_perf._git("status", "--porcelain=v1")),
-            "source_head": host_perf._git("rev-parse", "HEAD"),
-            "source_tree": host_perf._git("rev-parse", "HEAD^{tree}"),
-            "lock_sha256": host_perf.sha256((host_perf.REPO / "Cargo.lock").read_bytes()),
-        }
+        identity = host_perf.source_identity()
         return host_build.runner(
             Path(witness_home) / example_name, identity, features, example_name
         )
@@ -263,7 +258,7 @@ def main() -> int:
         elif not raw_valid:
             reason = f"runner wrote invalid raw artifact: {raw_problem or 'status is not complete'}"
         provenance = {
-            "schema_version": 4,
+            "schema_version": host_perf.PROVENANCE_VERSION,
             "status": "invalid" if reason else "complete",
             "reason": reason,
             "scenario_sha256": host_perf.sha256(scenario_bytes),

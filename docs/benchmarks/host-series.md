@@ -158,7 +158,15 @@ just bench-host-admit /tmp/contract.json /tmp/taskmesh-series \
 ```
 
 Admission requires the exact clean source checkout for typed raw reconstruction,
-rechecks the ledger and measured controls, and runs a third cold build. It then
+including a comparison of tracked bytes and executable modes against HEAD that
+does not honor assume-unchanged or skip-worktree hints. Execution provenance
+schema v5 and structural receipt schema v3 bind a source-content digest as well
+as HEAD/tree/dirty state; changing one dirty checkout into another invalidates
+the acquisition. Older identity/provenance receipts must be reacquired and do
+not migrate by adding a copied digest. Frozen build acquisition uses the same
+clean-source check before archiving the pinned commit.
+
+Admission rechecks the ledger and measured controls, and runs a third cold build. It then
 executes the four named Taskmesh engine/facade oracle suites from the frozen
 source, with test-profile optimization, debug assertions and overflow checking
 explicitly matched to the measured artifact. At least 45 passing tests across all four suite results, zero ignored,

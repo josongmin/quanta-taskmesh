@@ -144,6 +144,9 @@ pub struct ClosedLoopRun {
 impl ClosedLoopRun {
     pub fn validate_against(&self, scenario: &ClosedLoopScenario) -> Result<(), String> {
         scenario.validate()?;
+        scenario
+            .resolved_topology()?
+            .validate_capability_usage(&self.final_capabilities, "closed-loop final inventory")?;
         let total = scenario.concurrency * scenario.iterations_per_slot;
         if self.schema_version != CLOSED_LOOP_VERSION
             || self.mode != "closed_loop_fixed_concurrency"

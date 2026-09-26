@@ -206,6 +206,10 @@ pub struct CompositeFailureRaw {
 impl CompositeFailureRaw {
     pub fn validate_against(&self, scenario: &CompositeScenario) -> Result<(), String> {
         scenario.validate()?;
+        scenario.resolved_topology()?.validate_capability_usage(
+            &self.final_capabilities,
+            "composite failure final inventory",
+        )?;
         if self.schema_version != COMPOSITE_HOST_VERSION
             || self.status != "invalid"
             || self.mode != "caller_orchestrated_composite"
@@ -344,6 +348,9 @@ pub struct CompositeRaw {
 impl CompositeRaw {
     pub fn validate_against(&self, scenario: &CompositeScenario) -> Result<(), String> {
         scenario.validate()?;
+        scenario
+            .resolved_topology()?
+            .validate_capability_usage(&self.final_capabilities, "composite final inventory")?;
         if self.schema_version != COMPOSITE_HOST_VERSION
             || self.mode != "caller_orchestrated_composite"
             || self.scenario_id != scenario.id

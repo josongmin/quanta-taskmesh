@@ -300,6 +300,66 @@ fn pure_producer_cap_and_lag_have_exact_boundary() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn complete_raw_rejects_failed_settlement_and_retained_ownership() {
+    let mut scenario =
+        HostScenario::from_json(&serde_json::to_vec(&valid_scenario()).unwrap()).unwrap();
+    scenario.load.snapshot_ms = 5;
+    let good = run_host_scenario_with_fault(&scenario, None)
+        .await
+        .expect("diagnostic run retains raw evidence");
+    good.validate_against(&scenario).expect("settled baseline");
+    for case in [
+        "drain",
+        "conservation",
+        "inflight",
+        "queued",
+        "capability",
+        "inventory",
+    ] {
+        let mut raw = good.clone();
+        match case {
+            "drain" => raw.drain_ok = false,
+            "conservation" => raw.conservation_ok = false,
+            "inflight" => raw.class_counters.get_mut("c").unwrap().inflight = 1,
+            "queued" => raw.class_counters.get_mut("c").unwrap().queued = 1,
+            "capability" => *raw.final_capabilities.values_mut().next().unwrap() = 1,
+            "inventory" => raw.final_capabilities.clear(),
+            _ => unreachable!(),
+        }
+        assert_eq!(raw.status, HostRunStatus::Complete);
+        assert!(raw.validate().is_err(), "{case}");
+        assert!(raw.validate_against(&scenario).is_err(), "{case}");
+        // Failed evidence stays serializable for diagnosis, including callers
+        // that retain it before invoking the validation boundary.
+        let bytes = serde_json::to_vec(&raw).expect("failed raw is retainable");
+        let restored: RawHostRun = serde_json::from_slice(&bytes).unwrap();
+        assert!(restored.validate_against(&scenario).is_err(), "{case}");
+    }
+    let mut forged = good.clone();
+    forged.final_capabilities = BTreeMap::from([("unregistered".into(), 0)]);
+    assert!(forged
+        .validate_against(&scenario)
+        .unwrap_err()
+        .contains("capability catalog"));
+    let mut forged = good.clone();
+    forged.snapshots[0].capabilities = BTreeMap::from([("unregistered".into(), 0)]);
+    assert!(forged
+        .validate_against(&scenario)
+        .unwrap_err()
+        .contains("capability catalog"));
+    let mut forged = good;
+    *forged.snapshots[0]
+        .capabilities
+        .values_mut()
+        .next()
+        .unwrap() = u32::MAX;
+    assert!(forged
+        .validate_against(&scenario)
+        .unwrap_err()
+        .contains("resolved limit"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn producer_and_sampler_failures_return_bounded_invalid_raw() {
     let scenario =
         HostScenario::from_json(&serde_json::to_vec(&valid_scenario()).unwrap()).unwrap();

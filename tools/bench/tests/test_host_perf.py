@@ -101,6 +101,7 @@ def fixture() -> tuple[dict, dict, dict, dict]:
         "source_head": "a" * 40,
         "source_tree": "b" * 40,
         "source_dirty": False,
+        "source_content_sha256": "f" * 64,
         "lock_sha256": "c" * 64,
         "rustc": "rustc synthetic",
         "features": [],
@@ -189,7 +190,7 @@ def complete() -> tuple[bytes, bytes, bytes, dict, dict]:
 
 def provenance(raw: bytes, scenario: bytes, identity: dict) -> dict:
     return {
-        "schema_version": 4,
+        "schema_version": host_perf.PROVENANCE_VERSION,
         "status": "complete",
         "reason": None,
         "scenario_sha256": host_perf.sha256(scenario),
@@ -749,6 +750,21 @@ def test_precision_floor_and_dirty_source_reject() -> None:
         host_perf.verify_receipt(
             raw_bytes, scenario_bytes, encoded(dirty), identity, require_performance=True
         )
+
+
+def test_legacy_identity_without_content_custody_rejects() -> None:
+    _, _, identity, _ = fixture()
+    del identity["source_content_sha256"]
+    with pytest.raises(host_perf.ReceiptError, match="identity: missing/unknown fields"):
+        host_perf.validate_identity(identity)
+
+
+@pytest.mark.parametrize("digest", [None, "a", "A" * 64, True])
+def test_identity_requires_exact_content_digest(digest: object) -> None:
+    _, _, identity, _ = fixture()
+    identity["source_content_sha256"] = digest
+    with pytest.raises(host_perf.ReceiptError, match="source_content_sha256"):
+        host_perf.validate_identity(identity)
 
 
 def test_global_tail_count_cannot_hide_thin_class_population() -> None:

@@ -143,6 +143,9 @@ impl MinimalHostRun {
         if self.status != HostRunStatus::Complete {
             return Err("minimal host run is invalid".into());
         }
+        scenario
+            .resolved_topology()?
+            .validate_capability_usage(&self.final_capabilities, "minimal host final inventory")?;
         if self.schema_version != MINIMAL_HOST_VERSION
             || self.scenario_id != scenario.id
             || self.injection_window_ns != scenario.load.injection_ms * 1_000_000

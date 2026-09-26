@@ -308,6 +308,13 @@ impl HostScenario {
             ))
     }
 
+    pub fn resolved_topology(&self) -> Result<crate::host_load::ResolvedHostTopology, String> {
+        self.validate()?;
+        Ok(crate::host_load::ResolvedHostTopology::from_runtime(
+            &self.build_runtime()?,
+        ))
+    }
+
     pub fn build_runtime(&self) -> Result<TokioRuntime, String> {
         let topology = self.topology_config();
         let resources = ResourceBudget::new()

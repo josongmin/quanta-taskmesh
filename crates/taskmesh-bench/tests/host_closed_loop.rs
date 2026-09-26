@@ -22,6 +22,13 @@ async fn fixed_caller_slots_reconcile_without_an_intended_arrival_schedule() {
     assert_eq!(topology.schema_version, 1);
     assert!(raw.final_capabilities.values().all(|held| *held == 0));
 
+    let mut wrong_capabilities = raw.clone();
+    wrong_capabilities.final_capabilities =
+        std::collections::BTreeMap::from([("unregistered".into(), 0)]);
+    assert!(wrong_capabilities
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("capability catalog")));
+
     raw.records[0].as_mut().expect("first record").outcome = ResponseOutcome::Cancelled;
     assert!(raw
         .validate_against(&scenario)

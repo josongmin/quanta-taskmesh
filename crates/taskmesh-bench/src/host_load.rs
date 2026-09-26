@@ -61,6 +61,29 @@ impl ResolvedHostTopology {
             },
         }
     }
+
+    /// Bind retained usage observations to the runtime's registered pools.
+    /// Nonzero usage is valid in snapshots and diagnostic failure artifacts.
+    pub(crate) fn validate_capability_usage(
+        &self,
+        usage: &BTreeMap<String, u32>,
+        context: &str,
+    ) -> Result<(), String> {
+        if usage.keys().ne(self.capability_limits.keys()) {
+            return Err(format!(
+                "{context}: capability catalog differs from resolved runtime"
+            ));
+        }
+        if usage
+            .iter()
+            .any(|(pool, held)| *held > self.capability_limits[pool])
+        {
+            return Err(format!(
+                "{context}: capability usage exceeds resolved limit"
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -440,15 +463,16 @@ impl RawHostRun {
         if actual.waiting != 0 {
             return Err("settlement contains unclassified waiting callers".into());
         }
-        if self.drain_ok
-            && (!self.conservation_ok
-                || self
-                    .class_counters
-                    .values()
-                    .any(|class| class.inflight != 0 || class.queued != 0)
-                || self.final_capabilities.values().any(|in_use| *in_use != 0))
+        if !self.drain_ok
+            || !self.conservation_ok
+            || self
+                .class_counters
+                .values()
+                .any(|class| class.inflight != 0 || class.queued != 0)
+            || self.final_capabilities.is_empty()
+            || self.final_capabilities.values().any(|in_use| *in_use != 0)
         {
-            return Err("drained run still owns engine capacity".into());
+            return Err("complete host run did not settle owned engine capacity".into());
         }
         Ok(())
     }
@@ -456,6 +480,8 @@ impl RawHostRun {
     pub fn validate_against(&self, scenario: &HostScenario) -> Result<(), String> {
         self.validate()?;
         scenario.validate()?;
+        let topology = scenario.resolved_topology()?;
+        topology.validate_capability_usage(&self.final_capabilities, "host final inventory")?;
         if self.scenario_id != scenario.id || self.records.len() != scenario.offers.len() {
             return Err("raw scenario identity or offer population differs".into());
         }
@@ -469,6 +495,10 @@ impl RawHostRun {
             return Err("raw snapshot cadence differs from scenario".into());
         }
         for (index, sample) in self.snapshots.iter().enumerate() {
+            topology.validate_capability_usage(
+                &sample.capabilities,
+                &format!("host snapshot {index}"),
+            )?;
             if sample.classes.len() != scenario.classes.len()
                 || scenario
                     .classes

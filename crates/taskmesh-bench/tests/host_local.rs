@@ -17,6 +17,12 @@ async fn caller_affine_non_send_fixture_keeps_bounded_raw_rows() {
         .all(|row| matches!(row.outcome.as_ref(), Some(ResponseOutcome::Success))));
     assert_eq!(raw.class_counters["local"].started, 2);
     assert_eq!(topology.schema_version, 1);
+    let mut wrong_capabilities = raw.clone();
+    wrong_capabilities.final_capabilities =
+        std::collections::BTreeMap::from([("unregistered".into(), 0)]);
+    assert!(wrong_capabilities
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("capability catalog")));
     raw.records[0].pacer_observed_ns += 1;
     assert!(raw
         .validate_against(&scenario)
@@ -75,6 +81,16 @@ async fn local_controls_and_snapshot_keep_caller_disposition_and_settlement_type
     raw.validate_against(&scenario)
         .expect("local control raw parity");
     assert_eq!(raw.snapshots.len(), 10);
+    let mut wrong_capabilities = raw.clone();
+    wrong_capabilities.snapshots[0].capabilities =
+        std::collections::BTreeMap::from([("unregistered".into(), 0)]);
+    assert!(wrong_capabilities
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("capability catalog")));
+    wrong_capabilities.final_capabilities = wrong_capabilities.snapshots[0].capabilities.clone();
+    assert!(wrong_capabilities
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("capability catalog")));
     assert!(raw.drain_ok && raw.conservation_ok);
     assert_eq!(raw.class_counters["local"].inflight, 0);
     for row in &raw.records {

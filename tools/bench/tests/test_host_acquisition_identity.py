@@ -32,7 +32,9 @@ def test_prelaunch_drift_rejects_before_process_creation(
     identities = iter([baseline, baseline, {**baseline, changed_field: "B"}])
     monkeypatch.setattr(host_perf, "local_identity", lambda *_args: next(identities))
     module = host_run if mode == "full" else generator_run
-    monkeypatch.setattr(module, "build_runner", lambda *_args: (binary, [], ["mock build"]))
+    monkeypatch.setattr(
+        module, "build_runner", lambda *_args, **_kwargs: (binary, [], ["mock build"])
+    )
 
     def unexpected_launch(*_args: object, **_kwargs: object) -> None:
         pytest.fail("source drift must reject before creating a child process")
@@ -83,9 +85,7 @@ def test_source_identity_rejects_index_hint_hidden_edits(
     source = source_repo(tmp_path, monkeypatch)
     clean = host_perf.source_identity()
     assert clean["source_dirty"] is False
-    subprocess.run(
-        ["git", "update-index", flag, "probe.rs"], cwd=tmp_path, check=True
-    )
+    subprocess.run(["git", "update-index", flag, "probe.rs"], cwd=tmp_path, check=True)
     source.write_text("hidden edit")
     assert host_perf._git("status", "--porcelain=v1") == ""
     changed = host_perf.source_identity()

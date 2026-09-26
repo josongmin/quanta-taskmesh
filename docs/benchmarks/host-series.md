@@ -187,7 +187,7 @@ just bench-host-admit /tmp/contract.json /tmp/taskmesh-series \
 Admission requires the exact clean source checkout for typed raw reconstruction,
 including a comparison of tracked bytes and executable modes against HEAD that
 does not honor assume-unchanged or skip-worktree hints. Execution provenance
-schema v5 and structural receipt schema v3 bind a source-content digest as well
+schema v6 and structural receipt schema v3 bind a source-content digest as well
 as HEAD/tree/dirty state; changing one dirty checkout into another invalidates
 the acquisition. Older identity/provenance receipts must be reacquired and do
 not migrate by adding a copied digest. Frozen build acquisition uses the same
@@ -197,6 +197,22 @@ native tool executable bytes from the actual frozen build directory. This
 context is rechecked before and after cold builds and correctness oracles;
 older build witnesses must be reacquired. Interpreter dependencies and shared
 libraries are outside this executable-file custody contract.
+
+Acquisition subprocesses share bounded execution and cooperative descendant
+ownership. Build, probe, and validator deadlines default to 1800 seconds and
+can be declared with `--build-timeout-seconds`, `--probe-timeout-seconds`, and
+`--validator-timeout-seconds` on standalone runners. Control collectors accept
+`--timeout-seconds`. The resource artifact schema v3 requires successful terminal
+execution flags; timeout, signal, capture overflow, and live owned descendants
+reject acquisition even when the parent exits zero. Combined captured output is
+limited to 8 MiB, with partial logs retained on failure. Interrupted controls
+retain every planned arm, marking remaining arms `not_launched`.
+
+Control bundles require A/A v2, snapshot v2, recorder v3, and sampler v2;
+special-mode receipts require v2. Older receipts must be reacquired. These
+execution deadlines bound collection work; they are not performance SLOs or
+longitudinal RSS/recovery admission thresholds. See
+[acquisition ownership audit](../audits/2026-09-27-acquisition-ownership.md).
 
 Admission binds every typed-validated artifact to the sealed ledger digest,
 hashes the exact bytes used for tail analysis, rechecks measured controls, and

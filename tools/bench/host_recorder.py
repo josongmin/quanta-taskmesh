@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,7 +13,7 @@ import host_observer
 import host_perf
 from host_run import retain_control_bundle
 
-BUNDLE_VERSION = 2
+BUNDLE_VERSION = 3
 
 
 def mode_for(index: int) -> str:
@@ -103,10 +102,17 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
             "identity",
             "runs",
             "failures",
+            "expected_runs",
+            "timeout_seconds",
+            "executions",
         },
         "recorder study",
     )
-    if bundle["schema_version"] != BUNDLE_VERSION or bundle["kind"] != "recorder_full_minimal":
+    if (
+        type(bundle["schema_version"]) is not int
+        or bundle["schema_version"] != BUNDLE_VERSION
+        or bundle["kind"] != "recorder_full_minimal"
+    ):
         raise host_perf.ReceiptError("unsupported recorder study")
     if bundle["status"] != "diagnostic_complete" or bundle["failures"] != []:
         raise host_perf.ReceiptError("recorder study is incomplete")
@@ -121,6 +127,7 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
     if not isinstance(runs, list) or len(runs) < 2 or len(runs) % 2:
         raise host_perf.ReceiptError("recorder study lacks complete pairs")
     expected_cadence = None
+    host_aa.validate_executions(bundle, directory, runs)
     for index, recorded in enumerate(runs):
         if not isinstance(recorded, dict):
             raise host_perf.ReceiptError("recorder run must be an object")
@@ -151,7 +158,10 @@ def acquire(
     directory: Path,
     pairs: int,
     features: tuple[str, ...] = (),
+    *,
+    timeout_seconds: float = 1800,
 ) -> dict[str, Any]:
+    host_aa.validate_timeout(timeout_seconds)
     if pairs < 1 or pairs > 50:
         raise host_perf.ReceiptError("recorder pairs must be 1..=50")
     scenario_bytes = scenario.read_bytes()
@@ -161,6 +171,7 @@ def acquire(
         raise host_perf.ReceiptError("recorder study requires Snapshot sampling off")
     directory.mkdir(parents=True, exist_ok=False)
     runs = []
+    executions = []
     failures = []
     common_identity = None
     common_binary = None
@@ -185,11 +196,10 @@ def acquire(
                 str(artifact["raw"]),
                 *(part for feature in features for part in ("--feature", feature)),
             ]
-        result = subprocess.run(
-            command, cwd=host_perf.REPO, capture_output=True, text=True, check=False
-        )
-        if result.returncode != 0:
-            failures.append({"index": index, "reason": result.stderr[-1000:]})
+        terminal, reason = host_aa.execute_arm(directory, index, command, timeout_seconds)
+        executions.append(terminal)
+        if reason:
+            failures.append({"index": index, "reason": reason})
             break
         try:
             row, identity = verified_run(directory, index, scenario_bytes, mode)
@@ -203,6 +213,7 @@ def acquire(
             failures.append({"index": index, "reason": "recorder source, host or binary changed"})
             break
         runs.append(row)
+    host_aa.account_unlaunched(directory, executions, failures, pairs * 2, timeout_seconds)
     bundle = {
         "schema_version": BUNDLE_VERSION,
         "kind": "recorder_full_minimal",
@@ -212,6 +223,9 @@ def acquire(
         "identity": common_identity,
         "runs": runs,
         "failures": failures,
+        "expected_runs": pairs * 2,
+        "timeout_seconds": timeout_seconds,
+        "executions": executions,
     }
     retain_control_bundle(
         directory / "recorder-bundle.json",
@@ -229,10 +243,16 @@ def main() -> int:
     parser.add_argument("directory", type=Path)
     parser.add_argument("--pairs", type=int, default=1)
     parser.add_argument("--feature", action="append", default=[])
+    parser.add_argument("--timeout-seconds", type=float, default=1800)
     args = parser.parse_args()
     try:
         bundle = acquire(
-            args.scenario, args.calibration, args.directory, args.pairs, tuple(args.feature)
+            args.scenario,
+            args.calibration,
+            args.directory,
+            args.pairs,
+            tuple(args.feature),
+            timeout_seconds=args.timeout_seconds,
         )
         print(
             f"RECORDER_DIAGNOSTIC performance=UNQUALIFIED runs={len(bundle['runs'])} "

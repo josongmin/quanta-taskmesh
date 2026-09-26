@@ -7,13 +7,13 @@ observations, not exact RSS or thread high-water marks.
 
 from __future__ import annotations
 
-import subprocess
 import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
 
 import psutil
+from acquisition_process import execution_record, run_acquisition
 
 
 class ProcessResourceSampler:
@@ -92,33 +92,41 @@ class ProcessResourceSampler:
 
 
 def sample_subprocess(
-    command: list[str], cwd: Path, cadence_ms: int = 250, *, sample_resources: bool = True
+    command: list[str],
+    cwd: Path,
+    cadence_ms: int = 250,
+    *,
+    sample_resources: bool = True,
+    timeout_seconds: float = 1800,
 ) -> tuple[int, int, str, dict[str, Any]]:
-    """Run one child, optionally omitting the observer for a paired control."""
+    """Run an owned bounded child and sample that exact launched PID."""
     started_ns = time.monotonic_ns()
     started_epoch_ns = time.time_ns()
     boot_time_ns = round(psutil.boot_time() * 1_000_000_000)
-    child = subprocess.Popen(
-        command,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if sample_resources:
-        sampler = ProcessResourceSampler(child.pid, cadence_ms=cadence_ms)
-        sampler.start()
-        try:
-            _, stderr = child.communicate()
-        finally:
+    sampler = None
+    pid = None
+
+    def started(child) -> None:
+        nonlocal sampler, pid
+        pid = child.pid
+        if sample_resources:
+            sampler = ProcessResourceSampler(pid, cadence_ms=cadence_ms)
+            sampler.start()
+
+    try:
+        result = run_acquisition(
+            command, cwd=cwd, timeout_seconds=timeout_seconds, on_started=started
+        )
+    finally:
+        if sampler is not None:
             resources = sampler.stop()
-    else:
-        _, stderr = child.communicate()
+    assert pid is not None
+    if sampler is None:
         resources = {
             "schema_version": 2,
             "status": "unavailable",
             "reason": "resource sampling intentionally disabled for paired control",
-            "pid": child.pid,
+            "pid": pid,
             "process_create_time_ns": None,
             "boot_time_ns": boot_time_ns,
             "cadence_ms": cadence_ms,
@@ -128,4 +136,18 @@ def sample_subprocess(
             "sampling_ended_epoch_ns": time.time_ns(),
             "samples": [],
         }
-    return child.returncode, child.pid, stderr, resources
+    resources["schema_version"] = 3
+    resources["execution"] = execution_record(result, timeout_seconds)
+    incomplete = (
+        result.returncode != 0
+        or result.timed_out
+        or result.interrupted_by_signal is not None
+        or result.aborted_early
+    )
+    code = result.returncode if result.returncode is not None else 1
+    if incomplete and code == 0:
+        code = 1
+    stderr = result.stderr
+    if incomplete and result.stdout:
+        stderr += "\nACQUISITION: partial stdout\n" + result.stdout
+    return code, pid, stderr, resources

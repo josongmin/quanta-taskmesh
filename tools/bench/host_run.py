@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
@@ -15,11 +15,16 @@ from pathlib import Path
 from typing import Any
 
 import host_perf
+from acquisition_process import run_acquisition
 from process_resource import sample_subprocess
 
 
 def build_runner(
-    features: list[str], example_name: str = "host_load_probe"
+    features: list[str],
+    example_name: str = "host_load_probe",
+    *,
+    timeout_seconds: float = 1800,
+    execution_path: Path | None = None,
 ) -> tuple[Path, list[str], list[str]]:
     if example_name not in (
         "host_load_probe",
@@ -50,11 +55,17 @@ def build_runner(
     ]
     if features:
         command.extend(["--features", ",".join(features)])
-    result = subprocess.run(
-        command, cwd=host_perf.REPO, capture_output=True, text=True, check=False
-    )
-    if result.returncode != 0:
-        raise host_perf.ReceiptError(f"host runner build failed: {result.stderr[-2000:]}")
+    result = run_acquisition(command, cwd=host_perf.REPO, timeout_seconds=timeout_seconds)
+    if execution_path is not None:
+        retain_execution(execution_path, result, command, host_perf.REPO, timeout_seconds)
+    if execution_failed(result):
+        if execution_path is None:
+            execution_path = Path(tempfile.mkdtemp(prefix="taskmesh-host-build-failure-")) / "build"
+            retain_execution(execution_path, result, command, host_perf.REPO, timeout_seconds)
+        raise host_perf.ReceiptError(
+            f"host runner build failed: {result.stderr[-2000:]} "
+            f"execution={execution_artifacts(execution_path)[2]}"
+        )
     artifacts: list[dict[str, Any]] = []
     for line in result.stdout.splitlines():
         try:
@@ -74,6 +85,75 @@ def build_runner(
     if not binary.is_file():
         raise host_perf.ReceiptError("built host runner binary is missing")
     return binary, sorted(artifacts[0]["features"]), command
+
+
+def positive_timeout(value: str) -> float:
+    try:
+        timeout = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("deadline must be a positive finite number") from error
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise argparse.ArgumentTypeError("deadline must be a positive finite number")
+    return timeout
+
+
+def add_timeout_arguments(parser: argparse.ArgumentParser) -> None:
+    for phase in ("build", "validator", "probe"):
+        parser.add_argument(f"--{phase}-timeout-seconds", type=positive_timeout, default=1800.0)
+
+
+def execution_failed(result: Any) -> bool:
+    return (
+        result.returncode != 0
+        or result.timed_out
+        or result.interrupted_by_signal is not None
+        or result.aborted_early
+    )
+
+
+def execution_artifacts(prefix: Path) -> list[Path]:
+    return [
+        prefix.with_name(prefix.name + suffix)
+        for suffix in (".stdout", ".stderr", ".execution.json")
+    ]
+
+
+def retain_execution(
+    prefix: Path, result: Any, command: list[str], cwd: Path, timeout_seconds: float
+) -> None:
+    stdout, stderr, terminal = execution_artifacts(prefix)
+    stdout_bytes, stderr_bytes = result.stdout.encode(), result.stderr.encode()
+    write_new(stdout, stdout_bytes)
+    write_new(stderr, stderr_bytes)
+    write_new(
+        terminal,
+        host_perf.canonical(
+            {
+                "schema_version": 1,
+                "status": "failed" if execution_failed(result) else "complete",
+                "command": command,
+                "cwd": str(cwd.resolve()),
+                "timeout_seconds": timeout_seconds,
+                "returncode": result.returncode,
+                "timed_out": result.timed_out,
+                "interrupted_by_signal": result.interrupted_by_signal,
+                "aborted_early": result.aborted_early,
+                "stdout_sha256": host_perf.sha256(stdout_bytes),
+                "stderr_sha256": host_perf.sha256(stderr_bytes),
+            }
+        )
+        + b"\n",
+    )
+
+
+def probe_failed(resources: dict[str, Any]) -> bool:
+    execution = resources.get("execution", {})
+    return (
+        execution.get("returncode") != 0
+        or execution.get("timed_out") is not False
+        or execution.get("interrupted_by_signal") is not None
+        or execution.get("aborted_early") is not False
+    )
 
 
 def write_new(path: Path, data: bytes) -> None:
@@ -165,12 +245,16 @@ def main() -> int:
     parser.add_argument("calibration", type=Path)
     parser.add_argument("--feature", action="append", default=[])
     parser.add_argument("--no-resource-sampling", action="store_true")
+    add_timeout_arguments(parser)
     args = parser.parse_args()
     provenance_path = args.raw.with_name(args.raw.name + ".provenance.json")
     executable_path = args.raw.with_name(args.raw.name + ".runner")
     topology_path = args.raw.with_name(args.raw.name + ".topology.json")
     resource_path = args.raw.with_name(args.raw.name + ".resources.json")
     rejection_path = args.raw.with_name(args.raw.name + ".rejection.json")
+    build_execution = args.raw.with_name(args.raw.name + ".build")
+    validator_execution = args.raw.with_name(args.raw.name + ".validation")
+    probe_stderr_path = args.raw.with_name(args.raw.name + ".probe.stderr")
     owns_artifacts = False
     phase = "preflight"
     try:
@@ -184,6 +268,9 @@ def main() -> int:
                 topology_path,
                 resource_path,
                 rejection_path,
+                *execution_artifacts(build_execution),
+                *execution_artifacts(validator_execution),
+                probe_stderr_path,
             )
         ):
             raise host_perf.ReceiptError(
@@ -196,7 +283,9 @@ def main() -> int:
         features = sorted(set(args.feature))
         build_start_identity = host_perf.local_identity(scenario, features)
         phase = "build"
-        binary, artifact_features, build_command = build_runner(features)
+        binary, artifact_features, build_command = build_runner(
+            features, timeout_seconds=args.build_timeout_seconds, execution_path=build_execution
+        )
         if host_perf.local_identity(scenario, features) != build_start_identity:
             raise host_perf.ReceiptError("source, toolchain or host identity changed during build")
         # Run a private copy so another Cargo build cannot replace the measured
@@ -227,8 +316,10 @@ def main() -> int:
                 ],
                 cwd=host_perf.REPO,
                 sample_resources=not args.no_resource_sampling,
+                timeout_seconds=args.probe_timeout_seconds,
             )
             resource_bytes = host_perf.canonical(resources) + b"\n"
+            write_new(probe_stderr_path, runner_stderr.encode())
             write_new(resource_path, resource_bytes)
             end_identity = host_perf.local_identity(scenario, features)
             binary_unchanged = host_perf.sha256(sealed_binary.read_bytes()) == binary_digest
@@ -249,7 +340,7 @@ def main() -> int:
             not binary_unchanged or host_perf.sha256(executable_path.read_bytes()) != binary_digest
         ):
             reason = "sealed or retained executable changed during run"
-        elif runner_exit_code != 0:
+        elif runner_exit_code != 0 or probe_failed(resources):
             reason = f"runner exited {runner_exit_code}: {runner_stderr[-1000:]}"
         elif raw_bytes is None:
             reason = "runner did not write raw artifact"
@@ -281,6 +372,7 @@ def main() -> int:
         if reason is None:
             assert raw_bytes is not None
             provisional = host_perf.canonical(provenance) + b"\n"
+            phase = "validation"
             try:
                 summary = host_perf.make_summary(
                     raw_bytes,
@@ -292,6 +384,8 @@ def main() -> int:
                     executable_bytes,
                     topology_bytes,
                     resource_bytes,
+                    validator_timeout_seconds=args.validator_timeout_seconds,
+                    validator_execution_prefix=validator_execution,
                 )
             except host_perf.ReceiptError as error:
                 provenance["status"] = "invalid"
@@ -317,7 +411,7 @@ def main() -> int:
                     return 0
         write_new(provenance_path, host_perf.canonical(provenance) + b"\n")
         raise host_perf.ReceiptError(provenance["reason"] or "host run was invalid")
-    except (OSError, host_perf.ReceiptError) as error:
+    except (OSError, ValueError, host_perf.ReceiptError) as error:
         if owns_artifacts:
             retain_rejection(rejection_path, phase, error)
         print(f"host run rejected: {error}", file=sys.stderr)

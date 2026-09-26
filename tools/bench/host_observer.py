@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,7 +13,7 @@ import host_aa
 import host_perf
 from host_run import retain_control_bundle, write_new
 
-BUNDLE_VERSION = 1
+BUNDLE_VERSION = 2
 
 
 def mode_for(index: int) -> str:
@@ -51,10 +50,17 @@ def verify_bundle(bundle_bytes: bytes, directory: Path) -> dict[str, Any]:
             "identity",
             "runs",
             "failures",
+            "expected_runs",
+            "timeout_seconds",
+            "executions",
         },
         "Snapshot study",
     )
-    if bundle["schema_version"] != BUNDLE_VERSION or bundle["kind"] != "snapshot_on_off":
+    if (
+        type(bundle["schema_version"]) is not int
+        or bundle["schema_version"] != BUNDLE_VERSION
+        or bundle["kind"] != "snapshot_on_off"
+    ):
         raise host_perf.ReceiptError("unsupported Snapshot study")
     if bundle["status"] != "diagnostic_complete" or bundle["failures"] != []:
         raise host_perf.ReceiptError("Snapshot study is incomplete")
@@ -75,6 +81,7 @@ def verify_bundle(bundle_bytes: bytes, directory: Path) -> dict[str, Any]:
     runs = bundle["runs"]
     if not isinstance(runs, list) or len(runs) < 2 or len(runs) % 2:
         raise host_perf.ReceiptError("Snapshot study lacks complete pairs")
+    host_aa.validate_executions(bundle, directory, runs)
     for index, recorded in enumerate(runs):
         if not isinstance(recorded, dict):
             raise host_perf.ReceiptError("Snapshot run must be an object")
@@ -100,7 +107,10 @@ def acquire(
     pairs: int,
     cadence_ms: int,
     features: tuple[str, ...] = (),
+    *,
+    timeout_seconds: float = 1800,
 ) -> dict[str, Any]:
+    host_aa.validate_timeout(timeout_seconds)
     if pairs < 1 or pairs > 50:
         raise host_perf.ReceiptError("Snapshot pairs must be 1..=50")
     off_bytes, on_bytes = scenario_pair(scenario.read_bytes(), cadence_ms)
@@ -110,6 +120,7 @@ def acquire(
     write_new(off_path, off_bytes)
     write_new(on_path, on_bytes)
     runs = []
+    executions = []
     failures = []
     common_identity = None
     common_binary = None
@@ -118,7 +129,9 @@ def acquire(
         source_path = on_path if mode == "on" else off_path
         source_bytes = on_bytes if mode == "on" else off_bytes
         artifact = host_aa.paths(directory, index)
-        result = subprocess.run(
+        terminal, reason = host_aa.execute_arm(
+            directory,
+            index,
             [
                 sys.executable,
                 str(Path(__file__).with_name("host_run.py")),
@@ -128,13 +141,11 @@ def acquire(
                 str(calibration),
                 *(part for feature in features for part in ("--feature", feature)),
             ],
-            cwd=host_perf.REPO,
-            capture_output=True,
-            text=True,
-            check=False,
+            timeout_seconds,
         )
-        if result.returncode != 0:
-            failures.append({"index": index, "reason": result.stderr[-1000:]})
+        executions.append(terminal)
+        if reason:
+            failures.append({"index": index, "reason": reason})
             break
         try:
             row, identity = host_aa.verified_run(directory, index, source_bytes)
@@ -149,6 +160,7 @@ def acquire(
             failures.append({"index": index, "reason": "Snapshot source, host or binary changed"})
             break
         runs.append(row)
+    host_aa.account_unlaunched(directory, executions, failures, pairs * 2, timeout_seconds)
     bundle = {
         "schema_version": BUNDLE_VERSION,
         "kind": "snapshot_on_off",
@@ -160,6 +172,9 @@ def acquire(
         "identity": common_identity,
         "runs": runs,
         "failures": failures,
+        "expected_runs": pairs * 2,
+        "timeout_seconds": timeout_seconds,
+        "executions": executions,
     }
     retain_control_bundle(
         directory / "snapshot-bundle.json",
@@ -178,6 +193,7 @@ def main() -> int:
     parser.add_argument("--pairs", type=int, default=1)
     parser.add_argument("--snapshot-ms", type=int, required=True)
     parser.add_argument("--feature", action="append", default=[])
+    parser.add_argument("--timeout-seconds", type=float, default=1800)
     args = parser.parse_args()
     try:
         bundle = acquire(
@@ -187,6 +203,7 @@ def main() -> int:
             args.pairs,
             args.snapshot_ms,
             tuple(args.feature),
+            timeout_seconds=args.timeout_seconds,
         )
         print(
             f"SNAPSHOT_DIAGNOSTIC performance=UNQUALIFIED runs={len(bundle['runs'])} "

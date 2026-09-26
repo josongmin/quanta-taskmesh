@@ -14,6 +14,7 @@ from pathlib import Path
 
 import host_perf
 import host_run
+from acquisition_process import run_acquisition
 from process_resource import sample_subprocess
 
 RUNNERS = {
@@ -21,6 +22,7 @@ RUNNERS = {
     "local": "host_local_probe",
     "composite": "host_composite_probe",
 }
+SPECIAL_RECEIPT_VERSION = 2
 
 
 def source_content_sha256() -> str:
@@ -30,6 +32,7 @@ def source_content_sha256() -> str:
         cwd=host_perf.REPO,
         capture_output=True,
         check=True,
+        timeout=30,
     ).stdout.split(b"\0")
     digest = hashlib.sha256()
     for name in sorted(set(names) - {b""}):
@@ -51,7 +54,10 @@ def source_content_sha256() -> str:
     return digest.hexdigest()
 
 
-def verify_receipt(directory: Path, *, require_current_source: bool = False) -> dict:
+def verify_receipt(
+    directory: Path, *, require_current_source: bool = False, timeout_seconds: float = 1800
+) -> dict:
+    directory = directory.resolve()
     receipt = host_perf.parse_object((directory / "receipt.json").read_bytes(), "special receipt")
     expected = {
         "schema_version",
@@ -76,8 +82,13 @@ def verify_receipt(directory: Path, *, require_current_source: bool = False) -> 
         "source_content_sha256",
     }
     host_perf.exact_keys(receipt, expected, "special receipt")
-    if type(receipt["schema_version"]) is not int or receipt["schema_version"] != 1:
-        raise host_perf.ReceiptError("special receipt version differs")
+    if (
+        type(receipt["schema_version"]) is not int
+        or receipt["schema_version"] != SPECIAL_RECEIPT_VERSION
+    ):
+        raise host_perf.ReceiptError(
+            "special receipt version differs; reacquire execution evidence"
+        )
     if not isinstance(receipt["mode"], str) or receipt["mode"] not in RUNNERS:
         raise host_perf.ReceiptError("special receipt version or mode differs")
     if receipt["status"] != "complete" or receipt["reason"] is not None:
@@ -149,26 +160,37 @@ def verify_receipt(directory: Path, *, require_current_source: bool = False) -> 
         for field in ("source_head", "source_tree", "source_dirty", "lock_sha256", "rustc"):
             if current[field] != source[field]:
                 raise host_perf.ReceiptError(f"current source/toolchain {field} differs")
-    result = subprocess.run(
-        [
-            str(directory / "validator"),
-            receipt["mode"],
-            str(directory / "scenario"),
-            str(directory / "raw"),
-            str(directory / "topology"),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
+    command = [
+        str(directory / "validator"),
+        receipt["mode"],
+        str(directory / "scenario"),
+        str(directory / "raw"),
+        str(directory / "topology"),
+    ]
+    result = run_acquisition(command, cwd=host_perf.REPO, timeout_seconds=timeout_seconds)
+    if host_run.execution_failed(result):
+        # Verification is repeatable; each failure owns a fresh log directory.
+        failure = Path(tempfile.mkdtemp(prefix="validator-failure-", dir=directory))
+        host_run.retain_execution(
+            failure / "validator", result, command, host_perf.REPO, timeout_seconds
+        )
         raise host_perf.ReceiptError(
             f"typed special raw/topology rejected: {result.stderr[-1000:]}"
         )
     return receipt
 
 
-def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]) -> None:
+def acquire(
+    mode: str,
+    scenario_path: Path,
+    directory: Path,
+    features: list[str],
+    *,
+    build_timeout_seconds: float = 1800,
+    validator_timeout_seconds: float = 1800,
+    probe_timeout_seconds: float = 1800,
+) -> None:
+    directory = directory.resolve()
     if directory.exists():
         raise host_perf.ReceiptError(f"refusing to overwrite {directory}")
     if directory.resolve().is_relative_to(host_perf.REPO):
@@ -182,9 +204,17 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
     baseline = host_perf.local_identity(scenario, features)
     source_digest = source_content_sha256()
     runner_name = RUNNERS[mode]
-    runner, runner_features, runner_command = host_run.build_runner(features, runner_name)
+    runner, runner_features, runner_command = host_run.build_runner(
+        features,
+        runner_name,
+        timeout_seconds=build_timeout_seconds,
+        execution_path=directory / "runner-build",
+    )
     validator, validator_features, validator_command = host_run.build_runner(
-        features, "host_special_validate"
+        features,
+        "host_special_validate",
+        timeout_seconds=build_timeout_seconds,
+        execution_path=directory / "validator-build",
     )
     if runner_features != validator_features:
         raise host_perf.ReceiptError("special runner and validator features differ")
@@ -208,31 +238,42 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
                 str(directory / "topology"),
             ],
             cwd=host_perf.REPO,
+            timeout_seconds=probe_timeout_seconds,
         )
         host_run.write_new(directory / "resources", host_perf.canonical(resources) + b"\n")
+        host_run.write_new(directory / "probe.stderr", stderr.encode())
         validator_exit = None
         validator_mode = (
-            mode if exit_code == 0 else "composite_invalid" if mode == "composite" else None
+            mode
+            if exit_code == 0 and not host_run.probe_failed(resources)
+            else "composite_invalid"
+            if mode == "composite"
+            else None
         )
         if (
             validator_mode is not None
             and (directory / "raw").is_file()
             and (directory / "topology").is_file()
         ):
-            checked = subprocess.run(
-                [
-                    str(sealed_validator),
-                    validator_mode,
-                    str(directory / "scenario"),
-                    str(directory / "raw"),
-                    str(directory / "topology"),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
+            command = [
+                str(sealed_validator),
+                validator_mode,
+                str(directory / "scenario"),
+                str(directory / "raw"),
+                str(directory / "topology"),
+            ]
+            checked = run_acquisition(
+                command, cwd=host_perf.REPO, timeout_seconds=validator_timeout_seconds
             )
-            validator_exit = checked.returncode
-            if validator_exit:
+            host_run.retain_execution(
+                directory / "validation",
+                checked,
+                command,
+                host_perf.REPO,
+                validator_timeout_seconds,
+            )
+            validator_exit = checked.returncode if not host_run.execution_failed(checked) else -1
+            if host_run.execution_failed(checked):
                 stderr += checked.stderr[-1000:]
         end = host_perf.local_identity(scenario, features)
         source_unchanged = source_content_sha256() == source_digest
@@ -246,7 +287,7 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
         reason = "source or host identity changed during special run"
     elif not sealed_unchanged:
         reason = "special sealed binary changed"
-    elif exit_code != 0:
+    elif exit_code != 0 or host_run.probe_failed(resources):
         reason = f"special runner failed: {stderr[-1000:]}"
     elif validator_exit != 0:
         reason = f"special validator failed: {stderr[-1000:]}"
@@ -256,7 +297,7 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
         except host_perf.ReceiptError as error:
             reason = f"special process resources invalid: {error}"
     receipt = {
-        "schema_version": 1,
+        "schema_version": SPECIAL_RECEIPT_VERSION,
         "status": "invalid" if reason else "complete",
         "reason": reason,
         "performance_status": "UNQUALIFIED",
@@ -280,7 +321,9 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
     host_run.write_new(directory / "receipt.json", host_perf.canonical(receipt) + b"\n")
     if reason:
         raise host_perf.ReceiptError(reason)
-    verify_receipt(directory, require_current_source=True)
+    verify_receipt(
+        directory, require_current_source=True, timeout_seconds=validator_timeout_seconds
+    )
 
 
 def main() -> int:
@@ -289,10 +332,19 @@ def main() -> int:
     parser.add_argument("scenario", type=Path)
     parser.add_argument("directory", type=Path)
     parser.add_argument("--feature", action="append", default=[])
+    host_run.add_timeout_arguments(parser)
     args = parser.parse_args()
     try:
-        acquire(args.mode, args.scenario, args.directory, sorted(set(args.feature)))
-    except (OSError, subprocess.SubprocessError, host_perf.ReceiptError) as error:
+        acquire(
+            args.mode,
+            args.scenario,
+            args.directory,
+            sorted(set(args.feature)),
+            build_timeout_seconds=args.build_timeout_seconds,
+            validator_timeout_seconds=args.validator_timeout_seconds,
+            probe_timeout_seconds=args.probe_timeout_seconds,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError, host_perf.ReceiptError) as error:
         if args.directory.is_dir() and not (args.directory / "receipt.json").exists():
             host_run.write_new(
                 args.directory / "rejection.json",

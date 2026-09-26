@@ -42,6 +42,14 @@ def test_sampler_keeps_bounded_cpu_rss_and_thread_rows() -> None:
     assert artifact["boot_time_ns"] <= artifact["process_create_time_ns"]
     assert artifact["sampling_started_epoch_ns"] < artifact["sampling_ended_epoch_ns"]
     assert 1 <= len(artifact["samples"]) <= 100
+    artifact["schema_version"] = 3
+    artifact["execution"] = {
+        "timeout_seconds": 1800.0,
+        "returncode": 0,
+        "timed_out": False,
+        "interrupted_by_signal": None,
+        "aborted_early": False,
+    }
     raw = json.dumps(artifact).encode()
     assert host_perf.validate_resource_artifact(raw, child.pid) == artifact
     artifact["samples"][0]["threads"] = 0
@@ -62,3 +70,20 @@ def test_sampler_off_control_retains_typed_unavailable_artifact(tmp_path: Path) 
     assert artifact["reason"] == "resource sampling intentionally disabled for paired control"
     assert artifact["samples"] == []
     assert host_perf.validate_resource_artifact(json.dumps(artifact).encode(), pid) == artifact
+
+
+def test_sample_subprocess_timeout_retains_pid_partial_output_and_failure(tmp_path: Path) -> None:
+    started = time.monotonic()
+    code, pid, stderr, resources = sample_subprocess(
+        [sys.executable, "-c", "import time; print('partial stdout', flush=True); time.sleep(60)"],
+        tmp_path,
+        cadence_ms=10,
+        timeout_seconds=0.2,
+    )
+    assert time.monotonic() - started < 3
+    assert code != 0
+    assert resources["schema_version"] == 3
+    assert resources["pid"] == pid
+    assert resources["execution"]["timed_out"] is True
+    assert resources["sampling_started_epoch_ns"] <= resources["sampling_ended_epoch_ns"]
+    assert "partial stdout" in stderr

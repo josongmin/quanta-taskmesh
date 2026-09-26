@@ -21,7 +21,7 @@ from host_run import write_new
 
 if str(host_perf.REPO) not in sys.path:
     sys.path.insert(0, str(host_perf.REPO))
-from tools.process_supervisor import run_process  # noqa: E402
+from acquisition_process import run_acquisition as run_process  # noqa: E402
 
 VERSION = 2
 ARTIFACTS = {

@@ -30,6 +30,19 @@ def build_runner(
         "host_special_validate",
     ):
         raise host_perf.ReceiptError("unsupported benchmark runner")
+    witness_home = os.environ.get("TASKMESH_BENCH_BUILD_WITNESSES")
+    if witness_home:
+        import host_build
+
+        identity = {
+            "source_dirty": bool(host_perf._git("status", "--porcelain=v1")),
+            "source_head": host_perf._git("rev-parse", "HEAD"),
+            "source_tree": host_perf._git("rev-parse", "HEAD^{tree}"),
+            "lock_sha256": host_perf.sha256((host_perf.REPO / "Cargo.lock").read_bytes()),
+        }
+        return host_build.runner(
+            Path(witness_home) / example_name, identity, features, example_name
+        )
     command = [
         "cargo",
         "build",
@@ -129,6 +142,26 @@ def retain_control_bundle(
         raise host_perf.ReceiptError(f"{label} acquisition incomplete: {bundle['failures'][0]}")
 
 
+def retain_rejection(path: Path, phase: str, error: Exception) -> None:
+    """Keep acquisition failures distinct from complete execution provenance."""
+    try:
+        write_new(
+            path,
+            host_perf.canonical(
+                {
+                    "schema_version": 1,
+                    "status": "rejected",
+                    "performance": "UNQUALIFIED",
+                    "phase": phase,
+                    "reason": str(error),
+                }
+            )
+            + b"\n",
+        )
+    except (OSError, host_perf.ReceiptError) as retention_error:
+        print(f"acquisition rejection could not be retained: {retention_error}", file=sys.stderr)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("scenario", type=Path)
@@ -142,6 +175,9 @@ def main() -> int:
     executable_path = args.raw.with_name(args.raw.name + ".runner")
     topology_path = args.raw.with_name(args.raw.name + ".topology.json")
     resource_path = args.raw.with_name(args.raw.name + ".resources.json")
+    rejection_path = args.raw.with_name(args.raw.name + ".rejection.json")
+    owns_artifacts = False
+    phase = "preflight"
     try:
         if any(
             path.exists()
@@ -152,16 +188,19 @@ def main() -> int:
                 executable_path,
                 topology_path,
                 resource_path,
+                rejection_path,
             )
         ):
             raise host_perf.ReceiptError(
                 "raw, summary, provenance, runner, topology and resource paths must be fresh"
             )
+        owns_artifacts = True
         scenario_bytes = args.scenario.read_bytes()
         scenario = host_perf.parse_object(scenario_bytes, "scenario")
         calibration = host_perf.parse_object(args.calibration.read_bytes(), "calibration")
         features = sorted(set(args.feature))
         build_start_identity = host_perf.local_identity(scenario, features)
+        phase = "build"
         binary, artifact_features, build_command = build_runner(features)
         if host_perf.local_identity(scenario, features) != build_start_identity:
             raise host_perf.ReceiptError("source, toolchain or host identity changed during build")
@@ -177,6 +216,12 @@ def main() -> int:
             if host_perf.sha256(executable_bytes) != binary_digest:
                 raise host_perf.ReceiptError("retained runner differs from sealed executable")
             start_identity = host_perf.local_identity(scenario, features)
+            phase = "before_launch"
+            if start_identity != build_start_identity:
+                raise host_perf.ReceiptError(
+                    "source, toolchain or host identity changed between build and launch"
+                )
+            phase = "run"
             runner_exit_code, runner_pid, runner_stderr, resources = sample_subprocess(
                 [
                     str(sealed_binary),
@@ -278,6 +323,8 @@ def main() -> int:
         write_new(provenance_path, host_perf.canonical(provenance) + b"\n")
         raise host_perf.ReceiptError(provenance["reason"] or "host run was invalid")
     except (OSError, host_perf.ReceiptError) as error:
+        if owns_artifacts:
+            retain_rejection(rejection_path, phase, error)
         print(f"host run rejected: {error}", file=sys.stderr)
         return 1
 

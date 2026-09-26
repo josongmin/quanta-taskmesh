@@ -2,19 +2,10 @@
 
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use taskmesh_bench::artifact::write_new;
 
 use taskmesh_bench::composite_host::{run_composite_with_topology, CompositeScenario};
-
-fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    if path.exists() {
-        return Err(format!("refusing to overwrite {}", path.display()).into());
-    }
-    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
-    fs::write(&temporary, bytes)?;
-    fs::rename(&temporary, path)?;
-    Ok(())
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -289,6 +289,8 @@ def host_environment() -> dict[str, Any]:
 
 def build_environment() -> dict[str, str]:
     relevant = (
+        "TASKMESH_BENCH_BUILD_WITNESSES",
+        "CARGO_HOME",
         "RUSTFLAGS",
         "CARGO_ENCODED_RUSTFLAGS",
         "RUSTC",
@@ -998,10 +1000,13 @@ def verify_receipt(
             raise ReceiptError("unsupported per-class/path p99 population")
         if provenance_bytes is None:
             raise ReceiptError("execution provenance is required for performance")
-        # The current booleans are caller assertions, not measured null-work,
-        # A/A and observer-on/off receipts. Fail closed until those artifacts
-        # have a versioned contract and independent verification.
-        raise ReceiptError("measured calibration artifact is required for performance")
+        # Single-run caller booleans cannot admit a measured series. The separate
+        # host_admission.py path rechecks the full ledger, controls, frozen build
+        # and executable correctness oracle under a frozen contract.
+        raise ReceiptError(
+            "measured calibration artifact is required for performance; "
+            "use host_admission.py for a frozen full-host series"
+        )
     return summary
 
 

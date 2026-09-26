@@ -174,6 +174,7 @@ def make_bundle(
     provenance_digests = set()
     cadences = set()
     boots = set()
+    study_ends: dict[str, int] = {}
     for label, provenance_bytes, resource_bytes in resource_artifacts:
         digest = host_perf.sha256(provenance_bytes)
         if digest in provenance_digests:
@@ -183,6 +184,13 @@ def make_bundle(
         start, end, cadence, boot = complete_resources(
             resource_bytes, provenance["runner_pid"], label
         )
+        if "/" in label:
+            study = label.rsplit("/", 1)[0]
+            if study_ends.get(study, 0) > start:
+                raise host_perf.ReceiptError(
+                    f"{study}: indexed process order is reversed or overlaps"
+                )
+            study_ends[study] = end
         windows.append((start, end, label))
         cadences.add(cadence)
         boots.add(boot)

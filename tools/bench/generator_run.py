@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 import host_perf
-from host_run import build_runner, retain_executable, write_new
+from host_run import build_runner, retain_executable, retain_rejection, write_new
 from process_resource import sample_subprocess
 from scenario_rate import doubled_generator_scenario
 
@@ -43,6 +43,9 @@ def main(
     topology_path = args.raw.with_name(args.raw.name + ".topology.json")
     resource_path = args.raw.with_name(args.raw.name + ".resources.json")
     scenario_artifact_path = args.raw.with_name(args.raw.name + ".scenario.json")
+    rejection_path = args.raw.with_name(args.raw.name + ".rejection.json")
+    owns_artifacts = False
+    phase = "preflight"
     try:
         if raw_kind != "generator" and args.rate_factor != 1:
             raise host_perf.ReceiptError("rate factor applies only to generator control")
@@ -55,9 +58,11 @@ def main(
                 topology_path,
                 resource_path,
                 scenario_artifact_path,
+                rejection_path,
             )
         ):
             raise host_perf.ReceiptError("control artifact paths must be fresh")
+        owns_artifacts = True
         scenario_bytes = args.scenario.read_bytes()
         scenario = host_perf.parse_object(scenario_bytes, "scenario")
         if args.rate_factor == 2:
@@ -66,6 +71,7 @@ def main(
         write_new(scenario_artifact_path, scenario_bytes)
         features = sorted(set(args.feature))
         build_start_identity = host_perf.local_identity(scenario, features)
+        phase = "build"
         binary, artifact_features, build_command = build_runner(features, example_name)
         if host_perf.local_identity(scenario, features) != build_start_identity:
             raise host_perf.ReceiptError("source, toolchain or host identity changed during build")
@@ -79,6 +85,11 @@ def main(
             if host_perf.sha256(executable_bytes) != binary_digest:
                 raise host_perf.ReceiptError("retained control differs from sealed executable")
             start_identity = host_perf.local_identity(scenario, features)
+            phase = "before_launch"
+            if start_identity != build_start_identity:
+                raise host_perf.ReceiptError(
+                    "source, toolchain or host identity changed between build and launch"
+                )
             runner_command = [
                 str(sealed_binary),
                 str(sealed_scenario),
@@ -88,6 +99,7 @@ def main(
             ]
             if runner_flag is not None:
                 runner_command.append(runner_flag)
+            phase = "run"
             runner_exit_code, runner_pid, runner_stderr, resources = sample_subprocess(
                 runner_command,
                 cwd=host_perf.REPO,
@@ -172,6 +184,8 @@ def main(
         )
         return 0
     except (OSError, ValueError, host_perf.ReceiptError) as error:
+        if owns_artifacts:
+            retain_rejection(rejection_path, phase, error)
         print(f"{raw_kind} control rejected: {error}", file=sys.stderr)
         return 1
 

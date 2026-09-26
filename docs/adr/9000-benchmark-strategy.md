@@ -174,3 +174,23 @@ P8=회귀 인프라, P9=mechanism control을 뜻한다. 번호는 출처 추적�
 고정 호스트 성능 자격은 별도 결과로 보관한다. 원시 행·fixture·실행 출처가
 누락되거나 correctness oracle이 실패한 rate point는 결과에서 조용히 제거하지
 않고 실패 사유와 함께 보존한다.
+
+## 2026-09-26 acquisition and series admission update
+
+- Build-to-launch identity is compared explicitly in full/generator/minimal
+  acquisition; failures retain a separate rejection artifact. Every indexed
+  control study must follow its actual chronological process windows.
+- All Rust probe writers use one create-only atomic artifact publisher.
+- Local v3 adds cancel/deadline/drop and Snapshot diagnostics; active IO
+  release-to-settled drain is a separate Criterion population.
+- Recorder/control-budget schema v2 adds whole-probe duration distortion.
+  Minimal mode still has no request p99.
+- Frozen-source cold rebuilds, complete attempt accounting and a separate
+  measured full-host admission path are implemented. Single-run structural
+  booleans, selected successful pairs and copied control PASS reports cannot
+  promote a measured series.
+
+The executable workflow and proof limits are in
+[host-series acquisition and admission](../benchmarks/host-series.md). Actual
+B00 values, quiet-host repeated measurements, consumer H7 and matched peers
+remain inputs to acquire; code presence is not a performance result.

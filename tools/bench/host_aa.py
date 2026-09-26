@@ -51,6 +51,7 @@ def verified_run(directory: Path, index: int, scenario_bytes: bytes) -> tuple[di
         topology_bytes=artifacts["topology"],
         resource_bytes=artifacts["resources"],
     )
+
     return (
         {
             "index": index,
@@ -73,6 +74,36 @@ def verified_run(directory: Path, index: int, scenario_bytes: bytes) -> tuple[di
         },
         summary["identity"],
     )
+
+
+def validate_study_windows(directory: Path, runs: list[dict], label: str) -> None:
+    """Bind indexed members to serial process windows, with digest rechecks."""
+    previous_end = 0
+    boots = set()
+    cadences = set()
+    for index, run in enumerate(runs):
+        artifact_paths = paths(directory, index)
+        artifacts = {}
+        for name in ("provenance", "resources"):
+            data = artifact_paths[name].read_bytes()
+            if host_perf.sha256(data) != run[f"{name}_sha256"]:
+                raise host_perf.ReceiptError(f"{label} {name} changed during verification")
+            artifacts[name] = data
+        provenance = host_perf.parse_object(artifacts["provenance"], f"{label} provenance")
+        resources = host_perf.validate_resource_artifact(
+            artifacts["resources"], provenance["runner_pid"]
+        )
+        start = resources["sampling_started_epoch_ns"]
+        end = resources["sampling_ended_epoch_ns"]
+        if start == 0 or end <= start:
+            raise host_perf.ReceiptError(f"{label} process window is invalid")
+        if previous_end > start:
+            raise host_perf.ReceiptError(f"{label} windows overlap or indexed order is reversed")
+        previous_end = end
+        boots.add(resources["boot_time_ns"])
+        cadences.add(resources["cadence_ms"])
+    if len(boots) != 1 or len(cadences) != 1:
+        raise host_perf.ReceiptError(f"{label} host boot or resource cadence changed")
 
 
 def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -> dict[str, Any]:
@@ -110,6 +141,7 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
             raise host_perf.ReceiptError(f"A/A run {index} artifact or metric differs")
         if identity != bundle["identity"] or actual["binary_sha256"] != bundle["binary_sha256"]:
             raise host_perf.ReceiptError("A/A source, host or binary changed")
+    validate_study_windows(directory, runs, "A/A")
     return bundle
 
 

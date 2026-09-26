@@ -89,6 +89,7 @@ def verify_bundle(bundle_bytes: bytes, directory: Path) -> dict[str, Any]:
             raise host_perf.ReceiptError(f"Snapshot run {index} artifact or metric differs")
         if identity != bundle["identity"] or actual["binary_sha256"] != bundle["binary_sha256"]:
             raise host_perf.ReceiptError("Snapshot source, host or binary changed")
+    host_aa.validate_study_windows(directory, runs, "Snapshot")
     return bundle
 
 

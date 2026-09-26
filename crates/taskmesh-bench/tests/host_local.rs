@@ -46,15 +46,57 @@ async fn unsubmitted_local_offer_lag_must_reconcile_with_pacer_observation() {
 }
 
 #[test]
-fn local_preflight_rejects_unimplemented_snapshot_observer() {
+fn local_preflight_validates_snapshot_cadence_and_rejects_old_schema() {
     let mut scenario = LocalHostScenario::from_json(FIXTURE).expect("local fixture");
     scenario.load.snapshot_ms = 10;
-    assert!(scenario
-        .validate()
-        .is_err_and(|error| error.contains("Snapshot sampling is unavailable")));
+    scenario.validate().expect("local Snapshot is supported");
+    scenario.load.snapshot_ms = 17;
+    assert!(scenario.validate().is_err());
     scenario.load.snapshot_ms = 0;
-    scenario.schema_version = 1;
+    scenario.schema_version = 2;
     assert!(scenario
         .validate()
         .is_err_and(|error| error.contains("unsupported local host scenario version")));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn local_controls_and_snapshot_keep_caller_disposition_and_settlement_typed() {
+    let mut scenario = LocalHostScenario::from_json(FIXTURE).expect("local fixture");
+    scenario.load.snapshot_ms = 10;
+    scenario.offers[0].body = taskmesh_bench::host_scenarios::HostBody::AsyncSleep { millis: 40 };
+    scenario.offers[0].cancel_after_ms = Some(2);
+    scenario.offers[1].body = taskmesh_bench::host_scenarios::HostBody::AsyncSleep { millis: 40 };
+    scenario.offers[1].drop_after_ms = Some(2);
+    let (mut raw, _) = run_local_host_with_topology(&scenario)
+        .await
+        .expect("local control run");
+    raw.validate_against(&scenario)
+        .expect("local control raw parity");
+    assert_eq!(raw.snapshots.len(), 10);
+    assert!(raw.drain_ok && raw.conservation_ok);
+    assert_eq!(raw.class_counters["local"].inflight, 0);
+    for row in &raw.records {
+        assert!(row.response_ns.is_some() ^ row.caller_drop_ns.is_some());
+    }
+    raw.snapshots[0].intended_ns += 1;
+    assert!(raw
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("Snapshot")));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn local_deadline_observation_has_a_valid_caller_terminal() {
+    let mut scenario = LocalHostScenario::from_json(FIXTURE).expect("local fixture");
+    scenario.offers[0].body = taskmesh_bench::host_scenarios::HostBody::AsyncSleep { millis: 40 };
+    scenario.offers[0].deadline_ms = Some(2);
+    let (raw, _) = run_local_host_with_topology(&scenario)
+        .await
+        .expect("local deadline run");
+    raw.validate_against(&scenario)
+        .expect("local deadline parity");
+    assert!(matches!(
+        raw.records[0].outcome,
+        Some(ResponseOutcome::Deadline | ResponseOutcome::Success)
+    ));
+    assert!(raw.drain_ok);
 }

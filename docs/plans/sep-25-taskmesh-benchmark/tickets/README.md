@@ -2,10 +2,12 @@
 
 ## Current checkpoint
 
-Remaining audit at benchmark source `c5b5282` (unchanged at `52f7c00`):
-[B04 remaining audit](B04-remaining-audit.md) records two reproduced acquisition
-defects, recorder measurement limits, missing measured admission/build custody,
-and the distinct fixture and performance-evidence gaps. They remain open.
+[B04 remaining audit](B04-remaining-audit.md) now separates repaired acquisition
+defects and implemented measurement infrastructure from still-missing measured
+inputs. Frozen build witnesses, complete attempt collection and a scoped
+full-host measured-series admission path are implemented; see the
+[operational workflow](../../../benchmarks/host-series.md). No new qualifying
+performance series, H7 profile or peer comparison has been acquired.
 
 At clean detached `f7834d7`, structural `closed_loop`, `local` v2 and `composite`
 receipts were acquired under `/tmp` and copied byte-for-byte to ignored
@@ -13,7 +15,7 @@ receipts were acquired under `/tmp` and copied byte-for-byte to ignored
 report `UNQUALIFIED`. This benchmark change set preserves a
 separate invalid H6 raw on parent timeout/failure and adds a source/scenario-bound
 control-budget evaluator; neither has a clean exact-HEAD receipt yet. B00 values,
-measured sampler distortion budget, fixed-host rate series, H7 and an equivalent peer
+actual measured sampler distortion budget, fixed-host rate series, H7 and an equivalent peer
 remain open. The older checkpoint notes below are historical and must not be
 used as current qualification evidence.
 

@@ -121,3 +121,41 @@ def test_sampler_rejects_unbalanced_pair_count_before_acquisition(tmp_path: Path
     with pytest.raises(host_perf.ReceiptError, match="pairs must be even"):
         host_sampler.acquire(tmp_path / "missing", tmp_path / "missing", tmp_path / "out", 3, 1)
     assert not (tmp_path / "out").exists()
+
+
+def test_sampler_rejects_indexed_order_that_differs_from_execution_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle, scenario = setup_study(tmp_path, monkeypatch)
+    for index, start in enumerate((10, 50, 70, 30)):
+        host_sampler.host_aa.paths(tmp_path, index)["resources"].write_bytes(
+            resource(index + 1, start, host_sampler.mode_for(index))
+        )
+    bundle["runs"] = [host_sampler.verified_run(tmp_path, index, scenario)[0] for index in range(4)]
+    with pytest.raises(host_perf.ReceiptError, match="index order reversed"):
+        host_sampler.verify_bundle(encoded(bundle), tmp_path, scenario)
+
+
+@pytest.mark.parametrize("label", ["A/A", "Snapshot", "recorder"])
+def test_shared_study_window_verifier_rejects_permuted_time_and_artifact_drift(
+    tmp_path: Path, label: str
+) -> None:
+    runs = []
+    for index in range(4):
+        artifacts = {
+            "provenance": encoded({"runner_pid": index + 1}),
+            "resources": resource(index + 1, 10 + index * 20, "on"),
+        }
+        row = {}
+        for name, data in artifacts.items():
+            host_sampler.host_aa.paths(tmp_path, index)[name].write_bytes(data)
+            row[f"{name}_sha256"] = host_perf.sha256(data)
+        runs.append(row)
+    host_sampler.host_aa.validate_study_windows(tmp_path, runs, label)
+    second = host_sampler.host_aa.paths(tmp_path, 1)["resources"]
+    second.write_bytes(resource(2, 70, "on"))
+    with pytest.raises(host_perf.ReceiptError, match="changed during verification"):
+        host_sampler.host_aa.validate_study_windows(tmp_path, runs, label)
+    runs[1]["resources_sha256"] = host_perf.sha256(second.read_bytes())
+    with pytest.raises(host_perf.ReceiptError, match="indexed order is reversed"):
+        host_sampler.host_aa.validate_study_windows(tmp_path, runs, label)

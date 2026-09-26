@@ -20,7 +20,7 @@ import host_perf
 import host_sampler
 from host_run import write_new
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 POLICY_KEYS = {
     "schema_version",
     "scenario_sha256",
@@ -35,6 +35,7 @@ POLICY_KEYS = {
     "max_snapshot_relative_delta",
     "max_snapshot_p99_relative_delta",
     "max_recorder_response_fraction_delta",
+    "max_recorder_process_duration_relative_delta",
     "max_sampler_relative_delta",
     "max_sampler_p99_relative_delta",
 }
@@ -79,6 +80,7 @@ def parse_policy(data: bytes) -> dict[str, Any]:
         "max_snapshot_relative_delta",
         "max_snapshot_p99_relative_delta",
         "max_recorder_response_fraction_delta",
+        "max_recorder_process_duration_relative_delta",
         "max_sampler_relative_delta",
         "max_sampler_p99_relative_delta",
     ):
@@ -332,11 +334,19 @@ def assess(
             p99_effects(off, on, policy["min_success_samples_per_cohort"], f"Snapshot pair {index}")
         )
     recorder_effects = []
+    recorder_duration_effects = []
     for first, second in balanced_pairs(
         recorder["runs"], policy["min_pairs"], "recorder", ("full", "minimal")
     ):
         full, minimal = (first, second) if first["mode"] == "full" else (second, first)
         recorder_effects.append(recorder_response_effect(full, minimal))
+        recorder_duration_effects.append(
+            relative_delta(
+                full["probe_process_duration_ns"],
+                minimal["probe_process_duration_ns"],
+                "recorder probe process duration",
+            )
+        )
     max_aa = max(value for pair in aa_effects for value in pair.values())
     max_snapshot = max(value for pair in snapshot_effects for value in pair.values())
     max_recorder = max(recorder_effects)
@@ -364,6 +374,7 @@ def assess(
         "max_snapshot_relative_delta": max_snapshot,
         "max_snapshot_p99_relative_delta": max_snapshot_p99,
         "max_recorder_response_fraction_delta": max_recorder,
+        "max_recorder_process_duration_relative_delta": max(recorder_duration_effects),
         "max_sampler_relative_delta": max_sampler,
         "max_sampler_p99_relative_delta": max_sampler_p99,
         "aa_pairs": len(aa_effects),
@@ -393,6 +404,10 @@ def assess(
         ("max_snapshot_relative_delta", "max_snapshot_relative_delta"),
         ("max_snapshot_p99_relative_delta", "max_snapshot_p99_relative_delta"),
         ("max_recorder_response_fraction_delta", "max_recorder_response_fraction_delta"),
+        (
+            "max_recorder_process_duration_relative_delta",
+            "max_recorder_process_duration_relative_delta",
+        ),
         ("max_sampler_relative_delta", "max_sampler_relative_delta"),
         ("max_sampler_p99_relative_delta", "max_sampler_p99_relative_delta"),
     ):
@@ -408,6 +423,7 @@ def assess(
         "sampler_bundle_sha256": host_perf.sha256(sampler_bytes),
         "scenario_sha256": policy["scenario_sha256"],
         "source_head": policy["source_head"],
+        "process_windows_epoch_ns": windows,
         "observations": observations,
         "violations": violations,
     }

@@ -122,6 +122,8 @@ def setup_assessment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[d
             )
             host_control_assess.host_aa.paths(directory, index)["resources"].write_bytes(data)
             run["resources_sha256"] = host_perf.sha256(data)
+            if directory == recorder:
+                run["probe_process_duration_ns"] = 10
             retain_summary(directory, index, run)
         (directory / f"{directory.name}-bundle.json").write_bytes(encoded({"runs": runs}))
     sampler_runs = []
@@ -146,7 +148,7 @@ def setup_assessment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[d
         lambda data, *_args: host_perf.parse_object(data, "sampler fixture"),
     )
     policy = {
-        "schema_version": 1,
+        "schema_version": 2,
         "scenario_sha256": host_perf.sha256(scenario.read_bytes()),
         "source_head": "a" * 40,
         "min_pairs": 2,
@@ -159,6 +161,7 @@ def setup_assessment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[d
         "max_snapshot_relative_delta": 0.1,
         "max_snapshot_p99_relative_delta": 0.1,
         "max_recorder_response_fraction_delta": 0.2,
+        "max_recorder_process_duration_relative_delta": 0.1,
         "max_sampler_relative_delta": 0.1,
         "max_sampler_p99_relative_delta": 0.1,
     }
@@ -369,3 +372,17 @@ def test_control_budget_checks_target_settlement_and_observer(
     report = host_control_assess.assess(encoded(policy), *paths)
     assert report["status"] == "BUDGET_FAIL"
     assert report["violations"] == [f"target/0/{field}"]
+
+
+def test_recorder_duration_budget_detects_cost_with_unchanged_response_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    policy, paths = setup_assessment(tmp_path, monkeypatch)
+    bundle_path = paths[6] / "recorder-bundle.json"
+    bundle = json.loads(bundle_path.read_bytes())
+    bundle["runs"][0]["probe_process_duration_ns"] = 20
+    bundle_path.write_bytes(encoded(bundle))
+    report = host_control_assess.assess(encoded(policy), *paths)
+    assert report["status"] == "BUDGET_FAIL"
+    assert report["observations"]["max_recorder_response_fraction_delta"] == 0.1
+    assert report["violations"] == ["max_recorder_process_duration_relative_delta"]

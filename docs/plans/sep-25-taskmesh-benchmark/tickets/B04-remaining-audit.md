@@ -5,7 +5,34 @@ HEAD moved to `52f7c008e7ad761e9efb67bedd357c50551aa628`; that commit changes on
 ingress test formatting. Benchmark source is unchanged. This audit does not
 qualify the engine or its performance.
 
-## Confirmed code defects
+## Implementation checkpoint — 2026-09-26
+
+The two reproduced acquisition defects below are repaired with focused regressions.
+Recorder bundle/control-budget schema v2 adds whole-probe duration sensitivity;
+it does not invent minimal-mode request p99. Rust probe artifact publication is
+now atomic and create-only. Local schema v3 covers cancel/deadline/drop/Snapshot,
+and Criterion has active IO release-to-settled drain with ownership asserted
+before timing.
+
+`host_build.py`, `host_study.py` and `host_admission.py` now implement frozen Git
+source/repeated cold rebuild custody, complete planned-attempt accounting, and a
+separate full-host measured-series admission path. The latter reconstructs raw
+runs, recomputes control budgets, reexecutes a cold rebuild and exact-source
+correctness oracle, and checks every intended-arrival cohort and independent run.
+It reports highest **tested** passing rate and conditional p99 rank intervals.
+Sampled CPU per injection-cohort success is retained only as a whole-trial lower
+bound; exact CPU/resource-efficiency comparisons remain unsupported.
+
+Operational contract and remaining real inputs:
+[host-series workflow](../../../benchmarks/host-series.md).
+
+**Still open:** actual frozen B00 values, quiet-host measured series, H7 consumer
+profile, semantically equivalent peer and external independent rerun; separate
+repeated admission lanes for local/closed-loop/composite/Rayon claims. These are
+not marked complete by implementation or focused tests. Current-HEAD CI remains
+separate from these owner-local checks.
+
+## Historical reproduced code defects (repaired)
 
 ### P1 — Build-to-run identity discontinuity
 
@@ -45,7 +72,7 @@ qualify the engine or its performance.
   audit the same boundary for A/A, Snapshot and recorder; allow serial studies
   to execute in any order relative to each other.
 
-## Implementation and measurement gaps
+## Historical implementation and measurement gaps
 
 | Priority / owner | Current source evidence | Required completion |
 |---|---|---|
@@ -68,6 +95,6 @@ qualify the engine or its performance.
 - No product-engine execution defect was established by this benchmark audit.
   Unexamined engine paths are outside this conclusion.
 
-Implementation order: fix the two confirmed defects, close recorder measurement
-and build custody, wire measured admission, then extend study accounting and
-claim-specific fixtures before acquiring a qualifying performance series.
+Next: validate the newly implemented acquisition/admission workflow on frozen
+source, then pilot and freeze B00 and acquire an actual measured series after the
+required workload/host inputs exist. Do not substitute historical receipts.

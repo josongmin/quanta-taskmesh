@@ -787,7 +787,11 @@ fn snapshot_rows(slots: &[Slot]) -> Vec<RawHostRecord> {
         .collect()
 }
 
-fn snapshot_sample(runtime: &TokioRuntime, origin: Instant, intended_ns: u64) -> SnapshotSample {
+pub(crate) fn snapshot_sample(
+    runtime: &TokioRuntime,
+    origin: Instant,
+    intended_ns: u64,
+) -> SnapshotSample {
     let snapshot = runtime.snapshot();
     SnapshotSample {
         intended_ns,

@@ -119,10 +119,11 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
         cadences.add(actual["resource_cadence_ms"])
     if len(boots) != 1 or len(cadences) != 1:
         raise host_perf.ReceiptError("resource sampler boot or cadence changed")
-    ordered = sorted(windows)
-    if any(first[1] > second[0] for first, second in zip(ordered, ordered[1:])):
-        raise host_perf.ReceiptError("resource sampler process windows overlap")
-    if ordered[-1][1] - ordered[0][0] > max_span_ns:
+    if any(first[1] > second[0] for first, second in zip(windows, windows[1:])):
+        raise host_perf.ReceiptError(
+            "resource sampler process windows overlap or index order reversed"
+        )
+    if windows[-1][1] - windows[0][0] > max_span_ns:
         raise host_perf.ReceiptError("resource sampler acquisition exceeds declared span")
     return bundle
 

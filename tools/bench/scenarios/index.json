@@ -63,9 +63,9 @@
       "topology_scope": "shared blocking versus declared owned Rayon; external shared Rayon is nonexclusive",
       "oracle_cells": ["E5"],
       "correctness_oracles": ["crates/taskmesh/tests/hardening_executor_authority.rs", "crates/taskmesh/tests/hardening_role_pool_isolation.rs"],
-      "current_artifacts": ["tools/bench/scenarios/h4-cpu-blocking-smoke.json", "tools/bench/scenarios/h4-requested-stack-smoke.json", "tools/bench/scenarios/h4-local-smoke.json", "crates/taskmesh-bench/src/local_host.rs", "crates/taskmesh-bench/tests/host_load_integration.rs", "crates/taskmesh-bench/tests/host_local.rs", "tools/bench/host_special_run.py"],
+      "current_artifacts": ["tools/bench/scenarios/h4-cpu-blocking-smoke.json", "tools/bench/scenarios/h4-requested-stack-smoke.json", "tools/bench/scenarios/h4-local-smoke.json", "tools/bench/scenarios/h4-local-controls-smoke.json", "crates/taskmesh-bench/src/local_host.rs", "crates/taskmesh-bench/tests/host_load_integration.rs", "crates/taskmesh-bench/tests/host_local.rs", "tools/bench/host_special_run.py"],
       "support": "partial",
-      "missing": "Default and Rayon CPU/blocking topology parity and requested-stack blocking/async parity are focused diagnostics only. One real H4 requested-stack raw/summary/Python receipt round trip passed on dirty source after the parser fix. The separate caller-affine !Send local diagnostic uses schema v2 with validated pacer observation; a clean structural v2 receipt was acquired at f7834d7 under /tmp, but no repository-retained receipt or measured comparison exists. No clean repeated feature-paired host receipt exists."
+      "missing": "Caller-affine !Send local diagnostic now uses schema v3 and covers cancel, deadline, caller drop and Snapshot with typed validation. Earlier f7834d7 v2 receipts are historical only. No repeated local/default-Rayon/requested-stack performance series has been acquired."
     },
     {
       "id": "H5",
@@ -117,7 +117,7 @@
       "correctness_oracles": ["crates/taskmesh/tests/hardening_drain.rs"],
       "current_artifacts": ["crates/taskmesh-bench/benches/cold_host_lifecycle.rs"],
       "support": "partial",
-      "missing": "Quiescent drain is measured, not active-work teardown; no retained fixed-host distribution."
+      "missing": "Construction, first call, warm call and quiescent drain are separate cases. Active IO release-to-settled-drain now starts with asserted owned work; its timed segment excludes construction/setup. No retained quiet-host measured distribution exists."
     }
   ]
 }

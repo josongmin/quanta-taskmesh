@@ -14,6 +14,11 @@ canaries on one host. Earlier owner-local H2/H5 runs retain their original
 source identities; they do not qualify the reconciled source. The exact-source
 CI receipt is the authority for this integration. B07 remains a functional
 diagnostic with `performance=UNQUALIFIED`.
+The owner-local final audit at local `8a4f3a6` passed 120 Rust and 36 B07
+Python cases plus a new three-cycle H5 smoke. Those receipts remain tied to
+their recorded dirty source. Retained bundle replay now uses a locally built
+validator rather than executing a self-hashed runner; historical replay is
+structural, while current-source replay also requires runner byte equality.
 
 Other-mode repeated performance admission, RSS slope thresholds, and recovery
 SLOs require a declared performance claim and frozen consumer budgets. B00,

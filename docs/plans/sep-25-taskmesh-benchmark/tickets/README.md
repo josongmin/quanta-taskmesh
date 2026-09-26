@@ -9,6 +9,10 @@ The longer H2/H5 owner-local bundles are source-specific diagnostics and keep
 `performance=UNQUALIFIED`. Clean-source CI, optimized witness/oracle evidence,
 measured B00/quiet-host inputs, H7 provenance, and matched peers are distinct
 proof requirements. The older checkpoints below remain historical.
+The final owner-local audit at local `8a4f3a6` passed 120 Rust and 36 B07 Python
+cases plus a three-cycle H5 smoke. Historical bundles remain structural only;
+current-source replay requires a trusted local validator and retained runner
+byte equality. The merged source still needs its own exact-HEAD CI receipt.
 
 ## Current checkpoint — additional audit at `f41862d`
 

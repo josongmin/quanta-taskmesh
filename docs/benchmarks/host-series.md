@@ -325,5 +325,7 @@ B07 owner-local checkpoint (2026-09-27): H2 completed 1,000 cycles over 600.003s
 H5 completed three cycles. Both report functional PASS and UNQUALIFIED performance.
 Their retained local bundles are under `bench-results/receipts/owner-b07-61d4e47/`;
 source identities and exact commands are recorded in B07. Two interrupted studies
-remain invalid and are excluded from the successful study population. Current-source
-CI and optimized measurement qualification remain separate open work.
+remain invalid and are excluded from the successful study population. A later
+owner-local H5 run and trusted-validator regressions are recorded in B07 with
+their own source identity. At those checkpoints, current-source CI and optimized
+measurement qualification were separate open work.

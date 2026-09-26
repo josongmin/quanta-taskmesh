@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -15,13 +16,17 @@ import generator_run  # noqa: E402
 import host_perf  # noqa: E402
 import host_run  # noqa: E402
 import host_special_run  # noqa: E402
+import process_resource  # noqa: E402
 from acquisition_process import SupervisedProcess  # noqa: E402
 
 from tools.bench.tests.test_host_special import receipt_directory  # noqa: E402
 
 
-def hanging_program(path: Path) -> Path:
-    path.write_text("#!/bin/sh\nprintf 'retained partial stdout\\n'\nexec /bin/sleep 60\n")
+def hanging_program(path: Path, *, ready: Path | None = None) -> Path:
+    marker = f"printf 'ready' > {shlex.quote(str(ready))}\n" if ready is not None else ""
+    path.write_text(
+        "#!/bin/sh\nprintf 'retained partial stdout\\n'\n" + marker + "exec /bin/sleep 60\n"
+    )
     path.chmod(0o755)
     return path
 
@@ -85,7 +90,27 @@ def test_probe_hang_rejects_and_retains_resource_terminal_and_partial_logs(
     scenario, calibration, raw = (tmp_path / name for name in ("scenario", "calibration", "raw"))
     scenario.write_text("{}")
     calibration.write_text("{}")
-    binary = hanging_program(tmp_path / "binary")
+    ready = tmp_path / "probe-ready"
+    binary = hanging_program(tmp_path / "binary", ready=ready)
+    run_acquisition = process_resource.run_acquisition
+
+    def after_partial_output(command, **kwargs):
+        original_started = kwargs["on_started"]
+
+        def started(process):
+            original_started(process)
+            # Establish that the fixture emitted bytes before exercising the
+            # execution deadline. A scheduling delay may legitimately time out
+            # a production child before it emits any output.
+            startup_deadline = time.monotonic() + 10
+            while not ready.exists() and time.monotonic() < startup_deadline:
+                time.sleep(0.01)
+            assert ready.exists(), "probe fixture did not reach its partial-output stage"
+
+        kwargs["on_started"] = started
+        return run_acquisition(command, **kwargs)
+
+    monkeypatch.setattr(process_resource, "run_acquisition", after_partial_output)
     identity = {"source_head": "fixture", "source_dirty": False}
     monkeypatch.setattr(host_perf, "local_identity", lambda *_a: identity)
     module = host_run if mode == "full" else generator_run

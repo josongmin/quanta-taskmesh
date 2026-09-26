@@ -58,13 +58,19 @@ async fn control_keeps_every_intended_offer_and_settles_without_taskmesh_work() 
 
     let mut wrong_id = raw.clone();
     wrong_id.records[0].id = 3;
-    assert!(wrong_id.validate_against(&scenario).is_err());
+    assert!(wrong_id
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("generator row 0 differs from intended schedule")));
     let mut wrong_lag = raw.clone();
     wrong_lag.records[0].scheduled_lag_ns = Some(u64::MAX);
-    assert!(wrong_lag.validate_against(&scenario).is_err());
+    assert!(wrong_lag
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("generator row 0 differs from intended schedule")));
     let mut wrong_count = raw;
     wrong_count.completed += 1;
-    assert!(wrong_count.validate_against(&scenario).is_err());
+    assert!(wrong_count
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("generator conservation or settlement failed")));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -79,6 +85,8 @@ async fn producer_failure_preserves_bounded_invalid_rows() {
     assert!(matches!(raw.status, HostRunStatus::Invalid { .. }));
     assert_eq!(raw.records.len(), scenario.offers.len());
     assert_eq!(raw.records[1].disposition, GeneratorDisposition::Pending);
-    assert!(raw.validate_against(&scenario).is_err());
+    assert!(raw
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("generator run is invalid")));
     assert_eq!(topology.schema_version, 1);
 }

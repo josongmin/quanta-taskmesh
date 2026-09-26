@@ -58,19 +58,29 @@ async fn minimal_recorder_conserves_intended_and_terminal_rows_without_latencies
 
     let mut fabricated_latency = raw.clone();
     fabricated_latency.response_latency_available = true;
-    assert!(fabricated_latency.validate_against(&scenario).is_err());
+    assert!(fabricated_latency
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("minimal host scenario or mode differs")));
     let mut wrong_count = raw.clone();
     wrong_count.counts.responded += 1;
-    assert!(wrong_count.validate_against(&scenario).is_err());
+    assert!(wrong_count
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("minimal host conservation or settlement failed")));
     let mut false_ledger = raw.clone();
     false_ledger.class_counters.get_mut("c").unwrap().admitted = 99;
-    assert!(false_ledger.validate_against(&scenario).is_err());
+    assert!(false_ledger
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("minimal host final governor ledger differs")));
     let mut missing_capabilities = raw.clone();
     missing_capabilities.final_capabilities.clear();
-    assert!(missing_capabilities.validate_against(&scenario).is_err());
+    assert!(missing_capabilities
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("minimal host final governor ledger differs")));
     let mut wrong_id = raw;
     wrong_id.records[0].id = 7;
-    assert!(wrong_id.validate_against(&scenario).is_err());
+    assert!(wrong_id
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("minimal row 0: offer identity differs")));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -83,12 +93,16 @@ async fn minimal_producer_failure_preserves_bounded_invalid_rows() {
     assert!(matches!(raw.status, HostRunStatus::Invalid { .. }));
     assert_eq!(raw.records.len(), scenario.offers.len());
     assert_eq!(raw.records[1].disposition, MinimalDisposition::Pending);
-    assert!(raw.validate_against(&scenario).is_err());
+    assert!(raw
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("minimal host run is invalid")));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn minimal_recorder_rejects_snapshot_sampling_before_timing() {
     let mut scenario = scenario();
     scenario.load.snapshot_ms = 10;
-    assert!(run_minimal_host_scenario(&scenario, None).await.is_err());
+    assert!(run_minimal_host_scenario(&scenario, None).await.is_err_and(
+        |error| error.contains("minimal recorder control requires Snapshot sampling off")
+    ));
 }

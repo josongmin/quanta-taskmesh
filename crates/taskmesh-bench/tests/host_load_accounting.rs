@@ -107,8 +107,26 @@ fn scenario_schema_fails_before_timing_on_invalid_boundary() {
             v
         }),
     ] {
+        let expected = match path {
+            "unknown key" => "unknown field",
+            "unknown class" => "unknown class",
+            "zero WFQ weight" => "WFQ weight must be positive",
+            "path/body mismatch" => "path/body mismatch",
+            "unbounded async body" => "body exceeds settlement window",
+            "zero outstanding" => "max_outstanding and max_records must be nonzero",
+            "unbounded record allocation" => "record/outstanding bounds are invalid",
+            "too many intervals" => "scenario may emit at most 10000 report intervals",
+            "invalid topology" => "fixed physical topology capacities must be nonzero",
+            "requested stack without finite slot" => "finite large_stack_slots limit",
+            "requested stack without size" => "invalid requested stack size",
+            "stack size on IO path" => "stack size on non-stack path",
+            "outside injection" => "outside injection window",
+            "out-of-order integer schedule" => "intended times are not ordered",
+            _ => unreachable!("all malformed fixtures have a named contract"),
+        };
         assert!(
-            HostScenario::from_json(&serde_json::to_vec(&value).unwrap()).is_err(),
+            HostScenario::from_json(&serde_json::to_vec(&value).unwrap())
+                .is_err_and(|error| error.contains(expected)),
             "{path}"
         );
     }
@@ -226,33 +244,43 @@ fn raw_rows_count_every_intended_offer_without_inventing_latency() {
 
 #[test]
 fn malformed_event_order_and_population_fail_closed() {
-    let good = row(
+    let mut good = row(
         0,
         CallerDisposition::Responded {
             outcome: ResponseOutcome::Success,
         },
     );
+    good.body_started_ns = Some(0);
+    good.body_finished_ns = Some(1);
+    CallerCounts::from_records(&[good.clone()]).expect("baseline row is valid");
     let mut duplicate = good.clone();
     duplicate.id = 0;
-    assert!(CallerCounts::from_records(&[good.clone(), duplicate]).is_err());
+    assert!(CallerCounts::from_records(&[good.clone(), duplicate])
+        .is_err_and(|error| error.contains("missing, duplicated or reordered id")));
 
     let mut missing = good.clone();
     missing.id = 1;
-    assert!(CallerCounts::from_records(&[missing]).is_err());
+    assert!(CallerCounts::from_records(&[missing])
+        .is_err_and(|error| error.contains("missing, duplicated or reordered id")));
 
     let mut reversed_time = good.clone();
     reversed_time.submitted_ns = Some(10);
-    assert!(CallerCounts::from_records(&[reversed_time]).is_err());
+    reversed_time.body_started_ns = Some(10);
+    reversed_time.body_finished_ns = Some(10);
+    assert!(CallerCounts::from_records(&[reversed_time])
+        .is_err_and(|error| error.contains("response precedes submit")));
 
     let mut dropped_with_response = good;
     dropped_with_response.disposition = CallerDisposition::CallerDropped;
     dropped_with_response.caller_drop_ns = Some(2);
-    assert!(CallerCounts::from_records(&[dropped_with_response]).is_err());
+    assert!(CallerCounts::from_records(&[dropped_with_response])
+        .is_err_and(|error| error.contains("invalid drop timestamps")));
 
     let mut body_before_submit = row(0, CallerDisposition::CallerDropped);
     body_before_submit.body_started_ns = Some(0);
     body_before_submit.submitted_ns = Some(1);
-    assert!(CallerCounts::from_records(&[body_before_submit]).is_err());
+    assert!(CallerCounts::from_records(&[body_before_submit])
+        .is_err_and(|error| error.contains("body start precedes submit")));
 }
 
 #[test]

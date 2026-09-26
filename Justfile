@@ -179,6 +179,19 @@ bench-host-closed-loop scenario raw topology:
 bench-host-local scenario raw topology:
     cargo run --locked -p taskmesh-bench --example host_local_probe -- {{scenario}} {{raw}} {{topology}}
 
+# Caller-orchestrated composite with separately governed children and keyed reduce.
+# Distinct diagnostic schema, not a performance receipt.
+bench-host-composite scenario raw topology:
+    cargo run --locked -p taskmesh-bench --example host_composite_probe -- {{scenario}} {{raw}} {{topology}}
+
+# Retain binary, typed validator, topology, process resource samples and source
+# identity for the three separate diagnostic schemas. Use a fresh output dir.
+bench-host-special mode scenario directory *ARGS:
+    uv run python tools/bench/host_special_run.py {{mode}} {{scenario}} {{directory}} {{ARGS}}
+
+bench-host-special-verify directory *ARGS:
+    uv run python tools/bench/host_special_verify.py {{directory}} {{ARGS}}
+
 # Expand a one-offer template at an explicit absolute rate. This does not
 # freeze the comparison grid or establish any performance result.
 bench-scenario-rate template rate_per_second output:

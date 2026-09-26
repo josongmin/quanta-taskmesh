@@ -56,6 +56,13 @@ impl LocalHostScenario {
         self.host_shape().validate()
     }
 
+    pub fn resolved_topology(&self) -> Result<ResolvedHostTopology, String> {
+        self.validate()?;
+        Ok(ResolvedHostTopology::from_runtime(
+            &self.host_shape().build_runtime()?,
+        ))
+    }
+
     // Reuse class/topology/arrival/body validation. `Io` here is only the
     // preflight shape; the measured dispatch below is TaskSpec::local.
     fn host_shape(&self) -> HostScenario {

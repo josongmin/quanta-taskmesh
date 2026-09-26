@@ -20,7 +20,14 @@ from process_resource import sample_subprocess
 def build_runner(
     features: list[str], example_name: str = "host_load_probe"
 ) -> tuple[Path, list[str], list[str]]:
-    if example_name not in ("host_load_probe", "host_generator_probe"):
+    if example_name not in (
+        "host_load_probe",
+        "host_generator_probe",
+        "host_closed_loop_probe",
+        "host_local_probe",
+        "host_composite_probe",
+        "host_special_validate",
+    ):
         raise host_perf.ReceiptError("unsupported benchmark runner")
     command = [
         "cargo",

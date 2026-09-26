@@ -100,11 +100,21 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   `closed_loop.rs`는 별도의 고정 caller 동시성 완료량 경로다. 각 slot은 직전
   응답 뒤에만 다음 호출을 제출하고 요청 수·최대 실행 시간을 제한한다. 독립 raw
   schema에는 외생 intended-arrival 시각이 없으므로 open-loop의 overload tail이나
-  intended-arrival SLO-goodput과 합치지 않는다. 아직 독립 build/provenance 영수증은 없다.
+  intended-arrival SLO-goodput과 합치지 않는다.
   `local_host.rs`는 current-thread LocalSet에서 `!Send` payload를 실행하고,
   같은 caller thread의 finite pacer 지연/미제출을 별도 raw에 남긴다. Snapshot,
   deadline, cancel/drop은 이 진단 schema에서 지원하지 않으며 IO 경로로 대체하지
-  않는다. 독립 build/provenance 영수증과 비교 측정은 없다.
+  않는다. 비교 측정은 없다.
+  `composite_host.rs`는 H6에서 부모의 reduce 선언과 별도 공개 호출로 제출한
+  IO/blocking/CPU 자식 세 건을 진단한다. 한 자식의 작업 오류에도 caller가
+  성공 키를 정렬해 합치며, 자식별 시각·결과, class 정산, root attribution 소멸을
+  독립 raw schema로 검사한다. reduce 실행 주체는 caller다. 이 단일 smoke는
+  fan-out 성능이나 내부 reducer 구현을 입증하지 않는다. H6 반복 고정 host 측정은 없다.
+  `just bench-host-special`은 이 세 개의 독립 진단 schema를 소스 내용,
+  빌드 feature, 보관된 실행 파일과 별도 typed validator, raw, topology, process
+  resource digest에 묶는다. 빌드/실행 중 소스가 바뀌면 거부하고 실패 이유를 남긴다.
+  `just bench-host-special-verify`는 보관 파일로 재검증한다. dirty-source 구조
+  영수증도 `UNQUALIFIED`이며 open-loop 성능 영수증으로 입력할 수 없다.
   현재 calibration 파일의 boolean은 실측 증거가 아니므로
   `host_perf.py --require-performance`는 fail closed다.
   동일 window의 2배 generator replay와 H0–H8 지원 현황 인덱스는 진단 범위로
@@ -116,7 +126,7 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   불완전 실행, 바뀐 소스/host/feature/topology/workload, 재사용·중첩된 실행과
   불균형 순서를 거부하며 실패 보고서를 보존한다. 이 도구는 항상
   `UNQUALIFIED`를 출력한다. 실측 보정 및 고정 host 반복 실행,
-  closed-loop/local의 source-bound 획득/비교, Rayon 비교 측정과
+  closed-loop/local/H6의 반복 비교 측정, Rayon 비교 측정과
   대표 H7은 남아 있다.
   구조 bundle v3는 target Snapshot-off 또는 control과 같은 cadence의 Snapshot-on을
   허용한다. Snapshot-on target을 쓸 때 A/A는 on workload, recorder full/minimal은

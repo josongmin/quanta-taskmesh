@@ -24,9 +24,9 @@
       "topology_scope": "declared CPU and blocking capacities; resolve at run time",
       "oracle_cells": ["E1"],
       "correctness_oracles": ["crates/taskmesh-engine/tests/hardening_policy_interactions.rs", "crates/taskmesh/tests/hardening_mixed_overload.rs"],
-      "current_artifacts": ["tools/bench/scenarios/h1-default-send-smoke.json", "tools/bench/scenarios/h1-io-rate-template.json", "tools/bench/scenarios/h1-blocking-rate-template.json", "tools/bench/scenarios/h1-cpu-rate-template.json", "tools/bench/scenarios/h1-io-closed-loop-smoke.json", "crates/taskmesh-bench/src/closed_loop.rs", "tools/bench/scenario_grid.py"],
+      "current_artifacts": ["tools/bench/scenarios/h1-default-send-smoke.json", "tools/bench/scenarios/h1-io-rate-template.json", "tools/bench/scenarios/h1-blocking-rate-template.json", "tools/bench/scenarios/h1-cpu-rate-template.json", "tools/bench/scenarios/h1-io-closed-loop-smoke.json", "crates/taskmesh-bench/src/closed_loop.rs", "tools/bench/scenario_grid.py", "tools/bench/host_special_run.py"],
       "support": "partial",
-      "missing": "One-path IO/blocking/CPU open-loop templates, deterministic absolute-rate expansion and a separate fixed-concurrency IO completion diagnostic exist. The closed-loop raw schema has no intended-arrival clock or source-bound external receipt yet. No frozen multi-rate grid or qualifying fixed-host run exists; the old three-offer mixed-path smoke is not a capacity point."
+      "missing": "One-path IO/blocking/CPU open-loop templates, deterministic absolute-rate expansion and a separate fixed-concurrency IO completion diagnostic exist. Closed-loop has a separate structural acquisition/verification path, but no retained clean-source receipt, intended-arrival clock, frozen multi-rate grid or qualifying fixed-host run. The old three-offer mixed-path smoke is not a capacity point."
     },
     {
       "id": "H2",
@@ -63,9 +63,9 @@
       "topology_scope": "shared blocking versus declared owned Rayon; external shared Rayon is nonexclusive",
       "oracle_cells": ["E5"],
       "correctness_oracles": ["crates/taskmesh/tests/hardening_executor_authority.rs", "crates/taskmesh/tests/hardening_role_pool_isolation.rs"],
-      "current_artifacts": ["tools/bench/scenarios/h4-cpu-blocking-smoke.json", "tools/bench/scenarios/h4-requested-stack-smoke.json", "tools/bench/scenarios/h4-local-smoke.json", "crates/taskmesh-bench/src/local_host.rs", "crates/taskmesh-bench/tests/host_load_integration.rs", "crates/taskmesh-bench/tests/host_local.rs"],
+      "current_artifacts": ["tools/bench/scenarios/h4-cpu-blocking-smoke.json", "tools/bench/scenarios/h4-requested-stack-smoke.json", "tools/bench/scenarios/h4-local-smoke.json", "crates/taskmesh-bench/src/local_host.rs", "crates/taskmesh-bench/tests/host_load_integration.rs", "crates/taskmesh-bench/tests/host_local.rs", "tools/bench/host_special_run.py"],
       "support": "partial",
-      "missing": "Default and Rayon CPU/blocking topology parity and requested-stack blocking/async parity are focused diagnostics only. One real H4 requested-stack raw/summary/Python receipt round trip passed on dirty source after the parser fix. A separate current-thread caller-affine !Send local raw diagnostic exists, but lacks source-bound Python receipt and measured comparison. No clean repeated feature-paired host receipt exists."
+      "missing": "Default and Rayon CPU/blocking topology parity and requested-stack blocking/async parity are focused diagnostics only. One real H4 requested-stack raw/summary/Python receipt round trip passed on dirty source after the parser fix. A separate current-thread caller-affine !Send local diagnostic has structural acquisition/verification, but no retained clean-source receipt or measured comparison. No clean repeated feature-paired host receipt exists."
     },
     {
       "id": "H5",
@@ -89,9 +89,9 @@
       "topology_scope": "declared parent and child limits; each child is a separate public submission",
       "oracle_cells": ["E7"],
       "correctness_oracles": ["crates/taskmesh/tests/hardening_nested_wait.rs", "crates/taskmesh/tests/e2e_scenarios.rs"],
-      "current_artifacts": [],
-      "support": "unavailable",
-      "missing": "No versioned host composite workload or attribution receipt; Taskmesh does not execute the reducer."
+      "current_artifacts": ["tools/bench/scenarios/h6-composite-smoke.json", "crates/taskmesh-bench/src/composite_host.rs", "crates/taskmesh-bench/tests/host_composite.rs", "tools/bench/host_special_run.py"],
+      "support": "partial",
+      "missing": "Bounded caller-orchestrated diagnostic covers one child failure, keyed reduce and settled governance; structural acquisition/verification exists, but no retained clean-source receipt, rate/repetition series or qualified host performance. Taskmesh does not execute the reducer."
     },
     {
       "id": "H7",

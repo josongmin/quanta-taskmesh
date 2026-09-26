@@ -8,6 +8,7 @@
 //! proof fixtures.
 
 pub mod closed_loop;
+pub mod composite_host;
 pub mod generator_calibration;
 pub mod host_load;
 pub mod host_scenarios;

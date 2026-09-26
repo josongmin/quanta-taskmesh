@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "h6-caller-composite-smoke-v1",
+  "warmup_ms": 2,
+  "settlement_ms": 1000,
+  "topology": {
+    "cpu_workers": 2,
+    "blocking_threads": 2,
+    "shared_blocking_limit": 2,
+    "cpu_units": 8,
+    "memory_units": 8
+  },
+  "classes": [
+    {
+      "name": "parent",
+      "slo_ms": 500,
+      "max_inflight": 1,
+      "max_queue_depth": 1,
+      "cpu_units": 1,
+      "memory_units": 1,
+      "overflow": "reject"
+    },
+    {
+      "name": "child",
+      "slo_ms": 500,
+      "max_inflight": 3,
+      "max_queue_depth": 1,
+      "cpu_units": 1,
+      "memory_units": 1,
+      "overflow": "reject"
+    }
+  ],
+  "parent_class": "parent",
+  "child_class": "child",
+  "io_delay_ms": 2,
+  "blocking_delay_ms": 3,
+  "cpu_iterations": 1000,
+  "fail_child_key": 2
+}

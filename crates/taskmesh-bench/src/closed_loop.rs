@@ -73,6 +73,13 @@ impl ClosedLoopScenario {
         self.host_shape().validate()
     }
 
+    pub fn resolved_topology(&self) -> Result<ResolvedHostTopology, String> {
+        self.validate()?;
+        Ok(ResolvedHostTopology::from_runtime(
+            &self.host_shape().build_runtime()?,
+        ))
+    }
+
     fn offer(&self) -> HostOffer {
         HostOffer {
             send_time_ns: 0,

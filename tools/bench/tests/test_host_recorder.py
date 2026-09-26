@@ -37,7 +37,7 @@ def test_recorder_pair_uses_one_binary_and_rejects_forged_mode(tmp_path: Path) -
 
     swapped = json.loads(bundle_bytes)
     swapped["runs"][1]["mode"] = "full"
-    with pytest.raises(host_perf.ReceiptError, match="pair order or mode"):
+    with pytest.raises(host_perf.ReceiptError, match="pair order or mode|command differs"):
         host_recorder.verify_bundle(json.dumps(swapped).encode(), directory, SCENARIO.read_bytes())
     fabricated = json.loads(bundle_bytes)
     fabricated["runs"][1]["metrics"]["success_latency_by_class_path"] = {"c/io": 0}

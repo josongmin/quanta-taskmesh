@@ -1,56 +1,16 @@
 # Taskmesh benchmark qualification: source audit and work plan
 
-## Current scope — minimal stability implementation at base `61d4e47`, 2026-09-27
+## Reconciled scope — 2026-09-27
 
-Metadata/nonregular ingress and stdin backpressure remediation is committed in
-`5be7e09`; its scoped owner proof is in [B04](B04-remaining-audit.md).
+[B07 same-host recovery](B07-minimal-recovery-soak.md) is implemented as a
+functional diagnostic on top of bounded acquisition and ingress custody. It
+requires repeated exact capacity return and successful canaries on one host.
+The longer H2/H5 owner-local bundles are source-specific diagnostics and keep
+`performance=UNQUALIFIED`. Clean-source CI, optimized witness/oracle evidence,
+measured B00/quiet-host inputs, H7 provenance, and matched peers are distinct
+proof requirements. The older checkpoints below remain historical.
 
-**Implemented scope; audit-delta owner regressions pending:** [B07 — minimal recovery/soak](B07-minimal-recovery-soak.md).
-Reuse one host across bounded overload/settlement cycles, require exact resource
-return and a successful normal-work canary after each recovery. Existing raw and
-custody oracles remain the correctness owners. Short smoke joins existing tests;
-longer stress starts as explicit local opt-in.
-
-**Deferred:** all-mode repeated performance admission, automatic RSS slope gates
-and performance recovery SLOs. Activate only for a declared performance claim and
-frozen consumer budgets. These are not unconditional engine-completion blockers.
-Existing correctness/cancel/drain/resource-return tests remain required for all modes.
-
-B07's previous snapshot is owner-local **CLOSED**: Rust 118, Python 616 and Rayon 13 cases passed;
-one-host H2 completed 1,000 cycles over 600.003 seconds, H5 completed 3 cycles.
-Retained diagnostics remain `UNQUALIFIED`; exact commands/source digests are in B07. Current-source clean CI, optimized build/oracle E2E
-and real measurement inputs retain their separate open statuses. Historical
-checkpoints below do not override this scope decision.
-
-Final audit at base `a3241e3` fixes existing-output corruption, early-error drain
-and redundant replay copies. Compile/lint and historical H5 replay pass; the new
-delta's owner regressions/current-source smoke remain pending in B07.
-
-## Previous checkpoint — follow-up code audit at base `6f16118`, 2026-09-27
-
-Standalone diagnostic builds, probes, typed validation and all four control-arm
-launchers now use owned bounded execution. Sampler PID/window identity is kept;
-failed/interrupt/orphan execution cannot publish a successful arm. Shared
-supervisor start notification/stdin support has focused process regressions.
-**Code is still incomplete:** prelaunch metadata/binary artifact custody,
-longitudinal recovery/soak admission and declared-scope other-mode admission
-remain implementation work. CI/build-oracle proof and real measurement inputs
-remain separately open. See [B04 follow-up audit](B04-remaining-audit.md).
-
-## Previous checkpoint — code audit at integration base `031d7b9`, 2026-09-27
-
-Code is **not fully complete**. The latest pass repairs cross-rate workload
-consistency, explicit measured-path scope, control bundle byte custody and
-special-validator input/execution custody. Remaining code owners and DoD cover
-standalone acquisition process ownership, longitudinal recovery/soak gates, and
-conditional mode-specific repeated admission. B00/H7/quiet-host/peer inputs and
-clean-source CI/optimized end-to-end proof remain distinct open requirements.
-The shared checkout advanced from initial base `f00c039` during verification;
-incoming source-content regressions were preserved when resolving the additive
-admission-test conflict. Build witness v3 is current; older v2 proof is historical.
-See [B04 current audit](B04-remaining-audit.md).
-
-## Previous checkpoint — additional audit at `f41862d`
+## Current checkpoint — additional audit at `f41862d`
 
 [B04 remaining audit](B04-remaining-audit.md) now separates repaired acquisition
 defects and implemented measurement infrastructure from still-missing measured

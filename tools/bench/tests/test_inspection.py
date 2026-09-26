@@ -13,8 +13,8 @@ import psutil
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import acquisition_process  # noqa: E402
 import allocation_gate  # noqa: E402
-import bench_process  # noqa: E402
 import host_build  # noqa: E402
 import host_perf  # noqa: E402
 import host_run  # noqa: E402
@@ -188,13 +188,13 @@ def test_invalid_supervisor_budget_rejects_before_launch(
     tmp_path: Path, field: str, value: object
 ) -> None:
     args = {"timeout_seconds": 1, field: value}
-    with pytest.raises(ValueError, match="finite and positive"):
+    with pytest.raises(ValueError, match="positive"):
         run_process(["must-not-launch"], cwd=tmp_path, env={}, **args)
 
 
 @pytest.mark.parametrize("value", [True, 0, -1, float("nan"), float("inf")])
 def test_invalid_batch_deadline_rejects_before_launch(tmp_path: Path, value: object) -> None:
-    with pytest.raises(ValueError, match="finite and positive"):
+    with pytest.raises(ValueError, match="positive"):
         run_process_batch([SupervisedCommand(["must-not-launch"], tmp_path, {}, value)])
 
 
@@ -206,7 +206,8 @@ def test_large_stdin_backpressure_survives_capture_polls(tmp_path: Path, binary:
         cwd=tmp_path,
         env=os.environ.copy(),
         timeout_seconds=4,
-        input_text=payload,
+        stdin_data=payload.encode(),
+        max_capture_bytes=4096,
         binary_output=binary,
     )
     assert result.returncode == 0
@@ -239,8 +240,8 @@ def test_ledger_replacement_rejects_without_waiting(tmp_path: Path, kind: str) -
 
 def test_incomplete_allocation_producer_exits_failure(monkeypatch) -> None:
     monkeypatch.setattr(
-        bench_process,
-        "run_bench",
+        acquisition_process,
+        "run_acquisition",
         lambda *args, **kwargs: SupervisedProcess(None, "partial", "timeout", True, None),
     )
     with pytest.raises(SystemExit) as caught:
@@ -257,3 +258,53 @@ def test_runner_installation_timeout_cannot_use_cached_version(monkeypatch) -> N
     monkeypatch.setattr(iai_gate, "inspect_process", incomplete)
     version, reason = iai_gate.detect_runner_version()
     assert version is None and "incomplete" in reason
+
+
+def test_metadata_capture_cap_cannot_admit_truncated_identity(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(inspection, "MAX_METADATA_CAPTURE_BYTES", 4096)
+    with pytest.raises(inspection.InspectionExecutionError, match="unsettled execution"):
+        inspection.metadata_output(
+            [sys.executable, "-c", "import os; os.write(1,b'x' * 4097)"], cwd=tmp_path
+        )
+
+
+@pytest.mark.parametrize("flag", ["timed_out", "interrupted_by_signal", "aborted_early"])
+def test_allocation_rejects_incomplete_flags_even_with_zero_exit(monkeypatch, flag: str) -> None:
+    fields = {
+        "returncode": 0,
+        "stdout": "partial",
+        "stderr": "incomplete",
+        "timed_out": False,
+        "interrupted_by_signal": None,
+        "aborted_early": False,
+    }
+    fields[flag] = 15 if flag == "interrupted_by_signal" else True
+    monkeypatch.setattr(
+        acquisition_process, "run_acquisition", lambda *a, **kw: SupervisedProcess(**fields)
+    )
+    with pytest.raises(SystemExit) as caught:
+        allocation_gate.run_producer()
+    assert caught.value.code == 1
+
+
+def test_evidence_identity_rejects_fifo_before_read(tmp_path: Path) -> None:
+    from tools.qualification import evidence
+
+    path = tmp_path / "artifact"
+    os.mkfifo(path)
+    with pytest.raises(OSError, match="regular file required"):
+        evidence.file_identity(path, relative_to=tmp_path)
+
+
+def test_allocation_captured_input_rejects_fifo_before_read(tmp_path: Path) -> None:
+    path = tmp_path / "output"
+    os.mkfifo(path)
+    assert allocation_gate.main(["--input", str(path)]) == 1
+
+
+@pytest.mark.parametrize("api", ["inspect_process", "metadata_output"])
+def test_metadata_regular_stdin_keeps_binary_bytes_exact(tmp_path: Path, api: str) -> None:
+    payload = b"\xff\x00\r\n\xc3\xa9\n" * 300000
+    command = [sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"]
+    result = getattr(inspection, api)(command, cwd=tmp_path, timeout_seconds=3, stdin_data=payload)
+    assert (result.stdout if api == "inspect_process" else result) == payload

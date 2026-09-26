@@ -157,14 +157,19 @@ PRODUCER = [
 
 
 def run_producer() -> str:
-    from bench_process import BUILD_TIMEOUT_SECONDS, run_bench
+    from acquisition_process import run_acquisition
 
-    proc = run_bench(PRODUCER, cwd=REPO, timeout_seconds=BUILD_TIMEOUT_SECONDS)
-    if proc.returncode != 0:
+    proc = run_acquisition(PRODUCER, cwd=REPO, timeout_seconds=1800)
+    if (
+        proc.returncode != 0
+        or proc.timed_out
+        or proc.interrupted_by_signal is not None
+        or proc.aborted_early
+    ):
         # Producer failures propagate with their own code; they are not parse
         # failures and are not turned into one.
         sys.stderr.write(proc.stderr)
-        raise SystemExit(proc.returncode if proc.returncode is not None else 1)
+        raise SystemExit(proc.returncode if proc.returncode not in (None, 0) else 1)
     sys.stderr.write(proc.stderr)
     return proc.stdout
 

@@ -1,280 +1,25 @@
-# Benchmark remaining audit — 2026-09-27
+# Benchmark remaining audit — 2026-09-26
 
-Historical initial audited source: `c5b5282a919eaa77d02a71577b8d8b1cdd8b9812`. During that audit,
+Initial audited source: `c5b5282a919eaa77d02a71577b8d8b1cdd8b9812`. During that audit,
 HEAD moved to `52f7c008e7ad761e9efb67bedd357c50551aa628`; that commit changes only
 ingress test formatting. Benchmark source is unchanged. This audit does not
 qualify the engine or its performance.
 
-## Current scope and owner closure — 2026-09-27, base `61d4e47`
+## Reconciled implementation scope — 2026-09-27
 
-사용자 결정: 필요한 안정성 검증만 추가한다. 이전의 모든 모드 반복 성능 admission과
-통계적 longitudinal admission을 전체 엔진 완료의 필수 조건으로 잡은 범위를 축소한다.
+The same-host [B07 recovery diagnostic](B07-minimal-recovery-soak.md) is
+implemented alongside bounded acquisition and ingress custody changes.
+It checks repeated settlement, exact capacity return, and real success
+canaries on one host. Earlier owner-local H2/H5 runs retain their original
+source identities; they do not qualify the reconciled source. The exact-source
+CI receipt is the authority for this integration. B07 remains a functional
+diagnostic with `performance=UNQUALIFIED`.
 
-- **Implemented scope; final-audit delta owner regressions pending:** [B07 minimal recovery/soak](B07-minimal-recovery-soak.md).
-  같은 host의 반복 과부하 → exact capacity 반환 → 정상 canary 성공을 검증한다.
-  기존 typed raw/custody oracle, bounded execution과 artifact 경계를 재사용한다.
-- **Deferred:** local/closed-loop/composite/requested-stack/Rayon 성능 admission,
-  RSS slope 자동 gate 및 recovery 성능 SLO. 공개 주장과 consumer budget이 정해지면 재개한다.
-- 모든 지원 모드의 correctness/cancel/drain/resource-return 테스트 의무는 유지한다.
-  B07가 현재 엔진 결함을 입증하거나 전체 엔진 감사의 완료를 의미하지 않는다.
-- 구현/owner verification, clean CI, 실제 stress, performance qualification은 별도로 기록한다.
-  이전의 CI/build/oracle·B00/quiet-host/H7/peer 입력 공백을 완료로 바꾸지 않는다.
-
-## Completed boundary audit — 2026-09-27, base `494b159`
-
-**Disposition: P1b metadata/nonregular artifact ingress is repaired in this
-working source, committed as `5be7e09`.** This audit follows
-the benchmark acquisition/admission chain and its shared inspection/supervisor
-dependencies. It is not a whole-engine correctness or performance certification.
-The sections below retain earlier findings; this section supersedes their open
-P1/P1b execution and metadata items. Other-owner governance/PM changes are excluded.
-
-### Repaired boundaries and evidence contract
-
-| Boundary | Implementation / regression obligation |
-|---|---|
-| Prelaunch identity and archive commands | `tools/inspection.py` uses owned supervision with a 30-second inspection budget and 0.5-second termination grace. Binary capture preserves invalid UTF-8, NUL-delimited Git paths and archive bytes. Timeout, interruption, aborted capture or a surviving owned group raises an inspection error; partial stdout cannot become identity. Optional host queries propagate incomplete execution. `host_build.py`, `host_perf.py`, `host_special_run.py`, `iai_gate.py` and shared `qualification/evidence.py` use this contract. |
-| Nonregular artifact ingress | Benchmark artifact/config/source reads use a common `O_NONBLOCK` open plus descriptor `fstat`. FIFO, FIFO symlinks, directories and devices reject without waiting for a writer. Cargo config discovery treats a present nonregular/dangling path as an error, not an absent setting. Existing caller-specific path/symlink confinement remains authoritative; a regular symlink is not globally forbidden. Byte hashing and parsing still use the retained bytes. |
-| Executable copy and ledger reopening | Private executable copies and retained executables read bytes/mode from the same regular descriptor; they do not reopen the source through `copy2` after validation. The study ledger reopens with nonblocking append and rejects symlinks/nonregular descriptors. Atomic no-overwrite publication remains in the existing retention helpers. |
-| Backpressured validator stdin | A new 2 MB delayed-reader test reproduced dropped remaining stdin after a capture timeout. The shared supervisor now owns a nonblocking writer, retains its offset across polls and closes EOF after all bytes; capture draining and cancellation stay supervised. Text and binary cases must both finish. |
-| Invalid execution budgets | Single and batch supervisors reject bool, nonfinite and nonpositive deadlines before process launch. The allocation producer uses the bounded execution adapter and maps incomplete execution to exit 1, never `SystemExit(None)` success. |
-
-Inspection budgets are execution safety limits, not SLOs. Descriptor checks cover
-normal local-file ingress and pathname replacement between open and read. They
-do not impose a capture byte cap, bound stalled regular-file kernel/network I/O,
-or provide a filesystem sandbox against a hostile concurrent writer. Explicit
-session escape and arbitrary forced SIGKILL remain outside cooperative descendant
-cleanup proof. This pass does not claim universal standalone I/O liveness.
-
-### Final owner verification
-
-- New metadata/ingress/budget/backpressure regressions: **41/41 PASS** as part of
-  the focused run. Focused inspection, artifact-write, IAI and build checks:
-  **161 PASS / 0 FAIL**, 36.31 seconds. This includes **70/70** IAI helper and
-  PATH-shim CLI tests; it does not execute Linux/Valgrind measurement qualification.
-  Command: `uv run pytest -q tools/bench/tests/test_inspection.py
-  tools/bench/tests/test_host_artifact_write.py tools/bench/tests/test_iai_gate.py
-  tools/bench/tests/test_host_build.py --tb=short`.
-  Log: `/tmp/taskmesh-bench-audit-494b159-final-focused.log`.
-- Final selected benchmark Python, shared batch supervisor and qualification
-  envelope/receipt validators: **584 PASS / 0 FAIL / 71 deselected**, 174.99 seconds.
-  Command: `uv run pytest -q tools/bench/tests tools/gates/tests/test_batch_supervisor.py
-  tools/qualification/tests/test_evidence.py tools/qualification/tests/test_receipt.py
-  -m 'not slow and not qualification' --tb=short`.
-  Log: `/tmp/taskmesh-bench-audit-494b159-final-suite.log`.
-- Earlier runs were not green: the first backpressure regression reproduced
-  actual stdin loss; the first broad run failed the obsolete `copyfileobj` error
-  injection; isolated IAI fixtures lacked the new common modules. The supervisor
-  was repaired, write-failure injection moved to the current descriptor boundary,
-  and isolated fixtures now copy their dependencies. Final runs above supersede
-  those failures without dropping tests.
-- Ruff lint/format checks on the changed code/test scope and whitespace checks
-  passed. HEAD stayed `494b159c1a6deffaa8801162e41030faab0d88a1`; edits stopped
-  during the final broad run. These are working-source owner checks with other
-  owners' dirty files preserved. This audit record is updated after that run.
-  No clean exact-HEAD CI, optimized build/oracle E2E, performance series, mutation,
-  nightly/release qualification or remote push was performed. Old build/control
-  receipts cannot qualify the new source.
-
-### Active plan and conditional evidence requirements
-
-[B07](B07-minimal-recovery-soak.md) replaces the earlier broad recovery/soak and
-other-mode implementation list. It records current coverage, the same-host gap,
-execution sequence, changed files, DoD, cost and stop conditions. B07 implementation now adds same-host windows, canaries and complete-population
-replay. B07's previous source snapshot is owner-local CLOSED with 118 Rust / 616 Python / 13 Rayon passes
-and an actual 600.003-second, 1,000-cycle H2 diagnostic plus H5 smoke.
-Its exact source/commands and retained UNQUALIFIED bundles are in B07; this paragraph does not
-turn historical B04 checks into current-source proof.
-The final-audit delta at base `a3241e3` repairs existing-output corruption and
-early-error cleanup, and removes duplicate replay copying. Compile/lint and
-historical replay pass; current-delta owner regressions/smoke remain pending.
-
-Clean exact-source CI and optimized v3 build/oracle E2E remain separate open
-proof. B00 values/rate grid, quiet-host measured controls/series, H7 provenance,
-matched peers and external rerun remain prerequisites for their corresponding
-performance claims, rather than additional engine implementation requirements.
-Historical sections below retain the earlier scope and receipts; the current
-scope decision above determines active work.
-
-## Historical follow-up code audit — 2026-09-27, base `6f16118`
-
-**Disposition: standalone build/probe/control execution is repaired; overall code
-work remains incomplete.** Runtime/public API code is unchanged. Other-owner
-source remains dirty and excluded from edits. The earlier audit below is history.
-
-### Execution fixes in this pass
-
-- `tools/bench/bench_process.py` is the shared execution adapter. Safety limits
-  are 1,800 seconds for diagnostic builds/probes/typed validation and 3,600
-  seconds per control arm. These constants are safety limits, not SLOs or
-  measured capacity budgets. Timeout, interruption, aborted execution or a
-  surviving process group cannot return a successful status, even when the
-  leader exit code is zero.
-- `process_resource.py` uses the shared supervisor and attaches its sampler to
-  the actual launched probe PID through a start callback. Sampling-disabled
-  controls use the same execution custody. Failed execution marks resources
-  unavailable and preserves stderr; sampled maxima remain lower bounds.
-- `host_run.py` bounds non-witness builds; `host_perf.py` bounds Cargo-backed
-  typed validation and passes scenario input once across capture polls.
-  `host_special_run.py` also bounds the acquisition validator.
-- A/A, Snapshot, recorder and sampler control acquisition reuse the same
-  supervised arm execution. Launch/capture errors retain an incomplete bundle;
-  timeout/interruption never advances to the next arm.
-- `tools/process_supervisor.py` adds optional PID notification and text stdin;
-  existing gate/batch contracts stay unchanged. Inner execution uses a one-second
-  termination grace; control arms use three seconds and the collector uses its
-  existing five seconds. Normal timeout/SIGINT/SIGTERM cascades settle inner
-  groups before outer cleanup. Arbitrary forced SIGKILL or children deliberately
-  leaving their session are outside this cooperative nested-cancellation proof.
-
-Verification covers real hung probes, closed-pipe descendants surviving a zero
-leader exit, sampling on/off, nested timeout with a SIGTERM-ignoring probe,
-callback failure cleanup, stdin across polling intervals and all four control
-modes' failure/next-arm accounting. These are process/correctness checks,
-not performance qualification.
-
-Owner verification on the final working changes:
-- Dedicated execution regressions: **25/25 PASS**.
-- Earlier focused collector/admission/resource/supervisor checks: **105/105 PASS**.
-- Complete selected benchmark Python plus batch-supervisor invocation:
-  **304 PASS / 0 FAIL / 71 deselected**, 218.59 seconds.
-  Command: `uv run pytest -q tools/bench/tests tools/gates/tests/test_batch_supervisor.py
-  -m 'not slow and not qualification' --tb=short`.
-  Log: `/tmp/taskmesh-bench-audit-6f16118-suite.log`.
-  HEAD remained `6f1611821db79d9003e05ad9190b08757f9c4f36`; source edits stopped
-  during the broad run. Ruff and whitespace checks passed. This is working-source
-  owner verification with other-owner dirty files preserved, not clean CI or a
-  qualifying measured series. Mutation, whole CI, optimized cold-build/oracle
-  qualification, remote push and release qualification were not run.
-
-### Remaining implementation, ordered
-
-1. **P1b — pre-execution metadata and artifact custody.** The execution adapter
-   does not cover every operation before a command launches. Unbounded metadata
-   subprocesses remain in `host_perf.py` (`_git`, `_command_output`, rustc
-   identity), `host_special_run.py` (source file listing),
-   `host_build.py` (`command_output`, including binary Git archive), and shared
-   `tools/qualification/evidence.py` Git inspection. Some tool-context/version
-   queries have a 30-second `subprocess.run` timeout but lack the shared owned
-   capture/descendant contract. Separate these from the repaired execution
-   commands; do not mark all standalone entrypoints bounded.
-   Purpose: bound source/tool inspection before collection without corrupting
-   binary/NUL-delimited Git output or losing exact source attribution.
-   DoD: owned binary-safe bounded capture, terminal errors before launch,
-   regression with hung metadata and inherited capture pipes; preserve source
-   identity/index-hint tests and frozen-tool/configuration checks. Audit regular
-   file reads at artifact ingress so a nonregular input cannot block before the
-   execution deadline. Limits are declared inspection budgets, not workload SLOs.
-2. **P2 — recovery/soak admission.** Finite-run settlement and resource snapshots
-   exist; longitudinal recovery deadline/resource-growth admission remains
-   unimplemented. Keep phase/estimand/limit ownership and DoD from the previous
-   section; extending a timeout is not a soak qualification gate.
-3. **P2 / declared scope — other modes.** Local, closed-loop, composite,
-   requested-stack and Rayon repeated admission remains unimplemented. Their
-   typed diagnostic probes already exist; no engine rewrite is inferred.
-
-Clean exact-source CI, optimized v3 build/oracle end-to-end proof, frozen B00
-values, quiet-host measured controls/series, H7 provenance and matched peer /
-external rerun remain separate open requirements. Every new source needs fresh
-measurement custody; no old control or build receipt qualifies this change.
-
-## Historical code audit — 2026-09-27, initial base `f00c039`, integration base `031d7b9`
-
-**Disposition: code work is not fully complete.** This pass covers benchmark
-scenario/probe validators, acquisition wrappers, control assessment, build/study
-custody, comparison and measured admission. It does not establish whole-engine
-correctness, complete current-source CI or an acquired performance series.
-Other-owner dirty governance/bugbash/PM files were excluded from edits.
-The shared checkout advanced to `031d7b9f5bf070e884fbd6244f201caa5ae60be5`
-during verification; stash restoration conflicted in `test_host_admission.py`.
-Preserve both incoming source-content/dirty-source regressions and this pass's
-path/workload/byte-custody regressions. The conflict is resolved additively.
-The incoming build witness is schema v3, adding actual Cargo tool-context custody;
-v2 is now historical and insufficient for current admission.
-
-### Repaired in this pass
-
-| Boundary | Concrete defect | Fix / regression DoD |
-|---|---|---|
-| Same workload across rates | Per-rate digest checks permit preregistered body, policy or mix changes, producing an invalid capacity grid. | `host_compare.py` exposes one workload signature/mix check used by `host_admission.py`. Preserve topology, full class policies, work bodies and proportional offer mix. Regressions independently vary body, mix, policy, topology and load settings while keeping synthetic preregistration custody valid; each rejects before rebuild/oracle. |
-| Admitted public paths | The documented IO/blocking/CPU lane had no explicit path rejection; the underlying host validator also supports requested-stack paths. | Reject requested-stack and other paths before expensive proof execution. Separate async/blocking requested-stack regressions plus a local-path guard test. This restricts claim scope; it does not remove diagnostic support. |
-| Control bundle byte custody | Parsed bundle bytes and hashed bundle bytes came from separate reads. | Read once, hash and parse that exact value. A replacement-between-reads regression rejects the altered first read. |
-| Special-mode validator input custody | Digest checks precede a validator that reopens mutable scenario/raw/topology/executable paths. | `host_special_run.py` revalidates private copies of the checked bytes. Supervise the validator with a 120-second deadline. Regressions replace original raw/executable after digest checks and verify the frozen copies, then reject the changed original on a later verification. Timeout/interruption cannot return a complete verification. |
-| Documentation consistency | The main ADR still described local v2 without Snapshot/cancel/deadline/drop, contradicting its appended v3 update. | Replace the stale as-is paragraph and recorder-cost description with current source behavior. |
-
-These regressions test admission orchestration and custody, using synthetic
-measurements. They do not measure performance or execute the real optimized
-oracle/profile pipeline. Focused post-integration checks: 51/51 tests passed in `test_host_admission.py`,
-`test_host_compare.py` and `test_host_special.py`, including a real private-copy
-validator execution. Ruff passed. These are shared working-checkout checks,
-not exact-clean-source CI. The broader run crossed the HEAD transition and
-ended 228 PASS / 14 FAIL / 38 deselected; it cannot qualify either snapshot.
-Its failures required a rerun, not automatic dismissal as drift.
-
-The post-integration broader run ended **268 PASS / 1 FAIL / 71 deselected**
-(`uv run pytest -q tools/bench/tests -m 'not slow and not qualification'`).
-The sole failing A/A acquisition retained the concrete reason: source/toolchain/
-host identity changed between build and launch. This audit edited tracked docs
-while that run was acquiring its binary; the source guard correctly rejected it.
-After stopping source edits, that exact test passed **1/1** on rerun. This is
-split working-checkout evidence, not a single clean 269/269 suite receipt.
-The broad log is `/tmp/taskmesh-bench-audit-031d7b9-pytest.log`.
-Final focused 51/51, Ruff, worktree/index whitespace checks and additive conflict
-resolution passed. No mutation campaign, full CI, optimized cold build,
-performance acquisition, remote push or release qualification ran in this pass.
-
-### Remaining code work, in priority order
-
-1. **P1 — standalone acquisition execution ownership.**
-   Purpose: terminate hung control/build/probe commands and retain failed or
-   interrupted terminal accounting, independently of `host_study`.
-   Owner files: `tools/bench/process_resource.py`, `host_run.py`,
-   `host_special_run.py`, `host_aa.py`, `host_observer.py`, `host_recorder.py`,
-   `host_sampler.py`; inspect `generator_run.py` / `minimal_run.py` shared callers.
-   Current source: resource sampling has a sample cap but
-   `sample_subprocess()` waits on unbounded `communicate()`; A/A, observer,
-   recorder and sampler use unbounded `subprocess.run()`; non-witness Cargo
-   builds and special acquisition validators are also unbounded.
-   The supervised study collector bounds its attempts only, so independent
-   controls can still hang. This is a liveness/cleanup defect, not evidence of a
-   wrongly admitted performance result.
-   DoD: positive declared deadlines, one explicit process owner per acquisition,
-   bounded capture and descendant cleanup, preserved logs/failure accounting;
-   no later planned arm after interruption. Real subprocess regressions must
-   cover hung builds/probes, closed-pipe surviving descendants, SIGINT/SIGTERM
-   and parent success with live work. Preserve sampling PID/window identity;
-   nested sessions must not escape the owning collector's cleanup.
-2. **P2 — longitudinal recovery/soak qualification.**
-   Purpose: establish recovery and bounded sustained resource use beyond one
-   finite run. Owner files: benchmark scenario/probe modules,
-   `tools/bench/host_perf.py`, `host_study.py`, `host_admission.py`, new focused
-   tests and `docs/benchmarks/host-series.md`.
-   Current finite runs validate settlement/residual ownership and retain resource
-   observations, but no mode-specific longitudinal trend/recovery gate exists.
-   DoD: preregister overload/recovery phases, intended populations, recovery
-   deadline, permitted residual state and resource-growth estimand; analyze
-   complete time series without request pooling, retain unavailable/capped
-   sampler states, and reject recovery failures. Application/measurement owners
-   must supply limits; no universal RSS slope or recovery threshold is invented.
-3. **P2 / conditional scope — other repeated admission modes.**
-   Local, closed-loop, composite, requested-stack and Rayon measurements need
-   separately declared estimands/contracts and mode-specific raw/control
-   validation. Reuse build/study custody without interpreting closed-loop
-   response tails as external-arrival overload latency. Their current diagnostic
-   support is not missing engine functionality; their performance admission is
-   unimplemented. DoD is the separately repeated, budgeted population, plus
-   mode-specific correctness and scope-rejection regressions.
-
-### Verification and input gaps
-
-- Current-source clean CI and optimized v3 cold-build / actual oracle-profile
-  end-to-end proof remain open; the interrupted `381311e` receipts below remain
-  historical and NOT_QUALIFIED.
-- Frozen B00 values, a quiet host with measured controls/series, H7 consumer
-  provenance, equivalent peer data and external rerun remain missing inputs.
-- A finite-grid capacity claim, longitudinal stability claim and industry
-  superiority claim have different completion requirements. None is inferred
-  from code presence or synthetic tests.
+Other-mode repeated performance admission, RSS slope thresholds, and recovery
+SLOs require a declared performance claim and frozen consumer budgets. B00,
+quiet-host measurements, H7 provenance, matched peers, and optimized witness /
+oracle evidence remain separate inputs. Historical sections below describe
+their own source checkpoints.
 
 ## Additional boundary audit — base `f41862d`
 
@@ -370,9 +115,7 @@ failed/interrupted attempts cannot supply final CI proof.
    structural receipts do not close this implementation/measurement gap.
 
 Items 1–4 require measurement or external input, rather than fabricated code
-defaults. Item 5 is an explicit scope-extension implementation gap. The current
-2026-09-27 section additionally records standalone execution and longitudinal
-qualification code gaps; this older list is not exhaustive. No industry
+defaults. Item 5 is an explicit scope-extension implementation gap. No industry
 SOTA performance claim is admitted by this change set.
 
 ## Implementation checkpoint — 2026-09-26

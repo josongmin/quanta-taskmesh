@@ -392,6 +392,38 @@ def test_changed_raw_read_cannot_supply_unvalidated_tail_values(
         admission.admit(*args[:6])
     assert True not in args[6]
     assert not args[5].exists()
+    assert not args[5].exists()
+
+
+def test_admission_rejects_actual_dirty_source_before_proof_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        host_perf, "source_identity", lambda: {"source_head": "a" * 40, "source_dirty": True}
+    )
+    with pytest.raises(host_perf.ReceiptError, match="exact clean frozen source"):
+        admission.admit(*args[:6])
+    assert args[6] == []
+    assert not args[5].exists()
+
+
+def test_admission_rejects_content_drift_after_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    identity = {"source_head": "a" * 40, "source_dirty": False}
+    sources = iter(
+        [
+            {**identity, "source_content_sha256": "a" * 64},
+            {**identity, "source_content_sha256": "b" * 64},
+        ]
+    )
+    monkeypatch.setattr(host_perf, "source_identity", lambda: next(sources))
+    with pytest.raises(host_perf.ReceiptError, match="source checkout changed"):
+        admission.admit(*args[:6])
+    assert (args[5] / "oracle.stdout").exists()
+    assert not (args[5] / "admission.json").exists()
 
 
 def replace_preregistered_scenarios(args: tuple, transform: Callable[[dict, int], None]) -> tuple:
@@ -438,37 +470,6 @@ def test_preregistered_digests_do_not_allow_different_workloads_across_rates(
         admission.admit(*args[:6])
     assert True not in args[6]
     assert not args[5].exists()
-
-
-def test_admission_rejects_actual_dirty_source_before_proof_execution(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    args = fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        host_perf, "source_identity", lambda: {"source_head": "a" * 40, "source_dirty": True}
-    )
-    with pytest.raises(host_perf.ReceiptError, match="exact clean frozen source"):
-        admission.admit(*args[:6])
-    assert args[6] == []
-    assert not args[5].exists()
-
-
-def test_admission_rejects_content_drift_after_oracle(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    args = fixture(tmp_path, monkeypatch)
-    identity = {"source_head": "a" * 40, "source_dirty": False}
-    sources = iter(
-        [
-            {**identity, "source_content_sha256": "a" * 64},
-            {**identity, "source_content_sha256": "b" * 64},
-        ]
-    )
-    monkeypatch.setattr(host_perf, "source_identity", lambda: next(sources))
-    with pytest.raises(host_perf.ReceiptError, match="source checkout changed"):
-        admission.admit(*args[:6])
-    assert (args[5] / "oracle.stdout").exists()
-    assert not (args[5] / "admission.json").exists()
 
 
 @pytest.mark.parametrize("path", ["requested_stack_async", "requested_stack_blocking", "local"])

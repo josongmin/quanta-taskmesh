@@ -1,6 +1,6 @@
 # B07 — 필요한 recovery / soak 안정성 검증
 
-- 상태: **IMPLEMENTED — 이전 snapshot owner-local CLOSED; 최종 감사 보완의 owner 회귀는 pending**
+- 상태: **IMPLEMENTED — owner-local 진단은 이전 source snapshot에 한정; 현재 source의 CI 영수증은 별도 확인**
 - 기준 소스: `61d4e47b0dc6009bb511704292e2a830c29c4287` + owner working delta (2026-09-27)
 - 우선순위: 안정성 coverage 보완. 현재 확인된 엔진 결함이나 release blocker로 분류하지 않는다.
 - 선행: [B04](B04-remaining-audit.md)의 실행·metadata·artifact 경계 보완은 구현됨.

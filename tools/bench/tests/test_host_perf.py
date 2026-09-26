@@ -142,8 +142,15 @@ def encoded(value: dict) -> bytes:
 def synthetic_resources() -> bytes:
     return encoded(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "status": "complete",
+            "execution": {
+                "timeout_seconds": 1800,
+                "returncode": 0,
+                "timed_out": False,
+                "interrupted_by_signal": None,
+                "aborted_early": False,
+            },
             "reason": None,
             "pid": 1234,
             "process_create_time_ns": 1,
@@ -164,6 +171,57 @@ def synthetic_resources() -> bytes:
             ],
         }
     )
+
+
+@pytest.mark.parametrize(
+    "field,value,error",
+    [
+        ("returncode", 1, "terminate successfully"),
+        ("returncode", False, "terminate successfully"),
+        ("timed_out", True, "terminate successfully"),
+        ("interrupted_by_signal", 15, "terminate successfully"),
+        ("aborted_early", True, "terminate successfully"),
+        ("timeout_seconds", float("inf"), "nonfinite JSON value"),
+        ("timeout_seconds", float("nan"), "nonfinite JSON value"),
+        ("timeout_seconds", True, "positive and finite"),
+        ("timeout_seconds", 0, "positive and finite"),
+    ],
+)
+def test_valid_resource_samples_cannot_mask_failed_or_unbounded_execution(
+    field: str, value: object, error: str
+) -> None:
+    resources = json.loads(synthetic_resources())
+    resources["execution"][field] = value
+    with pytest.raises(host_perf.ReceiptError, match=error):
+        host_perf.validate_resource_artifact(encoded(resources), resources["pid"])
+
+
+def test_legacy_resource_evidence_without_execution_ownership_rejects() -> None:
+    resources = json.loads(synthetic_resources())
+    resources["schema_version"] = 2
+    with pytest.raises(host_perf.ReceiptError, match="unsupported process resource"):
+        host_perf.validate_resource_artifact(encoded(resources), resources["pid"])
+    del resources["execution"]
+    with pytest.raises(host_perf.ReceiptError, match="missing/unknown fields"):
+        host_perf.validate_resource_artifact(encoded(resources), resources["pid"])
+
+
+@pytest.mark.parametrize("flag", ["timed_out", "aborted_early", "interrupted_by_signal"])
+def test_validator_success_prefix_does_not_mask_supervisor_failure(monkeypatch, flag) -> None:
+    from tools.process_supervisor import SupervisedProcess
+
+    fields = {
+        "returncode": 0,
+        "stdout": "SCENARIO_VALID id=fixture",
+        "stderr": "retained",
+        "timed_out": False,
+        "interrupted_by_signal": None,
+        "aborted_early": False,
+    }
+    fields[flag] = 15 if flag == "interrupted_by_signal" else True
+    monkeypatch.setattr(host_perf, "run_acquisition", lambda *a, **kw: SupervisedProcess(**fields))
+    with pytest.raises(host_perf.ReceiptError, match="Rust scenario preflight failed"):
+        host_perf.validate_with_rust(b"{}", b"{}", [])
 
 
 @lru_cache(maxsize=4)

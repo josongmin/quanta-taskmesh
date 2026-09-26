@@ -243,7 +243,7 @@ def test_real_child_group_cannot_hang_or_false_pass_a_study(
 
     def redirected(command: list[str], **kwargs: object) -> SupervisedProcess:
         command[1] = str(runner)
-        return real_run(command, **kwargs, termination_grace_seconds=0.1)
+        return real_run(command, **kwargs)
 
     monkeypatch.setattr(host_study, "run_process", redirected)
     root = tmp_path / "study"

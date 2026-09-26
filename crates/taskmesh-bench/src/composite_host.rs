@@ -286,8 +286,8 @@ impl CompositeFailureRaw {
 #[derive(Debug)]
 pub struct CompositeRunFailure {
     pub reason: String,
-    pub raw: Option<CompositeFailureRaw>,
-    pub topology: Option<ResolvedHostTopology>,
+    pub raw: Option<Box<CompositeFailureRaw>>,
+    pub topology: Option<Box<ResolvedHostTopology>>,
 }
 
 impl CompositeRunFailure {
@@ -686,8 +686,8 @@ pub async fn run_composite_with_topology(
             };
             return Err(CompositeRunFailure {
                 reason,
-                raw: Some(raw),
-                topology: Some(topology),
+                raw: Some(Box::new(raw)),
+                topology: Some(Box::new(topology)),
             });
         }
     };

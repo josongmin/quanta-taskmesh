@@ -66,7 +66,7 @@ async fn composite_timeout_retains_typed_invalid_raw_and_settlement_observation(
     assert!(raw.drain_ok);
     assert!(raw.conservation_ok);
     assert_eq!(
-        failure.topology.expect("failure topology must be retained"),
+        *failure.topology.expect("failure topology must be retained"),
         scenario.resolved_topology().expect("scenario topology")
     );
 }

@@ -94,13 +94,21 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   빌드 명령/환경/feature, 보관 파일과 fixture/raw/topology digest가 기록된다.
   검증기는 실행 파일 bytes를 다시 해시하고 같은 시나리오로 만든 런타임의
   topology와 대조한다. 이는 동일 소스의 독립 재빌드나 성능 자격을 뜻하지 않는다.
+  H4 requested-stack blocking/async의 Python raw 분석 경로를 Rust scenario와
+  일치시켰으며, 두 경로를 포함한 실제 CLI raw→summary→검증 왕복은 진단 범위에서
+  통과했다.
   현재 calibration 파일의 boolean은 실측 증거가 아니므로
   `host_perf.py --require-performance`는 fail closed다.
   동일 window의 2배 generator replay와 H0–H8 지원 현황 인덱스는 진단 범위로
   구현됐다. acquisition wrapper는 feature 선택을 모든 control 실행에 전달하며
   default/Rayon 영수증의 build feature 신원을 분리한다. 실측 calibration,
   external resource sampler의 왜곡 검증,
-  repeated comparison, closed-loop, caller-affine local, Rayon 비교 측정과 대표 H7은 남아 있다.
+  `host_compare.py`는 동일 absolute rate에서 baseline/candidate 영수증을
+  재검증하고, 독립 실행쌍의 SLO-goodput 차이와 설명용 bootstrap 범위를 출력한다.
+  불완전 실행, 바뀐 소스/host/feature/topology/workload, 재사용·중첩된 실행과
+  불균형 순서를 거부하며 실패 보고서를 보존한다. 이 도구는 항상
+  `UNQUALIFIED`를 출력한다. 실측 보정 및 고정 host 반복 실행,
+  closed-loop, caller-affine local, Rayon 비교 측정과 대표 H7은 남아 있다.
   구조 bundle v3는 target Snapshot-off 또는 control과 같은 cadence의 Snapshot-on을
   허용한다. Snapshot-on target을 쓸 때 A/A는 on workload, recorder full/minimal은
   같은 workload의 off 파생 시나리오를 사용하고 그 digest를 묶는다. On target의

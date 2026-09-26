@@ -685,7 +685,13 @@ def analyze_raw(raw: dict[str, Any], scenario: dict[str, Any]) -> dict[str, Any]
         ):
             raise ReceiptError(f"row {index}: missing, duplicate, reordered, or misattributed")
         class_name, path = row["class"], row["path"]
-        if class_name not in names or path not in {"io", "blocking", "cpu"}:
+        if class_name not in names or path not in {
+            "io",
+            "blocking",
+            "cpu",
+            "requested_stack_blocking",
+            "requested_stack_async",
+        }:
             raise ReceiptError(f"row {index}: unknown class/path")
         population = f"{class_name}/{path}"
         intended_by_path[population] += 1

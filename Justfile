@@ -208,6 +208,11 @@ bench-host-recorder scenario calibration directory *ARGS:
 bench-host-controls scenario host_raw host_summary generator_raw aa_dir snapshot_dir recorder_dir output max_span_seconds:
     uv run python tools/bench/host_controls.py {{scenario}} {{host_raw}} {{host_summary}} {{generator_raw}} {{aa_dir}} {{snapshot_dir}} {{recorder_dir}} {{output}} --max-span-seconds {{max_span_seconds}}
 
+# Revalidate independent baseline/candidate raw pairs at each absolute rate.
+# Its run-level interval is descriptive; B00/B04 qualification is still absent.
+bench-host-compare manifest output:
+    uv run python tools/bench/host_compare.py {{manifest}} {{output}}
+
 # Deterministic allocation gate (ADR 9000 / P2). Runs anywhere — no valgrind.
 bench-gate:
     bash tools/bench-gate.sh

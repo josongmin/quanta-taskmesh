@@ -234,6 +234,20 @@ def test_complete_raw_summary_pair_is_structurally_admissible() -> None:
     assert sum(point["responded"] for point in accepted["metrics"]["intervals"]) == 2
 
 
+@pytest.mark.parametrize("path", ["requested_stack_blocking", "requested_stack_async"])
+def test_requested_stack_public_paths_survive_raw_to_summary_validation(path: str) -> None:
+    raw, scenario, identity, calibration = fixture()
+    scenario["topology"]["large_stack_slots"] = 1
+    for offer, row in zip(scenario["offers"], raw["records"]):
+        offer["path"] = path
+        offer["stack_size_bytes"] = 2 * 1024 * 1024
+        row["path"] = path
+    raw_bytes, scenario_bytes = encoded(raw), encoded(scenario)
+    summary = host_perf.make_summary(raw_bytes, scenario_bytes, identity, calibration, 2)
+    accepted = host_perf.verify_receipt(raw_bytes, scenario_bytes, encoded(summary), identity)
+    assert accepted["metrics"]["cohort_goodput"][f"c/{path}"]["slo_success"] == 2
+
+
 def test_self_asserted_calibration_never_qualifies_performance() -> None:
     raw, scenario, summary, identity, _ = complete()
     assert host_perf.verify_receipt(raw, scenario, summary, identity)

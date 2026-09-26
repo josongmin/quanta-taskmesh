@@ -766,10 +766,11 @@ mod tests {
             0.0
         );
 
-        // The real-thread convenience path only needs to prove that a positive
-        // elapsed measurement reaches the rate calculation; no stress budget.
-        let convenience = contention_throughput(2, 1);
+        // A 64-cycle run only needs to finish within 64 seconds to exceed
+        // 1 op/sec. This loose bound catches a fabricated constant rate without
+        // making the test a benchmark or sensitive to ordinary host load.
+        let convenience = contention_throughput(1, 64);
         assert!(convenience.is_finite());
-        assert!(convenience > 0.0, "{convenience}");
+        assert!(convenience > 1.0, "{convenience}");
     }
 }

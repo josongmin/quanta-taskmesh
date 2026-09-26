@@ -3,16 +3,19 @@
 
 from __future__ import annotations
 
-from collections import Counter
 import json
-from pathlib import Path
 import re
 import sys
+from collections import Counter
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 SCENARIO = re.compile(r"\b([ABHD])(\d{2})(?:[–-]([ABHD])(\d{2}))?\b")
 LINK = re.compile(r"\[[^]]+\]\(([^)]+)\)")
-SECTIONS = ("## 목적", "## 근거", "## 변경 파일", "## 작업 계획", "## DoD", "## 검증", "## 인계 및 중단 조건")
+SECTIONS = (
+    "## 목적", "## 근거", "## 변경 파일", "## 작업 계획",
+    "## DoD", "## 검증", "## 인계 및 중단 조건",
+)
 MODES = {
     "decision",
     "conditional-implementation",
@@ -61,7 +64,10 @@ def incomplete_scenarios(path: Path) -> set[str]:
     if len(all_ids) != 104 or len(set(all_ids)) != 104:
         fail(f"audit cardinality drift: {len(all_ids)} total / {len(set(all_ids))} unique")
     if len(incomplete) != 53 or len(set(incomplete)) != 53:
-        fail(f"incomplete cardinality drift: {len(incomplete)} total / {len(set(incomplete))} unique")
+        fail(
+            f"incomplete cardinality drift: {len(incomplete)} total / "
+            f"{len(set(incomplete))} unique"
+        )
     return set(incomplete)
 
 
@@ -99,7 +105,13 @@ def main() -> None:
     mapped = [scenario for ticket in tickets for scenario in ticket["scenarios"]]
     counts = Counter(mapped)
     if set(mapped) != expected or any(count != 1 for count in counts.values()):
-        fail(f"scenario mapping drift: missing={sorted(expected-set(mapped))} extra={sorted(set(mapped)-expected)} duplicates={sorted(k for k,v in counts.items() if v != 1)}")
+        missing = sorted(expected - set(mapped))
+        extra = sorted(set(mapped) - expected)
+        duplicates = sorted(key for key, count in counts.items() if count != 1)
+        fail(
+            f"scenario mapping drift: missing={missing} extra={extra} "
+            f"duplicates={duplicates}"
+        )
     if by_id["BG25-001"]["scenarios"] or by_id["BG25-012"]["scenarios"]:
         fail("cross-cutting tickets cannot own scenario IDs")
     for ticket in tickets:
@@ -194,7 +206,10 @@ def main() -> None:
         check_links(markdown)
         if any(line != line.rstrip() for line in markdown.read_text().splitlines()):
             fail(f"trailing whitespace: {markdown.name}")
-    print(f"plan PASS: {len(tickets)} tickets; {len(expected)} scenarios mapped once; DAG and links valid")
+    print(
+        f"plan PASS: {len(tickets)} tickets; {len(expected)} scenarios mapped once; "
+        "DAG and links valid"
+    )
 
 
 if __name__ == "__main__":

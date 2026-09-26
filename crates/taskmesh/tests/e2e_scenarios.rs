@@ -51,11 +51,13 @@ fn assert_drained(rt: &TokioRuntime, classes: &[&str]) {
 
 // ───────────────────────── 1. cancellation chaos ────────────────────────
 
-/// Spawn a churn of submissions, cancel exactly half of them mid-flight via
-/// outer timeouts, and prove the governor never leaks: after everything
-/// settles, all accounting is zero and the runtime still serves fresh work.
+/// Spawn completion and cancellation cohorts together, abort each cancellation
+/// only after its worker future starts, and prove the governor never leaks.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancellation_chaos_never_leaks() {
+    use tokio::sync::mpsc;
+    use tokio::task::JoinSet;
+
     let rt = Builder::new()
         .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
         .class_policy(
@@ -69,49 +71,72 @@ async fn cancellation_chaos_never_leaks() {
         .build()
         .unwrap();
 
-    let completed = Arc::new(AtomicUsize::new(0));
-    let cancelled = Arc::new(AtomicUsize::new(0));
-    let mut handles = Vec::new();
+    const COHORT: usize = 80;
+    let (started_tx, mut started_rx) = mpsc::unbounded_channel();
+    let mut completion_tasks = JoinSet::new();
+    let mut cancellation_tasks = JoinSet::new();
+    let mut aborts = Vec::with_capacity(COHORT);
 
-    for i in 0..160usize {
-        let rt = rt.clone();
-        let completed = completed.clone();
-        let cancelled = cancelled.clone();
-        // Keep both outcomes meaningful under host contention. Completion is
-        // not decided by wall-clock speed; only the cancellation cohort uses
-        // a timeout, against work that cannot finish inside that budget.
-        let should_cancel = i % 2 != 0;
-        handles.push(tokio::spawn(async move {
-            let spec = TaskSpec::io(cls("c")).operation(format!("c-{i}"));
-            let fut = rt.run_io(spec, async move {
-                if should_cancel {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-                Ok::<_, ()>(i)
-            });
-            if should_cancel {
-                match tokio::time::timeout(Duration::from_millis(1), fut).await {
-                    Err(_) => cancelled.fetch_add(1, Ordering::SeqCst),
-                    Ok(Ok(value)) => panic!("cancellation cohort completed as {value}"),
-                    Ok(Err(error)) => panic!("unexpected runtime failure: {error:?}"),
-                };
-            } else {
-                match fut.await {
-                    Ok(_) => completed.fetch_add(1, Ordering::SeqCst),
-                    Err(error) => panic!("unexpected runtime failure: {error:?}"),
-                };
-            }
+    for i in 0..COHORT {
+        let completion_rt = rt.clone();
+        completion_tasks.spawn(async move {
+            completion_rt
+                .run_io(
+                    TaskSpec::io(cls("c")).operation(format!("complete-{i}")),
+                    async move { Ok::<_, ()>(i) },
+                )
+                .await
+        });
+
+        let cancellation_rt = rt.clone();
+        let started_tx = started_tx.clone();
+        aborts.push(cancellation_tasks.spawn(async move {
+            cancellation_rt
+                .run_io(
+                    TaskSpec::io(cls("c")).operation(format!("cancel-{i}")),
+                    async move {
+                        started_tx.send(i).expect("cancellation controller is live");
+                        std::future::pending::<()>().await;
+                        Ok::<_, ()>(i)
+                    },
+                )
+                .await
         }));
     }
-    bounded_storm("cancellation chaos task group", async move {
-        for handle in handles {
-            handle.await.unwrap();
+    drop(started_tx);
+
+    let (completed, cancelled) = bounded_storm("cancellation chaos task group", async move {
+        for _ in 0..COHORT {
+            let started = started_rx
+                .recv()
+                .await
+                .expect("every cancellation worker announces its start");
+            aborts[started].abort();
         }
+
+        let mut completed = 0;
+        while let Some(joined) = completion_tasks.join_next().await {
+            joined
+                .expect("completion task joins")
+                .expect("completion cohort succeeds");
+            completed += 1;
+        }
+
+        let mut cancelled = 0;
+        while let Some(joined) = cancellation_tasks.join_next().await {
+            let error = joined.expect_err("started cancellation task cannot complete");
+            assert!(
+                error.is_cancelled(),
+                "cancellation task failed without abort: {error}"
+            );
+            cancelled += 1;
+        }
+        (completed, cancelled)
     })
     .await;
 
-    assert_eq!(completed.load(Ordering::SeqCst), 80);
-    assert_eq!(cancelled.load(Ordering::SeqCst), 80);
+    assert_eq!(completed, COHORT);
+    assert_eq!(cancelled, COHORT);
 
     // Each submission future has returned; its permit release is part of that
     // completion contract. A delay here would hide a late-release regression.

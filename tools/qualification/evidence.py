@@ -69,6 +69,57 @@ def git_source_paths(root: Path) -> list[str]:
     return sorted(path.decode("utf-8") for path in process.stdout.split(b"\0") if path)
 
 
+def head_worktree_mismatches(root: Path) -> list[str]:
+    """Compare tracked bytes and Git modes to HEAD without consulting index hints.
+
+    `git status` and `git diff` honor assume-unchanged/skip-worktree bits. A
+    receipt for the pushed HEAD must not trust either bit when deciding whether
+    the files that the gates executed are the files in that commit.
+    """
+    object_format = subprocess.run(
+        ["git", "rev-parse", "--show-object-format"],
+        cwd=root, capture_output=True, check=True, text=True,
+    ).stdout.strip()
+    if object_format not in {"sha1", "sha256"}:
+        raise ValueError(f"unsupported Git object format: {object_format!r}")
+    tree = subprocess.run(
+        ["git", "ls-tree", "-r", "-z", "--full-tree", "HEAD"],
+        cwd=root, capture_output=True, check=True,
+    ).stdout
+    mismatches: list[str] = []
+    for entry in tree.split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_path = entry.split(b"\t", 1)
+        mode, kind, expected_oid = metadata.split()
+        relative = os.fsdecode(raw_path)
+        path = root / relative
+        if kind != b"blob":
+            mismatches.append(relative)
+            continue
+        if mode == b"120000":
+            if not path.is_symlink():
+                mismatches.append(relative)
+                continue
+            data = os.fsencode(os.readlink(path))
+        elif mode in {b"100644", b"100755"}:
+            if path.is_symlink() or not path.is_file():
+                mismatches.append(relative)
+                continue
+            executable = bool(path.stat().st_mode & 0o111)
+            if executable != (mode == b"100755"):
+                mismatches.append(relative)
+                continue
+            data = path.read_bytes()
+        else:
+            mismatches.append(relative)
+            continue
+        blob = b"blob " + str(len(data)).encode() + b"\0" + data
+        if hashlib.new(object_format, blob).hexdigest().encode() != expected_oid:
+            mismatches.append(relative)
+    return mismatches
+
+
 def source_tree_digest(root: Path, paths: Iterable[str]) -> str:
     """Digest an unambiguous sequence of path, kind, mode, and content records."""
     digest = hashlib.sha256()

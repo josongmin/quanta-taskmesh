@@ -59,8 +59,9 @@ ALLOWED_EDGES: dict[str, set[str]] = {
         "tokio-util",
     },
     "taskmesh-rayon": {"taskmesh-contract", "rayon"},
-    # The bench harness is `publish = false` and sits outside the shipped graph;
-    # it is allowed to depend on the whole workspace plus measurement crates.
+    # The bench harness is `publish = false` and sits outside the shipped graph.
+    # Its real-host load library owns JSON fixtures and Tokio execution, so
+    # those edges remain here rather than widening any shipped crate boundary.
     "taskmesh-bench": {
         "taskmesh",
         "taskmesh-contract",
@@ -69,6 +70,10 @@ ALLOWED_EDGES: dict[str, set[str]] = {
         "rand",
         "rand_distr",
         "iai-callgrind",
+        "serde",
+        "serde_json",
+        "tokio",
+        "tokio-util",
     },
     # Compiles the consumer-facing docs' examples against the facade (build.rs
     # extracts them). `publish = false`; it is a consumer, so it may only see

@@ -79,6 +79,12 @@ need iai-callgrind-runner
 need cargo
 need rustc
 
+# The runner also reads these from the environment. They can select a named
+# baseline or filter cases without changing the command line below.
+for name in IAI_CALLGRIND_BASELINE IAI_CALLGRIND_SAVE_BASELINE IAI_CALLGRIND_LOAD_BASELINE IAI_CALLGRIND_FILTER; do
+  [[ -z "${!name+x}" ]] || fail "${name} cannot alter the reviewed benchmark comparison"
+done
+
 # The runner has no `--version`; the helper knows the two places it does say
 # its version and reports which one answered (or why neither did).
 if ! installed_runner="$(python3 "${HELPER}" runner-version)"; then

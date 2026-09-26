@@ -4,18 +4,18 @@ set shell := ["bash", "-c"]
 
 root := justfile_directory()
 
-clippy_allows := `grep -v '^#' config/clippy-allows.txt | grep -v '^$' | tr '\n' ' '`
-clippy_restrict := `grep -v '^#' config/clippy-restrict.txt | grep -v '^$' | tr '\n' ' '`
+clippy_allows := `set -o pipefail; grep -v '^#' config/clippy-allows.txt | grep -v '^$' | tr '\n' ' '`
+clippy_restrict := `set -o pipefail; grep -v '^#' config/clippy-restrict.txt | grep -v '^$' | tr '\n' ' '`
 clippy_strict := "-D warnings -D clippy::pedantic -D clippy::nursery"
 
 default:
     @just --list
 
 fmt:
-    cargo fmt --all
+    uv run python tools/gates/execute_rust_fmt.py
 
 fmt-check:
-    cargo fmt --all --check
+    uv run python tools/gates/execute_rust_fmt.py --check
 
 check:
     # Keep the rayon-enabled documentation fixture from feature-unifying the
@@ -65,7 +65,7 @@ test-architecture:
     uv run python docs/plans/bugbash-sep-25-general/tickets/validate_scenario_evidence.py
 
 py-lint:
-    uv run ruff check tools
+    uv run python tools/gates/execute_py_lint.py
 
 py-test:
     uv run python tools/gates/execute_py_tests.py
@@ -163,6 +163,100 @@ consumer-msrv:
 # Run the criterion wall-clock benches (informational; not a gate).
 bench:
     cargo bench --locked -p taskmesh-bench --benches
+
+# Diagnostic public-host run. Raw and summary paths must be fresh. The
+# calibration file is an explicit input; this command makes no timing claim.
+bench-host scenario raw summary calibration *ARGS:
+    uv run python tools/bench/host_run.py {{scenario}} {{raw}} {{summary}} {{calibration}} {{ARGS}}
+
+# Separate fixed-concurrency completion-capacity diagnostic. Its raw schema has
+# no intended-arrival clock and is never an open-loop overload receipt.
+bench-host-closed-loop scenario raw topology:
+    cargo run --locked -p taskmesh-bench --example host_closed_loop_probe -- {{scenario}} {{raw}} {{topology}}
+
+# Caller-affine !Send path on a current-thread executor. Separate raw schema;
+# no source-bound receipt or performance verdict is implied.
+bench-host-local scenario raw topology:
+    cargo run --locked -p taskmesh-bench --example host_local_probe -- {{scenario}} {{raw}} {{topology}}
+
+# Caller-orchestrated composite with separately governed children and keyed reduce.
+# Distinct diagnostic schema, not a performance receipt.
+bench-host-composite scenario raw topology:
+    cargo run --locked -p taskmesh-bench --example host_composite_probe -- {{scenario}} {{raw}} {{topology}}
+
+# Retain binary, typed validator, topology, process resource samples and source
+# identity for the three separate diagnostic schemas. Use a fresh output dir.
+bench-host-special mode scenario directory *ARGS:
+    uv run python tools/bench/host_special_run.py {{mode}} {{scenario}} {{directory}} {{ARGS}}
+
+bench-host-special-verify directory *ARGS:
+    uv run python tools/bench/host_special_verify.py {{directory}} {{ARGS}}
+
+# Expand a one-offer template at an explicit absolute rate. This does not
+# freeze the comparison grid or establish any performance result.
+bench-scenario-rate template rate_per_second output:
+    uv run python tools/bench/scenario_grid.py {{template}} {{rate_per_second}} {{output}}
+
+# Null-work producer control for the same typed host scenario. Diagnostic only:
+# a valid control is necessary but does not qualify a host performance claim.
+bench-generator scenario raw *ARGS:
+    uv run python tools/bench/generator_run.py {{scenario}} {{raw}} {{ARGS}}
+
+# Replay the exact finite schedule twice within the same injection window.
+# The v2 structural control bundle requires this separate generator artifact.
+bench-generator-above scenario raw *ARGS:
+    uv run python tools/bench/generator_run.py {{scenario}} {{raw}} --rate-factor 2 {{ARGS}}
+
+# Same host executable/workload with per-request timestamps disabled. Counts
+# remain typed and bounded; response latency is unavailable by construction.
+bench-host-minimal scenario raw *ARGS:
+    uv run python tools/bench/minimal_run.py {{scenario}} {{raw}} {{ARGS}}
+
+# Repeated fresh-process A/A study; output remains diagnostic until measured
+# generator/observer calibration and a predeclared noise policy are present.
+bench-host-aa scenario calibration directory *ARGS:
+    uv run python tools/bench/host_aa.py {{scenario}} {{calibration}} {{directory}} {{ARGS}}
+
+# Balanced Snapshot-on/off host pairs, with the same body and executable.
+bench-host-snapshot scenario calibration directory *ARGS:
+    uv run python tools/bench/host_observer.py {{scenario}} {{calibration}} {{directory}} {{ARGS}}
+
+# Balanced full/minimal recorder pairs with the same host executable and
+# Snapshot sampling disabled in both arms.
+bench-host-recorder scenario calibration directory *ARGS:
+    uv run python tools/bench/host_recorder.py {{scenario}} {{calibration}} {{directory}} {{ARGS}}
+
+# Revalidate and bind all diagnostic host controls within a declared acquisition
+# span. This command does not admit a performance claim.
+bench-host-controls scenario host_raw host_summary generator_raw aa_dir snapshot_dir recorder_dir output max_span_seconds:
+    uv run python tools/bench/host_controls.py {{scenario}} {{host_raw}} {{host_summary}} {{generator_raw}} {{aa_dir}} {{snapshot_dir}} {{recorder_dir}} {{output}} --max-span-seconds {{max_span_seconds}}
+
+# Compare revalidated control observations to a source/scenario-bound budget.
+# Passing this diagnostic does not grant host performance qualification.
+bench-host-control-assess policy scenario host_raw host_summary generator_raw aa_dir snapshot_dir recorder_dir sampler_dir control_bundle output:
+    uv run python tools/bench/host_control_assess.py {{policy}} {{scenario}} {{host_raw}} {{host_summary}} {{generator_raw}} {{aa_dir}} {{snapshot_dir}} {{recorder_dir}} {{sampler_dir}} {{control_bundle}} {{output}}
+
+# Balanced external resource-sampler on/off diagnostic on one source and binary.
+bench-host-sampler scenario calibration directory max_span_seconds *ARGS:
+    uv run python tools/bench/host_sampler.py {{scenario}} {{calibration}} {{directory}} --max-span-seconds {{max_span_seconds}} {{ARGS}}
+
+# Revalidate independent baseline/candidate raw pairs at each absolute rate.
+# Its run-level interval is descriptive; B00/B04 qualification is still absent.
+bench-host-compare manifest output:
+    uv run python tools/bench/host_compare.py {{manifest}} {{output}}
+
+# Frozen Git source and byte-reproducible cold host builds; local evidence only.
+bench-build mode directory *ARGS:
+    uv run python tools/bench/host_build.py {{mode}} {{directory}} {{ARGS}}
+
+# Every predeclared full-host attempt is recorded, including failures.
+bench-study mode directory *ARGS:
+    uv run python tools/bench/host_study.py {{mode}} {{directory}} {{ARGS}}
+
+# Rebuild, exact-source correctness oracle and complete measured series admission.
+# Does not run mutation testing or establish industry peer superiority.
+bench-host-admit contract study build controls output:
+    uv run python tools/bench/host_admission.py {{contract}} {{study}} {{build}} {{controls}} {{output}}
 
 # Deterministic allocation gate (ADR 9000 / P2). Runs anywhere — no valgrind.
 bench-gate:

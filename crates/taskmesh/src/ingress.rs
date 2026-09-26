@@ -497,6 +497,15 @@ struct StrictRequestedStack {
     stack_size_bytes: u64,
 }
 
+fn validate_requested_stack_size(size: u64, usize_max: u64) -> Result<u64, StrictIngressError> {
+    if size == 0 || size > MAX_REQUESTED_STACK_BYTES || size > usize_max {
+        return Err(StrictIngressError::BlockingDispatch(
+            "requested stack size is not representable and within the supported bound",
+        ));
+    }
+    Ok(size)
+}
+
 /// Decode bounded, strict task bytes and validate the resulting task plan.
 pub fn parse_task_spec(
     bytes: &[u8],
@@ -517,16 +526,10 @@ pub fn parse_task_spec(
     let stack_size_bytes = match (blocking_family, input.blocking_dispatch) {
         (true, Some(StrictBlockingDispatch::SharedBlocking)) | (false, None) => None,
         (true, Some(StrictBlockingDispatch::RequestedStack(request))) => {
-            let size = request.stack_size_bytes;
-            if size == 0
-                || size > MAX_REQUESTED_STACK_BYTES
-                || size > u64::try_from(usize::MAX).unwrap_or(u64::MAX)
-            {
-                return Err(StrictIngressError::BlockingDispatch(
-                    "requested stack size is not representable and within the supported bound",
-                ));
-            }
-            Some(size)
+            Some(validate_requested_stack_size(
+                request.stack_size_bytes,
+                u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+            )?)
         }
         (true, None) => {
             return Err(StrictIngressError::BlockingDispatch(
@@ -606,4 +609,66 @@ pub fn parse_runtime_config(
     serde_json::from_slice(bytes)
         .map(StrictRuntimeConfig)
         .map_err(|error| StrictIngressError::Decode(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::de::{Error as _, Unexpected};
+
+    #[test]
+    fn requested_stack_size_validation_covers_32_bit_width() {
+        let invalid = StrictIngressError::BlockingDispatch(
+            "requested stack size is not representable and within the supported bound",
+        );
+        assert_eq!(
+            validate_requested_stack_size(0, u64::MAX),
+            Err(invalid.clone())
+        );
+        assert_eq!(
+            validate_requested_stack_size(MAX_REQUESTED_STACK_BYTES, u64::MAX),
+            Ok(MAX_REQUESTED_STACK_BYTES)
+        );
+        assert_eq!(
+            validate_requested_stack_size(MAX_REQUESTED_STACK_BYTES + 1, u64::MAX),
+            Err(invalid.clone())
+        );
+        assert_eq!(
+            validate_requested_stack_size(u64::from(u32::MAX), u64::from(u32::MAX)),
+            Ok(u64::from(u32::MAX))
+        );
+        assert_eq!(
+            validate_requested_stack_size(u64::from(u32::MAX) + 1, u64::from(u32::MAX)),
+            Err(invalid)
+        );
+    }
+
+    #[test]
+    fn scan_visitor_reports_the_expected_shape_in_serde_errors() {
+        let state = ScanState {
+            limits: StrictIngressLimits::default(),
+            failure: RefCell::new(None),
+        };
+
+        for (shape, expected) in [
+            (Shape::Task, "a bounded task JSON value"),
+            (Shape::CpuMode, "a bounded cpu mode JSON value"),
+            (Shape::ClassPolicy, "a bounded class policy JSON value"),
+            (
+                Shape::CapabilityLimits,
+                "a bounded capability_limits JSON value",
+            ),
+        ] {
+            let visitor = ScanVisitor(ScanSeed {
+                state: &state,
+                shape,
+                depth: 0,
+            });
+            let error = serde::de::value::Error::invalid_type(Unexpected::Seq, &visitor);
+            assert_eq!(
+                error.to_string(),
+                format!("invalid type: sequence, expected {expected}")
+            );
+        }
+    }
 }

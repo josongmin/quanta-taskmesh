@@ -1633,7 +1633,23 @@
       "supporting_cases": [
         {
           "target": "crates/taskmesh-bench/tests/hellgate.rs",
-          "case": "invariants_hold_across_seeds_and_regimes"
+          "case": "invariants_hold_across_regimes_seed_one"
+        },
+        {
+          "target": "crates/taskmesh-bench/tests/hellgate.rs",
+          "case": "invariants_hold_across_regimes_seed_seven"
+        },
+        {
+          "target": "crates/taskmesh-bench/tests/hellgate.rs",
+          "case": "invariants_hold_across_regimes_seed_forty_two"
+        },
+        {
+          "target": "crates/taskmesh-bench/tests/hellgate.rs",
+          "case": "invariants_hold_across_regimes_seed_coffee"
+        },
+        {
+          "target": "crates/taskmesh-bench/tests/hellgate.rs",
+          "case": "invariants_hold_across_regimes_seed_deadbeef"
         },
         {
           "target": "crates/taskmesh-bench/tests/hellgate.rs",

@@ -462,7 +462,13 @@ def iai_release_fixture(tmp_path: Path) -> tuple[dict, dict, dict, str]:
         directory = store / f"{function_name}.{case_id}"
         directory.mkdir(parents=True)
         raw = directory / "callgrind.fixture.out"
-        raw.write_text("events: Ir\n", encoding="utf-8")
+        raw.write_text(
+            "# callgrind format\nversion: 1\nevents: Ir\ntotals: 101\n", encoding="utf-8"
+        )
+        old = directory / "callgrind.fixture.out.old"
+        old.write_text(
+            "# callgrind format\nversion: 1\nevents: Ir\ntotals: 100\n", encoding="utf-8"
+        )
         (directory / "summary.json").write_text(
             json.dumps(
                 {
@@ -473,7 +479,8 @@ def iai_release_fixture(tmp_path: Path) -> tuple[dict, dict, dict, str]:
                     "callgrind_summary": {
                         "out_paths": [str(raw)],
                         "callgrind_run": {
-                            "total": {"summary": {"Ir": {"metrics": {"Both": [101, 100]}}}}
+                            "total": {"summary": {"Ir": {"metrics": {"Both": [101, 100]}}}},
+                            "segments": [{"baseline": {"path": str(old)}}],
                         },
                     },
                 }
@@ -484,12 +491,16 @@ def iai_release_fixture(tmp_path: Path) -> tuple[dict, dict, dict, str]:
     runner = gate["iai_callgrind_runner"]
     valgrind = "valgrind-3.22"
     rustc = "rustc 1.95.0\nhost: x86_64-unknown-linux-gnu"
+    runner_binary = tmp_path / "fixture-runner"
+    runner_binary.write_bytes(b"iai-callgrind-runner 0.14.2 fixture")
+    build_context = receipt.iai_gate.cargo_build_context(tmp_path, runner_binary)
     fingerprint = receipt.iai_gate.fingerprint(
         [tmp_path / name for name in gate["fingerprint_inputs"]],
         gate["measurement_schema"],
         runner,
         valgrind,
         rustc,
+        build_context=build_context,
     )
     status, problems = receipt.iai_gate.finalize_run(
         store,
@@ -497,6 +508,7 @@ def iai_release_fixture(tmp_path: Path) -> tuple[dict, dict, dict, str]:
         runner=runner,
         valgrind=valgrind,
         rustc=rustc,
+        build_context=build_context,
         expected_comparison=True,
     )
     assert (status, problems) == ("QUALIFIED", [])
@@ -518,6 +530,15 @@ def test_release_iai_raw_semantics_match_current_source_and_ordinary_gate(tmp_pa
         return receipt.iai_raw_problems(tmp_path, baseline, comparison, output_ref, line)
 
     assert check() == []
+
+    changed_context = deepcopy(comparison)
+    changed_context["build_context"]["environment"]["RUSTFLAGS"] = "-C opt-level=0"
+    assert any(
+        "build context" in reason
+        for reason in receipt.iai_raw_problems(
+            tmp_path, baseline, changed_context, output_ref, line
+        )
+    )
 
     bad = deepcopy(comparison)
     bad["cases"] = bad["cases"][:-1]
@@ -554,6 +575,44 @@ def test_release_iai_raw_semantics_match_current_source_and_ordinary_gate(tmp_pa
     assert any("baseline manifest is unreadable" in reason for reason in check())
     next((tmp_path / "target/iai").rglob("summary.json")).write_bytes(b"\xff")
     assert any("summary case/comparison" in reason for reason in check())
+
+
+@pytest.mark.parametrize("old", [False, True])
+def test_release_iai_rederives_ir_from_current_and_old_raw_outputs(
+    tmp_path: Path, old: bool
+) -> None:
+    baseline, comparison, output_ref, line = iai_release_fixture(tmp_path)
+    store = tmp_path / "target/iai"
+    suffix = "*.out.old" if old else "*.out"
+    raw = next(store.rglob(suffix))
+    raw.write_text(
+        "# callgrind format\nversion: 1\nevents: Ir\ntotals: 200\n",
+        encoding="utf-8",
+    )
+    # Refresh file identities to isolate the semantic check from digest drift.
+    if old:
+        comparison["old_artifacts"] = [
+            receipt.iai_gate._artifact(store / path, store)
+            for path in comparison["old_outputs"]
+        ]
+    else:
+        baseline["artifacts"] = receipt.iai_gate.baseline_artifacts(store)
+        (store / "baseline-manifest.json").write_text(json.dumps(baseline))
+    problems = receipt.iai_raw_problems(tmp_path, baseline, comparison, output_ref, line)
+    assert any("summary case/comparison/raw-output inventory is incomplete" in p for p in problems)
+
+
+def test_release_iai_rejects_old_raw_output_shared_by_cases(tmp_path: Path) -> None:
+    baseline, comparison, output_ref, line = iai_release_fixture(tmp_path)
+    summaries = sorted((tmp_path / "target/iai").rglob("summary.json"))
+    first = json.loads(summaries[0].read_text())
+    second = json.loads(summaries[1].read_text())
+    second["callgrind_summary"]["callgrind_run"]["segments"][0]["baseline"] = (
+        first["callgrind_summary"]["callgrind_run"]["segments"][0]["baseline"]
+    )
+    summaries[1].write_text(json.dumps(second))
+    problems = receipt.iai_raw_problems(tmp_path, baseline, comparison, output_ref, line)
+    assert any("summary case/comparison/raw-output inventory is incomplete" in p for p in problems)
 
 
 def test_release_rejects_symlinked_iai_raw_store(tmp_path: Path) -> None:

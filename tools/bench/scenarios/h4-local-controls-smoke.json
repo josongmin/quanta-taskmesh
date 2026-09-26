@@ -1,0 +1,60 @@
+{
+  "schema_version": 3,
+  "id": "h4-local-controls-smoke-v3",
+  "load": {
+    "warmup_ms": 2,
+    "injection_ms": 100,
+    "interval_ms": 10,
+    "snapshot_ms": 10,
+    "settlement_ms": 500,
+    "max_outstanding": 4,
+    "max_records": 8
+  },
+  "topology": {
+    "cpu_workers": 2,
+    "blocking_threads": 2,
+    "shared_blocking_limit": 2,
+    "cpu_units": 8,
+    "memory_units": 8
+  },
+  "classes": [
+    {
+      "name": "local",
+      "slo_ms": 100,
+      "max_inflight": 4,
+      "max_queue_depth": 2,
+      "cpu_units": 1,
+      "memory_units": 1,
+      "overflow": "queue_within_depth"
+    }
+  ],
+  "offers": [
+    {
+      "class": "local",
+      "body": {
+        "kind": "async_sleep",
+        "millis": 40
+      },
+      "send_time_ns": 0,
+      "cancel_after_ms": 2
+    },
+    {
+      "class": "local",
+      "body": {
+        "kind": "async_sleep",
+        "millis": 40
+      },
+      "send_time_ns": 10000000,
+      "deadline_ms": 2
+    },
+    {
+      "class": "local",
+      "body": {
+        "kind": "async_sleep",
+        "millis": 40
+      },
+      "send_time_ns": 20000000,
+      "drop_after_ms": 2
+    }
+  ]
+}

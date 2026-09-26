@@ -35,8 +35,11 @@ def test_tokio_multithread_scheduler_is_not_a_shipped_workspace_default() -> Non
 
 
 def test_tooling_declares_only_the_tokio_features_its_code_uses() -> None:
-    bench = features(manifest("crates/taskmesh-bench/Cargo.toml")["dev-dependencies"]["tokio"])
-    assert bench == {"rt-multi-thread", "sync"}
+    bench = manifest("crates/taskmesh-bench/Cargo.toml")
+    assert "tokio" not in bench.get("dev-dependencies", {})
+    assert features(bench["dependencies"]["tokio"]) == {
+        "rt-multi-thread", "sync", "time", "macros"
+    }
 
     docs = features(manifest("tools/doc-examples/Cargo.toml")["dependencies"]["tokio"])
     assert docs == {"rt", "macros"}

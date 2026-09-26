@@ -6,10 +6,26 @@ use taskmesh_contract::{
 };
 use taskmesh_engine::{
     request_key_derive_count, reset_request_key_derive_count, AdmissionDecision, Governor,
-    PolicySet,
+    PolicySet, RequestKey,
 };
 
 static REQUEST_KEY_COUNTER_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn request_key_counter_reset_clears_prior_derivations() {
+    let _guard = REQUEST_KEY_COUNTER_LOCK.lock().expect("lock");
+    reset_request_key_derive_count();
+
+    assert_eq!(RequestKey::from_root("first").as_str(), "first");
+    assert_eq!(RequestKey::from_root("second").as_str(), "second");
+    assert_eq!(request_key_derive_count(), 2);
+
+    reset_request_key_derive_count();
+    assert_eq!(request_key_derive_count(), 0);
+
+    assert_eq!(RequestKey::from_root("after-reset").as_str(), "after-reset");
+    assert_eq!(request_key_derive_count(), 1);
+}
 
 fn gov(policy: ClassPolicy) -> Governor {
     let mut classes = BTreeMap::new();

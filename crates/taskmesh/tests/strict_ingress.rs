@@ -2,8 +2,10 @@
 
 use serde_json::{json, Value};
 use taskmesh::{
-    parse_runtime_config, parse_task_spec, ClassPolicy, ResourceBudget, StrictIngressError,
-    StrictIngressLimits, SubstrateHint, TaskClass, TaskSpec, TaskStage, TopologyConfig,
+    parse_runtime_config, parse_task_spec, ClassPolicy, DeterministicReducePolicy,
+    DuplicateMergePolicy, ErrorAggregationPolicy, PartialResultOrdering, ResourceBudget,
+    StrictIngressError, StrictIngressLimits, SubstrateHint, TaskClass, TaskSpec, TaskStage,
+    TieBreakPolicy, TopologyConfig, MAX_REQUESTED_STACK_BYTES,
 };
 
 fn task() -> Value {
@@ -30,6 +32,91 @@ fn parse(
     limits: StrictIngressLimits,
 ) -> Result<taskmesh::ValidatedTaskPlan, StrictIngressError> {
     parse_task_spec(&serde_json::to_vec(value).unwrap(), limits)
+}
+
+#[test]
+fn requested_stack_size_bounds_are_enforced_at_strict_ingress() {
+    let mut input = task();
+    let limits = StrictIngressLimits::default();
+    let invalid_stack = StrictIngressError::BlockingDispatch(
+        "requested stack size is not representable and within the supported bound",
+    );
+
+    input["blocking_dispatch"] = json!({"requested_stack": {"stack_size_bytes": 0}});
+    assert_eq!(parse(&input, limits), Err(invalid_stack.clone()));
+
+    input["blocking_dispatch"] =
+        json!({"requested_stack": {"stack_size_bytes": MAX_REQUESTED_STACK_BYTES}});
+    if u64::try_from(usize::MAX).unwrap_or(u64::MAX) >= MAX_REQUESTED_STACK_BYTES {
+        assert_eq!(
+            parse(&input, limits)
+                .expect("the inclusive stack bound must be accepted")
+                .as_spec()
+                .stack_size_bytes,
+            Some(MAX_REQUESTED_STACK_BYTES)
+        );
+    } else {
+        assert_eq!(parse(&input, limits), Err(invalid_stack.clone()));
+    }
+
+    input["blocking_dispatch"] =
+        json!({"requested_stack": {"stack_size_bytes": MAX_REQUESTED_STACK_BYTES + 1}});
+    assert_eq!(parse(&input, limits), Err(invalid_stack));
+}
+
+#[test]
+fn strict_ingress_error_display_is_stable() {
+    use taskmesh_contract::TaskPlanError;
+
+    let cases = [
+        (
+            StrictIngressError::InvalidLimit("max_bytes"),
+            "strict ingress limit max_bytes must be nonzero",
+        ),
+        (
+            StrictIngressError::ByteLimit { actual: 5, max: 4 },
+            "strict ingress input is 5 bytes, above 4",
+        ),
+        (
+            StrictIngressError::DepthLimit { max: 3 },
+            "strict ingress depth exceeds 3",
+        ),
+        (
+            StrictIngressError::StageLimit { max: 2 },
+            "strict ingress stages exceed 2",
+        ),
+        (
+            StrictIngressError::DuplicateKey { key: "x".into() },
+            "duplicate JSON key \"x\"",
+        ),
+        (
+            StrictIngressError::UnknownKey {
+                object: "task",
+                key: "x".into(),
+            },
+            "unknown key \"x\" in task",
+        ),
+        (
+            StrictIngressError::InvalidShape("task"),
+            "invalid JSON shape for task",
+        ),
+        (
+            StrictIngressError::Decode("bad".into()),
+            "invalid strict JSON: bad",
+        ),
+        (
+            StrictIngressError::TaskPlan(TaskPlanError::NoStages),
+            "invalid task plan: task plan must declare at least one stage",
+        ),
+        (
+            StrictIngressError::BlockingDispatch("bad"),
+            "invalid blocking dispatch: bad",
+        ),
+    ];
+
+    for (error, expected) in cases {
+        assert_eq!(error.to_string(), expected);
+    }
 }
 
 fn config() -> Value {
@@ -254,6 +341,39 @@ fn zero_duplicate_and_many_stages_have_distinct_strict_ingress_verdicts() {
 }
 
 #[test]
+fn empty_stages_respect_the_exact_sequence_depth_boundary() {
+    use taskmesh_contract::TaskPlanError;
+
+    let mut value = task();
+    value["stages"] = json!([]);
+    value.as_object_mut().unwrap().remove("blocking_dispatch");
+
+    // The root object is depth 1 and its stages sequence is depth 2. An
+    // empty sequence at the limit is scanned before plan validation, while a
+    // sequence beyond the limit must be rejected even without any elements.
+    assert_eq!(
+        parse(
+            &value,
+            StrictIngressLimits {
+                max_depth: 1,
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Err(StrictIngressError::DepthLimit { max: 1 })
+    );
+    assert_eq!(
+        parse(
+            &value,
+            StrictIngressLimits {
+                max_depth: 2,
+                ..StrictIngressLimits::default()
+            }
+        ),
+        Err(StrictIngressError::TaskPlan(TaskPlanError::NoStages))
+    );
+}
+
+#[test]
 fn duplicate_and_unknown_keys_reject_at_every_nested_boundary() {
     let bytes = serde_json::to_vec(&task()).unwrap();
     let text = String::from_utf8(bytes).unwrap();
@@ -287,6 +407,74 @@ fn duplicate_and_unknown_keys_reject_at_every_nested_boundary() {
             key: "stack_size_byte".into()
         })
     );
+}
+
+#[test]
+fn strict_ingress_accepts_complete_reduce_policy_and_rejects_field_errors() {
+    let policy = json!({
+        "stable_sort_key": "document_id",
+        "duplicate_merge": "KeepLastStable",
+        "tie_break": "Lexicographic",
+        "error_aggregation": "AllStable",
+        "partial_result_ordering": "StableStageOrder"
+    });
+    let mut value = task();
+    value["stages"][0]["fan_out"] = json!(true);
+    value["stages"][0]["reduce_policy"] = policy.clone();
+
+    let mut expected = TaskSpec::blocking(TaskClass::new("c")).operation("root");
+    expected.stages[0].fan_out = true;
+    expected.stages[0].reduce_policy = Some(DeterministicReducePolicy {
+        stable_sort_key: "document_id".into(),
+        duplicate_merge: DuplicateMergePolicy::KeepLastStable,
+        tie_break: TieBreakPolicy::Lexicographic,
+        error_aggregation: ErrorAggregationPolicy::AllStable,
+        partial_result_ordering: PartialResultOrdering::StableStageOrder,
+    });
+    let parsed = parse(&value, StrictIngressLimits::default()).expect("complete reduce policy");
+    assert_eq!(
+        parsed,
+        expected.validate().expect("independent builder policy")
+    );
+    assert_eq!(
+        serde_json::to_value(&parsed.as_spec().stages[0].reduce_policy).unwrap(),
+        policy
+    );
+
+    for field in [
+        "stable_sort_key",
+        "duplicate_merge",
+        "tie_break",
+        "error_aggregation",
+        "partial_result_ordering",
+    ] {
+        let mut typo = value.clone();
+        let reduce = typo["stages"][0]["reduce_policy"].as_object_mut().unwrap();
+        let original = reduce.remove(field).unwrap();
+        let misspelled = format!("{field}_typo");
+        reduce.insert(misspelled.clone(), original);
+        assert_eq!(
+            parse(&typo, StrictIngressLimits::default()),
+            Err(StrictIngressError::UnknownKey {
+                object: "reduce_policy",
+                key: misspelled,
+            }),
+            "unknown {field} variant must be rejected before typed decode"
+        );
+
+        let mut missing = value.clone();
+        missing["stages"][0]["reduce_policy"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            matches!(
+                parse(&missing, StrictIngressLimits::default()),
+                Err(StrictIngressError::Decode(_))
+            ),
+            "missing {field} must not silently take a default"
+        );
+    }
 }
 
 #[test]
@@ -436,6 +624,83 @@ fn strict_config_accepts_supported_nested_variant_payloads() {
         StrictIngressLimits::default(),
     )
     .expect("all currently supported nested config shapes must decode");
+}
+
+#[test]
+fn strict_config_fairness_variants_require_exact_names_and_payload_keys() {
+    use taskmesh::FairnessPolicy;
+
+    for (wire, expected, variant, fields) in [
+        (
+            json!({"WeightedFairQueue": {"weight": 3, "burst": 2}}),
+            FairnessPolicy::WeightedFairQueue {
+                weight: 3,
+                burst: 2,
+            },
+            "WeightedFairQueue",
+            &[("weight", "weigth"), ("burst", "brust")][..],
+        ),
+        (
+            json!({"DeficitRoundRobin": {"quantum": 7}}),
+            FairnessPolicy::DeficitRoundRobin { quantum: 7 },
+            "DeficitRoundRobin",
+            &[("quantum", "quantm")][..],
+        ),
+        (
+            json!({"DeadlineAware": {"slack_ms": 29}}),
+            FairnessPolicy::DeadlineAware { slack_ms: 29 },
+            "DeadlineAware",
+            &[("slack_ms", "slack_mss")][..],
+        ),
+    ] {
+        let mut valid = config();
+        valid["classes"]["c"]["fairness"] = wire;
+        let runtime = parse_runtime_config(
+            &serde_json::to_vec(&valid).unwrap(),
+            StrictIngressLimits::default(),
+        )
+        .expect("explicit fairness variant must pass strict scanning")
+        .into_builder()
+        .build()
+        .expect("valid fairness policy must build");
+        assert_eq!(
+            runtime.config().classes[&TaskClass::new("c")].fairness,
+            expected
+        );
+
+        for &(field, typo) in fields {
+            let mut misspelled = valid.clone();
+            let payload = misspelled["classes"]["c"]["fairness"][variant]
+                .as_object_mut()
+                .unwrap();
+            let original = payload.remove(field).unwrap();
+            payload.insert(typo.into(), original);
+            assert_eq!(
+                parse_runtime_config(
+                    &serde_json::to_vec(&misspelled).unwrap(),
+                    StrictIngressLimits::default(),
+                )
+                .err(),
+                Some(StrictIngressError::UnknownKey {
+                    object: variant,
+                    key: typo.into(),
+                })
+            );
+
+            let mut missing = valid.clone();
+            missing["classes"]["c"]["fairness"][variant]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            assert!(matches!(
+                parse_runtime_config(
+                    &serde_json::to_vec(&missing).unwrap(),
+                    StrictIngressLimits::default(),
+                ),
+                Err(StrictIngressError::Decode(_))
+            ));
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

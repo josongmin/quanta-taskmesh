@@ -35,8 +35,9 @@ def test_command_scopes_mutants_and_keeps_package_tests() -> None:
     assert argv[argv.index("--in-diff") + 1] == "/tmp/changed.diff"
     assert "--cargo-arg=--test" in argv
     assert "--cargo-arg=admission_queue" in argv
-    assert "--cargo-test-arg=--exact" in argv
+    assert "--cargo-test-arg=--" in argv
     assert "--cargo-test-arg=admission_queue::tests::rejects_when_full" in argv
+    assert "--cargo-test-arg=--exact" in argv
     assert "--baseline" in argv and argv[argv.index("--baseline") + 1] == "run"
     assert "--workspace" not in argv
 
@@ -140,6 +141,15 @@ def test_cache_dependency_closure_includes_execution_and_digest_owners() -> None
     assert "crates/taskmesh-engine/tests/prop_invariants.rs" in files
     assert "tools/process_supervisor.py" in files
     assert "tools/qualification/evidence.py" in files
+
+
+def test_cache_dependency_closure_accepts_symlinked_workspace_root(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.symlink_to(REPO, target_is_directory=True)
+
+    files = set(focused.package_dependency_files(workspace, ["taskmesh-engine"]))
+
+    assert "crates/taskmesh-engine/src/lib.rs" in files
 
 
 def test_doc_example_build_inputs_outside_package_are_in_cache_closure() -> None:

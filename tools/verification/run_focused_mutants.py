@@ -89,6 +89,7 @@ def doc_example_build_inputs(source: Path) -> list[str]:
 
 
 def package_dependency_files(source: Path, package_names: list[str]) -> list[str]:
+    source = source.resolve()
     metadata = subprocess.run(
         ["cargo", "metadata", "--format-version", "1", "--locked"],
         cwd=source,
@@ -230,7 +231,13 @@ def command(
     elif test_target is not None:
         argv.extend(["--cargo-arg=--test", f"--cargo-arg={test_target}"])
     if test_filter is not None:
-        argv.extend(["--cargo-test-arg=--exact", f"--cargo-test-arg={test_filter}"])
+        argv.extend(
+            [
+                "--cargo-test-arg=--",
+                f"--cargo-test-arg={test_filter}",
+                "--cargo-test-arg=--exact",
+            ]
+        )
     for package in packages:
         argv.extend(["--package", package])
     for file in files:

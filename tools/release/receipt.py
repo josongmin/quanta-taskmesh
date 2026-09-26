@@ -130,7 +130,7 @@ def iai_raw_problems(
     if comparison.get("status") != "QUALIFIED":
         problems.append("IAI comparison status is not QUALIFIED")
     if (
-        comparison.get("schema_version") != 1
+        comparison.get("schema_version") != iai_gate.COMPARISON_MANIFEST_VERSION
         or comparison.get("kind") != "iai-callgrind-comparison"
     ):
         problems.append("IAI comparison manifest schema/kind mismatch")
@@ -175,8 +175,20 @@ def iai_raw_problems(
     ):
         problems.append("IAI baseline toolchain identity is missing or incompatible")
         return problems
+    build_context = baseline.get("build_context")
+    if (
+        not iai_gate.build_context_valid(build_context)
+        or comparison.get("build_context") != build_context
+    ):
+        problems.append("IAI build context is missing or differs between manifests")
+        return problems
     fingerprint = iai_gate.fingerprint(
-        input_paths, gate.get("measurement_schema"), runner, valgrind, rustc
+        input_paths,
+        gate.get("measurement_schema"),
+        runner,
+        valgrind,
+        rustc,
+        build_context=build_context,
     )
     if baseline.get("fingerprint") != fingerprint or comparison.get("fingerprint") != fingerprint:
         problems.append("IAI baseline/comparison fingerprint differs from current source")
@@ -211,19 +223,22 @@ def iai_raw_problems(
             runner=runner,
             valgrind=valgrind,
             rustc=rustc,
+            build_context=build_context,
             config_path=config_path,
         )
     )
     if baseline.get("artifacts") != iai_gate.baseline_artifacts(store):
         problems.append("IAI baseline raw artifact inventory differs from disk")
-    inspection = iai_gate.inspect_summaries(store)
+    inspection = iai_gate.inspect_summaries(store, expected_comparison=True)
     if (
         inspection["selected_count"] != len(expected_cases)
         or inspection["executed_count"] != len(expected_cases)
         or inspection["comparison_count"] != len(expected_cases)
         or sorted(inspection["cases"]) != sorted(expected_cases)
         or len(inspection["raw_outputs"]) != len(set(inspection["raw_outputs"]))
+        or len(inspection["old_outputs"]) != len(set(inspection["old_outputs"]))
         or inspection["invalid_summaries"]
+        or inspection["semantic_problems"]
     ):
         problems.append("IAI summary case/comparison/raw-output inventory is incomplete")
     for key, expected in inspection.items():
@@ -232,6 +247,9 @@ def iai_raw_problems(
     summaries = [identity(store, path) for path in inspection["summaries"]]
     if None in summaries or comparison.get("summary_artifacts") != summaries:
         problems.append("IAI comparison summary artifact identities differ from disk")
+    old_artifacts = [iai_gate._artifact(store / path, store) for path in inspection["old_outputs"]]
+    if comparison.get("old_artifacts") != old_artifacts:
+        problems.append("IAI old raw artifact identities differ from disk")
     output = identity(store, "benchmark-output.log")
     release_output = identity(root, "target/iai/benchmark-output.log")
     if (

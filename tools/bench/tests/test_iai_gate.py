@@ -27,6 +27,16 @@ sys.path.insert(0, str(HELPER.parent))
 import iai_gate  # noqa: E402
 
 RUNNER_VERSION = iai_gate.gate_config()["iai_callgrind_runner"]
+EMPTY_BUILD_CONTEXT = {
+    "environment": {},
+    "cargo_configs": {},
+    "runner_sha256": "a" * 64,
+    "tool_executables": {
+        "build.rustc": {"path": "/fixture/rustc", "sha256": "b" * 64},
+        "build.cargo": {"path": "/fixture/cargo", "sha256": "c" * 64},
+        "build.default-linker": {"path": "/fixture/cc", "sha256": "d" * 64},
+    },
+}
 
 # This module validates the Linux-only IAI qualification producer, including
 # its shell/toolchain boundary. Full `py-test` retains it; the macOS daily
@@ -68,14 +78,58 @@ def test_runner_version_is_read_from_its_own_error_report() -> None:
         "but iai-callgrind-runner (0.14.2) is >= '0.3.0'."
     )
     assert iai_gate.runner_version_from_self_report(complaint) == "0.14.2"
+    assert (
+        iai_gate.runner_version_from_self_report(
+            "Detected version of iai-callgrind-runner is 0.14.2."
+        )
+        == "0.14.2"
+    )
     assert iai_gate.runner_version_from_self_report("") is None
+
+
+def test_raw_ir_prefers_totals_and_requires_a_real_callgrind_file(tmp_path: Path) -> None:
+    raw = tmp_path / "callgrind.out"
+    raw.write_text(
+        "# callgrind format\nversion: 1\nevents: Dr Ir Dw\nsummary: 1 2 3\ntotals: 4 105 6\n",
+        encoding="utf-8",
+    )
+    assert iai_gate._raw_ir(raw) == 105
+    raw.write_text("garbage\n", encoding="utf-8")
+    assert iai_gate._raw_ir(raw) is None
+
+
+@pytest.mark.parametrize(
+    ("new", "expected_problem"),
+    [(105, False), (106, True), (200, True)],
+)
+def test_ir_limit_is_exact_and_strict(tmp_path: Path, new: int, expected_problem: bool) -> None:
+    store = tmp_path.resolve()
+    current = store / "case.out"
+    old = store / "case.out.old"
+    current.write_text(f"version: 1\nevents: Ir\ntotals: {new}\n")
+    old.write_text("version: 1\nevents: Ir\ntotals: 100\n")
+    summary = {
+        "callgrind_summary": {
+            "callgrind_run": {
+                "total": {"summary": {"Ir": {"metrics": {"Both": [new, 100]}}}},
+                "segments": [{"baseline": {"path": str(old)}}],
+            }
+        }
+    }
+    _, problems = iai_gate._ir_semantic_problems(summary, store, ["case.out"], comparison=True)
+    assert ("Ir regression exceeds reviewed threshold" in problems) is expected_problem
 
 
 def test_fingerprint_changes_with_every_compatibility_input(tmp_path: Path) -> None:
     bench = tmp_path / "bench.rs"
     bench.write_text("fn main() {}\n")
     base = dict(
-        inputs=[bench], schema=2, runner="0.14.2", valgrind="valgrind-3.22", rustc="rustc 1.95.0"
+        inputs=[bench],
+        schema=2,
+        runner="0.14.2",
+        valgrind="valgrind-3.22",
+        rustc="rustc 1.95.0",
+        build_context=EMPTY_BUILD_CONTEXT,
     )
     reference = iai_gate.fingerprint(**base)
     assert reference == iai_gate.fingerprint(**base), "deterministic"
@@ -84,6 +138,10 @@ def test_fingerprint_changes_with_every_compatibility_input(tmp_path: Path) -> N
         ("runner", "0.14.3"),
         ("valgrind", "valgrind-3.23"),
         ("rustc", "rustc 1.96.0"),
+        (
+            "build_context",
+            {**EMPTY_BUILD_CONTEXT, "environment": {"RUSTFLAGS": "-C opt-level=0"}},
+        ),
     ]:
         assert iai_gate.fingerprint(**{**base, key: value}) != reference, key
     bench.write_text("fn main() { let _ = 1; }\n")
@@ -98,11 +156,17 @@ def test_fingerprint_changes_with_every_compatibility_input(tmp_path: Path) -> N
         iai_gate.fingerprint(**{**base, "inputs": []})
 
 
-def test_every_configured_fingerprint_input_changes_the_fingerprint(tmp_path: Path) -> None:
+def test_every_configured_fingerprint_input_changes_the_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The CI cache key and the stamp both come from `fingerprint` over the
     configured input list. Each configured file must move it: a dependency
     bump (`Cargo.lock`) or a threshold change (`perf-gate.json`) that left the
     fingerprint alone would compare a new measurement against an old baseline."""
+    runner_bin = tmp_path / "bin"
+    runner_bin.mkdir()
+    _shim(runner_bin, "iai-callgrind-runner", "echo 'Detected version 0.14.2' >&2\nexit 1\n")
+    monkeypatch.setenv("PATH", f"{runner_bin}{os.pathsep}{os.environ.get('PATH', '')}")
     config = iai_gate.gate_config()
     root = tmp_path / "root"
     for rel in config["fingerprint_inputs"]:
@@ -187,6 +251,7 @@ def test_manifest_rejects_a_baseline_artifact_outside_the_store(tmp_path: Path) 
         "runner": "0.14.2",
         "valgrind": "valgrind-3.22",
         "rustc": "rustc 1.95.0",
+        "build_context": EMPTY_BUILD_CONTEXT,
         "config_sha256": iai_gate._sha256(iai_gate.CONFIG),
         "artifacts": [
             {
@@ -203,6 +268,7 @@ def test_manifest_rejects_a_baseline_artifact_outside_the_store(tmp_path: Path) 
         runner="0.14.2",
         valgrind="valgrind-3.22",
         rustc="rustc 1.95.0",
+        build_context=EMPTY_BUILD_CONTEXT,
     )
     assert "baseline artifact '../outside.out' escapes the baseline store" in problems
 
@@ -252,6 +318,7 @@ def test_comparison_requires_real_instruction_counts_and_keeps_baseline_on_failu
         runner="0.14.2",
         valgrind="valgrind-3.22",
         rustc="rustc 1.95.0",
+        build_context=EMPTY_BUILD_CONTEXT,
         expected_comparison=True,
     )
     assert status == "NOT_RUN"
@@ -279,11 +346,221 @@ def test_first_run_without_raw_callgrind_output_cannot_create_a_baseline(tmp_pat
         runner="0.14.2",
         valgrind="valgrind-3.22",
         rustc="rustc 1.95.0",
+        build_context=EMPTY_BUILD_CONTEXT,
         expected_comparison=False,
     )
     assert status == "NOT_RUN"
     assert "raw callgrind .out artifact is missing" in problems
     assert not (store / iai_gate.BASELINE_MANIFEST).exists()
+
+
+@pytest.mark.parametrize(
+    "control",
+    [
+        "RUSTC",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER",
+    ],
+)
+def test_same_path_tool_rewrite_changes_build_context(
+    tmp_path: Path, monkeypatch, control: str
+) -> None:
+    executable = tmp_path / "tool"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    monkeypatch.setenv(control, str(executable))
+    before = iai_gate.cargo_build_context(tmp_path)
+    executable.write_text("#!/bin/sh\nexit 1\n")
+    after = iai_gate.cargo_build_context(tmp_path)
+    assert before != after
+    assert before["environment"] == after["environment"]
+    assert before["tool_executables"] != after["tool_executables"]
+
+
+@pytest.mark.parametrize(
+    "control",
+    [
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "CARGO_BUILD_RUSTC",
+        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER",
+    ],
+)
+def test_missing_selected_tool_rejects_build_context(
+    tmp_path: Path, monkeypatch, control: str
+) -> None:
+    monkeypatch.delenv("RUSTC", raising=False)
+    monkeypatch.setenv(control, str(tmp_path / "missing"))
+    with pytest.raises(ValueError, match="missing or not executable"):
+        iai_gate.cargo_build_context(tmp_path)
+
+
+def test_config_relative_wrapper_bytes_and_environment_override(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("RUSTC_WRAPPER", raising=False)
+    monkeypatch.delenv("CARGO_BUILD_RUSTC_WRAPPER", raising=False)
+    cargo_home = tmp_path / "cargo-home"
+    cargo_home.mkdir()
+    monkeypatch.setenv("CARGO_HOME", str(cargo_home))
+    root = tmp_path / "source"
+    (root / ".cargo").mkdir(parents=True)
+    (root / ".cargo/config.toml").write_text('[build]\nrustc-wrapper = "./wrapper"\n')
+    executable = root / "wrapper"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    before = iai_gate.cargo_build_context(root)
+    executable.write_text("#!/bin/sh\nexit 1\n")
+    after = iai_gate.cargo_build_context(root)
+    assert before["cargo_configs"] == after["cargo_configs"]
+    assert before["tool_executables"] != after["tool_executables"]
+    executable.unlink()
+    with pytest.raises(ValueError, match="missing or not executable"):
+        iai_gate.cargo_build_context(root)
+    monkeypatch.setenv("RUSTC_WRAPPER", "")
+    assert "build.rustc-wrapper" not in iai_gate.cargo_build_context(root)["tool_executables"]
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+def test_rustflags_linker_rewrite_and_missing_tool_are_rejected(
+    tmp_path: Path, monkeypatch, encoded: bool
+) -> None:
+    executable = tmp_path / "linker"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    name = "CARGO_ENCODED_RUSTFLAGS" if encoded else "RUSTFLAGS"
+    monkeypatch.delenv("CARGO_ENCODED_RUSTFLAGS", raising=False)
+    separator = "\x1f" if encoded else " "
+    monkeypatch.setenv(name, f"-C{separator}linker={executable}")
+    before = iai_gate.cargo_build_context(tmp_path)
+    executable.write_text("#!/bin/sh\nexit 1\n")
+    assert before != iai_gate.cargo_build_context(tmp_path)
+    executable.unlink()
+    with pytest.raises(ValueError, match="missing or not executable"):
+        iai_gate.cargo_build_context(tmp_path)
+
+
+def test_path_selected_rustc_bytes_bind_build_context(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("RUSTC", raising=False)
+    monkeypatch.delenv("CARGO_BUILD_RUSTC", raising=False)
+    executable = tmp_path / "rustc"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    before = iai_gate.cargo_build_context(tmp_path)
+    executable.write_text("#!/bin/sh\nexit 1\n")
+    assert before != iai_gate.cargo_build_context(tmp_path)
+
+
+def test_rustup_proxy_binds_active_compiler_and_cargo_bytes(tmp_path: Path, monkeypatch) -> None:
+    for name in ("RUSTC", "CARGO_BUILD_RUSTC"):
+        monkeypatch.delenv(name, raising=False)
+    proxy = tmp_path / "rustup"
+    proxy.write_text("#!/bin/sh\nexit 0\n")
+    proxy.chmod(0o755)
+    for tool in ("rustc", "cargo"):
+        (tmp_path / tool).symlink_to(proxy)
+        executable = tmp_path / ("active-" + tool)
+        executable.write_text("#!/bin/sh\nexit 0\n")
+        executable.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+
+    def which(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command, 0, str(tmp_path / ("active-" + command[-1])), ""
+        )
+
+    monkeypatch.setattr(iai_gate.subprocess, "run", which)
+    before = iai_gate.cargo_build_context(tmp_path)
+    assert before["tool_executables"]["build.rustc"]["path"] == str(tmp_path / "active-rustc")
+    assert before["tool_executables"]["build.cargo"]["path"] == str(tmp_path / "active-cargo")
+    (tmp_path / "active-rustc").write_text("#!/bin/sh\nexit 1\n")
+    after = iai_gate.cargo_build_context(tmp_path)
+    assert before != after
+    assert (
+        before["tool_executables"]["build.rustc.launcher"]
+        == after["tool_executables"]["build.rustc.launcher"]
+    )
+
+
+def test_default_linker_bytes_bind_build_context(tmp_path: Path, monkeypatch) -> None:
+    executable = tmp_path / "cc"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    before = iai_gate.cargo_build_context(tmp_path)
+    executable.write_text("#!/bin/sh\nexit 1\n")
+    assert before != iai_gate.cargo_build_context(tmp_path)
+
+
+def test_unsupported_target_rejects_default_linker_provenance(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CARGO_BUILD_TARGET", "wasm32-unknown-unknown")
+    with pytest.raises(ValueError, match="unsupported build target"):
+        iai_gate.cargo_build_context(tmp_path)
+
+
+@pytest.mark.parametrize("as_array", [False, True])
+def test_cargo_runner_command_binds_its_first_executable(
+    tmp_path: Path, monkeypatch, as_array: bool
+) -> None:
+    home = tmp_path / "cargo-home"
+    home.mkdir()
+    monkeypatch.setenv("CARGO_HOME", str(home))
+    executable = tmp_path / "runner"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    config = f'[target.x86_64-unknown-linux-gnu]\nrunner = "{executable} --arg"\n'
+    if as_array:
+        config = f'[target.x86_64-unknown-linux-gnu]\nrunner = ["{executable}", "--arg"]\n'
+    (home / "config.toml").write_text(config)
+    context = iai_gate.cargo_build_context(tmp_path)
+    assert context["tool_executables"]["target.x86_64-unknown-linux-gnu.runner"]["path"] == str(
+        executable
+    )
+
+
+def test_ancestor_rustflags_linker_survives_deeper_array_merge(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("RUSTFLAGS", raising=False)
+    monkeypatch.delenv("CARGO_ENCODED_RUSTFLAGS", raising=False)
+    monkeypatch.delenv("CARGO_BUILD_RUSTFLAGS", raising=False)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("CARGO_HOME", str(home))
+    root = tmp_path / "parent/child"
+    (root / ".cargo").mkdir(parents=True)
+    (root.parent / ".cargo").mkdir()
+    linker = tmp_path / "linker"
+    linker.write_text("#!/bin/sh\nexit 0\n")
+    linker.chmod(0o755)
+    (root.parent / ".cargo/config.toml").write_text(
+        f'[build]\nrustflags = ["-C", "linker={linker}"]\n'
+    )
+    (root / ".cargo/config.toml").write_text('[build]\nrustflags = ["-C", "opt-level=3"]\n')
+    before = iai_gate.cargo_build_context(root)
+    linker.write_text("#!/bin/sh\nexit 1\n")
+    after = iai_gate.cargo_build_context(root)
+    assert before["cargo_configs"] == after["cargo_configs"]
+    assert before != after
+
+
+@pytest.mark.parametrize("name", ["RUSTC_WRAPPER", "CC", "PATH"])
+def test_config_environment_tool_controls_fail_closed(
+    tmp_path: Path, monkeypatch, name: str
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("CARGO_HOME", str(home))
+    executable = tmp_path / "wrapper"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    (home / "config.toml").write_text(
+        f'[env]\n{name} = {{ value = "../wrapper", force = true, relative = true }}\n'
+    )
+    for content in ("#!/bin/sh\nexit 0\n", "#!/bin/sh\nexit 1\n"):
+        executable.write_text(content)
+        with pytest.raises(ValueError, match=r"unattested Cargo \[env\] build control"):
+            iai_gate.cargo_build_context(tmp_path)
 
 
 # ---- the shell script ------------------------------------------------------
@@ -332,11 +609,8 @@ class Harness:
         if version and not self_report:
             listing = f"iai-callgrind-runner v{version}:\n    iai-callgrind-runner\n"
         report = "echo 'iai_callgrind_runner: Error: unusable' >&2; exit 1\n"
-        if version and self_report:
-            report = (
-                'echo "iai_callgrind_runner: Error: ... but iai-callgrind-runner '
-                f"({version}) is >= '0.3.0'.\" >&2; exit 1\n"
-            )
+        if version:
+            report = f"echo 'Detected version of iai-callgrind-runner is {version}.' >&2; exit 1\n"
         _shim(self.bin, "iai-callgrind-runner", report)
         self._listing = listing
         self._write_cargo()
@@ -391,7 +665,16 @@ class Harness:
                 "callgrind_summary": {
                     "out_paths": [str(self.root / raw_directory / "callgrind.fake.out")],
                     "callgrind_run": {
-                        "total": {"summary": {"Ir": {"metrics": "__METRICS__"}}, "regressions": []}
+                        "total": {"summary": {"Ir": {"metrics": "__METRICS__"}}, "regressions": []},
+                        "segments": [
+                            {
+                                "baseline": {
+                                    "path": str(
+                                        self.root / raw_directory / "callgrind.fake.out.old"
+                                    )
+                                }
+                            }
+                        ],
                     },
                 },
             }
@@ -399,18 +682,24 @@ class Harness:
             case_commands += (
                 f"  mkdir -p {directory}\n"
                 f"  if [[ -f {directory}/callgrind.fake.out && {comparison_flag} -eq 1 ]]; then\n"
+                f"    mv {directory}/callgrind.fake.out {directory}/callgrind.fake.out.old\n"
                 "    metrics='{\"Both\":[101,100]}'\n"
+                "    ir=101\n"
                 "  else\n"
-                "    metrics='{\"Left\":101}'\n"
+                "    metrics='{\"Left\":100}'\n"
+                "    ir=100\n"
                 "  fi\n"
             )
             if index < getattr(self, "_raw_case_count", len(cases)):
-                case_commands += f"  echo 'events: Ir' >{directory}/callgrind.fake.out\n"
+                case_commands += (
+                    "  printf '# callgrind format\\nversion: 1\\nevents: Ir\\ntotals: %s\\n' "
+                    f'"$ir" >{directory}/callgrind.fake.out\n'
+                )
             if emits_summary:
                 case_commands += f"  printf '{encoded}\\n' \"$metrics\" >{directory}/summary.json\n"
         _shim(
             self.bin,
-            "cargo",
+            "cargo-fixture",
             f'echo "cargo $*" >>"{self.log}"\n'
             'if [[ "$1" == "install" ]]; then\n'
             f"  printf '%s' \"{listing}\"\n"
@@ -427,6 +716,8 @@ class Harness:
             "fi\n"
             "exit 0\n",
         )
+        # Runtime fixture payload varies; the selected Cargo launcher is stable.
+        _shim(self.bin, "cargo", f'exec bash "{self.bin / "cargo-fixture"}" "$@"\n')
 
     def run(
         self, *args: str, env: dict[str, str] | None = None
@@ -542,6 +833,42 @@ def test_a_runner_version_mismatch_names_both_versions(harness: Harness) -> None
     assert f"config requires {RUNNER_VERSION}" in proc.stderr
 
 
+def test_shadowed_path_runner_is_not_misidentified_by_cargo_list(harness: Harness) -> None:
+    _shim(
+        harness.bin,
+        "iai-callgrind-runner",
+        "echo 'Detected version of iai-callgrind-runner is 0.15.0.' >&2; exit 1\n",
+    )
+    proc = harness.run()
+    assert proc.returncode == 1
+    assert "PATH runner 0.15.0 differs from cargo install 0.14.2" in proc.stderr
+
+
+def test_same_version_runner_binary_change_moves_fingerprint(harness: Harness) -> None:
+    before = harness.run("fingerprint")
+    assert before.returncode == 0, before.stderr
+    runner = harness.bin / "iai-callgrind-runner"
+    runner.write_text(runner.read_text() + "# changed binary\n")
+    after = harness.run("fingerprint")
+    assert after.returncode == 0, after.stderr
+    assert after.stdout != before.stdout
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "IAI_CALLGRIND_BASELINE",
+        "IAI_CALLGRIND_SAVE_BASELINE",
+        "IAI_CALLGRIND_LOAD_BASELINE",
+        "IAI_CALLGRIND_FILTER",
+    ],
+)
+def test_ambient_baseline_and_filter_controls_are_rejected(harness: Harness, name: str) -> None:
+    proc = harness.run(env={name: "unexpected"})
+    assert proc.returncode == 1
+    assert f"{name} cannot alter" in proc.stderr
+
+
 def test_first_run_records_a_baseline_and_second_run_qualifies(harness: Harness) -> None:
     first = harness.run()
     assert first.returncode == 0, first.stderr
@@ -650,6 +977,28 @@ def test_an_incompatible_baseline_is_discarded_not_compared(harness: Harness) ->
     assert "status=BASELINE_CREATED" in proc.stdout
     assert "cached baseline is incomplete, corrupt, or incompatible" in proc.stderr
     assert harness.fingerprint != old
+
+
+def test_codegen_environment_change_cannot_reuse_an_iai_baseline(harness: Harness) -> None:
+    first = harness.run(env={"RUSTFLAGS": "-C opt-level=0"})
+    assert first.returncode == 0, first.stderr
+    assert "status=BASELINE_CREATED" in first.stdout
+    old = harness.fingerprint
+
+    second = harness.run(env={"RUSTFLAGS": "-C opt-level=3"})
+    assert second.returncode == 0, second.stderr
+    assert "status=BASELINE_CREATED" in second.stdout
+    assert harness.fingerprint != old
+
+
+def test_workspace_bench_profile_changes_iai_fingerprint(harness: Harness) -> None:
+    first = harness.run("fingerprint")
+    assert first.returncode == 0, first.stderr
+    cargo_manifest = harness.root / "Cargo.toml"
+    cargo_manifest.write_text(cargo_manifest.read_text() + "\n[profile.bench]\nopt-level = 0\n")
+    second = harness.run("fingerprint")
+    assert second.returncode == 0, second.stderr
+    assert second.stdout != first.stdout
 
 
 def test_a_failed_benchmark_leaves_no_manifest_behind(harness: Harness) -> None:

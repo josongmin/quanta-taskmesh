@@ -88,16 +88,35 @@ def listed_cases(
 
 
 def executed_cases(
-    lines: str, expected: set[tuple[str, str, str]], *, allow_filtered: bool = False
+    lines: str,
+    expected: set[tuple[str, str, str]],
+    targets: set[str],
+    *,
+    allow_filtered: bool = False,
 ) -> set[tuple[str, str, str]]:
     started: set[tuple[str, str, str]] = set()
     passed: set[tuple[str, str, str]] = set()
     suite_started: set[tuple[str, str]] = set()
     suite_finished: set[tuple[str, str]] = set()
     expected_by_suite: dict[tuple[str, str], int] = {}
+    zero_allowed: dict[tuple[str, str], bool] = {}
+    for target in targets:
+        fields = target.split("/", 2)
+        if len(fields) != 3 or not all(fields):
+            raise ValueError(f"malformed selected target {target}")
+        key = (fields[0], fields[2])
+        if key in expected_by_suite:
+            raise ValueError(f"selected targets alias nextest suite identity {key}")
+        expected_by_suite[key] = 0
+        zero_allowed[key] = target in ZERO_CASE_LIBS and not allow_filtered
     for package, binary, _case in expected:
         key = (package, binary)
-        expected_by_suite[key] = expected_by_suite.get(key, 0) + 1
+        if key not in expected_by_suite:
+            raise ValueError(f"selected case has no selected target {key}")
+        expected_by_suite[key] += 1
+    for key, count in expected_by_suite.items():
+        if count == 0 and not zero_allowed[key]:
+            raise ValueError(f"unregistered zero-case target {key}")
     for line in lines.splitlines():
         try:
             event = json.loads(line)
@@ -112,10 +131,12 @@ def executed_cases(
             key = (info.get("crate"), info.get("test_binary"))
             if not all(isinstance(x, str) for x in key):
                 raise ValueError("nextest suite identity is malformed")
+            if key not in expected_by_suite:
+                raise ValueError(f"unexpected nextest suite {key}")
             if event.get("event") == "started":
                 if key in suite_started:
                     raise ValueError(f"duplicate suite start {key}")
-                if event.get("test_count") != expected_by_suite.get(key, 0):
+                if event.get("test_count") != expected_by_suite[key]:
                     raise ValueError(f"suite start denominator differs from selected cases {key}")
                 suite_started.add(key)
             elif event.get("event") == "ok":
@@ -123,7 +144,7 @@ def executed_cases(
                     raise ValueError(f"unmatched suite finish {key}")
                 filtered_out = event.get("filtered_out")
                 if (
-                    event.get("passed") != expected_by_suite.get(key, 0)
+                    event.get("passed") != expected_by_suite[key]
                     or event.get("failed") != 0
                     or event.get("ignored") != 0
                     or type(filtered_out) is not int
@@ -154,7 +175,13 @@ def executed_cases(
                 raise ValueError(f"non-pass test event {event.get('event')} for {name}")
         else:
             raise ValueError(f"unknown nextest event type {event.get('type')}")
-    if passed != expected or started != expected or suite_started != suite_finished:
+    required_suites = {key for key, count in expected_by_suite.items() if count > 0}
+    if (
+        passed != expected
+        or started != expected
+        or suite_started != suite_finished
+        or not required_suites.issubset(suite_finished)
+    ):
         raise ValueError(
             f"nextest execution denominator mismatch: selected={len(expected)} "
             f"started={len(started)} passed={len(passed)} "
@@ -219,7 +246,7 @@ def main() -> int:
             if all_cases & cases:
                 raise ValueError("test scopes overlap")
             output = run_command(execution, env=env)
-            executed_cases(output, cases, allow_filtered=exact_case is not None)
+            executed_cases(output, cases, targets, allow_filtered=exact_case is not None)
             all_cases.update(cases)
             all_targets.update(targets)
             commands.extend((selection, execution))

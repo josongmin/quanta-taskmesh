@@ -8,10 +8,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# A threshold that is set — even to an empty string — is an explicit override
-# and goes to the parser as-is. Falling back to the default on an empty value
-# would turn a misconfigured override into a silently different gate.
 if [ -n "${MAX_ALLOCS_PER_OP+set}" ]; then
-  exec python3 tools/bench/allocation_gate.py --max-allocs-per-op="${MAX_ALLOCS_PER_OP}" "$@"
+  echo "bench-gate: MAX_ALLOCS_PER_OP cannot override the reviewed threshold" >&2
+  exit 2
 fi
 exec python3 tools/bench/allocation_gate.py "$@"

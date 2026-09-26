@@ -719,6 +719,12 @@ mod mutation_semantics {
     }
 
     #[test]
+    fn opaque_ids_render_authority_and_sequence() {
+        assert_eq!(PermitId::new(17, 42).to_string(), "17:42");
+        assert_eq!(Ticket::new(23, 911).to_string(), "23:911");
+    }
+
+    #[test]
     fn capability_identity_binds_name_and_issuing_authority() {
         let first_policy = PolicySet::new(ResourceBudget::new(), BTreeMap::new());
         let second_policy = PolicySet::new(ResourceBudget::new(), BTreeMap::new());

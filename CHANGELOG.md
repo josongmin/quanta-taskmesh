@@ -64,6 +64,27 @@ The current operator path is local; hosted attestation remains a compatibility p
   declare nonblocking submit, physical domain, exact worker count, and whether
   submission requires an entered Tokio runtime. The built-in Tokio adapter
   declares that prerequisite even when installed explicitly.
+- **Topology and default host executor (H03).** `TopologyConfig` gained the
+  public `physical_domains` field. Downstream struct literals must add
+  `physical_domains: PhysicalDomainTopology::default()` or migrate to
+  `TopologyConfig::new()` and its builders. `BlockingPoolCpuExecutor` is no
+  longer a unit struct or `Default`; direct embedders construct it with
+  `BlockingPoolCpuExecutor::new(NonZeroU32)`. Normal `Builder` users do not
+  construct this adapter themselves.
+- **Engine observation and custody outcomes (C01/E01).** `PendingView` now
+  exposes `assessment` and a `capabilities` requirement set; `PermitLedgerView`
+  likewise replaces the singular `capability` projection with `capabilities`.
+  `ReleaseOutcome` adds `HeldByLease { phase }`, so exhaustive matches must
+  handle an attempted release that did not own worker custody. `TerminalReason`
+  adds delivery-failure and irreversible-cycle reasons and is no longer
+  `Copy`, `Ord`, or `Hash`; `ClaimOutcome` and `Provenance` are also no longer
+  `Copy`. Clone owned diagnostic values only where needed and match the new
+  typed outcomes instead of relying on ordering or implicit copies.
+- **Capability policy inspection (E01).** `PolicySet::capability_limits()` and
+  `capability_limit()` are replaced by `capability_records()` and
+  `capability_capacity()`. The new API preserves the difference between a
+  missing pool and `CapabilityCapacity::ExplicitUnbounded`; callers must not
+  map both states to the legacy numeric zero sentinel.
 - **Memory result (E03).** Before:
   `if governor.reconcile_memory(permit, bytes) { /* applied */ }`.
   After: `match governor.reconcile_memory(permit, bytes) {
@@ -92,12 +113,10 @@ The current operator path is local; hosted attestation remains a compatibility p
   receipt integration and V02 mutation producer are implemented but not
   hosted/full-denominator qualified. V03 producer has local semantic fuzz and
   model evidence; hosted replay remains separate.
-- The exact `1378383` local `taskmesh-rayon` generated subset had 10 planned:
-  5 caught, 0 missed, 5 unviable, 0 timeout/equivalent. This is **FAIL** under
-  the current generated quality rule, not a workspace score. One unviable
-  `try_new -> Ok(Default::default())` replacement cannot compile because the
-  executor intentionally has no `Default`. Full workspace generated results
-  remain NOT_RUN for this candidate.
+- Generated mutation status is taken only from the final candidate's
+  exact-source `receipt.generated-mutations.json`. Subset, focused, interrupted,
+  or earlier-HEAD campaigns remain diagnostic evidence and never qualify the
+  workspace, even when every executed mutant was caught.
 - Coverage is descriptive, not a correctness threshold. Line/region/function/
   instantiation percentages and collected state are preserved separately;
   branch/MCDC count zero is `NOT_COLLECTED`, not 0% coverage.

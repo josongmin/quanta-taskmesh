@@ -34,6 +34,7 @@ from campaign import (  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 CATEGORIES = ("caught", "missed", "unviable", "timeout")
+DEFAULT_MUTANT_TIMEOUT_SECONDS = 120
 SUMMARY_CATEGORY = {
     "CaughtMutant": "caught",
     "MissedMutant": "missed",
@@ -252,8 +253,16 @@ def command(args: argparse.Namespace, raw_parent: Path) -> list[str]:
         "--jobs",
         str(args.jobs),
     ]
-    if args.timeout is not None:
-        argv.extend(["--timeout", str(args.timeout)])
+    # The baseline-derived cargo-mutants timeout can be shorter than the
+    # bounded waits inside the Rust tests (currently up to 30 seconds). A
+    # semantic test failure must not be relabeled as a mutant timeout while
+    # another nextest case is still reaching its own bound.
+    argv.extend(
+        [
+            "--timeout",
+            str(args.timeout if args.timeout is not None else DEFAULT_MUTANT_TIMEOUT_SECONDS),
+        ]
+    )
     for package in args.package:
         argv.extend(["--package", package])
     return argv

@@ -314,6 +314,24 @@ def test_generated_command_uses_two_isolated_cargo_mutants_jobs() -> None:
     generated = gm.command(args, Path("/tmp/raw"))
     assert generated[generated.index("--jobs") + 1] == "2"
     assert generated[generated.index("--test-tool") + 1] == "nextest"
+    assert generated[generated.index("--timeout") + 1] == "120"
+
+
+def test_generated_command_allows_explicit_per_mutant_timeout() -> None:
+    args = SimpleNamespace(jobs=2, timeout=180, package=[])
+    generated = gm.command(args, Path("/tmp/raw"))
+    assert generated[generated.index("--timeout") + 1] == "180"
+
+
+def test_nextest_test_backstop_preempts_the_generated_mutant_timeout() -> None:
+    config = gm.tomllib.loads(
+        (REPO / ".config/nextest.toml").read_text(encoding="utf-8")
+    )
+    slow_timeout = config["profile"]["default"]["slow-timeout"]
+    match = re.fullmatch(r"(\d+)s", slow_timeout["period"])
+    assert match is not None
+    test_timeout_seconds = int(match.group(1)) * slow_timeout["terminate-after"]
+    assert 0 < test_timeout_seconds < gm.DEFAULT_MUTANT_TIMEOUT_SECONDS
 
 
 def test_generated_receipt_identifies_nextest(monkeypatch, tmp_path: Path) -> None:

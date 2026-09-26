@@ -7,7 +7,7 @@ import pytest
 from tools.gates.execute_py_tests import reconcile
 
 
-def test_reconcile_counts_skip_as_exclusion_not_pass() -> None:
+def test_reconcile_rejects_skip_even_when_another_case_passes() -> None:
     selected = {
         "tools/tests/test_a.py::test_ok": {"module": "tools/tests/test_a.py"},
         "tools/tests/test_a.py::test_skip": {"module": "tools/tests/test_a.py"},
@@ -20,11 +20,8 @@ def test_reconcile_counts_skip_as_exclusion_not_pass() -> None:
             "phase": "setup", "outcome": "skipped", "xfail": False,
         }],
     }
-    passed, excluded = reconcile(selected, outcomes, {"tools/tests/test_a.py"}, [])
-    assert passed == ["tools/tests/test_a.py::test_ok"]
-    assert excluded == [{
-        "case": "tools/tests/test_a.py::test_skip", "reason": "skipped_or_xfail",
-    }]
+    with pytest.raises(ValueError, match="was skipped or xfailed"):
+        reconcile(selected, outcomes, {"tools/tests/test_a.py"}, [])
 
 
 def test_reconcile_rejects_missing_module_and_all_skipped_module() -> None:
@@ -34,7 +31,7 @@ def test_reconcile_rejects_missing_module_and_all_skipped_module() -> None:
     }]}
     with pytest.raises(ValueError, match="module denominator mismatch"):
         reconcile(selected, outcomes, {"tools/tests/test_other.py"}, [])
-    with pytest.raises(ValueError, match="no passed cases"):
+    with pytest.raises(ValueError, match="was skipped or xfailed"):
         reconcile(selected, outcomes, {"tools/tests/test_a.py"}, [])
 
 

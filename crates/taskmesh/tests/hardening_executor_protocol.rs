@@ -633,6 +633,143 @@ async fn a_caller_that_leaves_while_the_job_is_accepted_but_not_started_keeps_it
     assert_eq!(observed.terminated_total, 1);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn accepted_unstarted_caller_exit_keeps_follower_queued_until_worker_settles() {
+    use tokio_util::sync::CancellationToken;
+
+    for cancel_caller in [true, false] {
+        let class = TaskClass::new("c");
+        let held: HeldJobs = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rt = Builder::new()
+            .topology(TopologyConfig::new().cpu_fixed(1))
+            .resources(ResourceBudget::new().cpu_units(1).memory_units(1))
+            .class_policy(
+                class.clone(),
+                ClassPolicy::new()
+                    .max_inflight(1)
+                    .max_queue_depth(1)
+                    .cpu_units(1)
+                    .overflow_policy(OverflowPolicy::QueueWithinDepth)
+                    .cancellation_policy(CancellationPolicy::Cooperative),
+            )
+            .cpu_executor(Arc::new(HoldingExecutor {
+                held: Arc::clone(&held),
+            }))
+            .build()
+            .expect("one-slot held executor builds");
+        let cancel = CancellationToken::new();
+        let owner = rt.clone();
+        let token = cancel.clone();
+        let mut first = tokio::spawn(async move {
+            owner
+                .run_cpu_with(
+                    TaskSpec::cpu(TaskClass::new("c")).operation("accepted-holder"),
+                    SubmitOptions::unbounded().with_cancel(token),
+                    || Ok::<_, ()>(1),
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while rt.snapshot().classes[&class].accepted != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("first closure becomes accepted without starting");
+        assert_eq!(held.lock().expect("lock").len(), 1);
+
+        let follower_rt = rt.clone();
+        let follower = tokio::spawn(async move {
+            follower_rt
+                .run_cpu(
+                    TaskSpec::cpu(TaskClass::new("c")).operation("queued-follower"),
+                    || Ok::<_, ()>(2),
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while rt.snapshot().classes[&class].queued != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("follower queues behind accepted closure");
+
+        if cancel_caller {
+            cancel.cancel();
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_secs(5), &mut first)
+                    .await
+                    .expect("cancelled caller responds")
+                    .expect("caller joins"),
+                Err(RunError::Governor(GovernorError::Cancelled))
+            ));
+        } else {
+            first.abort();
+            assert!(tokio::time::timeout(Duration::from_secs(5), &mut first)
+                .await
+                .expect("dropped caller settles")
+                .expect_err("dropped caller has no response")
+                .is_cancelled());
+        }
+
+        let pending = rt.snapshot();
+        assert_eq!(
+            (
+                pending.classes[&class].accepted,
+                pending.classes[&class].queued
+            ),
+            (1, 1)
+        );
+        assert_eq!(pending.capabilities["cpu"].in_use, 1);
+        assert_eq!(held.lock().expect("lock").len(), 1);
+        let not_drained = rt
+            .drain(Duration::ZERO)
+            .await
+            .expect_err("accepted closure and pre-drain follower retain custody");
+        assert_eq!(
+            (
+                not_drained.classes[&class].inflight,
+                not_drained.classes[&class].queued
+            ),
+            (1, 1)
+        );
+
+        let first_job = held.lock().expect("lock").pop().expect("first closure");
+        first_job();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while rt.snapshot().classes[&class].accepted != 1
+                || rt.snapshot().classes[&class].queued != 0
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("follower promotes and executor accepts it");
+        let second_job = held.lock().expect("lock").pop().expect("second closure");
+        second_job();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), follower)
+                .await
+                .expect("follower responds")
+                .expect("follower joins"),
+            Ok(2)
+        );
+        rt.drain(Duration::from_secs(5))
+            .await
+            .expect("both accepted closures have settled");
+        let final_snapshot = rt.snapshot();
+        let c = &final_snapshot.classes[&class];
+        assert_eq!((c.inflight, c.queued, c.accepted), (0, 0, 0));
+        assert_eq!(
+            (c.admitted_total, c.started_total, c.terminated_total),
+            (2, 2, 2)
+        );
+        assert_eq!(final_snapshot.capabilities["cpu"].in_use, 0);
+        assert_eq!(final_snapshot.conservation_violation(), None);
+    }
+}
+
 // ---- D05: the adapter's declaration is load-bearing ------------------------
 
 /// An adapter that declares a worker count and runs work on plain threads.
@@ -775,6 +912,28 @@ fn poll_once_without_tokio<F: std::future::Future + ?Sized>(
     future.poll(&mut context)
 }
 
+fn poll_to_completion_without_tokio<F: std::future::Future + ?Sized>(
+    mut future: std::pin::Pin<&mut F>,
+) -> F::Output {
+    struct ThreadWake(std::thread::Thread);
+    impl std::task::Wake for ThreadWake {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    let waker = std::task::Waker::from(Arc::new(ThreadWake(std::thread::current())));
+    let mut context = std::task::Context::from_waker(&waker);
+    let until = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let std::task::Poll::Ready(value) = future.as_mut().poll(&mut context) {
+            return value;
+        }
+        assert!(Instant::now() < until, "future did not wake without Tokio");
+        std::thread::park_timeout(until.saturating_duration_since(Instant::now()));
+    }
+}
+
 #[test]
 fn default_tokio_dispatch_without_a_runtime_is_rejected_before_admission() {
     let class = TaskClass::new("c");
@@ -851,6 +1010,90 @@ fn default_tokio_dispatch_without_a_runtime_is_rejected_before_admission() {
         assert_eq!(cpu_ran.load(Ordering::SeqCst), 0);
         assert_eq!(rt.snapshot(), before, "failed preflight cannot admit work");
     }
+}
+
+#[test]
+fn caller_future_requires_tokio_only_for_a_real_timer() {
+    let class = TaskClass::new("timer-context");
+    let rt = Builder::new()
+        .class_policy(
+            class.clone(),
+            ClassPolicy::new()
+                .max_inflight(1)
+                .cpu_units(1)
+                .cancellation_policy(CancellationPolicy::CooperativeWithDeadline),
+        )
+        .build()
+        .expect("I/O runtime builds");
+    let before = rt.snapshot();
+
+    // Try-once acquisition needs no timer. It must remain usable by a caller
+    // whose executor is not Tokio, including when the capacity is free.
+    let mut immediate = Box::pin(rt.run_io_with(
+        TaskSpec::io(class.clone()).operation("zero-acquire-budget"),
+        SubmitOptions::unbounded().with_acquire_timeout(Duration::ZERO),
+        async { Ok::<_, ()>(7) },
+    ));
+    assert_eq!(
+        poll_once_without_tokio(immediate.as_mut()),
+        std::task::Poll::Ready(Ok(7))
+    );
+
+    for (operation, opts) in [
+        (
+            "nonzero-acquire-budget",
+            SubmitOptions::unbounded().with_acquire_timeout(Duration::from_secs(30)),
+        ),
+        (
+            "relative-run-deadline",
+            SubmitOptions::unbounded().with_deadline(Duration::from_secs(30)),
+        ),
+        (
+            "absolute-completion-deadline",
+            SubmitOptions::unbounded()
+                .with_absolute_deadline(Instant::now() + Duration::from_secs(30)),
+        ),
+    ] {
+        let snapshot = rt.snapshot();
+        let mut timed = Box::pin(rt.run_io_with(
+            TaskSpec::io(class.clone()).operation(operation),
+            opts,
+            async { Ok::<_, ()>(9) },
+        ));
+        assert_eq!(
+            poll_once_without_tokio(timed.as_mut()),
+            std::task::Poll::Ready(Err(RunError::Governor(GovernorError::WorkerUnavailable {
+                context: "submission timer".into(),
+                detail: "an active Tokio runtime context is required before admission".into(),
+            }))),
+            "{operation}"
+        );
+        assert_eq!(rt.snapshot(), snapshot, "{operation} cannot admit work");
+    }
+    assert_eq!(rt.snapshot().conservation_violation(), None);
+    assert_eq!(before.classes[&class].inflight, 0);
+}
+
+#[test]
+fn independently_hosted_cpu_executor_needs_no_tokio_context() {
+    let class = TaskClass::new("plain-cpu");
+    let rt = Builder::new()
+        .topology(TopologyConfig::new().cpu_fixed(1))
+        .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
+        .class_policy(
+            class.clone(),
+            ClassPolicy::new().max_inflight(1).cpu_units(1),
+        )
+        .cpu_executor(Arc::new(DeclaringExecutor { workers: 1 }))
+        .build()
+        .expect("plain CPU executor builds");
+    assert!(!rt.executor_capabilities().requires_tokio_context);
+    let mut cpu = Box::pin(rt.run_cpu(
+        TaskSpec::cpu(class).operation("outside-tokio-custom-cpu"),
+        || Ok::<_, ()>(17),
+    ));
+    assert_eq!(poll_to_completion_without_tokio(cpu.as_mut()), Ok(17));
+    assert_eq!(rt.snapshot().conservation_violation(), None);
 }
 
 #[test]

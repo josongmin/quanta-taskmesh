@@ -270,14 +270,11 @@ impl Harness {
             .filter(|ledger| match held {
                 HeldCapacity::ClassInflight { class } => ledger.class == *class,
                 HeldCapacity::CapabilityPool { pool } => {
-                    ledger
-                        .capabilities
-                        .iter()
-                        .any(|capability| {
-                            self.governor.policy().resolved_capability_name(
-                                &ResolvedCapability::Registered(capability.clone()),
-                            ) == Some(pool.as_str())
-                        })
+                    ledger.capabilities.iter().any(|capability| {
+                        self.governor.policy().resolved_capability_name(
+                            &ResolvedCapability::Registered(capability.clone()),
+                        ) == Some(pool.as_str())
+                    })
                 }
                 HeldCapacity::CpuBudget => ledger.cpu_units > 0,
                 HeldCapacity::MemoryBudget => ledger.effective_units > 0,

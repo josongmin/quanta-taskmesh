@@ -77,6 +77,20 @@ Run the registered recipes through `just`:
       Saved local and final receipts recheck a directly executed PASS row against
       that retained line. Hosted producer-import rows use their registered
       envelope and raw-artifact validation instead of a local status line.
+      Semgrep JSON scan errors (including rule timeouts) are failures even if
+      its process exits 0. Python skip/xfail cases do not count as a passing
+      `py-test` denominator. The Rust target census checks source files against
+      Cargo metadata so disabled auto-discovery cannot hide tests or benches.
+      `fmt-check` discovers every Git-visible Cargo manifest, including the
+      separate fuzz and consumer-MSRV workspaces. `py-lint` enumerates every
+      Git-visible Python source rather than assuming all gate scripts live in
+      `tools/`. Hosted inventory-gate steps must invoke a single direct `just`
+      command so shell composition cannot mask a failing gate.
+- [ ] Remote `main` protection requires the single `required 16-gate verdict`
+      check with an up-to-date branch. A PR run must inspect GitHub's synthetic
+      merge SHA (`github.sha`), while the main push run inspects its commit SHA.
+      Local YAML validation and an older successful Actions run do not activate
+      or prove this remote rule.
 - [ ] Finding proof: each row in `tools/release/finding-proof-spec.json` runs
       its named focused Cargo or pytest witness through
       `tools/release/finding_proof.py`. Its `required_gate` names an additional
@@ -86,7 +100,7 @@ Run the registered recipes through `just`:
       requiring the related `test-rayon` feature gate. A Python IAI policy
       witness executes through pytest and additionally requires `bench-iai`.
 - [ ] `just test-rayon` / `just doctest` / `just rustdoc` / `just bench-smoke`
-- [ ] `just mutants-critical` — curated single-edit inventory의 non-control 102개가
+- [ ] `just mutants-critical` — curated single-edit inventory의 non-control 106개가
       KILLED이고 control 1개가 CONTROL_GREEN인지 확인한다. 이것은 cargo-mutants
       전체 생성 sweep의 score가 아니다. Non-control cargo mutation은 named primary
       oracle 하나만 `--exact --test-threads 1`로 실행하며 cargo cofailure 선언은 거부한다;
@@ -122,7 +136,8 @@ Run the registered recipes through `just`:
 - [ ] `just consumer-msrv` — PASS on the declared `rust-version` (NOT_RUN is
       not a pass)
 - [ ] `just bench-iai` on Linux — `status=QUALIFIED`. The first run for a given
-      fingerprint (bench definition, deps, toolchain, valgrind, runner) records a
+      fingerprint (bench definition, deps, workspace bench profile, Cargo build
+      configuration/environment, toolchain, valgrind, PATH runner binary) records a
       baseline and reports `BASELINE_CREATED`; the *next* run with the same
       fingerprint qualifies. A deliberately dispatched hosted reproduction may
       reuse its cache keyed by `tools/bench-iai.sh fingerprint`; ordinary local
@@ -133,6 +148,18 @@ Run the registered recipes through `just`:
       `.out` artifact in the runner summaries, without sharing an output path
       or aliasing one through a symlinked parent directory across cases. The
       gate refuses a symlinked `target` parent before touching its baseline store.
+      The final comparison re-derives each `Ir` total from current `.out` and
+      prior `.out.old` Callgrind files, binds both kinds of raw file to the
+      saved comparison manifest, and rejects a strict increase above the
+      reviewed `Ir=5.0` limit even if a runner exits zero. PATH runner version
+      and binary digest are part of compatibility; ambient baseline and case
+      filter overrides are refused.
+      Schema-v4 IAI evidence binds compiler, Cargo, supported-host default
+      linker and configured wrapper/linker/runner executable bytes. Rustup
+      launcher and active toolchain binaries are recorded separately.
+      Unresolvable executable controls reject. This does not attest every
+      interpreter dependency or dynamically loaded library. Earlier evidence
+      and cache namespaces must not be reused under this contract.
       Linux Valgrind measurement and the >5% negative control remain required.
 - [ ] `uv run python tools/qualification/receipt.py collect --local-qualified
       --out target/qualification/local-receipt.json` from a clean local Linux
@@ -142,6 +169,9 @@ Run the registered recipes through `just`:
       the one `collect` produced on that checkout — never a file handed over
       for `validate` alone. `mutants-critical` and `mutants-generated` are separate
       required denominators. A curated PASS never implies a generated score.
+      Local clean-source checks compare tracked worktree bytes and executable
+      modes with the HEAD tree, independent of Git index hints such as
+      `assume-unchanged`; a clean `git status` alone is insufficient.
       Receipt schema 4 records the gate-runner process exit and its raw required
       summary separately from the enriched gate rows: local qualification requires
       exit 0, while hosted producer import may account only for its exact skipped
@@ -176,12 +206,12 @@ Run the registered recipes through `just`:
   front doors; the JSON wire formats. `just fuzz-check` keeps the targets
   compiling on stable. NOT_RUN without nightly + cargo-fuzz; only
   `taskmesh-fuzz status=PASS` with all target-specific semantic witnesses is PASS.
-- Mutation gate: 102 curated entries — 101 single-edit fault probes
-  (88 non-control cargo incl. 3 shuttle-model targets and 1 differential-model target, 13 pytest
+- Mutation gate: 107 curated entries — 106 single-edit fault probes
+  (93 non-control cargo incl. 3 shuttle-model targets and 1 differential-model target, 13 pytest
   against the Python tooling), each killed by its named regression for its named
   reason found in that test's own output, plus one cargo behaviour-preserving control
-  that must stay green. The historical schema-v1 receipt contains the first 100;
-  the current inventory retains 96 of those IDs, adds 6, and removes 4, for 102 total.
+  that must stay green. These are the current inventory counts, not evidence
+  that a campaign ran. Historical receipts do not qualify the current inventory.
 
 ## Required proof scenarios
 
@@ -317,7 +347,9 @@ Run the registered recipes through `just`:
   allocation regression for the added governance state, not a performance
   improvement. Borrowed validation and the exact-operation permit index reduced
   an intermediate 16 to 8 without changing the measurement definition. The
-  no-regression gate now uses exactly 8 with no cushion; Linux IAI comparison
+  no-regression gate now uses the exact total allocation count against the
+  200,000-operation denominator and threshold 8, without rounding or an
+  environment override; Linux IAI comparison
   remains separate release evidence. A 0-allocation path needs a storage-model
   redesign (root-id interning), not a threshold adjustment.
 - `run_blocking` + `RunFor` bounds the caller's wait only; a started blocking

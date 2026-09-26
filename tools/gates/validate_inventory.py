@@ -365,16 +365,8 @@ def run_scripts(document: object) -> list[str]:
     return [step["run"] for step in run_steps(document)]
 
 
-# Shell shapes that let a gate fail without failing the step. Presence of the
-# `just <gate>` token proves the gate is *invoked*; these prove it is not
-# *enforced*, which is the property parity is supposed to deliver.
-UNENFORCED_SHELL = re.compile(
-    r"\|\|\s*true\b|\|\|\s*:|;\s*true\s*$|set\s+\+e|\bexit\s+0\b|\|\|\s*echo\b", re.MULTILINE
-)
-
-
 def unenforced_gate_steps(document: object, recipes_of_interest: set[str]) -> list[str]:
-    """Steps that invoke an inventory recipe but cannot fail the job."""
+    """Require a direct gate command; arbitrary shell syntax can mask failure."""
     problems: list[str] = []
     for step in run_steps(document):
         script = step["run"]
@@ -391,9 +383,13 @@ def unenforced_gate_steps(document: object, recipes_of_interest: set[str]) -> li
             problems.append(
                 f"step {label} runs {gates} under `if: {step['if']}`: the gate is conditional"
             )
-        if UNENFORCED_SHELL.search(script):
+        direct_commands = {f"just {gate}" for gate in gates}
+        if gates == ["fuzz"]:
+            direct_commands.add("FUZZ_SECONDS=60 just fuzz")
+        if script.strip() not in direct_commands:
             problems.append(
-                f"step {label} runs {gates} in a script that masks failure: {script.strip()!r}"
+                f"step {label} runs {gates} in a script that masks failure or is not a "
+                f"direct gate command: {script.strip()!r}"
             )
     return problems
 
@@ -517,7 +513,7 @@ PR_CI_GATE_SCRIPT = (
     "  --validate-receipt target/verification/pr-ci-gates.json \\\n"
     '  --expected-head "$EXPECTED_SHA"\n'
 )
-PR_CI_EVENT_SHA = "${{ github.event.pull_request.head.sha || github.sha }}"
+PR_CI_EVENT_SHA = "${{ github.sha }}"
 
 
 def pr_ci_contract_problems(path: Path, document: object, required: dict) -> list[str]:
@@ -558,7 +554,7 @@ def pr_ci_contract_problems(path: Path, document: object, required: dict) -> lis
         if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/checkout@")
     ]
     if len(checkouts) != 1 or checkouts[0].get("with", {}).get("ref") != PR_CI_EVENT_SHA:
-        problems.append("pr-ci.yml: checkout must pin the event head SHA")
+        problems.append("pr-ci.yml: checkout must pin the event merge SHA")
     runs = [str(step.get("run", "")) for step in steps if isinstance(step, dict)]
     gate_steps = [
         step
@@ -581,7 +577,7 @@ def pr_ci_contract_problems(path: Path, document: object, required: dict) -> lis
         if gate_run != PR_CI_GATE_SCRIPT or gate_step.get("shell") is not None:
             problems.append("pr-ci.yml: gate command must be the exact fail-fast CI recipe")
         if gate_step.get("env") != {"EXPECTED_SHA": PR_CI_EVENT_SHA}:
-            problems.append("pr-ci.yml: EXPECTED_SHA must bind the checked-out event head")
+            problems.append("pr-ci.yml: EXPECTED_SHA must bind the checked-out event merge SHA")
     if any("--profile nightly" in run or "--required" in run or "--all" in run for run in runs):
         problems.append("pr-ci.yml: deep or unbounded gate selector is forbidden")
     artifacts = [

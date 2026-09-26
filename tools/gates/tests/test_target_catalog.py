@@ -120,3 +120,34 @@ def test_mod_rs_support_file_is_not_a_python_test_module(tmp_path: Path) -> None
     (tests / "mod.rs").write_text("mod helper;\n")
     (tests / "helper.py").write_text("def helper(): pass\n")
     assert tc.python_test_modules(tmp_path) == ["tools/tests/test_owner.py"]
+
+
+def test_disabled_autotests_cannot_hide_an_integration_source(tmp_path: Path) -> None:
+    package_root = tmp_path / "crates" / "demo"
+    (package_root / "tests").mkdir(parents=True)
+    (package_root / "Cargo.toml").write_text(
+        '[package]\nname = "demo"\nversion = "0.1.0"\nautotests = false\n'
+    )
+    (package_root / "tests" / "hidden.rs").write_text('compile_error!("hidden");\n')
+    package = {"name": "demo", "manifest_path": str(package_root / "Cargo.toml"), "targets": []}
+    problems = tc.filesystem_target_problems([package], tmp_path)
+    assert any("tests/hidden.rs is absent from Cargo metadata" in problem for problem in problems)
+
+
+def test_bench_false_cannot_pass_the_smoke_census(tmp_path: Path) -> None:
+    package_root = tmp_path / "crates" / "demo"
+    (package_root / "benches").mkdir(parents=True)
+    bench = package_root / "benches" / "hidden.rs"
+    bench.write_text('compile_error!("hidden");\n')
+    (package_root / "Cargo.toml").write_text(
+        '[package]\nname = "demo"\nversion = "0.1.0"\n'
+        '[[bench]]\nname = "hidden"\nharness = false\nbench = false\n'
+    )
+    package = {
+        "name": "demo", "manifest_path": str(package_root / "Cargo.toml"),
+        "targets": [{"kind": ["bench"], "src_path": str(bench)}],
+    }
+    assert any(
+        "disables cargo bench execution" in problem
+        for problem in tc.filesystem_target_problems([package], tmp_path)
+    )

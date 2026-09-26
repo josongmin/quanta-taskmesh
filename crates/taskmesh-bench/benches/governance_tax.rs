@@ -1,13 +1,14 @@
-//! End-to-end governance tax (ADR 9000 / P1 + P9): the cost a governed
-//! `run_blocking` adds over raw `spawn_blocking`, against credible baselines —
-//! a bare semaphore and tower's `ConcurrencyLimit` middleware. Task body is a
-//! no-op so the delta is pure control-plane overhead.
+//! Named blocking-facade costs (ADR 9000 / B01). The governed full-facade case
+//! constructs TaskSpec inside the timed span; its difference from raw Tokio,
+//! Semaphore or Tower includes spec construction, admission and host dispatch.
+//! The prebuilt-spec case excludes spec/runtime cloning from the timed span;
+//! it remains a full host submission and is not a pure governor cost.
 
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use taskmesh::{
     AdmissionVerdict, Builder, CancellationToken, ClassPolicy, GovernorError, ResourceBudget,
     RunError, Runtime, SubmitOptions, TaskClass, TaskSpec, TokioRuntime, TopologyConfig,
@@ -60,20 +61,35 @@ fn governance_tax(c: &mut Criterion) {
         .build()
         .expect("tokio runtime");
     let runtime = build_runtime();
+    let prebuilt_spec = TaskSpec::blocking(TaskClass::new("retrieval")).operation("noop");
 
     let mut group = c.benchmark_group("governance_tax_blocking_noop");
 
-    group.bench_function("governed", |b| {
-        b.to_async(&rt).iter(|| {
-            let runtime = runtime.clone();
-            async move {
+    group.bench_function("governed_full_facade", |b| {
+        b.to_async(&rt).iter_batched(
+            || runtime.clone(),
+            |runtime| async move {
                 let spec = TaskSpec::blocking(TaskClass::new("retrieval")).operation("noop");
                 runtime
                     .run_blocking(spec, || Ok::<(), std::convert::Infallible>(()))
                     .await
                     .expect("governed noop");
-            }
-        });
+            },
+            BatchSize::PerIteration,
+        );
+    });
+
+    group.bench_function("governed_prebuilt_spec", |b| {
+        b.to_async(&rt).iter_batched(
+            || (runtime.clone(), prebuilt_spec.clone()),
+            |(runtime, spec)| async move {
+                runtime
+                    .run_blocking(spec, || Ok::<(), Infallible>(()))
+                    .await
+                    .expect("governed noop with prebuilt spec");
+            },
+            BatchSize::PerIteration,
+        );
     });
 
     group.bench_function("raw_spawn_blocking", |b| {
@@ -93,7 +109,8 @@ fn governance_tax(c: &mut Criterion) {
         });
     });
 
-    // Industry-standard middleware: tower's ConcurrencyLimit over a no-op service.
+    // Tower ConcurrencyLimit is a narrower mechanism control, not an equivalent
+    // governed-execution peer.
     let limited = ConcurrencyLimit::new(
         service_fn(|_: ()| async {
             tokio::task::spawn_blocking(|| ()).await.expect("join");

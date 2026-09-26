@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "id": "h3-weighted-smoke-v1",
+  "load": {
+    "warmup_ms": 5,
+    "injection_ms": 100,
+    "interval_ms": 10,
+    "snapshot_ms": 10,
+    "settlement_ms": 500,
+    "max_outstanding": 32,
+    "max_records": 32
+  },
+  "topology": {
+    "cpu_workers": 1,
+    "blocking_threads": 1,
+    "shared_blocking_limit": 1,
+    "cpu_units": 1,
+    "memory_units": 32
+  },
+  "classes": [
+    {
+      "name": "interactive",
+      "slo_ms": 200,
+      "max_inflight": 1,
+      "max_queue_depth": 4,
+      "cpu_units": 1,
+      "memory_units": 1,
+      "overflow": "queue_within_depth",
+      "fairness": { "kind": "weighted_fair", "weight": 4 }
+    },
+    {
+      "name": "batch",
+      "slo_ms": 200,
+      "max_inflight": 1,
+      "max_queue_depth": 4,
+      "cpu_units": 1,
+      "memory_units": 1,
+      "overflow": "queue_within_depth",
+      "fairness": { "kind": "weighted_fair", "weight": 1 }
+    }
+  ],
+  "offers": [
+    { "send_time_ns": 0, "class": "interactive", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } },
+    { "send_time_ns": 0, "class": "batch", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } },
+    { "send_time_ns": 1000000, "class": "batch", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } },
+    { "send_time_ns": 2000000, "class": "batch", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } },
+    { "send_time_ns": 3000000, "class": "batch", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } },
+    { "send_time_ns": 4000000, "class": "batch", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } },
+    { "send_time_ns": 5000000, "class": "batch", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } },
+    { "send_time_ns": 6000000, "class": "batch", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } },
+    { "send_time_ns": 7000000, "class": "batch", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } },
+    { "send_time_ns": 8000000, "class": "batch", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } },
+    { "send_time_ns": 9000000, "class": "batch", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } },
+    { "send_time_ns": 20000000, "class": "interactive", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } },
+    { "send_time_ns": 40000000, "class": "interactive", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 20 } }
+  ]
+}

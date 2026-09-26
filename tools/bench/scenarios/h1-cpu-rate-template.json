@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "h1-cpu-rate-template-v1",
+  "load": {
+    "warmup_ms": 5000,
+    "injection_ms": 60000,
+    "interval_ms": 1000,
+    "snapshot_ms": 1000,
+    "settlement_ms": 5000,
+    "max_outstanding": 64,
+    "max_records": 64
+  },
+  "topology": {
+    "cpu_workers": 2,
+    "blocking_threads": 2,
+    "shared_blocking_limit": 2,
+    "cpu_units": 2,
+    "memory_units": 64
+  },
+  "classes": [
+    {
+      "name": "work",
+      "slo_ms": 100,
+      "max_inflight": 2,
+      "max_queue_depth": 64,
+      "cpu_units": 1,
+      "memory_units": 1,
+      "overflow": "queue_within_depth"
+    }
+  ],
+  "offers": [
+    {
+      "send_time_ns": 0,
+      "class": "work",
+      "path": "cpu",
+      "body": { "kind": "cpu_spin", "iterations": 100000 }
+    }
+  ]
+}

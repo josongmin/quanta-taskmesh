@@ -7,9 +7,12 @@ boundary, so an escaped descendant cannot hold a gate open indefinitely.
 
 from __future__ import annotations
 
+import math
 import os
+import selectors
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -120,7 +123,12 @@ def run_process_batch(commands: list[SupervisedCommand]) -> list[SupervisedBatch
     """
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError("supervised processes must be launched from the main thread")
-    if any(command.timeout_seconds <= 0 for command in commands):
+    if any(
+        type(command.timeout_seconds) not in (int, float)
+        or not math.isfinite(command.timeout_seconds)
+        or command.timeout_seconds <= 0
+        for command in commands
+    ):
         raise ValueError("timeout_seconds must be positive")
     if not commands:
         return []
@@ -288,17 +296,41 @@ def run_process(
     timeout_seconds: float,
     termination_grace_seconds: float | None = None,
     abort_when: Callable[[], bool] | None = None,
+    on_started: Callable[[subprocess.Popen[str]], None] | None = None,
+    max_capture_bytes: int | None = None,
+    stdin_data: bytes | None = None,
 ) -> SupervisedProcess:
     """Capture complete output and reap the owned process group on every exit path."""
-    if timeout_seconds <= 0:
+    if (
+        type(timeout_seconds) not in (int, float)
+        or not math.isfinite(timeout_seconds)
+        or timeout_seconds <= 0
+    ):
         raise ValueError("timeout_seconds must be positive")
     if termination_grace_seconds is None:
         termination_grace_seconds = TERMINATION_GRACE_SECONDS
-    if termination_grace_seconds <= 0:
+    if (
+        type(termination_grace_seconds) not in (int, float)
+        or not math.isfinite(termination_grace_seconds)
+        or termination_grace_seconds <= 0
+    ):
         raise ValueError("termination_grace_seconds must be positive")
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError("supervised processes must be launched from the main thread")
 
+    if max_capture_bytes is not None and (
+        type(max_capture_bytes) is not int or max_capture_bytes <= 0
+    ):
+        raise ValueError("max_capture_bytes must be a positive integer")
+    if stdin_data is not None and not isinstance(stdin_data, bytes):
+        raise ValueError("stdin_data must be bytes")
+    input_file = tempfile.TemporaryFile() if stdin_data is not None else None
+    if input_file is not None:
+        input_file.write(stdin_data)
+        input_file.seek(0)
+    capture_selector = selectors.DefaultSelector() if max_capture_bytes is not None else None
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
+    capture_overflow = False
     process: subprocess.Popen[str] | None = None
     timed_out = False
     aborted_early = False
@@ -338,9 +370,17 @@ def run_process(
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            stdin=input_file,
             text=True,
             start_new_session=True,
         )
+        if capture_selector is not None:
+            for name, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):
+                assert pipe is not None
+                os.set_blocking(pipe.fileno(), False)
+                capture_selector.register(pipe, selectors.EVENT_READ, name)
+        if on_started is not None:
+            on_started(process)
         timeout_deadline = time.monotonic() + timeout_seconds
         if interrupted_by_signal is not None:
             signal_group(signal.SIGTERM)
@@ -369,8 +409,7 @@ def run_process(
                 not timed_out
                 and not aborted_early
                 and interrupted_by_signal is None
-                and abort_when is not None
-                and abort_when()
+                and (capture_overflow or (abort_when is not None and abort_when()))
             ):
                 aborted_early = True
                 signal_group(signal.SIGTERM)
@@ -389,6 +428,25 @@ def run_process(
                 else POLL_INTERVAL_SECONDS
             )
             wait_seconds = min(POLL_INTERVAL_SECONDS, until_deadline)
+            if capture_selector is not None:
+                for key, _events in capture_selector.select(wait_seconds):
+                    chunk = os.read(key.fileobj.fileno(), 65536)
+                    if not chunk:
+                        capture_selector.unregister(key.fileobj)
+                        continue
+                    remaining = max_capture_bytes - sum(len(value) for value in captured.values())
+                    captured[key.data].extend(chunk[: max(0, remaining)])
+                    if len(chunk) > remaining:
+                        capture_overflow = True
+                leader_done = process.poll() is not None
+                if leader_done and not capture_selector.get_map():
+                    break
+                if hard_stop:
+                    if capture_selector.get_map():
+                        captured["stderr"].extend(OPEN_CAPTURE_DIAGNOSTIC.encode())
+                    _finish_leader_after_pipe_abort(process)
+                    break
+                continue
             try:
                 stdout, stderr = process.communicate(timeout=wait_seconds)
                 break
@@ -399,6 +457,12 @@ def run_process(
                     _finish_leader_after_pipe_abort(process)
                     break
                 continue
+        if capture_selector is not None:
+            stdout = bytes(captured["stdout"]).decode(errors="replace")
+            stderr = bytes(captured["stderr"]).decode(errors="replace")
+            if capture_overflow:
+                stderr += "\nSUPERVISOR: capture byte limit exceeded\n"
+                aborted_early = True
         cleanup = _kill_remaining_group(process.pid)
         if cleanup != "absent":
             stderr += (
@@ -428,6 +492,12 @@ def run_process(
                 _kill_remaining_group(process.pid)
         raise
     finally:
+        if input_file is not None:
+            input_file.close()
+        if capture_selector is not None:
+            capture_selector.close()
+            if process is not None:
+                _close_capture_pipes(process)
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
 

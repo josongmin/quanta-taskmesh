@@ -16,7 +16,15 @@ from pathlib import Path
 from typing import Optional
 
 import host_perf
-from host_run import build_runner, retain_executable, retain_rejection, write_new
+from host_run import (
+    add_timeout_arguments,
+    build_runner,
+    execution_artifacts,
+    probe_failed,
+    retain_executable,
+    retain_rejection,
+    write_new,
+)
 from process_resource import sample_subprocess
 from scenario_rate import doubled_generator_scenario
 
@@ -37,6 +45,7 @@ def main(
     parser.add_argument("raw", type=Path)
     parser.add_argument("--feature", action="append", default=[])
     parser.add_argument("--rate-factor", type=int, choices=(1, 2), default=1)
+    add_timeout_arguments(parser)
     args = parser.parse_args()
     provenance_path = args.raw.with_name(args.raw.name + ".provenance.json")
     executable_path = args.raw.with_name(args.raw.name + ".runner")
@@ -44,6 +53,9 @@ def main(
     resource_path = args.raw.with_name(args.raw.name + ".resources.json")
     scenario_artifact_path = args.raw.with_name(args.raw.name + ".scenario.json")
     rejection_path = args.raw.with_name(args.raw.name + ".rejection.json")
+    build_execution = args.raw.with_name(args.raw.name + ".build")
+    validator_execution = args.raw.with_name(args.raw.name + ".validation")
+    probe_stderr_path = args.raw.with_name(args.raw.name + ".probe.stderr")
     owns_artifacts = False
     phase = "preflight"
     try:
@@ -59,6 +71,9 @@ def main(
                 resource_path,
                 scenario_artifact_path,
                 rejection_path,
+                *execution_artifacts(build_execution),
+                *execution_artifacts(validator_execution),
+                probe_stderr_path,
             )
         ):
             raise host_perf.ReceiptError("control artifact paths must be fresh")
@@ -72,7 +87,12 @@ def main(
         features = sorted(set(args.feature))
         build_start_identity = host_perf.local_identity(scenario, features)
         phase = "build"
-        binary, artifact_features, build_command = build_runner(features, example_name)
+        binary, artifact_features, build_command = build_runner(
+            features,
+            example_name,
+            timeout_seconds=args.build_timeout_seconds,
+            execution_path=build_execution,
+        )
         if host_perf.local_identity(scenario, features) != build_start_identity:
             raise host_perf.ReceiptError("source, toolchain or host identity changed during build")
         with tempfile.TemporaryDirectory(prefix="taskmesh-control-binary-") as binary_dir:
@@ -103,8 +123,10 @@ def main(
             runner_exit_code, runner_pid, runner_stderr, resources = sample_subprocess(
                 runner_command,
                 cwd=host_perf.REPO,
+                timeout_seconds=args.probe_timeout_seconds,
             )
             resource_bytes = host_perf.canonical(resources) + b"\n"
+            write_new(probe_stderr_path, runner_stderr.encode())
             write_new(resource_path, resource_bytes)
             end_identity = host_perf.local_identity(scenario, features)
             binary_unchanged = host_perf.sha256(sealed_binary.read_bytes()) == binary_digest
@@ -117,11 +139,12 @@ def main(
             not binary_unchanged or host_perf.sha256(executable_path.read_bytes()) != binary_digest
         ):
             reason = "sealed or retained control changed during run"
-        elif runner_exit_code != 0:
+        elif runner_exit_code != 0 or probe_failed(resources):
             reason = f"control exited {runner_exit_code}: {runner_stderr[-1000:]}"
         elif raw_bytes is None or topology_bytes is None:
             reason = "control did not write raw and topology artifacts"
         else:
+            phase = "validation"
             try:
                 host_perf.validate_with_rust(
                     scenario_bytes,
@@ -129,6 +152,8 @@ def main(
                     features,
                     topology_bytes,
                     raw_kind=raw_kind,
+                    timeout_seconds=args.validator_timeout_seconds,
+                    execution_prefix=validator_execution,
                 )
             except host_perf.ReceiptError as error:
                 reason = f"control raw validation failed: {error}"

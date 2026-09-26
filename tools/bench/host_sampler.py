@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,7 +13,7 @@ import host_observer
 import host_perf
 from host_run import retain_control_bundle
 
-BUNDLE_VERSION = 1
+BUNDLE_VERSION = 2
 OFF_REASON = "resource sampling intentionally disabled for paired control"
 
 
@@ -69,6 +68,9 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
             "max_span_ns",
             "runs",
             "failures",
+            "expected_runs",
+            "timeout_seconds",
+            "executions",
         },
         "resource sampler study",
     )
@@ -93,6 +95,7 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
     windows = []
     boots = set()
     cadences = set()
+    host_aa.validate_executions(bundle, directory, runs)
     for index, recorded in enumerate(runs):
         if not isinstance(recorded, dict):
             raise host_perf.ReceiptError("resource sampler run must be an object")
@@ -135,7 +138,10 @@ def acquire(
     pairs: int,
     max_span_ns: int,
     features: tuple[str, ...] = (),
+    *,
+    timeout_seconds: float = 1800,
 ) -> dict[str, Any]:
+    host_aa.validate_timeout(timeout_seconds)
     if pairs < 2 or pairs > 50 or pairs % 2 or max_span_ns <= 0:
         raise host_perf.ReceiptError(
             "sampler pairs must be even in 2..=50 and span must be positive"
@@ -144,13 +150,16 @@ def acquire(
     scenario_bytes = scenario.read_bytes()
     host_perf.parse_object(scenario_bytes, "sampler scenario")
     runs = []
+    executions = []
     failures = []
     common_identity = None
     common_binary = None
     for index in range(pairs * 2):
         mode = mode_for(index)
         paths = host_aa.paths(directory, index)
-        result = subprocess.run(
+        terminal, reason = host_aa.execute_arm(
+            directory,
+            index,
             [
                 sys.executable,
                 str(Path(__file__).with_name("host_run.py")),
@@ -161,13 +170,11 @@ def acquire(
                 *(part for feature in features for part in ("--feature", feature)),
                 *(["--no-resource-sampling"] if mode == "off" else []),
             ],
-            cwd=host_perf.REPO,
-            capture_output=True,
-            text=True,
-            check=False,
+            timeout_seconds,
         )
-        if result.returncode != 0:
-            failures.append({"index": index, "reason": result.stderr[-1000:]})
+        executions.append(terminal)
+        if reason:
+            failures.append({"index": index, "reason": reason})
             break
         try:
             row, identity = verified_run(directory, index, scenario_bytes)
@@ -181,6 +188,7 @@ def acquire(
             failures.append({"index": index, "reason": "sampler source, host or binary changed"})
             break
         runs.append(row)
+    host_aa.account_unlaunched(directory, executions, failures, pairs * 2, timeout_seconds)
     bundle = {
         "schema_version": BUNDLE_VERSION,
         "kind": "resource_sampler_on_off",
@@ -192,6 +200,9 @@ def acquire(
         "max_span_ns": max_span_ns,
         "runs": runs,
         "failures": failures,
+        "expected_runs": pairs * 2,
+        "timeout_seconds": timeout_seconds,
+        "executions": executions,
     }
     retain_control_bundle(
         directory / "sampler-bundle.json",
@@ -210,6 +221,7 @@ def main() -> int:
     parser.add_argument("--pairs", type=int, default=2)
     parser.add_argument("--max-span-seconds", type=int, required=True)
     parser.add_argument("--feature", action="append", default=[])
+    parser.add_argument("--timeout-seconds", type=float, default=1800)
     args = parser.parse_args()
     try:
         bundle = acquire(
@@ -219,6 +231,7 @@ def main() -> int:
             args.pairs,
             args.max_span_seconds * 1_000_000_000,
             tuple(args.feature),
+            timeout_seconds=args.timeout_seconds,
         )
         print(
             f"SAMPLER_DIAGNOSTIC performance=UNQUALIFIED runs={len(bundle['runs'])} "

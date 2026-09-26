@@ -25,10 +25,12 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from acquisition_process import deadline, run_acquisition  # noqa: E402
+
 from tools.qualification import evidence as source_evidence  # noqa: E402
 
 SUMMARY_VERSION = 3
-PROVENANCE_VERSION = 5
+PROVENANCE_VERSION = 6
 IDENTITY_KEYS = {
     "source_head",
     "source_tree",
@@ -121,6 +123,7 @@ RESOURCE_KEYS = {
     "sampling_started_epoch_ns",
     "sampling_ended_epoch_ns",
     "samples",
+    "execution",
 }
 RESOURCE_SAMPLE_KEYS = {
     "monotonic_ns",
@@ -178,6 +181,9 @@ def validate_with_rust(
     features: list[str],
     topology_bytes: Optional[bytes] = None,
     raw_kind: str = "host",
+    *,
+    timeout_seconds: float = 1800,
+    execution_prefix: Optional[Path] = None,
 ) -> None:
     """Use the runner's typed scenario, raw ledger and Builder rules."""
     if raw_kind not in ("host", "generator", "minimal"):
@@ -199,18 +205,34 @@ def validate_with_rust(
             if topology_bytes is not None:
                 topology_path.write_bytes(topology_bytes)
                 command.extend(["--topology", str(topology_path)])
-            result = subprocess.run(
+            result = run_acquisition(
                 command,
                 cwd=REPO,
-                input=scenario_bytes,
-                capture_output=True,
-                check=False,
+                stdin_data=scenario_bytes,
+                timeout_seconds=timeout_seconds,
             )
+            failed = (
+                result.returncode != 0
+                or result.timed_out
+                or result.interrupted_by_signal is not None
+                or result.aborted_early
+                or not result.stdout.startswith("SCENARIO_VALID id=")
+            )
+            if failed and execution_prefix is None:
+                execution_prefix = Path(
+                    tempfile.mkdtemp(prefix="taskmesh-host-validation-failure-")
+                ) / "validator"
+            if execution_prefix is not None:
+                from host_run import retain_execution
+
+                retain_execution(execution_prefix, result, command, REPO, timeout_seconds)
     except OSError as error:
         raise ReceiptError(f"Rust scenario preflight unavailable: {error}") from error
-    if result.returncode != 0 or not result.stdout.startswith(b"SCENARIO_VALID id="):
-        detail = result.stderr.decode("utf-8", errors="replace").strip()
-        raise ReceiptError(f"Rust scenario preflight failed: {detail[:1000]}")
+    if failed:
+        detail = result.stderr.strip()
+        raise ReceiptError(
+            f"Rust scenario preflight failed: {detail[:1000]}; execution={execution_prefix}"
+        )
 
 
 def exact_keys(value: dict[str, Any], keys: set[str], name: str) -> None:
@@ -416,8 +438,33 @@ def validate_identity(identity: Any) -> None:
 def validate_resource_artifact(data: bytes, runner_pid: Any) -> dict[str, Any]:
     resources = parse_object(data, "process resources")
     exact_keys(resources, RESOURCE_KEYS, "process resources")
-    if resources["schema_version"] != 2 or resources["status"] not in ("complete", "unavailable"):
+    if (
+        type(resources["schema_version"]) is not int
+        or resources["schema_version"] != 3
+        or resources["status"] not in ("complete", "unavailable")
+    ):
         raise ReceiptError("unsupported process resource artifact")
+    execution = resources["execution"]
+    if not isinstance(execution, dict):
+        raise ReceiptError("process execution terminal record must be an object")
+    exact_keys(
+        execution,
+        {"timeout_seconds", "returncode", "timed_out", "interrupted_by_signal", "aborted_early"},
+        "process execution",
+    )
+    deadline = execution["timeout_seconds"]
+    if type(deadline) not in (int, float) or not math.isfinite(deadline) or deadline <= 0:
+        raise ReceiptError("process execution deadline must be positive and finite")
+    if (
+        type(execution["returncode"]) is not int
+        or execution["returncode"] != 0
+        or type(execution["timed_out"]) is not bool
+        or execution["timed_out"]
+        or execution["interrupted_by_signal"] is not None
+        or type(execution["aborted_early"]) is not bool
+        or execution["aborted_early"]
+    ):
+        raise ReceiptError("process execution did not terminate successfully")
     pid = nat(resources["pid"], "process resources.pid")
     if pid == 0 or pid != runner_pid:
         raise ReceiptError("process resource PID differs from executed runner")
@@ -929,9 +976,18 @@ def make_summary(
     binary_bytes: Optional[bytes] = None,
     topology_bytes: Optional[bytes] = None,
     resource_bytes: Optional[bytes] = None,
+    validator_timeout_seconds: float = 1800,
+    validator_execution_prefix: Optional[Path] = None,
 ) -> dict[str, Any]:
     validate_identity(identity)
-    validate_with_rust(scenario_bytes, raw_bytes, identity["features"], topology_bytes)
+    validate_with_rust(
+        scenario_bytes,
+        raw_bytes,
+        identity["features"],
+        topology_bytes,
+        timeout_seconds=validator_timeout_seconds,
+        execution_prefix=validator_execution_prefix,
+    )
     if provenance_bytes is not None:
         validate_execution_provenance(
             provenance_bytes,
@@ -990,6 +1046,8 @@ def verify_receipt(
     binary_bytes: Optional[bytes] = None,
     topology_bytes: Optional[bytes] = None,
     resource_bytes: Optional[bytes] = None,
+    validator_timeout_seconds: float = 1800,
+    validator_execution_prefix: Optional[Path] = None,
 ) -> dict[str, Any]:
     summary = parse_object(summary_bytes, "summary")
     exact_keys(
@@ -1016,6 +1074,8 @@ def verify_receipt(
         binary_bytes,
         topology_bytes,
         resource_bytes,
+        validator_timeout_seconds=validator_timeout_seconds,
+        validator_execution_prefix=validator_execution_prefix,
     )
     if summary != expected:
         raise ReceiptError("summary differs from raw/scenario reconstruction or digest")
@@ -1067,8 +1127,10 @@ def main() -> int:
     parser.add_argument("--resources", type=Path)
     parser.add_argument("--p99-min-samples", type=int, default=10_000)
     parser.add_argument("--require-performance", action="store_true")
+    parser.add_argument("--validator-timeout-seconds", type=float, default=1800)
     args = parser.parse_args()
     try:
+        validator_timeout = deadline(args.validator_timeout_seconds)
         raw_bytes = args.raw.read_bytes()
         scenario_bytes = args.scenario.read_bytes()
         scenario = parse_object(scenario_bytes, "scenario")
@@ -1105,6 +1167,7 @@ def main() -> int:
                 binary_bytes,
                 topology_bytes,
                 resource_bytes,
+                validator_timeout_seconds=validator_timeout,
             )
             args.summary.write_bytes(json.dumps(summary, indent=2, sort_keys=True).encode() + b"\n")
             print(f"STRUCTURALLY_VALID summary={args.summary} performance=UNQUALIFIED")
@@ -1119,9 +1182,10 @@ def main() -> int:
                 binary_bytes=binary_bytes,
                 topology_bytes=topology_bytes,
                 resource_bytes=resource_bytes,
+                validator_timeout_seconds=validator_timeout,
             )
             print(f"STRUCTURALLY_VALID performance=UNQUALIFIED raw_sha256={summary['raw_sha256']}")
-    except (OSError, subprocess.CalledProcessError, ReceiptError) as error:
+    except (OSError, subprocess.CalledProcessError, ReceiptError, ValueError) as error:
         print(f"host receipt rejected: {error}", file=sys.stderr)
         return 1
     return 0

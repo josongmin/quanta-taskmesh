@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use taskmesh::{
-    AdmissionVerdict, RunError, Runtime, RuntimeConfig, SubmitOptions, TaskClass, TaskSpec,
-    TokioRuntime,
+    AdmissionVerdict, RunError, Runtime, RuntimeConfig, SubmitOptions, SubstrateHint, TaskClass,
+    TaskSpec, TokioRuntime,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -663,6 +663,10 @@ pub(crate) async fn execute(
         HostPath::Io => TaskSpec::io(class),
         HostPath::Blocking => TaskSpec::blocking(class),
         HostPath::Cpu => TaskSpec::cpu(class),
+        HostPath::RequestedStackBlocking => TaskSpec::blocking(class)
+            .stack_size_bytes(offer.stack_size_bytes.expect("validated stack size")),
+        HostPath::RequestedStackAsync => TaskSpec::base(class, SubstrateHint::LargeStackCapability)
+            .stack_size_bytes(offer.stack_size_bytes.expect("validated stack size")),
     }
     .operation(format!("bench-{offer_id}"));
     match (offer.path, &offer.body) {
@@ -702,6 +706,46 @@ pub(crate) async fn execute(
                     }
                     if sleep != 0 {
                         std::thread::sleep(Duration::from_millis(sleep));
+                    }
+                    if let Some(slot) = &slot {
+                        mutate(slot, |row| row.body_finished_ns = Some(since(origin)));
+                    }
+                    Ok(())
+                })
+                .await
+        }
+        (HostPath::RequestedStackBlocking, HostBody::Noop | HostBody::BlockingSleep { .. }) => {
+            let sleep = match &offer.body {
+                HostBody::BlockingSleep { millis } => *millis,
+                _ => 0,
+            };
+            runtime
+                .run_blocking_with(spec, opts, move || {
+                    if let Some(slot) = &slot {
+                        mutate(slot, |row| row.body_started_ns = Some(since(origin)));
+                    }
+                    if sleep != 0 {
+                        std::thread::sleep(Duration::from_millis(sleep));
+                    }
+                    if let Some(slot) = &slot {
+                        mutate(slot, |row| row.body_finished_ns = Some(since(origin)));
+                    }
+                    Ok(())
+                })
+                .await
+        }
+        (HostPath::RequestedStackAsync, HostBody::Noop | HostBody::AsyncSleep { .. }) => {
+            let sleep = match &offer.body {
+                HostBody::AsyncSleep { millis } => *millis,
+                _ => 0,
+            };
+            runtime
+                .run_async_with_requested_stack_with(spec, opts, move || async move {
+                    if let Some(slot) = &slot {
+                        mutate(slot, |row| row.body_started_ns = Some(since(origin)));
+                    }
+                    if sleep != 0 {
+                        tokio::time::sleep(Duration::from_millis(sleep)).await;
                     }
                     if let Some(slot) = &slot {
                         mutate(slot, |row| row.body_finished_ns = Some(since(origin)));
@@ -827,10 +871,10 @@ pub(crate) async fn warmup_runtime(
     // Control and host warm the same class/path set before their measured cut.
     let mut warmed = Vec::new();
     for offer in &scenario.offers {
-        if warmed.contains(&(offer.class.as_str(), offer.path)) {
+        if warmed.contains(&(offer.class.as_str(), offer.path, offer.stack_size_bytes)) {
             continue;
         }
-        warmed.push((offer.class.as_str(), offer.path));
+        warmed.push((offer.class.as_str(), offer.path, offer.stack_size_bytes));
         let class = TaskClass::new(offer.class.clone());
         let result = match offer.path {
             HostPath::Io => {
@@ -852,6 +896,30 @@ pub(crate) async fn warmup_runtime(
                     .run_cpu(TaskSpec::cpu(class).operation("bench-warmup"), || {
                         Ok::<(), ()>(())
                     })
+                    .await
+            }
+            HostPath::RequestedStackBlocking => {
+                runtime
+                    .run_blocking(
+                        TaskSpec::blocking(class)
+                            .operation("bench-warmup")
+                            .stack_size_bytes(
+                                offer.stack_size_bytes.expect("validated stack size"),
+                            ),
+                        || Ok::<(), ()>(()),
+                    )
+                    .await
+            }
+            HostPath::RequestedStackAsync => {
+                runtime
+                    .run_async_with_requested_stack(
+                        TaskSpec::base(class, SubstrateHint::LargeStackCapability)
+                            .operation("bench-warmup")
+                            .stack_size_bytes(
+                                offer.stack_size_bytes.expect("validated stack size"),
+                            ),
+                        || async { Ok::<(), ()>(()) },
+                    )
                     .await
             }
         };

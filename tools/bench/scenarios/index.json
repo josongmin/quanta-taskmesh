@@ -57,15 +57,15 @@
     {
       "id": "H4",
       "question": "How do CPU and blocking work interfere in the shared domain versus a feature-pinned separate CPU executor?",
-      "paths": ["cpu", "blocking", "local", "requested_stack"],
+      "paths": ["cpu", "blocking", "local", "requested_stack_blocking", "requested_stack_async"],
       "mode": "finite_open_loop_feature_pair",
       "feature_scope": "default and rayon must be separate builds",
       "topology_scope": "shared blocking versus declared owned Rayon; external shared Rayon is nonexclusive",
       "oracle_cells": ["E5"],
       "correctness_oracles": ["crates/taskmesh/tests/hardening_executor_authority.rs", "crates/taskmesh/tests/hardening_role_pool_isolation.rs"],
-      "current_artifacts": ["tools/bench/scenarios/h1-default-send-smoke.json"],
+      "current_artifacts": ["tools/bench/scenarios/h1-default-send-smoke.json", "tools/bench/scenarios/h4-requested-stack-smoke.json", "crates/taskmesh-bench/tests/host_load_integration.rs"],
       "support": "partial",
-      "missing": "Smoke includes default CPU/blocking only; no feature-paired host receipt, local or requested-stack adapter."
+      "missing": "Normal requested-stack blocking/async parity is diagnostic only; no feature-paired host receipt or caller-affine local adapter."
     },
     {
       "id": "H5",

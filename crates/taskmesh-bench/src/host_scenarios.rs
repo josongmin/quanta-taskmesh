@@ -44,6 +44,8 @@ pub struct HostTopology {
     pub cpu_workers: usize,
     pub blocking_threads: usize,
     pub shared_blocking_limit: usize,
+    #[serde(default)]
+    pub large_stack_slots: usize,
     pub cpu_units: u32,
     pub memory_units: u32,
 }
@@ -75,6 +77,8 @@ pub struct HostOffer {
     pub path: HostPath,
     pub body: HostBody,
     #[serde(default)]
+    pub stack_size_bytes: Option<u64>,
+    #[serde(default)]
     pub deadline_ms: Option<u64>,
     #[serde(default)]
     pub cancel_after_ms: Option<u64>,
@@ -88,6 +92,8 @@ pub enum HostPath {
     Io,
     Blocking,
     Cpu,
+    RequestedStackBlocking,
+    RequestedStackAsync,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -153,6 +159,15 @@ impl HostScenario {
         {
             return Err("fixed physical topology capacities must be nonzero".into());
         }
+        if self.offers.iter().any(|offer| {
+            matches!(
+                offer.path,
+                HostPath::RequestedStackBlocking | HostPath::RequestedStackAsync
+            )
+        }) && self.topology.large_stack_slots == 0
+        {
+            return Err("requested-stack offers require a finite large_stack_slots limit".into());
+        }
         if self.classes.is_empty() {
             return Err("at least one registered class is required".into());
         }
@@ -191,6 +206,19 @@ impl HostScenario {
             if offer.cancel_after_ms.is_some() && offer.drop_after_ms.is_some() {
                 return Err(format!("offer {index}: cancel and drop conflict"));
             }
+            let requested_stack = matches!(
+                offer.path,
+                HostPath::RequestedStackBlocking | HostPath::RequestedStackAsync
+            );
+            match (requested_stack, offer.stack_size_bytes) {
+                (true, Some(bytes))
+                    if bytes > 0 && bytes <= 1 << 34 && bytes <= usize::MAX as u64 => {}
+                (true, _) => return Err(format!("offer {index}: invalid requested stack size")),
+                (false, Some(_)) => {
+                    return Err(format!("offer {index}: stack size on non-stack path"))
+                }
+                (false, None) => {}
+            }
             if [
                 offer.deadline_ms,
                 offer.cancel_after_ms,
@@ -206,7 +234,15 @@ impl HostScenario {
                 (offer.path, &offer.body),
                 (HostPath::Io, HostBody::Noop | HostBody::AsyncSleep { .. })
                     | (
+                        HostPath::RequestedStackAsync,
+                        HostBody::Noop | HostBody::AsyncSleep { .. }
+                    )
+                    | (
                         HostPath::Blocking,
+                        HostBody::Noop | HostBody::BlockingSleep { .. }
+                    )
+                    | (
+                        HostPath::RequestedStackBlocking,
                         HostBody::Noop | HostBody::BlockingSleep { .. }
                     )
                     | (HostPath::Cpu, HostBody::Noop | HostBody::CpuSpin { .. })
@@ -248,6 +284,7 @@ impl HostScenario {
         TopologyConfig::new()
             .cpu_fixed(self.topology.cpu_workers)
             .blocking_threads(self.topology.blocking_threads)
+            .large_stack_slots(self.topology.large_stack_slots)
             .shared_blocking_domain(PhysicalDomainMode::Fixed(
                 self.topology.shared_blocking_limit,
             ))

@@ -82,7 +82,8 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   Criterion batch 지연의 분모는 batch 하나이며, 건당 값은 그 지연을 1 또는 10으로
   나누어 계산한다. 이 사례의 smoke는 상태·실행 가능성 증거이지 고정 host 성능
   영수증이 아니다. `*_sim`의 Criterion 시간은 simulator 계산 시간이다.
-- `taskmesh-bench`의 finite host runner는 Send IO/blocking/default CPU를 실행하고
+- `taskmesh-bench`의 finite host runner는 Send IO/blocking/default CPU 및
+  requested-stack blocking/async를 실행하고
   raw v2에 intended, submitted, caller terminal/drop, body start/finish, cut/settlement,
   sampled Snapshot과 실패 시 `invalid` 원시 행을 기록한다. Rust typed
   scenario/raw/Builder 검증과 Python 구조 검증이 연결돼 있다.
@@ -95,7 +96,7 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   `host_perf.py --require-performance`는 fail closed다.
   동일 window의 2배 generator replay와 H0–H8 지원 현황 인덱스는 진단 범위로
   구현됐다. 실측 calibration, external resource sampler의 왜곡 검증,
-  repeated comparison, closed-loop, local/requested-stack/Rayon과 대표 H7은 남아 있다.
+  repeated comparison, closed-loop, caller-affine local/feature-pinned Rayon과 대표 H7은 남아 있다.
   상세 목적·파일·DoD는 위 티켓이 소유한다.
 - `just bench-gate`는 allocation, `just bench-smoke`는 bench 실행 smoke,
   `just bench-iai`는 Linux의 지정된 instruction 사례다. 어느 것도 host 성능

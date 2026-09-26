@@ -17,6 +17,33 @@ use taskmesh_bench::host_scenarios::HostScenario;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn requested_stack_blocking_and_async_paths_reconcile_public_host_rows() {
+    let scenario = HostScenario::from_json(include_bytes!(
+        "../../../tools/bench/scenarios/h4-requested-stack-smoke.json"
+    ))
+    .expect("requested-stack fixture");
+    let raw = run_host_scenario(&scenario)
+        .await
+        .expect("requested-stack host run");
+    raw.validate_against(&scenario).expect("typed raw parity");
+    assert_eq!(raw.records.len(), 2);
+    assert_eq!(raw.settlement.responded, 2);
+    assert_eq!(raw.settlement.not_submitted, 0);
+    for row in &raw.records {
+        assert!(matches!(
+            row.disposition,
+            CallerDisposition::Responded {
+                outcome: ResponseOutcome::Success
+            }
+        ));
+        assert!(row.body_started_ns.is_some());
+        assert!(row.body_finished_ns.is_some());
+    }
+    assert_eq!(raw.final_capabilities["large_stack"], 0);
+    assert!(raw.drain_ok && raw.conservation_ok);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn finite_two_class_mixed_path_run_keeps_every_intended_offer() {
     let fixture = json!({
         "schema_version": 1,

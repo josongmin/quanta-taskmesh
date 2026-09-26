@@ -71,6 +71,23 @@ fn scenario_schema_fails_before_timing_on_invalid_boundary() {
             v["topology"]["shared_blocking_limit"] = json!(0);
             v
         }),
+        ("requested stack without finite slot", {
+            let mut v = valid.clone();
+            v["offers"][0]["path"] = json!("requested_stack_async");
+            v["offers"][0]["stack_size_bytes"] = json!(2_097_152);
+            v
+        }),
+        ("requested stack without size", {
+            let mut v = valid.clone();
+            v["topology"]["large_stack_slots"] = json!(1);
+            v["offers"][0]["path"] = json!("requested_stack_async");
+            v
+        }),
+        ("stack size on IO path", {
+            let mut v = valid.clone();
+            v["offers"][0]["stack_size_bytes"] = json!(2_097_152);
+            v
+        }),
         ("outside injection", {
             let mut v = valid.clone();
             v["offers"][0]["send_time_ns"] = json!(10_000_000);

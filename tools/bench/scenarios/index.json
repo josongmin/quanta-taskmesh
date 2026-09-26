@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "status": "diagnostic_registry_no_performance_receipt",
+  "scenarios": [
+    {
+      "id": "H0",
+      "question": "What is the named no-op facade cost for one completed call versus ten on one warmed host?",
+      "paths": ["io", "blocking"],
+      "mode": "criterion_micro",
+      "feature_scope": "default",
+      "topology_scope": "fixed benchmark runtime; no capacity claim",
+      "oracle_cells": ["E1", "E6"],
+      "correctness_oracles": ["crates/taskmesh-bench/tests/host_load_integration.rs", "crates/taskmesh/tests/hardening_drain.rs"],
+      "current_artifacts": ["crates/taskmesh-bench/benches/cold_host_lifecycle.rs", "crates/taskmesh-bench/benches/governance_tax.rs"],
+      "support": "partial",
+      "missing": "One-versus-ten matched completed batches exist for IO only; no fixed-host measured distribution."
+    },
+    {
+      "id": "H1",
+      "question": "Where does intended-arrival SLO-goodput stop increasing and bounded rejection begin for each public path?",
+      "paths": ["io", "blocking", "cpu"],
+      "mode": "finite_open_loop",
+      "feature_scope": "default",
+      "topology_scope": "declared CPU and blocking capacities; resolve at run time",
+      "oracle_cells": ["E1"],
+      "correctness_oracles": ["crates/taskmesh-engine/tests/hardening_policy_interactions.rs", "crates/taskmesh/tests/hardening_mixed_overload.rs"],
+      "current_artifacts": ["tools/bench/scenarios/h1-default-send-smoke.json"],
+      "support": "partial",
+      "missing": "Existing three-offer mixed-path smoke is not a one-path rate sweep; closed-loop capacity mode and qualifying fixed-host runs are absent."
+    },
+    {
+      "id": "H2",
+      "question": "How fast does bounded backlog recover after a declared rate spike?",
+      "paths": ["io", "blocking", "cpu"],
+      "mode": "finite_open_loop",
+      "feature_scope": "default",
+      "topology_scope": "same topology and body as a qualifying H1 point",
+      "oracle_cells": ["E1", "E8"],
+      "correctness_oracles": ["crates/taskmesh-engine/tests/hardening_admission_matrix.rs", "crates/taskmesh/tests/hardening_mixed_overload.rs"],
+      "current_artifacts": [],
+      "support": "unavailable",
+      "missing": "No versioned base-burst-recovery fixture or repeated interval receipt."
+    },
+    {
+      "id": "H3",
+      "question": "Does an overloaded batch class change interactive-class tail and service share under declared weighted policy?",
+      "paths": ["io", "blocking", "cpu"],
+      "mode": "finite_open_loop",
+      "feature_scope": "default",
+      "topology_scope": "two registered classes with one resolved physical topology",
+      "oracle_cells": ["E3"],
+      "correctness_oracles": ["crates/taskmesh-engine/tests/hardening_fairness_reference.rs", "crates/taskmesh-engine/tests/hardening_multi_pool_fairness.rs"],
+      "current_artifacts": ["crates/taskmesh-bench/benches/multiclass_fairness.rs"],
+      "support": "partial",
+      "missing": "Policy-model cost exists; no two-class weighted host workload or eligible-demand/service-window receipt."
+    },
+    {
+      "id": "H4",
+      "question": "How do CPU and blocking work interfere in the shared domain versus a feature-pinned separate CPU executor?",
+      "paths": ["cpu", "blocking", "local", "requested_stack"],
+      "mode": "finite_open_loop_feature_pair",
+      "feature_scope": "default and rayon must be separate builds",
+      "topology_scope": "shared blocking versus declared owned Rayon; external shared Rayon is nonexclusive",
+      "oracle_cells": ["E5"],
+      "correctness_oracles": ["crates/taskmesh/tests/hardening_executor_authority.rs", "crates/taskmesh/tests/hardening_role_pool_isolation.rs"],
+      "current_artifacts": ["tools/bench/scenarios/h1-default-send-smoke.json"],
+      "support": "partial",
+      "missing": "Smoke includes default CPU/blocking only; no feature-paired host receipt, local or requested-stack adapter."
+    },
+    {
+      "id": "H5",
+      "question": "How long does worker custody outlive caller cancellation, deadline or drop, and when does drain settle?",
+      "paths": ["blocking", "cpu"],
+      "mode": "finite_open_loop_burst",
+      "feature_scope": "default",
+      "topology_scope": "fixed worker and queue bounds with retained post-response custody",
+      "oracle_cells": ["E2", "E6"],
+      "correctness_oracles": ["crates/taskmesh/tests/hardening_executor_protocol.rs", "crates/taskmesh/tests/hardening_deadline_custody.rs", "crates/taskmesh/tests/hardening_drain.rs"],
+      "current_artifacts": ["crates/taskmesh-bench/tests/host_load_integration.rs"],
+      "support": "partial",
+      "missing": "Barrier correctness is present; no sustained cancel/deadline/drop burst and recovery receipt."
+    },
+    {
+      "id": "H6",
+      "question": "What is the measured parent/child governance and caller-owned deterministic reduce cost?",
+      "paths": ["io", "blocking", "cpu"],
+      "mode": "composite_caller_orchestrated",
+      "feature_scope": "default",
+      "topology_scope": "declared parent and child limits; each child is a separate public submission",
+      "oracle_cells": ["E7"],
+      "correctness_oracles": ["crates/taskmesh/tests/hardening_nested_wait.rs", "crates/taskmesh/tests/e2e_scenarios.rs"],
+      "current_artifacts": [],
+      "support": "unavailable",
+      "missing": "No versioned host composite workload or attribution receipt; Taskmesh does not execute the reducer."
+    },
+    {
+      "id": "H7",
+      "question": "Does a privacy-safe consumer-derived workload preserve the result seen in synthetic profiles?",
+      "paths": [],
+      "mode": "consumer_derived_open_loop",
+      "feature_scope": "unselected",
+      "topology_scope": "unselected until consumer profile provenance is frozen",
+      "oracle_cells": ["E1", "E2", "E3", "E5", "E6", "E7", "E8"],
+      "correctness_oracles": [],
+      "current_artifacts": [],
+      "support": "blocked_consumer_profile",
+      "missing": "No consented, privacy-safe consumer profile, transformation recipe or path-specific oracle selection."
+    },
+    {
+      "id": "H8",
+      "question": "How do cold construction, first call, warm call and settled drain differ on one topology?",
+      "paths": ["io"],
+      "mode": "criterion_micro",
+      "feature_scope": "default",
+      "topology_scope": "fixed benchmark runtime; lifecycle cases kept separate",
+      "oracle_cells": ["E6"],
+      "correctness_oracles": ["crates/taskmesh/tests/hardening_drain.rs"],
+      "current_artifacts": ["crates/taskmesh-bench/benches/cold_host_lifecycle.rs"],
+      "support": "partial",
+      "missing": "Quiescent drain is measured, not active-work teardown; no retained fixed-host distribution."
+    }
+  ]
+}

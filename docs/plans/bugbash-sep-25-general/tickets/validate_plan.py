@@ -77,6 +77,25 @@ def check_links(path: Path) -> None:
             fail(f"broken link in {path.name}: {target}")
 
 
+def implementation_rows(text: str) -> set[str]:
+    rows: set[str] = set()
+    for line in text.splitlines():
+        if not line.startswith("| BG25-"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if (
+            len(cells) != 3
+            or not re.fullmatch(r"BG25-\d{3}", cells[0])
+            or not cells[1]
+            or not cells[2]
+        ):
+            fail(f"incomplete implementation ADR row: {line}")
+        if cells[0] in rows:
+            fail(f"duplicate implementation ADR row: {cells[0]}")
+        rows.add(cells[0])
+    return rows
+
+
 def main() -> None:
     data = json.loads((ROOT / "plan.json").read_text())
     if data.get("schema_version") != 1:
@@ -115,6 +134,9 @@ def main() -> None:
         fail(f"missing implementation ADR: {ADR}")
     adr_text = ADR.read_text()
     check_links(ADR)
+    adr_rows = implementation_rows(adr_text)
+    if adr_rows != set(by_id):
+        fail(f"implementation ADR rows differ: {sorted(adr_rows ^ set(by_id))}")
     for ticket in tickets:
         if ticket.get("priority") not in {"P0", "P1"}:
             fail(f"invalid priority: {ticket['id']}")
@@ -131,8 +153,6 @@ def main() -> None:
         path = (ROOT / ticket["file"]).resolve()
         if path != ADR:
             fail(f"unexpected implementation ADR: {ticket['id']}")
-        if not re.search(rf"^\| {re.escape(ticket['id'])} \|", adr_text, re.M):
-            fail(f"implementation ADR row missing: {ticket['id']}")
         for dependency in ticket["depends_on"]:
             if dependency not in by_id or dependency == ticket["id"]:
                 fail(f"invalid dependency: {ticket['id']} -> {dependency}")

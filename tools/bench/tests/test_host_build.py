@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import host_build  # noqa: E402
 import host_perf  # noqa: E402
 
+from tools.process_supervisor import SupervisedProcess  # noqa: E402
+
 
 def archive(name: str = "Cargo.lock", kind: bytes = tarfile.REGTYPE) -> bytes:
     stream = io.BytesIO()
@@ -150,3 +152,160 @@ def test_cargo_profile_is_read_from_the_actual_named_artifact() -> None:
     assert host_build.cargo_profile(data, "host_load_probe") == profile
     with pytest.raises(host_perf.ReceiptError, match="no unique build profile"):
         host_build.cargo_profile(data + b"\n" + data, "host_load_probe")
+
+
+def test_cargo_config_custody_includes_ancestors_and_global_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "cargo-home"
+    home.mkdir()
+    monkeypatch.setenv("CARGO_HOME", str(home))
+    source = tmp_path / "witness/source"
+    source.mkdir(parents=True)
+    ancestor = tmp_path / ".cargo"
+    ancestor.mkdir()
+    (ancestor / "config.toml").write_text('[build]\nrustflags = ["-C", "opt-level=0"]\n')
+    (home / "config").write_text("[build]\njobs = 2\n")
+    configs = host_build.cargo_config_sha256(source)
+    assert str(ancestor / "config.toml") in configs
+    assert str(home / "config") in configs
+    proof = {"build_environment": {}, "cargo_config_sha256": configs}
+    with pytest.raises(host_perf.ReceiptError, match="custom compiler flags"):
+        host_build.require_standard_codegen(source.parent, proof)
+    (ancestor / "config.toml").write_text("[build]\njobs = 3\n")
+    with pytest.raises(host_perf.ReceiptError, match="configuration changed"):
+        host_build.require_standard_codegen(source.parent, proof)
+    proof["cargo_config_sha256"] = host_build.cargo_config_sha256(source)
+    host_build.require_standard_codegen(source.parent, proof)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "RUSTC",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "CARGO_BUILD_RUSTFLAGS",
+        "CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS",
+    ],
+)
+def test_profile_metadata_cannot_admit_effective_codegen_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    monkeypatch.setattr(host_build, "cargo_config_sha256", lambda _source: {})
+    with pytest.raises(host_perf.ReceiptError, match="custom compiler flags"):
+        host_build.require_standard_codegen(
+            tmp_path, {"build_environment": {key: "override"}, "cargo_config_sha256": {}}
+        )
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        '[target.aarch64-apple-darwin]\nrustflags = ["-Copt-level=0"]',
+        '[env]\nRUSTFLAGS = "-Copt-level=0"',
+        '[build]\nrustc-workspace-wrapper = "wrapper"',
+    ],
+)
+def test_config_codegen_injection_is_not_admitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: str
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(config)
+    configs = {str(path): host_perf.sha256(path.read_bytes())}
+    monkeypatch.setattr(host_build, "cargo_config_sha256", lambda _source: configs)
+    with pytest.raises(host_perf.ReceiptError, match="does not support"):
+        host_build.require_standard_codegen(
+            tmp_path, {"build_environment": {}, "cargo_config_sha256": configs}
+        )
+
+
+@pytest.mark.parametrize("timed_out,signum", [(True, None), (False, 15)])
+def test_cold_build_failure_keeps_execution_and_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timed_out: bool, signum: object
+) -> None:
+    import json
+
+    monkeypatch.setattr(
+        host_build,
+        "run_process",
+        lambda *a, **k: SupervisedProcess(0, "partial", "failed", timed_out, signum),
+    )
+    with pytest.raises(host_perf.ReceiptError, match="frozen build failed"):
+        host_build.cold_build(tmp_path, [], "host_load_probe")
+    retained = list(tmp_path.glob("failed-build-*"))
+    assert len(retained) == 1
+    assert (retained[0] / "stdout").read_text() == "partial"
+    execution = json.loads((retained[0] / "execution.json").read_bytes())
+    assert execution["timed_out"] is timed_out
+    assert execution["interrupted_by_signal"] == signum
+    assert not (tmp_path / "build-witness.json").exists()
+
+
+@pytest.mark.parametrize(
+    "change", ["none", "missing", "duplicate", "unoptimized", "assertions", "overflow", "bool_opt"]
+)
+def test_library_and_actual_oracle_profiles_are_bound_to_measured_semantics(
+    tmp_path: Path, change: str
+) -> None:
+    profile = {"opt_level": "3", "debug_assertions": False, "overflow_checks": False, "test": False}
+    names = ["taskmesh", "taskmesh_contract", "taskmesh_engine", "taskmesh_bench"]
+
+    def rows(targets: list[str]) -> bytes:
+        events = [
+            {
+                "reason": "compiler-artifact",
+                "target": {
+                    "name": name,
+                    "kind": ["test"] if name.startswith("hardening_") else ["lib"],
+                },
+                "profile": {**profile, "test": name.startswith("hardening_")},
+            }
+            for name in targets
+        ]
+        if change == "missing":
+            events = [e for e in events if e["target"]["name"] != "taskmesh_engine"]
+        elif change == "duplicate":
+            events.append(events[0])
+        elif change != "none":
+            field, value = {
+                "unoptimized": ("opt_level", "0"),
+                "assertions": ("debug_assertions", True),
+                "overflow": ("overflow_checks", True),
+                "bool_opt": ("opt_level", True),
+            }[change]
+            events[0]["profile"][field] = value
+        # Cargo emits reason first; canonical JSON emits profile first. Both
+        # layouts must be understood by the oracle parser.
+        import json
+
+        return (
+            b"\n".join(
+                (json.dumps(e).encode() if i % 2 else host_perf.canonical(e))
+                for i, e in enumerate(events)
+            )
+            + b"\n"
+        )
+
+    log = rows(names)
+    proof = {"logs_sha256": {f"build-{i}.stdout": host_perf.sha256(log) for i in range(2)}}
+    for index in range(2):
+        (tmp_path / f"build-{index}.stdout").write_bytes(log)
+    oracle = rows(
+        names[:3]
+        + [
+            "hardening_mixed_overload",
+            "hardening_deadline_custody",
+            "hardening_drain",
+            "hardening_executor_protocol",
+        ]
+    )
+    if change == "none":
+        host_build.require_matching_library_profiles(tmp_path, proof, profile)
+        host_build.require_oracle_profiles(oracle + b"test result: ok.\n", profile)
+    else:
+        with pytest.raises(host_perf.ReceiptError, match="profile"):
+            host_build.require_matching_library_profiles(tmp_path, proof, profile)
+        with pytest.raises(host_perf.ReceiptError, match="profile"):
+            host_build.require_oracle_profiles(oracle, profile)

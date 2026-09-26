@@ -295,13 +295,16 @@ def build_environment() -> dict[str, str]:
         "CARGO_ENCODED_RUSTFLAGS",
         "RUSTC",
         "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTC_BOOTSTRAP",
+        "RUSTUP_TOOLCHAIN",
         "CARGO_BUILD_TARGET",
         "CARGO_INCREMENTAL",
     )
     return {
         key: value
         for key, value in sorted(os.environ.items())
-        if key in relevant or key.startswith("CARGO_PROFILE_")
+        if key in relevant or key.startswith(("CARGO_PROFILE_", "CARGO_BUILD_", "CARGO_TARGET_"))
     }
 
 

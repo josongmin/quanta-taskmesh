@@ -233,8 +233,21 @@ def collect(plan_bytes: bytes, plan_root: Path, root: Path) -> dict:
 
 
 def verify(root: Path) -> dict[str, Any]:
+    if root.is_symlink() or not root.is_dir():
+        raise host_perf.ReceiptError("attempt ledger requires an owned regular directory")
+    for name in ("plan.json", "events.jsonl", "ledger.json"):
+        path = root / name
+        if path.is_symlink() or not path.is_file():
+            raise host_perf.ReceiptError("attempt ledger metadata requires regular owned files")
     plan_bytes = (root / "plan.json").read_bytes()
     plan = parse_plan(plan_bytes)
+    if {path.name for path in root.iterdir()} != {
+        "plan.json",
+        "events.jsonl",
+        "ledger.json",
+        *(a["id"] for a in plan["attempts"]),
+    }:
+        raise host_perf.ReceiptError("unplanned or missing study-root artifacts")
     final = host_perf.parse_object((root / "ledger.json").read_bytes(), "attempt ledger")
     host_perf.exact_keys(
         final,

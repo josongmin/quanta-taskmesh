@@ -119,8 +119,22 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
                         }
                     )
                 )
+                digests = {
+                    role: host_perf.sha256(f"synthetic {role}".encode())
+                    for role in admission.host_study.ARTIFACTS
+                }
+                digests["raw"] = host_perf.sha256((directory / "raw").read_bytes())
                 attempts.append(
-                    {"id": name, "rate_per_second": rate, "pair_index": pair, "arm": arm}
+                    {
+                        "id": name,
+                        "rate_per_second": rate,
+                        "pair_index": pair,
+                        "arm": arm,
+                        "artifact_sha256": {
+                            filename: digests[role]
+                            for role, filename in admission.host_study.ARTIFACTS.items()
+                        },
+                    }
                 )
                 start = 100 + len(attempts) * 10
                 fake_runs[name] = {
@@ -129,7 +143,7 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
                     "boot_time_ns": 1,
                     "resource_cadence_ms": 250,
                     "window": (start, start + 5),
-                    "artifact_sha256": {"raw": name},
+                    "artifact_sha256": digests,
                     "resource_observation": {},
                     "metrics": {
                         "cohort_goodput": {
@@ -314,6 +328,38 @@ def test_effective_codegen_override_rejects_before_rebuild_or_oracle(
     witness = admission.host_build.verify(args[2])
     witness["build_environment"]["RUSTFLAGS"] = "-C opt-level=0"
     with pytest.raises(host_perf.ReceiptError, match="custom compiler flags"):
+        admission.admit(*args[:6])
+    assert True not in args[6]
+    assert not args[5].exists()
+
+
+def test_validated_population_cannot_differ_from_the_sealed_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    next(iter(args[9].values()))["artifact_sha256"]["summary"] = "f" * 64
+    with pytest.raises(host_perf.ReceiptError, match="differ from sealed ledger"):
+        admission.admit(*args[:6])
+    assert True not in args[6]
+    assert not args[5].exists()
+
+
+def test_changed_raw_read_cannot_supply_unvalidated_tail_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    path = args[1] / next(iter(args[9])) / "raw"
+    original = Path.read_bytes
+    changed = json.loads(original(path))
+    changed["records"][0]["caller_response_ns"] = 999
+
+    def replaced_read(current: Path) -> bytes:
+        if current == path:
+            return host_perf.canonical(changed)
+        return original(current)
+
+    monkeypatch.setattr(Path, "read_bytes", replaced_read)
+    with pytest.raises(host_perf.ReceiptError, match="between typed validation and tail analysis"):
         admission.admit(*args[:6])
     assert True not in args[6]
     assert not args[5].exists()

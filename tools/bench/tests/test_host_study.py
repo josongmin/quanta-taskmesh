@@ -183,6 +183,26 @@ def test_fifo_input_cannot_block_before_execution_timeout(
     assert all("regular file" in a["reason"] for a in report["attempts"])
 
 
+@pytest.mark.parametrize("name", ["plan.json", "events.jsonl", "ledger.json", "unplanned"])
+def test_ledger_root_cannot_hide_unowned_metadata_or_unplanned_attempts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    monkeypatch.setattr(
+        host_study, "run_process", lambda *a, **k: SupervisedProcess(1, "", "failed", False, None)
+    )
+    root = tmp_path / "study"
+    host_study.collect(plan(tmp_path), tmp_path, root)
+    if name == "unplanned":
+        (root / name).mkdir()
+    else:
+        original = root / name
+        outside = tmp_path / name
+        original.rename(outside)
+        original.symlink_to(outside)
+    with pytest.raises(host_perf.ReceiptError, match="owned files|unplanned"):
+        host_study.verify(root)
+
+
 def test_interruption_accounts_remaining_population_without_launching_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

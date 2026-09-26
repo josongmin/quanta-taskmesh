@@ -164,7 +164,9 @@ are outside this cleanup guarantee. Stdout, stderr, partial artifacts and
 failure reasons are retained. Events form a digest chain rooted in the sealed
 plan, and final accounting binds the complete event bytes and every attempt's
 artifact inventory. Missing, duplicate, reordered, interrupted or altered
-attempts reject. Failures remain in the denominator and suppress admission.
+attempts reject. Metadata must be regular owned files and the study root must
+contain exactly its sealed metadata and declared attempt directories; unplanned
+artifacts reject. Failures remain in the denominator and suppress admission.
 This contract permits **zero exclusions**; arbitrary exclusion labels reject.
 It accounts for collector-owned attempts, not experiments run outside it.
 
@@ -183,7 +185,9 @@ just bench-host-admit /tmp/contract.json /tmp/taskmesh-series \
 ```
 
 Admission requires the exact clean source checkout for typed raw reconstruction,
-rechecks the ledger and measured controls, and runs a third cold build. It then
+binds every typed-validated artifact to the sealed ledger digest, hashes the
+exact bytes used for tail analysis, rechecks measured controls, and runs a third
+cold build. It then
 executes the four named Taskmesh engine/facade oracle suites from the frozen
 source, with test-profile optimization, debug assertions and overflow checking
 explicitly matched to the measured artifact. At least 45 passing tests across all four suite results, zero ignored,

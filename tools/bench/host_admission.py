@@ -298,6 +298,11 @@ def admit(
             )
         files = dict(host_study.ARTIFACTS)
         run = host_compare.read_run(directory, files, scenario_bytes, attempt["id"])
+        if any(
+            run["artifact_sha256"][role] != attempt["artifact_sha256"].get(filename)
+            for role, filename in files.items()
+        ):
+            raise host_perf.ReceiptError("validated attempt artifacts differ from sealed ledger")
         identity = run["identity"]
         if (
             identity["source_head"] != frozen["source_head"]
@@ -318,7 +323,10 @@ def admit(
             raise host_perf.ReceiptError("series indexed process order is reversed or overlaps")
         last_series_end = run["window"][1]
         windows.append(run["window"])
-        raw = host_perf.parse_object((directory / "raw").read_bytes(), "series raw")
+        raw_bytes = (directory / "raw").read_bytes()
+        if host_perf.sha256(raw_bytes) != run["artifact_sha256"]["raw"]:
+            raise host_perf.ReceiptError("raw changed between typed validation and tail analysis")
+        raw = host_perf.parse_object(raw_bytes, "series raw")
         by_cohort = {}
         for row in raw["records"]:
             if row["disposition"].get("outcome", {}).get("kind") == "success":

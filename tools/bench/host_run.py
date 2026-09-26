@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -70,11 +71,17 @@ def build_runner(
 def write_new(path: Path, data: bytes) -> None:
     if path.exists():
         raise host_perf.ReceiptError(f"refusing to overwrite {path}")
-    temporary = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f"{path.name}.tmp-", dir=path.parent)
+    temporary = Path(temporary_name)
     try:
-        with temporary.open("xb") as stream:
+        with os.fdopen(descriptor, "wb") as stream:
             stream.write(data)
-        temporary.replace(path)
+        # Linking publishes complete bytes atomically and never replaces an
+        # artifact created by another writer after the preflight check.
+        try:
+            os.link(temporary, path)
+        except FileExistsError as error:
+            raise host_perf.ReceiptError(f"refusing to overwrite {path}") from error
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -82,14 +89,44 @@ def write_new(path: Path, data: bytes) -> None:
 def retain_executable(source: Path, destination: Path) -> bytes:
     if destination.exists():
         raise host_perf.ReceiptError(f"refusing to overwrite {destination}")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f"{destination.name}.tmp-", dir=destination.parent
+    )
+    temporary = Path(temporary_name)
     try:
-        with source.open("rb") as input_stream, destination.open("xb") as output_stream:
-            shutil.copyfileobj(input_stream, output_stream)
-        destination.chmod(source.stat().st_mode & 0o777)
-        return destination.read_bytes()
-    except BaseException:
-        destination.unlink(missing_ok=True)
-        raise
+        with os.fdopen(descriptor, "wb") as output_stream:
+            with source.open("rb") as input_stream:
+                shutil.copyfileobj(input_stream, output_stream)
+        temporary.chmod(source.stat().st_mode & 0o777)
+        data = temporary.read_bytes()
+        try:
+            os.link(temporary, destination)
+        except FileExistsError as error:
+            raise host_perf.ReceiptError(f"refusing to overwrite {destination}") from error
+        return data
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def retain_control_bundle(
+    path: Path, bundle: dict[str, Any], verify: Callable[[bytes], Any], label: str
+) -> None:
+    """Publish a completed bundle only after final cross-run verification."""
+    if not bundle["failures"]:
+        try:
+            verify(host_perf.canonical(bundle) + b"\n")
+        except (OSError, host_perf.ReceiptError) as error:
+            bundle["failures"].append(
+                {
+                    "index": len(bundle["runs"]),
+                    "phase": "bundle_validation",
+                    "reason": str(error),
+                }
+            )
+    bundle["status"] = "incomplete" if bundle["failures"] else "diagnostic_complete"
+    write_new(path, host_perf.canonical(bundle) + b"\n")
+    if bundle["failures"]:
+        raise host_perf.ReceiptError(f"{label} acquisition incomplete: {bundle['failures'][0]}")
 
 
 def main() -> int:

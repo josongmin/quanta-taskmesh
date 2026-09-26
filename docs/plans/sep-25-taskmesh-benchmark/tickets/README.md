@@ -300,6 +300,16 @@ must be frozen before candidate acquisition; this evaluator does not establish
 B00 or grant performance
 qualification.
 
+The evaluator checks target and every control arm for omitted offers, unanswered
+callers at settlement, producer lag, and late Snapshot observations, and retains
+each arm's health in the report. Minimal recorder health uses its typed raw and
+does not fabricate a latency population. Snapshot/recorder/sampler budget inputs
+require equal forward/reverse pair counts; sampler acquisition rejects odd pair
+counts before writing. Final cross-run verification happens before publishing a
+complete control bundle; failures retain an `incomplete` bundle and partial raw.
+Artifact publication uses private temporary files and atomic no-replace hard
+links, preserving another writer's artifact even on an executable copy failure.
+
 `host_compare.py` also retains each run's sampled CPU delta and sampled
 RSS/thread peaks with sample count and observed span. These are lower-bound
 process observations, not a qualified CPU-per-success or memory-efficiency

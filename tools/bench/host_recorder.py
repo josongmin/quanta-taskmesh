@@ -12,7 +12,7 @@ from typing import Any
 import host_aa
 import host_observer
 import host_perf
-from host_run import write_new
+from host_run import retain_control_bundle
 
 BUNDLE_VERSION = 1
 
@@ -202,11 +202,12 @@ def acquire(
         "runs": runs,
         "failures": failures,
     }
-    bundle_bytes = host_perf.canonical(bundle) + b"\n"
-    write_new(directory / "recorder-bundle.json", bundle_bytes)
-    if failures:
-        raise host_perf.ReceiptError(f"recorder acquisition incomplete: {failures[0]}")
-    verify_bundle(bundle_bytes, directory, scenario_bytes)
+    retain_control_bundle(
+        directory / "recorder-bundle.json",
+        bundle,
+        lambda data: verify_bundle(data, directory, scenario_bytes),
+        "recorder",
+    )
     return bundle
 
 

@@ -12,7 +12,7 @@ from typing import Any
 import host_aa
 import host_observer
 import host_perf
-from host_run import write_new
+from host_run import retain_control_bundle
 
 BUNDLE_VERSION = 1
 OFF_REASON = "resource sampling intentionally disabled for paired control"
@@ -88,7 +88,7 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
     if max_span_ns == 0:
         raise host_perf.ReceiptError("sampler maximum span must be positive")
     runs = bundle["runs"]
-    if not isinstance(runs, list) or len(runs) < 4 or len(runs) % 2:
+    if not isinstance(runs, list) or len(runs) < 4 or len(runs) % 4:
         raise host_perf.ReceiptError("resource sampler study lacks balanced pairs")
     windows = []
     boots = set()
@@ -135,8 +135,10 @@ def acquire(
     max_span_ns: int,
     features: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    if pairs < 2 or pairs > 50 or max_span_ns <= 0:
-        raise host_perf.ReceiptError("sampler pairs must be 2..=50 and span must be positive")
+    if pairs < 2 or pairs > 50 or pairs % 2 or max_span_ns <= 0:
+        raise host_perf.ReceiptError(
+            "sampler pairs must be even in 2..=50 and span must be positive"
+        )
     directory.mkdir(parents=True, exist_ok=False)
     scenario_bytes = scenario.read_bytes()
     host_perf.parse_object(scenario_bytes, "sampler scenario")
@@ -190,11 +192,12 @@ def acquire(
         "runs": runs,
         "failures": failures,
     }
-    bundle_bytes = host_perf.canonical(bundle) + b"\n"
-    write_new(directory / "sampler-bundle.json", bundle_bytes)
-    if failures:
-        raise host_perf.ReceiptError(f"resource sampler acquisition incomplete: {failures[0]}")
-    verify_bundle(bundle_bytes, directory, scenario_bytes)
+    retain_control_bundle(
+        directory / "sampler-bundle.json",
+        bundle,
+        lambda data: verify_bundle(data, directory, scenario_bytes),
+        "resource sampler",
+    )
     return bundle
 
 

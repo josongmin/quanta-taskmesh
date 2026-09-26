@@ -115,3 +115,9 @@ def test_sampler_bundle_rejects_overlap_and_stale_span(
     bundle["runs"][1] = host_sampler.verified_run(tmp_path, 1, scenario)[0]
     with pytest.raises(host_perf.ReceiptError, match="windows overlap"):
         host_sampler.verify_bundle(encoded(bundle), tmp_path, scenario)
+
+
+def test_sampler_rejects_unbalanced_pair_count_before_acquisition(tmp_path: Path) -> None:
+    with pytest.raises(host_perf.ReceiptError, match="pairs must be even"):
+        host_sampler.acquire(tmp_path / "missing", tmp_path / "missing", tmp_path / "out", 3, 1)
+    assert not (tmp_path / "out").exists()

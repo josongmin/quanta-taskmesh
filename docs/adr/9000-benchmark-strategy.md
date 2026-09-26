@@ -144,6 +144,14 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   evaluator는 검증한 control bundle의 scenario·bundle·resource digest를 다시
   대조해 재열람 사이의 artifact 교체를 거부한다. B00 계약과 반복 고정 host 결과를
   대체하지 않는다.
+  target 및 모든 control arm의 미제출·settlement 미응답·producer lag·늦은
+  Snapshot을 검사하고 문제 arm을 별도로 보고한다. Minimal recorder는 typed raw가
+  Snapshot을 금지하며 latency를 만들지 않는다. Snapshot·recorder·sampler의
+  비교 예산에는 양방향 실행 순서가 같은 수의 쌍만 입력할 수 있다.
+  control bundle은 최종 검증 후 게시한다. 최종 검증 실패도 raw를 유지한
+  `incomplete` bundle로 남긴다. Python acquisition 산출물과 보관 실행파일은
+  같은 디렉터리의 private 임시 파일을 hard link로 게시해 기존 파일을 원자적으로
+  덮어쓰지 않는다. 이 계약은 crash durability 영수증을 뜻하지 않는다.
   구조 bundle v3는 target Snapshot-off 또는 control과 같은 cadence의 Snapshot-on을
   허용한다. Snapshot-on target을 쓸 때 A/A는 on workload, recorder full/minimal은
   같은 workload의 off 파생 시나리오를 사용하고 그 digest를 묶는다. On target의

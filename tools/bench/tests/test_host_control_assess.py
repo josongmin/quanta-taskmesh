@@ -24,9 +24,25 @@ def study_run(mode: str, rate: float = 2.0, responded: int = 10) -> dict:
         "metrics": {
             "cohort_goodput": {"c/io": {"slo_per_sec": rate}},
             "success_latency_by_class_path": {"c/io": {"count": 10, "p99_ns": 100}},
-            "counts": {"intended": 10, "responded": responded},
+            "counts": {
+                "intended": 10,
+                "responded": responded,
+                "not_submitted": 0,
+                "unanswered_at_settlement": 0,
+            },
+            "max_producer_lag_ns": 5,
+            "late_snapshot_samples": 0,
         },
     }
+
+
+def retain_summary(directory: Path, index: int, run: dict) -> None:
+    if run["mode"] == "minimal":
+        run["summary_sha256"] = None
+        return
+    data = encoded({"metrics": run["metrics"]})
+    host_control_assess.host_aa.paths(directory, index)["summary"].write_bytes(data)
+    run["summary_sha256"] = host_perf.sha256(data)
 
 
 def setup_assessment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, tuple]:
@@ -57,6 +73,9 @@ def setup_assessment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[d
         "host_max_lag_ns": 5,
         "artifact_sha256": {"target": {}, "generator": {}},
     }
+    target_summary = encoded({"metrics": study_run("full")["metrics"]})
+    summary.write_bytes(target_summary)
+    bundle["artifact_sha256"]["target"]["summary"] = host_perf.sha256(target_summary)
 
     def verified_bundle(*_args: object) -> dict:
         for label, directory in (
@@ -103,6 +122,7 @@ def setup_assessment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[d
             )
             host_control_assess.host_aa.paths(directory, index)["resources"].write_bytes(data)
             run["resources_sha256"] = host_perf.sha256(data)
+            retain_summary(directory, index, run)
         (directory / f"{directory.name}-bundle.json").write_bytes(encoded({"runs": runs}))
     sampler_runs = []
     for index, mode in enumerate(("on", "off", "off", "on")):
@@ -111,6 +131,7 @@ def setup_assessment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[d
         row["window_epoch_ns"] = [start, start + 10]
         row["boot_time_ns"] = 1
         row["resource_cadence_ms"] = 250
+        retain_summary(sampler, index, row)
         sampler_runs.append(row)
     sampler_bundle = {
         "identity": identity,
@@ -249,3 +270,102 @@ def test_control_assessment_rejects_control_scenario_swap(
     verified["scenario_sha256"] = "b" * 64
     with pytest.raises(host_perf.ReceiptError, match="scenario differs"):
         host_control_assess.assess(encoded(policy), *paths)
+
+
+@pytest.mark.parametrize("directory_index", [4, 5, 6, 7])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("not_submitted", 1),
+        ("unanswered_at_settlement", 1),
+        ("max_producer_lag_ns", 11),
+        ("late_snapshot_samples", 1),
+    ],
+)
+def test_control_assessment_checks_every_control_arm_health(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    directory_index: int,
+    field: str,
+    value: int,
+) -> None:
+    policy, paths = setup_assessment(tmp_path, monkeypatch)
+    directory = paths[directory_index]
+    bundle_path = directory / f"{directory.name}-bundle.json"
+    bundle = json.loads(bundle_path.read_bytes())
+    run = bundle["runs"][0]
+    metrics = run["metrics"]
+    if field in ("not_submitted", "unanswered_at_settlement"):
+        metrics["counts"][field] = value
+    else:
+        metrics[field] = value
+    retain_summary(directory, 0, run)
+    bundle_path.write_bytes(encoded(bundle))
+    report = host_control_assess.assess(encoded(policy), *paths)
+    assert report["status"] == "BUDGET_FAIL"
+    label = {4: "A/A", 5: "Snapshot", 6: "recorder", 7: "sampler"}[directory_index]
+    assert report["violations"] == [f"{label}/0/{field}"]
+
+
+@pytest.mark.parametrize(
+    ("label", "modes"),
+    [("Snapshot", ("on", "off")), ("recorder", ("full", "minimal")), ("sampler", ("on", "off"))],
+)
+def test_control_budget_rejects_unbalanced_control_order(
+    label: str, modes: tuple[str, str]
+) -> None:
+    forward = [{"mode": modes[0]}, {"mode": modes[1]}]
+    reverse = list(reversed(forward))
+    assert len(host_control_assess.balanced_pairs(forward + reverse, 2, label, modes)) == 2
+    with pytest.raises(host_perf.ReceiptError, match="order is unbalanced"):
+        host_control_assess.balanced_pairs(forward + reverse + forward, 2, label, modes)
+    with pytest.raises(host_perf.ReceiptError, match="both control arms"):
+        host_control_assess.balanced_pairs(forward + forward[:1] * 2, 2, label, modes)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("not_submitted", 1), ("unanswered_at_settlement", 1), ("max_producer_lag_ns", 11)],
+)
+def test_control_budget_checks_minimal_recorder_without_fabricating_latency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, value: int
+) -> None:
+    policy, paths = setup_assessment(tmp_path, monkeypatch)
+    bundle_path = paths[6] / "recorder-bundle.json"
+    bundle = json.loads(bundle_path.read_bytes())
+    run = bundle["runs"][1]
+    assert run["summary_sha256"] is None
+    if field == "max_producer_lag_ns":
+        run["metrics"][field] = value
+    else:
+        run["metrics"]["counts"][field] = value
+    bundle_path.write_bytes(encoded(bundle))
+    report = host_control_assess.assess(encoded(policy), *paths)
+    assert report["status"] == "BUDGET_FAIL"
+    assert report["violations"] == [f"recorder/1/{field}"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("not_submitted", 1),
+        ("unanswered_at_settlement", 1),
+        ("max_producer_lag_ns", 11),
+        ("late_snapshot_samples", 1),
+    ],
+)
+def test_control_budget_checks_target_settlement_and_observer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, value: int
+) -> None:
+    policy, paths = setup_assessment(tmp_path, monkeypatch)
+    target = json.loads(paths[2].read_bytes())
+    if field in ("not_submitted", "unanswered_at_settlement"):
+        target["metrics"]["counts"][field] = value
+    else:
+        target["metrics"][field] = value
+    paths[2].write_bytes(encoded(target))
+    verified = host_control_assess.host_controls.verify_bundle()
+    verified["artifact_sha256"]["target"]["summary"] = host_perf.sha256(paths[2].read_bytes())
+    report = host_control_assess.assess(encoded(policy), *paths)
+    assert report["status"] == "BUDGET_FAIL"
+    assert report["violations"] == [f"target/0/{field}"]

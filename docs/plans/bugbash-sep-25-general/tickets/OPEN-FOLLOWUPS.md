@@ -1,7 +1,7 @@
 # BG25 open follow-ups after implementation archive
 
-The [twelve BG25 implementation tickets](../../../archive/2026-09-25/bugbash-sep-25-general/tickets/README.md)
-are archived as implementation history. `plan.json` remains `PARTIAL` because
+The [twelve BG25 implementation tickets](../../../adr/0007-sep-25-implementation-closure.md)
+are compressed into the accepted implementation record. `plan.json` remains `PARTIAL` because
 its proof and external-adoption fields have different authorities.
 
 | Owner | Open action | Closure evidence |

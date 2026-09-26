@@ -3,7 +3,7 @@
 - Status: Accepted for the Taskmesh library; external adoption remains open
 - Date: 2026-09-25
 - Amends: [0003](0003-sep-16-hardening-contracts.md), especially D05 and D09–D10
-- Source: [BG25 decisions](../archive/2026-09-25/bugbash-sep-25-general/tickets/DECISIONS.md), D6–D8
+- Source: [BG25 implementation map](0007-sep-25-implementation-closure.md), D6–D8; original narratives remain at Git `cbf9764`
 
 ## Context
 

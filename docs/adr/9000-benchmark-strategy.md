@@ -218,14 +218,34 @@ remain inputs to acquire; code presence is not a performance result.
   readers and backpressure across capture polls. These checks do not bound
   stalled regular-file kernel/network I/O or captured byte volume, and are not
   universal filesystem isolation or standalone liveness qualification.
-- The completed owner-local follow-up is [B07 minimal recovery/soak](../plans/sep-25-taskmesh-benchmark/tickets/B07-minimal-recovery-soak.md):
-  reuse one host across bounded overload/settlement cycles, validate exact owned
-  capacity return, and execute a successful normal-work canary after recovery.
-  Reuse existing raw/custody oracles. Short smoke is ordinary correctness feedback;
-  longer stress begins as explicit local opt-in. Implementation, scoped owner tests and the actual 600-second, 1,000-cycle
-  H2 diagnostic are complete; source digests and separate CI gaps are maintained
-  in B07. Online validation reuses one installed topology; artifact replay runs
-  in a separate supervised process. No helper host is built per measured cycle.
+- B07 adds one-host recovery diagnostics: one runtime/warmup, bounded repeated
+  overload windows, exact zero-owned checkpoints without intermediate drain,
+  successful real-body canaries for each used class/path, cumulative counters,
+  and one terminal drain. Online validation reuses installed topology; a separate
+  supervised replay checks the complete indexed cycle population. Failed or
+  interrupted populations cannot publish a successful receipt. Bounded writer
+  errors close admission and attempt drain; the original and cleanup errors are
+  both reported. Existing output cannot be mutated by a rejected acquisition.
+- B07's retained runner is digest-checked data, not a replay authority. Plain
+  `verify` uses a validator built from the current checkout and reports only
+  `structural=PASS`; a self-declared digest does not authenticate an external
+  bundle. `--require-current-source` also requires stable source/host endpoints
+  and byte equality between the current build and retained runner.
+- At the earlier owner snapshot, the opt-in H2 study completed 1,000 cycles in
+  600.003 seconds on one host; H5 completed three cycles. Source content digest:
+  `d4ed183a7900404ace0a4d299018df379f365f2173910a2f89a76c4d206c52f3`.
+  The final audit at base `8a4f3a6` passed 120 Rust bench tests, 36 B07 Python
+  tests, canonical bench clippy, Ruff, and formatting. After local commit
+  `cbf9764f08eb9f307f3ee5a51bad5e5dabeaf4a6`, H5 again completed three
+  cycles with one host and terminal drain; `verify --require-current-source`
+  reported `structural=PASS`. Its local receipt at
+  `/tmp/taskmesh-b07-postcommit-W6ct5W/h5/receipt.json` has SHA-256
+  `ff4ef298c9f90004436a4eb05b885b59faeeee9f0fd7bdaa80edce80dbefd6f6`.
+  The source digest was
+  `41b7f7d115e9cffa8460ad08bdf54609024ea6a2f01d98d59e332a6590e442e5`.
+  These are owner-local, dirty-checkout diagnostics, not clean CI or performance
+  qualification. The full source-specific history remains at Git `cbf9764` in
+  `docs/plans/sep-25-taskmesh-benchmark/tickets/B07-minimal-recovery-soak.md`.
 - Mode-specific repeated performance admission, automatic RSS slope gates and
   performance recovery SLOs are deferred until a declared claim and frozen
   consumer budgets require them. All-mode correctness/cancel/drain/resource-return

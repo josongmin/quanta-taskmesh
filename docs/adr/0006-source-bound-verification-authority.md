@@ -3,7 +3,7 @@
 - Status: Accepted for current local verification policy
 - Date: 2026-09-25
 - Source: [Sep-25 scenario inventory](../misc/tmp-engine-checklist-sep-25.md),
-  [BG25 verification](../archive/2026-09-25/bugbash-sep-25-general/tickets/VERIFICATION.md),
+  [BG25 implementation map](0007-sep-25-implementation-closure.md),
   and [verification stages](../plans/2026-09-24-ci-verification-stages.md)
 
 ## Context

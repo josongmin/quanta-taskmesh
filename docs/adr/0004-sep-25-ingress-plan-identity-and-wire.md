@@ -3,7 +3,7 @@
 - Status: Accepted for the Taskmesh library; external adoption remains open
 - Date: 2026-09-25
 - Amends: [0001](0001-hexagonal-feature-sliced-architecture.md) at the host ingress boundary
-- Source: [BG25 decisions](../archive/2026-09-25/bugbash-sep-25-general/tickets/DECISIONS.md), D1–D5 and D9
+- Source: [BG25 implementation map](0007-sep-25-implementation-closure.md), D1–D5 and D9; original narratives remain at Git `cbf9764`
 
 ## Context
 
@@ -54,6 +54,7 @@ Snapshot schema versioning does not version every other public enum.
 
 ## Evidence boundary
 
-BG25-001–004 and the [104-scenario inventory](../misc/tmp-engine-checklist-sep-25.md)
-retain the implementation history and candidate fixtures. Their static mapping
+The [BG25 implementation map](0007-sep-25-implementation-closure.md) and
+[104-scenario inventory](../misc/tmp-engine-checklist-sep-25.md)
+retain the compressed implementation history and candidate fixtures. Their static mapping
 does not certify an external deployment or a later source revision.

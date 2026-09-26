@@ -23,6 +23,10 @@ terminal execution flags, and complete control-arm denominator.
   30-second deadline, 0.5-second grace, and 64 MiB combined capture limit.
   Incomplete execution or overflow rejects identity rather than using partial
   output. Optional metadata commands propagate incomplete execution.
+  Shared campaign snapshot/version inspection uses the same bounds and exact
+  binary stdin. Parallel snapshot regression uses two independent producer
+  processes, retaining disjoint source/target checks and main-thread signal
+  ownership. No mutation campaign is executed for this integration.
 - Cross-rate workload-shape and class-mix changes could be admitted together as
   a capacity grid. Admission now binds the common workload and public full-host
   IO/blocking/CPU scope across every rate. Other modes require separate claims.

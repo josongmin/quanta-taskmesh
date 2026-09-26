@@ -300,3 +300,11 @@ def test_allocation_captured_input_rejects_fifo_before_read(tmp_path: Path) -> N
     path = tmp_path / "output"
     os.mkfifo(path)
     assert allocation_gate.main(["--input", str(path)]) == 1
+
+
+@pytest.mark.parametrize("api", ["inspect_process", "metadata_output"])
+def test_metadata_regular_stdin_keeps_binary_bytes_exact(tmp_path: Path, api: str) -> None:
+    payload = b"\xff\x00\r\n\xc3\xa9\n" * 300000
+    command = [sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"]
+    result = getattr(inspection, api)(command, cwd=tmp_path, timeout_seconds=3, stdin_data=payload)
+    assert (result.stdout if api == "inspect_process" else result) == payload

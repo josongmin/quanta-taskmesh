@@ -93,7 +93,16 @@ def fixture() -> tuple[dict, dict, dict, dict]:
         "class_counters": {
             "c": {"admitted": 2, "started": 2, "terminated": 2, "inflight": 0, "queued": 0}
         },
-        "final_capabilities": {"cpu": 0},
+        "final_capabilities": {
+            "blocking": 0,
+            "cpu": 0,
+            "large_stack": 0,
+            "local_runtime": 0,
+            "maintenance": 0,
+            "physical.cpu": 0,
+            "physical.dedicated": 0,
+            "physical.shared_blocking": 0,
+        },
         "drain_ok": True,
         "conservation_ok": True,
     }
@@ -651,7 +660,7 @@ def test_broken_raw_row_population_rejects(damage: str) -> None:
 def test_drained_run_with_residual_pool_slot_rejects() -> None:
     raw, scenario, identity, calibration = fixture()
     raw["final_capabilities"]["cpu"] = 1
-    with pytest.raises(host_perf.ReceiptError, match="owns engine capacity"):
+    with pytest.raises(host_perf.ReceiptError, match="did not settle owned engine capacity"):
         host_perf.make_summary(encoded(raw), encoded(scenario), identity, calibration, 2)
 
 
@@ -805,7 +814,7 @@ def test_sparse_snapshot_peaks_are_labeled_lower_bounds() -> None:
                     "memory_units_held": "1",
                 }
             },
-            "capabilities": {"cpu": 1},
+            "capabilities": {**raw["final_capabilities"], "cpu": 1},
             "conservation_ok": True,
         }
 

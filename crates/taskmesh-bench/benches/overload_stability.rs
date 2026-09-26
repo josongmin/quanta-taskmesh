@@ -1,5 +1,5 @@
-//! Fail-closed stability under overload (ADR 9000 / P5). Offered load far exceeds
-//! capacity; the queue must stay bounded and rejection must be the pressure valve.
+//! Simulator computation and modeled fail-closed overload behavior (ADR 9000 /
+//! B01). The timed duration is not a real host overload latency.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use taskmesh_bench::loadgen::simulate;

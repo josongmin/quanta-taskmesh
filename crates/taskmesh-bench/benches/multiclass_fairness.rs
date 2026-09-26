@@ -1,6 +1,6 @@
-//! Realized multi-class fairness (ADR 9000 / P5). Drives a contended set of
-//! weighted-fair classes and scores the realized dispatch *order* with Jain's
-//! index — a behavioral characterization, not just a timing.
+//! Deterministic Governor policy-computation cost (ADR 9000 / B01). The
+//! weighted-fair dispatch order is an engine-model oracle, not host fairness
+//! latency or throughput.
 //!
 //! Fairness lives in the promotion ORDER under contention, not the final totals:
 //! every queued request eventually dispatches once the contention clears, so
@@ -141,7 +141,7 @@ fn bench(c: &mut Criterion) {
         jain_fairness_index(&weighted_shares)
     );
 
-    c.bench_function("fairness_promotion_order", |b| {
+    c.bench_function("fairness_promotion_order_sim", |b| {
         b.iter(|| black_box(promotion_order(&[("a", 1), ("b", 1), ("c", 1)], 200).len()));
     });
 }

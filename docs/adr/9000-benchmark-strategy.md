@@ -69,6 +69,15 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
 - 기존 Criterion/IAI와 allocation/smoke gate는 named micro/컴파일 범위다.
   현재 allocation 설정은 `tools/bench/perf-gate.json`의 `8 alloc/op`다. IAI 최초
   baseline 생성은 회귀 PASS가 아니다.
+- B01 Criterion 사례는 `governance_tax`의 full-facade(호출 중 spec 구성)와
+  prebuilt-spec(측정 밖 spec/runtime clone)을 구분한다. Tokio/Semaphore/Tower는
+  좁은 mechanism control이다. `queue_scaling`은 class 수 1/8/32와 class당
+  queue 깊이 1/16에서 fixture 구성·queue 적재를 제외하고 holder release 한 번과
+  promotion 한 건을 잰다. `cold_host_lifecycle`은 구성, 첫 IO 호출, warm IO 호출,
+  빈 host drain, 동일 경로·body의 완료된 1/10건 batch를 별도 측정한다.
+  Criterion batch 지연의 분모는 batch 하나이며, 건당 값은 그 지연을 1 또는 10으로
+  나누어 계산한다. 이 사례의 smoke는 상태·실행 가능성 증거이지 고정 host 성능
+  영수증이 아니다. `*_sim`의 Criterion 시간은 simulator 계산 시간이다.
 - `taskmesh-bench`의 finite host runner는 Send IO/blocking/default CPU를 실행하고
   raw v2에 intended, submitted, caller terminal/drop, body start/finish, cut/settlement,
   sampled Snapshot과 실패 시 `invalid` 원시 행을 기록한다. Rust typed

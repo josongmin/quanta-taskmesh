@@ -54,6 +54,14 @@ name = "governance_tax"
 harness = false
 
 [[bench]]
+name = "queue_scaling"
+harness = false
+
+[[bench]]
+name = "cold_host_lifecycle"
+harness = false
+
+[[bench]]
 name = "host_edge_paths"
 harness = false
 

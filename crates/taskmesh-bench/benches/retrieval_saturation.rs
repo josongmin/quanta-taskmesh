@@ -1,5 +1,5 @@
-//! Throughput–latency characterization of a single saturated retrieval class
-//! (ADR 9000 / P1). Open-loop; one raw admission-wait sample per started request.
+//! Simulator computation cost and virtual admission-wait characterization for
+//! one saturated retrieval class (ADR 9000 / B01). Not host p99 or throughput.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use taskmesh_bench::loadgen::simulate;

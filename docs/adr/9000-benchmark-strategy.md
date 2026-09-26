@@ -133,6 +133,9 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   `UNQUALIFIED`를 출력한다. 실측 보정 및 고정 host 반복 실행,
   closed-loop/local/H6의 반복 비교 측정, Rayon 비교 측정과
   대표 H7은 남아 있다.
+  비교 보고서는 실행별 외부 CPU 표본 delta와 RSS/thread 표본 최대치,
+  표본 구간을 하한 관측치로 함께 보존한다. 표본이 한 개뿐이면 CPU delta는
+  `null`이며 자원 효율 우위를 주장하지 않는다.
   별도 sampler on/off 균형쌍은 동일 시나리오·소스·바이너리에서 외부 자원
   관측의 영향을 진단한다. control-budget evaluator는 시나리오·clean HEAD에
   묶인 예산으로 generator lag/미제출, A/A, Snapshot, recorder 응답수 및

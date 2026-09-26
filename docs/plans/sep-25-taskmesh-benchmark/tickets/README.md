@@ -5,7 +5,7 @@
 At clean detached `f7834d7`, structural `closed_loop`, `local` v2 and `composite`
 receipts were acquired under `/tmp`. They are not repository-retained and all
 report `UNQUALIFIED`. This benchmark change set preserves a
-separate invalid H6 raw on parent timeout/failure and add a source/scenario-bound
+separate invalid H6 raw on parent timeout/failure and adds a source/scenario-bound
 control-budget evaluator; neither has a clean exact-HEAD receipt yet. B00 values,
 measured sampler distortion budget, fixed-host rate series, H7 and an equivalent peer
 remain open. The older checkpoint notes below are historical and must not be
@@ -297,6 +297,11 @@ diagnostic report. The budget policy
 must be frozen before candidate acquisition; this evaluator does not establish
 B00 or grant performance
 qualification.
+
+`host_compare.py` also retains each run's sampled CPU delta and sampled
+RSS/thread peaks with sample count and observed span. These are lower-bound
+process observations, not a qualified CPU-per-success or memory-efficiency
+comparison.
 
 - **Purpose:** Prevent noisy hosted timing from becoming a misleading PR gate while retaining cheap correctness checks.
 - **Files:** existing `tools/bench/host_perf.py` and `tools/bench/tests/test_host_perf.py`, new measured calibration/resource/comparison tools under `tools/bench/`, `Justfile`, `tools/gates/{inventory,required}.json` only if a new required gate is intentionally adopted, workflow only after runner ownership is decided, release checklist/ADR.

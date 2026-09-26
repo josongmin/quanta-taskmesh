@@ -71,6 +71,18 @@ def read_run(root: Path, files: Any, scenario: bytes, label: str) -> dict[str, A
     end = resources["sampling_ended_epoch_ns"]
     if start == 0 or end <= start:
         raise host_perf.ReceiptError(f"{label}: invalid resource window")
+    samples = resources["samples"]
+    cpu_start = samples[0]["cpu_user_ns"] + samples[0]["cpu_system_ns"]
+    cpu_end = samples[-1]["cpu_user_ns"] + samples[-1]["cpu_system_ns"]
+    resource_observation = {
+        "sample_count": len(samples),
+        "sampled_cpu_delta_ns_lower_bound": cpu_end - cpu_start if len(samples) >= 2 else None,
+        "sampled_peak_rss_bytes_lower_bound": max(sample["rss_bytes"] for sample in samples),
+        "sampled_peak_threads_lower_bound": max(sample["threads"] for sample in samples),
+        "sampled_span_ns": samples[-1]["monotonic_ns"] - samples[0]["monotonic_ns"],
+        "process_window_ns": resources["sampling_ended_monotonic_ns"]
+        - resources["sampling_started_monotonic_ns"],
+    }
     return {
         "identity": identity,
         "metrics": metrics,
@@ -80,6 +92,7 @@ def read_run(root: Path, files: Any, scenario: bytes, label: str) -> dict[str, A
         "window": (start, end),
         "boot_time_ns": resources["boot_time_ns"],
         "resource_cadence_ms": resources["cadence_ms"],
+        "resource_observation": resource_observation,
     }
 
 
@@ -213,6 +226,7 @@ def compare(manifest_bytes: bytes, root: Path) -> dict[str, Any]:
                         "pair_index": pair_index,
                         "arm": arm,
                         "sha256": run["artifact_sha256"],
+                        "resource_observation": run.get("resource_observation"),
                     }
                 )
                 boot_times.add(run["boot_time_ns"])

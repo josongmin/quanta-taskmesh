@@ -77,12 +77,10 @@ async fn each_used_path_has_real_canary_and_corruptions_reject() {
             3 => bad.canaries[0].body_ran = false,
             4 => bad.before = cycles[0].before.clone(),
             5 => {
-                bad.after_window
-                    .classes
-                    .values_mut()
-                    .next()
-                    .unwrap()
-                    .admitted_total += 1
+                let counters = bad.after_window.classes.values_mut().next().unwrap();
+                counters.admitted_total += 1;
+                counters.started_total += 1;
+                counters.terminated_total += 1;
             }
             6 => {
                 bad.after_canaries
@@ -97,7 +95,8 @@ async fn each_used_path_has_real_canary_and_corruptions_reject() {
         let expected = match mutation {
             0 | 1 | 4 => "cycle sequence, host continuity or admission differs",
             2 | 3 => "canary population or execution failed",
-            5 | 6 => "checkpoint has invalid catalog, conservation or live owned work",
+            5 => "cumulative host counters reset or differ from window/canaries",
+            6 => "checkpoint has invalid catalog, conservation or live owned work",
             _ => "complete host run did not settle owned engine capacity",
         };
         assert_eq!(
@@ -121,10 +120,14 @@ fn budgets_and_unsupported_paths_reject_before_host_creation() {
             1 => bad.max_total_records = 1,
             2 => bad.cycles = 10_001,
             3 => bad.min_duration_ms = 1_200_001,
-            _ => bad.scenario.offers[0].path = HostPath::RequestedStackBlocking,
+            _ => {
+                bad.scenario.topology.large_stack_slots = 1;
+                bad.scenario.offers[0].path = HostPath::RequestedStackBlocking;
+                bad.scenario.offers[0].stack_size_bytes = Some(2 * 1024 * 1024);
+            }
         }
         let expected = if mutation == 4 {
-            "requested-stack offers require a finite large_stack_slots limit"
+            "stability diagnostic supports IO/blocking/CPU only"
         } else {
             "invalid stability version, duration, cycle or record budget"
         };

@@ -25,7 +25,10 @@ async fn acquire(manifest: &StabilityManifest) -> Vec<StabilityCycle> {
         cycle.validate(manifest, &previous, index as u32).unwrap();
         assert!(!cycle.window.drain_ok);
         assert_eq!(
-            cycle.window.validate_against(&manifest.scenario).unwrap_err(),
+            cycle
+                .window
+                .validate_against(&manifest.scenario)
+                .unwrap_err(),
             "complete host run did not settle owned engine capacity"
         );
         previous = cycle.after_canaries.clone();

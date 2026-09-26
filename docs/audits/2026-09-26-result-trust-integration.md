@@ -16,6 +16,7 @@
 | IAI build tools | Replacing compiler/wrapper/linker bytes at the same path preserved compatibility context | Executable identities in context, unresolvable controls reject, versioned evidence/cache invalidation |
 | Complete raw run | `drain_ok=false` disabled conservation/retained-ownership checks | Complete evidence requires settled conservation and no held capacity |
 | Raw capability inventory | Arbitrary zero-valued capability names could replace the actual runtime catalog | Bind raw final and sampled capability catalogs to freshly resolved runtime topology |
+| Integrated local validator | Latest main used `Option::is_none_or` beyond declared Rust 1.81 MSRV and a manual checked division rejected by Clippy | Preserve validation semantics with MSRV-compatible `map_or` and `checked_div` |
 
 ## Verification boundary
 

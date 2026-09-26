@@ -10,7 +10,8 @@ qualify the engine or its performance.
 The two reproduced acquisition defects below are repaired with focused regressions.
 Recorder bundle/control-budget schema v2 adds whole-probe duration sensitivity;
 it does not invent minimal-mode request p99. Rust probe artifact publication is
-now atomic and create-only. Local schema v3 covers cancel/deadline/drop/Snapshot,
+now atomic and create-only. Cohort SLO lookup preserves classes containing `/`
+instead of treating the first slash as a path separator. Local schema v3 covers cancel/deadline/drop/Snapshot,
 and Criterion has active IO release-to-settled drain with ownership asserted
 before timing.
 

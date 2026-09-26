@@ -851,7 +851,7 @@ def analyze_raw(raw: dict[str, Any], scenario: dict[str, Any]) -> dict[str, Any]
                 "slo_fraction": slo_by_path[key] / intended_by_path[key],
                 "success_per_sec": success_by_path[key] * 1_000_000_000 / cut_ns,
                 "slo_per_sec": slo_by_path[key] * 1_000_000_000 / cut_ns,
-                "slo_ns": class_slo[key.split("/", 1)[0]],
+                "slo_ns": class_slo[key.rsplit("/", 1)[0]],
             }
             for key in sorted(intended_by_path)
         },

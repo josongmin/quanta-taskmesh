@@ -174,6 +174,11 @@ bench-host scenario raw summary calibration *ARGS:
 bench-host-closed-loop scenario raw topology:
     cargo run --locked -p taskmesh-bench --example host_closed_loop_probe -- {{scenario}} {{raw}} {{topology}}
 
+# Caller-affine !Send path on a current-thread executor. Separate raw schema;
+# no source-bound receipt or performance verdict is implied.
+bench-host-local scenario raw topology:
+    cargo run --locked -p taskmesh-bench --example host_local_probe -- {{scenario}} {{raw}} {{topology}}
+
 # Expand a one-offer template at an explicit absolute rate. This does not
 # freeze the comparison grid or establish any performance result.
 bench-scenario-rate template rate_per_second output:

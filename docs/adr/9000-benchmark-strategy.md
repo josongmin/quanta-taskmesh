@@ -101,6 +101,10 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   응답 뒤에만 다음 호출을 제출하고 요청 수·최대 실행 시간을 제한한다. 독립 raw
   schema에는 외생 intended-arrival 시각이 없으므로 open-loop의 overload tail이나
   intended-arrival SLO-goodput과 합치지 않는다. 아직 독립 build/provenance 영수증은 없다.
+  `local_host.rs`는 current-thread LocalSet에서 `!Send` payload를 실행하고,
+  같은 caller thread의 finite pacer 지연/미제출을 별도 raw에 남긴다. Snapshot,
+  deadline, cancel/drop은 이 진단 schema에서 지원하지 않으며 IO 경로로 대체하지
+  않는다. 독립 build/provenance 영수증과 비교 측정은 없다.
   현재 calibration 파일의 boolean은 실측 증거가 아니므로
   `host_perf.py --require-performance`는 fail closed다.
   동일 window의 2배 generator replay와 H0–H8 지원 현황 인덱스는 진단 범위로
@@ -112,7 +116,7 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   불완전 실행, 바뀐 소스/host/feature/topology/workload, 재사용·중첩된 실행과
   불균형 순서를 거부하며 실패 보고서를 보존한다. 이 도구는 항상
   `UNQUALIFIED`를 출력한다. 실측 보정 및 고정 host 반복 실행,
-  closed-loop의 source-bound 획득/비교, caller-affine local, Rayon 비교 측정과
+  closed-loop/local의 source-bound 획득/비교, Rayon 비교 측정과
   대표 H7은 남아 있다.
   구조 bundle v3는 target Snapshot-off 또는 control과 같은 cadence의 Snapshot-on을
   허용한다. Snapshot-on target을 쓸 때 A/A는 on workload, recorder full/minimal은

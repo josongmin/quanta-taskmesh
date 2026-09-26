@@ -63,9 +63,9 @@
       "topology_scope": "shared blocking versus declared owned Rayon; external shared Rayon is nonexclusive",
       "oracle_cells": ["E5"],
       "correctness_oracles": ["crates/taskmesh/tests/hardening_executor_authority.rs", "crates/taskmesh/tests/hardening_role_pool_isolation.rs"],
-      "current_artifacts": ["tools/bench/scenarios/h4-cpu-blocking-smoke.json", "tools/bench/scenarios/h4-requested-stack-smoke.json", "crates/taskmesh-bench/tests/host_load_integration.rs"],
+      "current_artifacts": ["tools/bench/scenarios/h4-cpu-blocking-smoke.json", "tools/bench/scenarios/h4-requested-stack-smoke.json", "tools/bench/scenarios/h4-local-smoke.json", "crates/taskmesh-bench/src/local_host.rs", "crates/taskmesh-bench/tests/host_load_integration.rs", "crates/taskmesh-bench/tests/host_local.rs"],
       "support": "partial",
-      "missing": "Default and Rayon CPU/blocking topology parity and requested-stack blocking/async parity are focused diagnostics only. One real H4 requested-stack raw/summary/Python receipt round trip passed on dirty source after the parser fix; no clean repeated feature-paired host receipt or caller-affine local adapter."
+      "missing": "Default and Rayon CPU/blocking topology parity and requested-stack blocking/async parity are focused diagnostics only. One real H4 requested-stack raw/summary/Python receipt round trip passed on dirty source after the parser fix. A separate current-thread caller-affine !Send local raw diagnostic exists, but lacks source-bound Python receipt and measured comparison. No clean repeated feature-paired host receipt exists."
     },
     {
       "id": "H5",

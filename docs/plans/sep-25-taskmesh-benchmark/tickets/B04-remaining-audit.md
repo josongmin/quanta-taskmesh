@@ -5,10 +5,25 @@ HEAD moved to `52f7c008e7ad761e9efb67bedd357c50551aa628`; that commit changes on
 ingress test formatting. Benchmark source is unchanged. This audit does not
 qualify the engine or its performance.
 
-## Current code audit — 2026-09-27, base `494b159`
+## Current scope decision — 2026-09-27, base `5be7e09`
+
+사용자 결정: 필요한 안정성 검증만 추가한다. 이전의 모든 모드 반복 성능 admission과
+통계적 longitudinal admission을 전체 엔진 완료의 필수 조건으로 잡은 범위를 축소한다.
+
+- **Active:** [B07 minimal recovery/soak](B07-minimal-recovery-soak.md).
+  같은 host의 반복 과부하 → exact capacity 반환 → 정상 canary 성공을 검증한다.
+  기존 typed raw/custody oracle, bounded execution과 artifact 경계를 재사용한다.
+- **Deferred:** local/closed-loop/composite/requested-stack/Rayon 성능 admission,
+  RSS slope 자동 gate 및 recovery 성능 SLO. 공개 주장과 consumer budget이 정해지면 재개한다.
+- 모든 지원 모드의 correctness/cancel/drain/resource-return 테스트 의무는 유지한다.
+  B07가 현재 엔진 결함을 입증하거나 전체 엔진 감사의 완료를 의미하지 않는다.
+- 구현/owner verification, clean CI, 실제 stress, performance qualification은 별도로 기록한다.
+  이전의 CI/build/oracle·B00/quiet-host/H7/peer 입력 공백을 완료로 바꾸지 않는다.
+
+## Completed boundary audit — 2026-09-27, base `494b159`
 
 **Disposition: P1b metadata/nonregular artifact ingress is repaired in this
-working source; benchmark code work is not fully complete.** This audit follows
+working source, committed as `5be7e09`.** This audit follows
 the benchmark acquisition/admission chain and its shared inspection/supervisor
 dependencies. It is not a whole-engine correctness or performance certification.
 The sections below retain earlier findings; this section supersedes their open
@@ -61,34 +76,19 @@ cleanup proof. This pass does not claim universal standalone I/O liveness.
   nightly/release qualification or remote push was performed. Old build/control
   receipts cannot qualify the new source.
 
-### Remaining code work
+### Active plan and conditional evidence requirements
 
-1. **P2 — longitudinal recovery/soak admission.** Preregister overload/recovery
-   phases, complete time-series populations, recovery deadline, permitted
-   residual state and resource-growth estimand/limits. Implement typed probe/raw
-   validation plus study/admission trend/recovery analysis; reject unavailable or
-   incomplete evidence. Owners: benchmark scenario/probe modules,
-   `host_perf.py`, `host_study.py`, `host_admission.py`, focused tests and the
-   acquisition workflow. The detailed DoD below remains current. Finite drain
-   conservation and sampled maxima are insufficient. Limits require B00 owner
-   input; no universal recovery deadline or RSS slope is invented.
-2. **P2 / declared claim scope — other repeated admission modes.** Local,
-   closed-loop, composite, requested-stack and Rayon diagnostic probes exist;
-   repeated performance admission is unimplemented. Each lane needs a frozen
-   estimand, repeated population, mode-specific raw/control validators, explicit
-   scope and fail-closed admission regressions. Reuse build/study custody. Do not
-   interpret closed-loop tails as external-arrival overload latency or require
-   an engine rewrite without a reachable engine defect.
+[B07](B07-minimal-recovery-soak.md) replaces the earlier broad recovery/soak and
+other-mode implementation list. It records current coverage, the same-host gap,
+execution sequence, changed files, DoD, cost and stop conditions. B07 is PLANNED;
+no implementation or new test/stress execution is claimed by this scope update.
 
-| Remaining lane | Concrete implementation and regression owners |
-|---|---|
-| Recovery/soak | `crates/taskmesh-bench/src/host_scenarios.rs` and `host_load.rs`: typed phase/window/raw accounting; `examples/host_load_probe.rs`: acquisition; `tools/bench/process_resource.py`: timestamped resource observations and unavailable/capped states; `host_perf.py`, `host_study.py`, `host_admission.py`: complete-series validation and the preregistered verdict. Extend `crates/taskmesh-bench/tests/host_load_accounting.rs`, `host_load_integration.rs` and Python admission/study/resource tests. DoD includes overload recovery failure, late/nonsettled work, incomplete windows and unavailable observations; reject rather than infer PASS. |
-| Other modes | `crates/taskmesh-bench/src/local_host.rs`, `composite_host.rs`, `host_load.rs` and their existing probe/validator examples: retain each mode's actual population. `tools/bench/host_special_run.py`, `host_build.py`, `host_study.py`, `host_admission.py`: reuse custody while adding separately scoped contracts/control populations and admission. Extend `host_local.rs`, `host_closed_loop.rs`, `host_composite.rs` and Python special/admission/build tests. DoD includes source/features/topology mismatch, wrong-mode raw, unmatched controls and misuse of closed-loop latency; each rejects. |
-
-Separate open proof/input requirements: clean exact-source CI; optimized v3
-cold-build and actual oracle-profile E2E; B00 values/rate grid; quiet-host measured
-controls/series; H7 consumer provenance; matched peers and external rerun.
-None is closed by passing synthetic/process regression tests.
+Clean exact-source CI and optimized v3 build/oracle E2E remain separate open
+proof. B00 values/rate grid, quiet-host measured controls/series, H7 provenance,
+matched peers and external rerun remain prerequisites for their corresponding
+performance claims, rather than additional engine implementation requirements.
+Historical sections below retain the earlier scope and receipts; the current
+scope decision above determines active work.
 
 ## Historical follow-up code audit — 2026-09-27, base `6f16118`
 

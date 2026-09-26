@@ -270,8 +270,16 @@ retains backpressured input across capture polls and closes EOF after delivery.
 These are normal local-filesystem/process checks, not capture-volume limits,
 deadlines for stalled kernel/network regular-file I/O or a hostile-writer sandbox.
 
-Finite-run validation checks settlement and residual ownership. There is no
-separate longitudinal recovery/soak admission contract or trend gate for resource
-growth. Long runs and resource samples alone do not close that gap. Its DoD and
-other mode extensions are tracked in B04; all structural receipts remain
-`UNQUALIFIED`.
+Finite-run validation checks settlement and residual ownership. The active
+[B07 plan](../plans/sep-25-taskmesh-benchmark/tickets/B07-minimal-recovery-soak.md)
+adds same-host repeated cycles, exact capacity-return checkpoints and successful
+normal-work canaries after recovery. It reuses existing validators and custody;
+short smoke belongs in ordinary tests, longer stress is initially local opt-in.
+Implementation and execution are pending; there is no stability command to run yet.
+
+Separate mode-specific performance admission, RSS slope gates and recovery SLOs
+are deferred until required by a declared performance claim and consumer budget.
+Supported modes retain their existing correctness/cancel/drain/resource-return
+test obligations. Resource samples remain observations with unavailable/capped
+states, and cannot turn functional recovery into a memory-stability or performance
+claim. All structural receipts remain `UNQUALIFIED`.

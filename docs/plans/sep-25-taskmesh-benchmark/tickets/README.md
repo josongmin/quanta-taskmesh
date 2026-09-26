@@ -1,15 +1,24 @@
 # Taskmesh benchmark qualification: source audit and work plan
 
-## Current checkpoint — metadata/ingress audit at base `494b159`, 2026-09-27
+## Current scope — minimal stability plan at base `5be7e09`, 2026-09-27
 
-Owned binary metadata inspection, descriptor-based regular artifact reads,
-executable copying and ledger reopening close the P1b code item. New large-stdin
-backpressure regression also exposed and repaired supervisor input loss after
-capture polls. **Code is still incomplete:** longitudinal recovery/soak admission
-and declared-scope other-mode repeated admission remain implementation work.
-Clean-source CI, optimized build/oracle E2E and real measurement inputs remain
-separate open requirements. The scope, limitations and verification are in
-[B04 current audit](B04-remaining-audit.md); earlier checkpoints are historical.
+Metadata/nonregular ingress and stdin backpressure remediation is committed in
+`5be7e09`; its scoped owner proof is in [B04](B04-remaining-audit.md).
+
+**Active implementation plan:** [B07 — minimal recovery/soak](B07-minimal-recovery-soak.md).
+Reuse one host across bounded overload/settlement cycles, require exact resource
+return and a successful normal-work canary after each recovery. Existing raw and
+custody oracles remain the correctness owners. Short smoke joins existing tests;
+longer stress starts as explicit local opt-in.
+
+**Deferred:** all-mode repeated performance admission, automatic RSS slope gates
+and performance recovery SLOs. Activate only for a declared performance claim and
+frozen consumer budgets. These are not unconditional engine-completion blockers.
+Existing correctness/cancel/drain/resource-return tests remain required for all modes.
+
+B07 is **PLANNED / NOT_RUN**. Current-source clean CI, optimized build/oracle E2E
+and real measurement inputs retain their separate open statuses. Historical
+checkpoints below do not override this scope decision.
 
 ## Previous checkpoint — follow-up code audit at base `6f16118`, 2026-09-27
 

@@ -218,9 +218,16 @@ remain inputs to acquire; code presence is not a performance result.
   readers and backpressure across capture polls. These checks do not bound
   stalled regular-file kernel/network I/O or captured byte volume, and are not
   universal filesystem isolation or standalone liveness qualification.
-- Dedicated repeated admission for other modes and longitudinal soak/recovery
-  qualification remain separate implementation work. Finite-run settlement
-  conservation and sampled resource maxima do not prove long-term stability.
+- The active follow-up is [B07 minimal recovery/soak](../plans/sep-25-taskmesh-benchmark/tickets/B07-minimal-recovery-soak.md):
+  reuse one host across bounded overload/settlement cycles, validate exact owned
+  capacity return, and execute a successful normal-work canary after recovery.
+  Reuse existing raw/custody oracles. Short smoke is ordinary correctness feedback;
+  longer stress begins as explicit local opt-in. This plan is not implemented yet.
+- Mode-specific repeated performance admission, automatic RSS slope gates and
+  performance recovery SLOs are deferred until a declared claim and frozen
+  consumer budgets require them. All-mode correctness/cancel/drain/resource-return
+  tests remain required. Finite drain, sampled maxima and B07 functional PASS do
+  not prove long-term memory stability or qualified performance.
 
 Current defects, file owners, DoD and proof boundaries are retained in
 [B04 remaining audit](../plans/sep-25-taskmesh-benchmark/tickets/B04-remaining-audit.md).

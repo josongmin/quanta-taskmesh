@@ -37,10 +37,17 @@ def test_sampler_keeps_bounded_cpu_rss_and_thread_rows() -> None:
             child.wait(timeout=5)
     artifact = sampler.stop()
     assert artifact["status"] == "complete"
+    assert artifact["schema_version"] == 2
     assert artifact["pid"] == child.pid
+    assert artifact["boot_time_ns"] <= artifact["process_create_time_ns"]
+    assert artifact["sampling_started_epoch_ns"] < artifact["sampling_ended_epoch_ns"]
     assert 1 <= len(artifact["samples"]) <= 100
     raw = json.dumps(artifact).encode()
     assert host_perf.validate_resource_artifact(raw, child.pid) == artifact
     artifact["samples"][0]["threads"] = 0
     with pytest.raises(host_perf.ReceiptError, match="thread count"):
+        host_perf.validate_resource_artifact(json.dumps(artifact).encode(), child.pid)
+    artifact["samples"][0]["threads"] = 1
+    artifact["sampling_ended_epoch_ns"] += 2_000_000_000
+    with pytest.raises(host_perf.ReceiptError, match="cross-clock window"):
         host_perf.validate_resource_artifact(json.dumps(artifact).encode(), child.pid)

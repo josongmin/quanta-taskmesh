@@ -132,14 +132,17 @@ def encoded(value: dict) -> bytes:
 def synthetic_resources() -> bytes:
     return encoded(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": "complete",
             "reason": None,
             "pid": 1234,
             "process_create_time_ns": 1,
+            "boot_time_ns": 1,
             "cadence_ms": 250,
             "sampling_started_monotonic_ns": 10,
             "sampling_ended_monotonic_ns": 20,
+            "sampling_started_epoch_ns": 10,
+            "sampling_ended_epoch_ns": 20,
             "samples": [
                 {
                     "monotonic_ns": 15,

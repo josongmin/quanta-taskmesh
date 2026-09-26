@@ -27,7 +27,10 @@ class ProcessResourceSampler:
         self.reason: Optional[str] = None
         self.create_time_ns: Optional[int] = None
         self.started_ns = time.monotonic_ns()
+        self.started_epoch_ns = time.time_ns()
+        self.boot_time_ns = round(psutil.boot_time() * 1_000_000_000)
         self.ended_ns: Optional[int] = None
+        self.ended_epoch_ns: Optional[int] = None
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._collect, daemon=True)
 
@@ -38,19 +41,23 @@ class ProcessResourceSampler:
         self._stop.set()
         self._thread.join(timeout=5)
         self.ended_ns = time.monotonic_ns()
+        self.ended_epoch_ns = time.time_ns()
         if self._thread.is_alive():
             self.reason = "sampler thread did not stop"
         if not self.samples and self.reason is None:
             self.reason = "process ended before first sample"
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": "complete" if self.reason is None else "unavailable",
             "reason": self.reason,
             "pid": self.pid,
             "process_create_time_ns": self.create_time_ns,
+            "boot_time_ns": self.boot_time_ns,
             "cadence_ms": self.cadence_ms,
             "sampling_started_monotonic_ns": self.started_ns,
             "sampling_ended_monotonic_ns": self.ended_ns,
+            "sampling_started_epoch_ns": self.started_epoch_ns,
+            "sampling_ended_epoch_ns": self.ended_epoch_ns,
             "samples": self.samples,
         }
 

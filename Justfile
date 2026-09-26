@@ -193,6 +193,11 @@ bench-host-snapshot scenario calibration directory *ARGS:
 bench-host-recorder scenario calibration directory *ARGS:
     uv run python tools/bench/host_recorder.py {{scenario}} {{calibration}} {{directory}} {{ARGS}}
 
+# Revalidate and bind all diagnostic host controls within a declared acquisition
+# span. This command does not admit a performance claim.
+bench-host-controls scenario host_raw host_summary generator_raw aa_dir snapshot_dir recorder_dir output max_span_seconds:
+    uv run python tools/bench/host_controls.py {{scenario}} {{host_raw}} {{host_summary}} {{generator_raw}} {{aa_dir}} {{snapshot_dir}} {{recorder_dir}} {{output}} --max-span-seconds {{max_span_seconds}}
+
 # Deterministic allocation gate (ADR 9000 / P2). Runs anywhere — no valgrind.
 bench-gate:
     bash tools/bench-gate.sh

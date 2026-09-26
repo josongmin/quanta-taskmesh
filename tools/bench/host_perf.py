@@ -106,9 +106,12 @@ RESOURCE_KEYS = {
     "reason",
     "pid",
     "process_create_time_ns",
+    "boot_time_ns",
     "cadence_ms",
     "sampling_started_monotonic_ns",
     "sampling_ended_monotonic_ns",
+    "sampling_started_epoch_ns",
+    "sampling_ended_epoch_ns",
     "samples",
 }
 RESOURCE_SAMPLE_KEYS = {
@@ -372,7 +375,7 @@ def validate_identity(identity: Any) -> None:
 def validate_resource_artifact(data: bytes, runner_pid: Any) -> dict[str, Any]:
     resources = parse_object(data, "process resources")
     exact_keys(resources, RESOURCE_KEYS, "process resources")
-    if resources["schema_version"] != 1 or resources["status"] not in ("complete", "unavailable"):
+    if resources["schema_version"] != 2 or resources["status"] not in ("complete", "unavailable"):
         raise ReceiptError("unsupported process resource artifact")
     pid = nat(resources["pid"], "process resources.pid")
     if pid == 0 or pid != runner_pid:
@@ -383,9 +386,21 @@ def validate_resource_artifact(data: bytes, runner_pid: Any) -> dict[str, Any]:
     end = nat(resources["sampling_ended_monotonic_ns"], "process resources.end")
     if end < start:
         raise ReceiptError("process resource sample window is reversed")
+    start_epoch = nat(resources["sampling_started_epoch_ns"], "process resources.start_epoch")
+    end_epoch = nat(resources["sampling_ended_epoch_ns"], "process resources.end_epoch")
+    boot_epoch = nat(resources["boot_time_ns"], "process resources.boot_time")
+    if (
+        boot_epoch == 0
+        or start_epoch < boot_epoch
+        or end_epoch < start_epoch
+        or abs((end_epoch - start_epoch) - (end - start)) > 1_000_000_000
+    ):
+        raise ReceiptError("process resource cross-clock window is invalid")
     created = resources["process_create_time_ns"]
     if created is not None:
-        nat(created, "process resources.process_create_time_ns")
+        created_ns = nat(created, "process resources.process_create_time_ns")
+        if created_ns < boot_epoch or created_ns > end_epoch:
+            raise ReceiptError("process resource create time is outside boot/run window")
     samples = resources["samples"]
     if not isinstance(samples, list) or len(samples) > 20_000:
         raise ReceiptError("process resource sample population is invalid")

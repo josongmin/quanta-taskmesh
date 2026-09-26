@@ -226,7 +226,7 @@ def compare(manifest_bytes: bytes, root: Path) -> dict[str, Any]:
                         "pair_index": pair_index,
                         "arm": arm,
                         "sha256": run["artifact_sha256"],
-                        "resource_observation": run.get("resource_observation"),
+                        "resource_observation": run["resource_observation"],
                     }
                 )
                 boot_times.add(run["boot_time_ns"])

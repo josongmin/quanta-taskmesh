@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import host_perf  # noqa: E402
-from process_resource import ProcessResourceSampler  # noqa: E402
+from process_resource import ProcessResourceSampler, sample_subprocess  # noqa: E402
 
 
 def test_sampler_keeps_bounded_cpu_rss_and_thread_rows() -> None:
@@ -51,3 +51,14 @@ def test_sampler_keeps_bounded_cpu_rss_and_thread_rows() -> None:
     artifact["sampling_ended_epoch_ns"] += 2_000_000_000
     with pytest.raises(host_perf.ReceiptError, match="cross-clock window"):
         host_perf.validate_resource_artifact(json.dumps(artifact).encode(), child.pid)
+
+
+def test_sampler_off_control_retains_typed_unavailable_artifact(tmp_path: Path) -> None:
+    exit_code, pid, stderr, artifact = sample_subprocess(
+        [sys.executable, "-c", "pass"], tmp_path, sample_resources=False
+    )
+    assert exit_code == 0, stderr
+    assert artifact["status"] == "unavailable"
+    assert artifact["reason"] == "resource sampling intentionally disabled for paired control"
+    assert artifact["samples"] == []
+    assert host_perf.validate_resource_artifact(json.dumps(artifact).encode(), pid) == artifact

@@ -25,13 +25,17 @@ POLICY_KEYS = {
     "scenario_sha256",
     "source_head",
     "min_pairs",
+    "min_success_samples_per_cohort",
     "max_span_ns",
     "max_generator_lag_ns",
     "max_host_lag_ns",
     "max_aa_relative_delta",
+    "max_aa_p99_relative_delta",
     "max_snapshot_relative_delta",
+    "max_snapshot_p99_relative_delta",
     "max_recorder_response_fraction_delta",
     "max_sampler_relative_delta",
+    "max_sampler_p99_relative_delta",
 }
 
 
@@ -57,14 +61,25 @@ def parse_policy(data: bytes) -> dict[str, Any]:
     pairs = host_perf.nat(policy["min_pairs"], "control budget min_pairs")
     if pairs < 2 or pairs > 50:
         raise host_perf.ReceiptError("control budget min_pairs must be 2..=50")
+    if (
+        host_perf.nat(
+            policy["min_success_samples_per_cohort"],
+            "control budget min_success_samples_per_cohort",
+        )
+        == 0
+    ):
+        raise host_perf.ReceiptError("control budget success sample floor must be positive")
     for key in ("max_span_ns", "max_generator_lag_ns", "max_host_lag_ns"):
         if host_perf.nat(policy[key], f"control budget {key}") == 0:
             raise host_perf.ReceiptError(f"control budget {key} must be positive")
     for key in (
         "max_aa_relative_delta",
+        "max_aa_p99_relative_delta",
         "max_snapshot_relative_delta",
+        "max_snapshot_p99_relative_delta",
         "max_recorder_response_fraction_delta",
         "max_sampler_relative_delta",
+        "max_sampler_p99_relative_delta",
     ):
         finite_fraction(policy[key], f"control budget {key}")
     return policy
@@ -93,7 +108,7 @@ def relative_delta(first: float, second: float, label: str) -> float:
         or second < 0
         or max(first, second) == 0
     ):
-        raise host_perf.ReceiptError(f"{label} has no positive comparable SLO-goodput")
+        raise host_perf.ReceiptError(f"{label} has no positive comparable value")
     return abs(first - second) / max(first, second)
 
 
@@ -106,6 +121,28 @@ def rate_effects(first: dict, second: dict, label: str) -> dict[str, float]:
         name: relative_delta(first_rates[name], second_rates[name], f"{label}/{name}")
         for name in first_rates
     }
+
+
+def p99_effects(first: dict, second: dict, minimum: int, label: str) -> dict[str, float]:
+    first_populations = first["metrics"]["success_latency_by_class_path"]
+    second_populations = second["metrics"]["success_latency_by_class_path"]
+    if (
+        not isinstance(first_populations, dict)
+        or not first_populations
+        or not isinstance(second_populations, dict)
+        or first_populations.keys() != second_populations.keys()
+    ):
+        raise host_perf.ReceiptError(f"{label} p99 cohort catalog differs")
+    effects = {}
+    for name, population in first_populations.items():
+        other = second_populations[name]
+        if (
+            host_perf.nat(population["count"], f"{label}/{name}.count") < minimum
+            or host_perf.nat(other["count"], f"{label}/{name}.other_count") < minimum
+        ):
+            raise host_perf.ReceiptError(f"{label}/{name} has a thin p99 population")
+        effects[name] = relative_delta(population["p99_ns"], other["p99_ns"], f"{label}/{name} p99")
+    return effects
 
 
 def recorder_response_effect(first: dict, second: dict) -> float:
@@ -191,12 +228,20 @@ def assess(
         rate_effects(first, second, f"A/A pair {index}")
         for index, (first, second) in enumerate(pair_runs(aa["runs"], policy["min_pairs"], "A/A"))
     ]
+    aa_p99_effects = [
+        p99_effects(first, second, policy["min_success_samples_per_cohort"], f"A/A pair {index}")
+        for index, (first, second) in enumerate(pair_runs(aa["runs"], policy["min_pairs"], "A/A"))
+    ]
     snapshot_effects = []
+    snapshot_p99_effects = []
     for index, (first, second) in enumerate(
         pair_runs(snapshot["runs"], policy["min_pairs"], "Snapshot")
     ):
         off, on = (first, second) if first["mode"] == "off" else (second, first)
         snapshot_effects.append(rate_effects(off, on, f"Snapshot pair {index}"))
+        snapshot_p99_effects.append(
+            p99_effects(off, on, policy["min_success_samples_per_cohort"], f"Snapshot pair {index}")
+        )
     recorder_effects = []
     for first, second in pair_runs(recorder["runs"], policy["min_pairs"], "recorder"):
         full, minimal = (first, second) if first["mode"] == "full" else (second, first)
@@ -205,21 +250,31 @@ def assess(
     max_snapshot = max(value for pair in snapshot_effects for value in pair.values())
     max_recorder = max(recorder_effects)
     sampler_effects = []
+    sampler_p99_effects = []
     for index, (first, second) in enumerate(
         pair_runs(sampler["runs"], policy["min_pairs"], "sampler")
     ):
         off, on = (first, second) if first["mode"] == "off" else (second, first)
         sampler_effects.append(rate_effects(off, on, f"sampler pair {index}"))
+        sampler_p99_effects.append(
+            p99_effects(off, on, policy["min_success_samples_per_cohort"], f"sampler pair {index}")
+        )
     max_sampler = max(value for pair in sampler_effects for value in pair.values())
+    max_aa_p99 = max(value for pair in aa_p99_effects for value in pair.values())
+    max_snapshot_p99 = max(value for pair in snapshot_p99_effects for value in pair.values())
+    max_sampler_p99 = max(value for pair in sampler_p99_effects for value in pair.values())
     observations = {
         "generator_not_submitted": bundle["generator_not_submitted"],
         "host_not_submitted": bundle["host_not_submitted"],
         "generator_max_lag_ns": bundle["generator_max_lag_ns"],
         "host_max_lag_ns": bundle["host_max_lag_ns"],
         "max_aa_relative_delta": max_aa,
+        "max_aa_p99_relative_delta": max_aa_p99,
         "max_snapshot_relative_delta": max_snapshot,
+        "max_snapshot_p99_relative_delta": max_snapshot_p99,
         "max_recorder_response_fraction_delta": max_recorder,
         "max_sampler_relative_delta": max_sampler,
+        "max_sampler_p99_relative_delta": max_sampler_p99,
         "aa_pairs": len(aa_effects),
         "snapshot_pairs": len(snapshot_effects),
         "recorder_pairs": len(recorder_effects),
@@ -236,9 +291,12 @@ def assess(
         ("generator_max_lag_ns", "max_generator_lag_ns"),
         ("host_max_lag_ns", "max_host_lag_ns"),
         ("max_aa_relative_delta", "max_aa_relative_delta"),
+        ("max_aa_p99_relative_delta", "max_aa_p99_relative_delta"),
         ("max_snapshot_relative_delta", "max_snapshot_relative_delta"),
+        ("max_snapshot_p99_relative_delta", "max_snapshot_p99_relative_delta"),
         ("max_recorder_response_fraction_delta", "max_recorder_response_fraction_delta"),
         ("max_sampler_relative_delta", "max_sampler_relative_delta"),
+        ("max_sampler_p99_relative_delta", "max_sampler_p99_relative_delta"),
     ):
         if observations[observed] > policy[limit]:
             violations.append(observed)

@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 write_new(&raw_path, &serde_json::to_vec_pretty(raw)?)?;
                 write_new(&topology_path, &serde_json::to_vec_pretty(topology)?)?;
             }
-            return Err(failure.into());
+            return Err(failure.reason.into());
         }
     };
     write_new(&raw_path, &serde_json::to_vec_pretty(&run)?)?;

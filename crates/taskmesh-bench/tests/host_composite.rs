@@ -40,6 +40,30 @@ async fn composite_all_success_is_key_ordered() {
     assert_eq!(raw.checksum, 6);
 }
 
+#[tokio::test]
+async fn composite_timeout_retains_typed_invalid_raw_and_settlement_observation() {
+    let mut scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");
+    scenario.id = "h6-timeout-regression".into();
+    scenario.settlement_ms = 500;
+    scenario.io_delay_ms = 500;
+    scenario.blocking_delay_ms = 500;
+    let failure = run_composite_with_topology(&scenario)
+        .await
+        .expect_err("parent must time out before delayed child bodies complete");
+    assert!(failure.reason.contains("exceeded settlement bound"));
+    let raw = failure.raw.expect("failure raw must be retained");
+    raw.validate_against(&scenario)
+        .expect("partial failure raw must remain typed");
+    assert_eq!(raw.status, "invalid");
+    assert_eq!(raw.children.len(), 3);
+    assert!(raw.drain_ok);
+    assert!(raw.conservation_ok);
+    assert_eq!(
+        failure.topology.expect("failure topology must be retained"),
+        scenario.resolved_topology().expect("scenario topology")
+    );
+}
+
 #[test]
 fn composite_preflight_rejects_unsupported_failure_key_and_body_bound() {
     let mut scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");

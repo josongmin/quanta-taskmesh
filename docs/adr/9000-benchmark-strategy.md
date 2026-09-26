@@ -139,7 +139,8 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   별도 sampler on/off 균형쌍은 동일 시나리오·소스·바이너리에서 외부 자원
   관측의 영향을 진단한다. control-budget evaluator는 시나리오·clean HEAD에
   묶인 예산으로 generator lag/미제출, A/A, Snapshot, recorder 응답수 및
-  sampler on/off SLO-goodput 변화를 계산한다. 예산 통과도 `UNQUALIFIED`이며
+  sampler on/off SLO-goodput 및 성공 응답 p99 변화를 계산한다. A/A와 Snapshot도
+  동일하게 p99 변화와 각 class/path의 최소 성공 표본 수를 검사한다. 예산 통과도 `UNQUALIFIED`이며
   B00 계약과 반복 고정 host 결과를 대체하지 않는다.
   구조 bundle v3는 target Snapshot-off 또는 control과 같은 cadence의 Snapshot-on을
   허용한다. Snapshot-on target을 쓸 때 A/A는 on workload, recorder full/minimal은

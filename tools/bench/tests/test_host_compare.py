@@ -81,6 +81,14 @@ def fake_run(_root: Path, files: dict, _scenario: bytes, _label: str) -> dict:
         "window": (start, start + 5),
         "boot_time_ns": 1,
         "resource_cadence_ms": 250,
+        "resource_observation": {
+            "sample_count": 2,
+            "sampled_cpu_delta_ns_lower_bound": 10,
+            "sampled_peak_rss_bytes_lower_bound": 4096,
+            "sampled_peak_threads_lower_bound": 1,
+            "sampled_span_ns": 5,
+            "process_window_ns": 5,
+        },
     }
 
 
@@ -135,6 +143,66 @@ def test_comparison_rejects_nonindependent_or_changed_population(
 def test_effect_interval_rejects_request_level_pseudoreplication() -> None:
     with pytest.raises(host_perf.ReceiptError, match="independent pairs"):
         host_compare.effect_interval([1.0, 1.0, 1.0])
+
+
+def test_read_run_retains_only_sampled_resource_bounds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    files = {name: f"{name}.json" for name in host_compare.RUN_KEYS}
+    for path in files.values():
+        (tmp_path / path).write_bytes(b"{}")
+    (tmp_path / files["provenance"]).write_text('{"runner_pid":123,"binary_sha256":"digest"}')
+    monkeypatch.setattr(
+        host_compare.host_perf,
+        "verify_receipt",
+        lambda *_args, **_kwargs: {
+            "identity": {"source_dirty": False},
+            "metrics": {
+                "counts": {"not_submitted": 0, "unanswered_at_settlement": 0},
+                "late_snapshot_samples": 0,
+            },
+        },
+    )
+    resources = {
+        "status": "complete",
+        "sampling_started_epoch_ns": 10,
+        "sampling_ended_epoch_ns": 30,
+        "sampling_started_monotonic_ns": 10,
+        "sampling_ended_monotonic_ns": 30,
+        "boot_time_ns": 1,
+        "cadence_ms": 250,
+        "samples": [
+            {
+                "monotonic_ns": 12,
+                "cpu_user_ns": 2,
+                "cpu_system_ns": 1,
+                "rss_bytes": 100,
+                "threads": 1,
+            },
+            {
+                "monotonic_ns": 28,
+                "cpu_user_ns": 5,
+                "cpu_system_ns": 3,
+                "rss_bytes": 120,
+                "threads": 2,
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        host_compare.host_perf, "validate_resource_artifact", lambda *_args: resources
+    )
+    run = host_compare.read_run(tmp_path, files, b"scenario", "run")
+    assert run["resource_observation"] == {
+        "sample_count": 2,
+        "sampled_cpu_delta_ns_lower_bound": 5,
+        "sampled_peak_rss_bytes_lower_bound": 120,
+        "sampled_peak_threads_lower_bound": 2,
+        "sampled_span_ns": 16,
+        "process_window_ns": 20,
+    }
+    resources["samples"] = resources["samples"][:1]
+    run = host_compare.read_run(tmp_path, files, b"scenario", "run")
+    assert run["resource_observation"]["sampled_cpu_delta_ns_lower_bound"] is None
 
 
 def test_rejected_comparison_retains_failure_receipt(

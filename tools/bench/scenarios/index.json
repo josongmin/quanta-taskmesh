@@ -24,9 +24,9 @@
       "topology_scope": "declared CPU and blocking capacities; resolve at run time",
       "oracle_cells": ["E1"],
       "correctness_oracles": ["crates/taskmesh-engine/tests/hardening_policy_interactions.rs", "crates/taskmesh/tests/hardening_mixed_overload.rs"],
-      "current_artifacts": ["tools/bench/scenarios/h1-default-send-smoke.json", "tools/bench/scenarios/h1-io-rate-template.json", "tools/bench/scenarios/h1-blocking-rate-template.json", "tools/bench/scenarios/h1-cpu-rate-template.json", "tools/bench/scenario_grid.py"],
+      "current_artifacts": ["tools/bench/scenarios/h1-default-send-smoke.json", "tools/bench/scenarios/h1-io-rate-template.json", "tools/bench/scenarios/h1-blocking-rate-template.json", "tools/bench/scenarios/h1-cpu-rate-template.json", "tools/bench/scenarios/h1-io-closed-loop-smoke.json", "crates/taskmesh-bench/src/closed_loop.rs", "tools/bench/scenario_grid.py"],
       "support": "partial",
-      "missing": "One-path IO/blocking/CPU templates and deterministic absolute-rate expansion exist; no frozen multi-rate grid, closed-loop capacity mode or qualifying fixed-host runs. The old three-offer mixed-path smoke is not a capacity point."
+      "missing": "One-path IO/blocking/CPU open-loop templates, deterministic absolute-rate expansion and a separate fixed-concurrency IO completion diagnostic exist. The closed-loop raw schema has no intended-arrival clock or source-bound external receipt yet. No frozen multi-rate grid or qualifying fixed-host run exists; the old three-offer mixed-path smoke is not a capacity point."
     },
     {
       "id": "H2",

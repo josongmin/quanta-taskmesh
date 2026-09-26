@@ -169,6 +169,11 @@ bench:
 bench-host scenario raw summary calibration *ARGS:
     uv run python tools/bench/host_run.py {{scenario}} {{raw}} {{summary}} {{calibration}} {{ARGS}}
 
+# Separate fixed-concurrency completion-capacity diagnostic. Its raw schema has
+# no intended-arrival clock and is never an open-loop overload receipt.
+bench-host-closed-loop scenario raw topology:
+    cargo run --locked -p taskmesh-bench --example host_closed_loop_probe -- {{scenario}} {{raw}} {{topology}}
+
 # Expand a one-offer template at an explicit absolute rate. This does not
 # freeze the comparison grid or establish any performance result.
 bench-scenario-rate template rate_per_second output:

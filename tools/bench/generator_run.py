@@ -18,6 +18,7 @@ from typing import Optional
 import host_perf
 from host_run import build_runner, retain_executable, write_new
 from process_resource import sample_subprocess
+from scenario_rate import doubled_generator_scenario
 
 
 def main(
@@ -35,19 +36,34 @@ def main(
     parser.add_argument("scenario", type=Path)
     parser.add_argument("raw", type=Path)
     parser.add_argument("--feature", action="append", default=[])
+    parser.add_argument("--rate-factor", type=int, choices=(1, 2), default=1)
     args = parser.parse_args()
     provenance_path = args.raw.with_name(args.raw.name + ".provenance.json")
     executable_path = args.raw.with_name(args.raw.name + ".runner")
     topology_path = args.raw.with_name(args.raw.name + ".topology.json")
     resource_path = args.raw.with_name(args.raw.name + ".resources.json")
+    scenario_artifact_path = args.raw.with_name(args.raw.name + ".scenario.json")
     try:
+        if raw_kind != "generator" and args.rate_factor != 1:
+            raise host_perf.ReceiptError("rate factor applies only to generator control")
         if any(
             path.exists()
-            for path in (args.raw, provenance_path, executable_path, topology_path, resource_path)
+            for path in (
+                args.raw,
+                provenance_path,
+                executable_path,
+                topology_path,
+                resource_path,
+                scenario_artifact_path,
+            )
         ):
             raise host_perf.ReceiptError("control artifact paths must be fresh")
         scenario_bytes = args.scenario.read_bytes()
         scenario = host_perf.parse_object(scenario_bytes, "scenario")
+        if args.rate_factor == 2:
+            scenario = doubled_generator_scenario(scenario)
+            scenario_bytes = host_perf.canonical(scenario) + b"\n"
+        write_new(scenario_artifact_path, scenario_bytes)
         features = sorted(set(args.feature))
         build_start_identity = host_perf.local_identity(scenario, features)
         binary, artifact_features, build_command = build_runner(features, example_name)
@@ -151,10 +167,11 @@ def main(
         print(
             f"STRUCTURALLY_VALID control={raw_kind} performance=UNQUALIFIED raw={args.raw} "
             f"provenance={provenance_path} runner={executable_path} "
-            f"topology={topology_path} resources={resource_path}"
+            f"topology={topology_path} resources={resource_path} "
+            f"scenario={scenario_artifact_path}"
         )
         return 0
-    except (OSError, host_perf.ReceiptError) as error:
+    except (OSError, ValueError, host_perf.ReceiptError) as error:
         print(f"{raw_kind} control rejected: {error}", file=sys.stderr)
         return 1
 

@@ -18,8 +18,9 @@ import host_observer
 import host_perf
 import host_recorder
 from host_run import write_new
+from scenario_rate import doubled_generator_scenario
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def sidecars(raw: Path, *, summary: Optional[Path] = None) -> dict[str, Path]:
@@ -103,8 +104,16 @@ def make_bundle(
     if host_provenance["runner_mode"] != "full":
         raise host_perf.ReceiptError("control target must use full recorder")
     generator = read_artifacts(sidecars(generator_raw_path))
+    generator_scenario_path = generator_raw_path.with_name(
+        generator_raw_path.name + ".scenario.json"
+    )
+    generator_scenario_bytes = generator_scenario_path.read_bytes()
+    expected_generator = doubled_generator_scenario(scenario)
+    generator_scenario = host_perf.parse_object(generator_scenario_bytes, "generator scenario")
+    if generator_scenario != expected_generator:
+        raise host_perf.ReceiptError("generator schedule is not the exact 2x replay of target")
     host_perf.validate_with_rust(
-        scenario_bytes,
+        generator_scenario_bytes,
         generator["raw"],
         identity["features"],
         generator["topology"],
@@ -113,7 +122,7 @@ def make_bundle(
     host_perf.validate_execution_provenance(
         generator["provenance"],
         generator["raw"],
-        scenario_bytes,
+        generator_scenario_bytes,
         identity,
         generator["binary"],
         generator["topology"],
@@ -197,6 +206,8 @@ def make_bundle(
         "identity": identity,
         "host_binary_sha256": host_binary_sha256,
         "generator_binary_sha256": host_perf.sha256(generator["binary"]),
+        "generator_rate_factor": 2,
+        "generator_scenario_sha256": host_perf.sha256(generator_scenario_bytes),
         "max_span_ns": max_span_ns,
         "observed_span_ns": observed_span_ns,
         "resource_cadence_ms": cadences.pop(),
@@ -209,6 +220,7 @@ def make_bundle(
         "artifact_sha256": {
             "target": digest_map(host),
             "generator": digest_map(generator),
+            "generator_scenario": host_perf.sha256(generator_scenario_bytes),
             "aa_bundle": host_perf.sha256(aa_bytes),
             "snapshot_bundle": host_perf.sha256(snapshot_bytes),
             "recorder_bundle": host_perf.sha256(recorder_bytes),
@@ -228,6 +240,8 @@ def verify_bundle(bundle_bytes: bytes, *args: Any) -> dict[str, Any]:
             "identity",
             "host_binary_sha256",
             "generator_binary_sha256",
+            "generator_rate_factor",
+            "generator_scenario_sha256",
             "max_span_ns",
             "observed_span_ns",
             "resource_cadence_ms",

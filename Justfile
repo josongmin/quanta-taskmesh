@@ -174,6 +174,11 @@ bench-host scenario raw summary calibration:
 bench-generator scenario raw:
     uv run python tools/bench/generator_run.py {{scenario}} {{raw}}
 
+# Replay the exact finite schedule twice within the same injection window.
+# The v2 structural control bundle requires this separate generator artifact.
+bench-generator-above scenario raw:
+    uv run python tools/bench/generator_run.py {{scenario}} {{raw}} --rate-factor 2
+
 # Same host executable/workload with per-request timestamps disabled. Counts
 # remain typed and bounded; response latency is unavailable by construction.
 bench-host-minimal scenario raw:

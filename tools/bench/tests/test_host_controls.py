@@ -11,6 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import host_controls  # noqa: E402
 import host_perf  # noqa: E402
+from scenario_rate import doubled_generator_scenario  # noqa: E402
 
 SCENARIO = host_perf.REPO / "tools/bench/scenarios/h1-default-send-smoke.json"
 
@@ -55,6 +56,8 @@ def setup_control_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
     host_raw.write_bytes(b"{}")
     host_summary.write_bytes(b"{}")
     generator_raw.write_bytes(encoded({"not_submitted": 0, "records": [{"scheduled_lag_ns": 4}]}))
+    doubled = doubled_generator_scenario(json.loads(scenario.read_bytes()))
+    generator_raw.with_name(generator_raw.name + ".scenario.json").write_bytes(encoded(doubled))
     identity = {"source": "same", "host": "same", "features": []}
     for raw, binary, pid, start, mode in (
         (host_raw, b"host-binary", 1, 10, "full"),
@@ -130,6 +133,7 @@ def test_control_bundle_binds_roles_identity_cadence_and_time(
     assert bundle["process_count"] == 8
     assert bundle["observed_span_ns"] == 150
     assert bundle["generator_max_lag_ns"] == 4
+    assert bundle["generator_rate_factor"] == 2
     assert bundle["host_max_lag_ns"] == 5
     host_controls.verify_bundle(encoded(bundle), *paths)
     forged = dict(bundle)
@@ -162,4 +166,20 @@ def test_control_bundle_rejects_overlap_stale_and_sampler_change(
     changed_boot["boot_time_ns"] = 2
     resource_path.write_bytes(encoded(changed_boot))
     with pytest.raises(host_perf.ReceiptError, match="different host boots"):
+        host_controls.make_bundle(*paths, max_span_ns=200)
+
+
+def test_control_bundle_rejects_same_rate_or_altered_generator_schedule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = setup_control_set(tmp_path, monkeypatch)
+    generator_scenario = paths[3].with_name(paths[3].name + ".scenario.json")
+    expected = generator_scenario.read_bytes()
+    generator_scenario.write_bytes(paths[0].read_bytes())
+    with pytest.raises(host_perf.ReceiptError, match="exact 2x replay"):
+        host_controls.make_bundle(*paths, max_span_ns=200)
+    altered = json.loads(expected)
+    altered["offers"][1]["send_time_ns"] += 2
+    generator_scenario.write_bytes(encoded(altered))
+    with pytest.raises(host_perf.ReceiptError, match="exact 2x replay"):
         host_controls.make_bundle(*paths, max_span_ns=200)

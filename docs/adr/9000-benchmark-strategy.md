@@ -56,6 +56,10 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
 - null-work generator headroom, 동일 바이너리 A/A, recorder/Snapshot on-off,
   외부 저주기 CPU/RSS/thread 샘플러를 측정해 producer 또는 observer 왜곡을
   구분한다. 측정 길이와 반복 횟수는 pilot 분산과 목표 효과에서 정한다.
+- generator headroom의 구조 검사에서는 동일 finite 스케줄을 같은 injection
+  window 안에서 정확히 두 번 재생한 별도 scenario/raw를 요구한다. target과 같은
+  rate의 generator 실행은 headroom 증거가 아니다. 이 2배 replay도 허용 lag와
+  미제출 비율의 사전등록·실측 판정 없이는 자격화되지 않는다.
 - baseline과 candidate의 source revision만 선언된 비교 변수로 둘 수 있다.
   body, SLO, class/feature/topology, host, rate grid, raw 모집단, 제외 규칙이
   다르면 비교를 거절한다. 요청별 상관 샘플을 독립 반복으로 세지 않는다.
@@ -89,8 +93,9 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   topology와 대조한다. 이는 동일 소스의 독립 재빌드나 성능 자격을 뜻하지 않는다.
   현재 calibration 파일의 boolean은 실측 증거가 아니므로
   `host_perf.py --require-performance`는 fail closed다.
-  실측 calibration, external resource sampler의 왜곡 검증, repeated comparison, closed-loop,
-  local/requested-stack/Rayon, H0–H8 인덱스와 대표 H7은 남아 있다.
+  동일 window의 2배 generator replay와 H0–H8 지원 현황 인덱스는 진단 범위로
+  구현됐다. 실측 calibration, external resource sampler의 왜곡 검증,
+  repeated comparison, closed-loop, local/requested-stack/Rayon과 대표 H7은 남아 있다.
   상세 목적·파일·DoD는 위 티켓이 소유한다.
 - `just bench-gate`는 allocation, `just bench-smoke`는 bench 실행 smoke,
   `just bench-iai`는 Linux의 지정된 instruction 사례다. 어느 것도 host 성능

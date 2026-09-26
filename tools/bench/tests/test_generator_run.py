@@ -11,6 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import host_perf  # noqa: E402
+from scenario_rate import doubled_generator_scenario  # noqa: E402
 
 SCENARIO = host_perf.REPO / "tools/bench/scenarios/h1-default-send-smoke.json"
 RUNNER = host_perf.REPO / "tools/bench/generator_run.py"
@@ -19,7 +20,7 @@ RUNNER = host_perf.REPO / "tools/bench/generator_run.py"
 def test_real_generator_control_binds_binary_topology_and_raw(tmp_path: Path) -> None:
     raw_path = tmp_path / "generator.json"
     result = subprocess.run(
-        [sys.executable, str(RUNNER), str(SCENARIO), str(raw_path)],
+        [sys.executable, str(RUNNER), str(SCENARIO), str(raw_path), "--rate-factor", "2"],
         cwd=host_perf.REPO,
         capture_output=True,
         text=True,
@@ -27,7 +28,12 @@ def test_real_generator_control_binds_binary_topology_and_raw(tmp_path: Path) ->
     )
     assert result.returncode == 0, result.stderr
     raw_bytes = raw_path.read_bytes()
-    scenario_bytes = SCENARIO.read_bytes()
+    scenario_bytes = raw_path.with_name(raw_path.name + ".scenario.json").read_bytes()
+    assert host_perf.parse_object(
+        scenario_bytes, "generator scenario"
+    ) == doubled_generator_scenario(
+        host_perf.parse_object(SCENARIO.read_bytes(), "target scenario")
+    )
     provenance_bytes = raw_path.with_name(raw_path.name + ".provenance.json").read_bytes()
     binary_bytes = raw_path.with_name(raw_path.name + ".runner").read_bytes()
     topology_bytes = raw_path.with_name(raw_path.name + ".topology.json").read_bytes()

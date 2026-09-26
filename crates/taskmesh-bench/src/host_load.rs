@@ -423,6 +423,10 @@ pub struct RawHostRun {
 
 impl RawHostRun {
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_mode(true)
+    }
+
+    fn validate_mode(&self, terminal: bool) -> Result<(), String> {
         if let HostRunStatus::Invalid { reason } = &self.status {
             return Err(format!("invalid host run: {reason}"));
         }
@@ -463,7 +467,7 @@ impl RawHostRun {
         if actual.waiting != 0 {
             return Err("settlement contains unclassified waiting callers".into());
         }
-        if !self.drain_ok
+        if self.drain_ok != terminal
             || !self.conservation_ok
             || self
                 .class_counters
@@ -478,9 +482,33 @@ impl RawHostRun {
     }
 
     pub fn validate_against(&self, scenario: &HostScenario) -> Result<(), String> {
-        self.validate()?;
+        self.validate_against_mode(scenario, true)
+    }
+
+    fn validate_against_mode(&self, scenario: &HostScenario, terminal: bool) -> Result<(), String> {
+        // Preserve the existing failure order before constructing an oracle.
+        self.validate_mode(terminal)?;
         scenario.validate()?;
         let topology = scenario.resolved_topology()?;
+        self.validate_against_resolved(scenario, terminal, &topology)
+    }
+
+    pub(crate) fn validate_window_with_topology(
+        &self,
+        scenario: &HostScenario,
+        topology: &ResolvedHostTopology,
+    ) -> Result<(), String> {
+        self.validate_against_resolved(scenario, false, topology)
+    }
+
+    fn validate_against_resolved(
+        &self,
+        scenario: &HostScenario,
+        terminal: bool,
+        topology: &ResolvedHostTopology,
+    ) -> Result<(), String> {
+        self.validate_mode(terminal)?;
+        scenario.validate()?;
         topology.validate_capability_usage(&self.final_capabilities, "host final inventory")?;
         if self.scenario_id != scenario.id || self.records.len() != scenario.offers.len() {
             return Err("raw scenario identity or offer population differs".into());
@@ -550,7 +578,7 @@ impl RawHostRun {
                     class.name
                 ));
             }
-            if self.drain_ok && counters.terminated != counters.admitted {
+            if counters.terminated != counters.admitted {
                 return Err(format!(
                     "class {}: drained admission did not settle",
                     class.name
@@ -970,8 +998,23 @@ async fn run_host_scenario_inner(
 ) -> Result<(RawHostRun, ResolvedHostTopology), String> {
     scenario.validate()?;
     let runtime = scenario.build_runtime()?;
-    let resolved_topology = ResolvedHostTopology::from_runtime(&runtime);
     warmup_runtime(scenario, &runtime).await?;
+    run_host_window(scenario, &runtime, fault, test_gate, true).await
+}
+
+/// Bench-only window execution. Nonterminal windows leave admission open.
+pub(crate) async fn run_host_window(
+    scenario: &HostScenario,
+    runtime: &TokioRuntime,
+    fault: Option<HostHarnessFault>,
+    test_gate: Option<Arc<HostHarnessTestGate>>,
+    terminal: bool,
+) -> Result<(RawHostRun, ResolvedHostTopology), String> {
+    scenario.validate()?;
+    if runtime.is_draining() {
+        return Err("window runtime is already draining".into());
+    }
+    let resolved_topology = ResolvedHostTopology::from_runtime(runtime);
     let baseline = runtime.snapshot();
     if baseline.conservation_violation().is_some()
         || baseline
@@ -1188,14 +1231,39 @@ async fn run_host_scenario_inner(
         issues.push("window-cut rows failed accounting");
         CallerCounts::default()
     });
-    let drain_ok = runtime
-        .drain(Duration::from_millis(scenario.load.settlement_ms))
-        .await
-        .is_ok();
+    let drain_ok = if terminal {
+        let drained = runtime
+            .drain(Duration::from_millis(scenario.load.settlement_ms))
+            .await
+            .is_ok();
+        if !drained {
+            issues.push("host drain did not settle");
+        }
+        drained
+    } else {
+        let deadline = Instant::now() + Duration::from_millis(scenario.load.settlement_ms);
+        loop {
+            let snapshot = runtime.snapshot();
+            if snapshot
+                .classes
+                .values()
+                .all(|class| class.inflight == 0 && class.queued == 0)
+                && snapshot
+                    .capabilities
+                    .values()
+                    .all(|usage| usage.in_use == 0)
+            {
+                break;
+            }
+            if Instant::now() >= deadline {
+                issues.push("window owned capacity did not settle");
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        false
+    };
     let final_snapshot = runtime.snapshot();
-    if !drain_ok {
-        issues.push("host drain did not settle");
-    }
     if final_snapshot.conservation_violation().is_some() {
         issues.push("final governor conservation failed");
     }

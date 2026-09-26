@@ -218,11 +218,14 @@ remain inputs to acquire; code presence is not a performance result.
   readers and backpressure across capture polls. These checks do not bound
   stalled regular-file kernel/network I/O or captured byte volume, and are not
   universal filesystem isolation or standalone liveness qualification.
-- The active follow-up is [B07 minimal recovery/soak](../plans/sep-25-taskmesh-benchmark/tickets/B07-minimal-recovery-soak.md):
+- The completed owner-local follow-up is [B07 minimal recovery/soak](../plans/sep-25-taskmesh-benchmark/tickets/B07-minimal-recovery-soak.md):
   reuse one host across bounded overload/settlement cycles, validate exact owned
   capacity return, and execute a successful normal-work canary after recovery.
   Reuse existing raw/custody oracles. Short smoke is ordinary correctness feedback;
-  longer stress begins as explicit local opt-in. This plan is not implemented yet.
+  longer stress begins as explicit local opt-in. Implementation, scoped owner tests and the actual 600-second, 1,000-cycle
+  H2 diagnostic are complete; source digests and separate CI gaps are maintained
+  in B07. Online validation reuses one installed topology; artifact replay runs
+  in a separate supervised process. No helper host is built per measured cycle.
 - Mode-specific repeated performance admission, automatic RSS slope gates and
   performance recovery SLOs are deferred until a declared claim and frozen
   consumer budgets require them. All-mode correctness/cancel/drain/resource-return

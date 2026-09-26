@@ -1,11 +1,11 @@
 # Taskmesh benchmark qualification: source audit and work plan
 
-## Current scope — minimal stability plan at base `5be7e09`, 2026-09-27
+## Current scope — minimal stability implementation at base `61d4e47`, 2026-09-27
 
 Metadata/nonregular ingress and stdin backpressure remediation is committed in
 `5be7e09`; its scoped owner proof is in [B04](B04-remaining-audit.md).
 
-**Active implementation plan:** [B07 — minimal recovery/soak](B07-minimal-recovery-soak.md).
+**Closed owner-local scope:** [B07 — minimal recovery/soak](B07-minimal-recovery-soak.md).
 Reuse one host across bounded overload/settlement cycles, require exact resource
 return and a successful normal-work canary after each recovery. Existing raw and
 custody oracles remain the correctness owners. Short smoke joins existing tests;
@@ -16,7 +16,9 @@ and performance recovery SLOs. Activate only for a declared performance claim an
 frozen consumer budgets. These are not unconditional engine-completion blockers.
 Existing correctness/cancel/drain/resource-return tests remain required for all modes.
 
-B07 is **PLANNED / NOT_RUN**. Current-source clean CI, optimized build/oracle E2E
+B07 owner-local is **CLOSED**: Rust 118, Python 616 and Rayon 13 cases passed;
+one-host H2 completed 1,000 cycles over 600.003 seconds, H5 completed 3 cycles.
+Retained diagnostics remain `UNQUALIFIED`; exact commands/source digests are in B07. Current-source clean CI, optimized build/oracle E2E
 and real measurement inputs retain their separate open statuses. Historical
 checkpoints below do not override this scope decision.
 

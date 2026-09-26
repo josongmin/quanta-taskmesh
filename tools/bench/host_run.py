@@ -29,6 +29,7 @@ def build_runner(
         "host_local_probe",
         "host_composite_probe",
         "host_special_validate",
+        "host_stability_probe",
     ):
         raise host_perf.ReceiptError("unsupported benchmark runner")
     witness_home = os.environ.get("TASKMESH_BENCH_BUILD_WITNESSES")

@@ -6,6 +6,11 @@
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static BUILD_CALLS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
 use taskmesh::{
     Builder, CancellationPolicy, ClassPolicy, FairnessPolicy, OverflowPolicy, PhysicalDomainMode,
     ResourceBudget, TaskClass, TokioRuntime, TopologyConfig,
@@ -316,6 +321,8 @@ impl HostScenario {
     }
 
     pub fn build_runtime(&self) -> Result<TokioRuntime, String> {
+        #[cfg(test)]
+        BUILD_CALLS.with(|calls| calls.set(calls.get() + 1));
         let topology = self.topology_config();
         let resources = ResourceBudget::new()
             .cpu_units(self.topology.cpu_units)

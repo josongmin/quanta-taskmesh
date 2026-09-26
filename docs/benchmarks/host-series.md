@@ -283,3 +283,66 @@ Supported modes retain their existing correctness/cancel/drain/resource-return
 test obligations. Resource samples remain observations with unavailable/capped
 states, and cannot turn functional recovery into a memory-stability or performance
 claim. All structural receipts remain `UNQUALIFIED`.
+
+
+## Same-host recovery diagnostics (B07)
+
+This is a default-feature correctness diagnostic for IO/blocking/CPU. It creates
+one host and warmup, emits each bounded cycle, requires exact zero owned capacity
+and a real Success canary for every used class/path, then drains once at the end.
+Intermediate checkpoints keep admission open. The same PID and cumulative class
+counters connect the complete population; recovery does not restart the host.
+
+```mermaid
+flowchart LR
+  B[Build and retain diagnostic runner] --> H[One host and warmup]
+  H --> W[Bounded window]
+  W --> Q[Workers settled and exact zero-owned snapshot]
+  Q --> C[Real success canaries]
+  C --> F[Flush indexed cycle and release raw memory]
+  F --> W
+  F --> D[Last cycle only: terminal drain]
+  D --> V[Replay every expected cycle from baseline]
+```
+
+```sh
+uv run python tools/bench/host_stability.py run \
+  tools/bench/scenarios/h2-stability-smoke.json /tmp/taskmesh-h2-stability-smoke
+uv run python tools/bench/host_stability.py run \
+  tools/bench/scenarios/h5-stability-smoke.json /tmp/taskmesh-h5-stability-smoke
+# Explicit opt-in: 1,000 bursts spread across at least 600 seconds, timeout 900s.
+uv run python tools/bench/host_stability.py run \
+  tools/bench/scenarios/h2-stability-stress.json /tmp/taskmesh-h2-stability-stress \
+  --cadence-ms 250 --timeout-seconds 900
+uv run python tools/bench/host_stability.py verify /tmp/taskmesh-h2-stability-stress
+```
+
+Use a new directory outside the checkout each time. `verify --require-current-source`
+also compares live source/host identity; plain verify replays the retained historical
+bundle. Diagnostic runner build uses the existing build-witness selector when
+`TASKMESH_BENCH_BUILD_WITNESSES` is configured. A default debug acquisition is
+owner-local evidence; it is not an independently rebuilt optimized performance run.
+
+Manifest v1 pins the full finite trace, cycles, minimum duration and record cap.
+Cycle v1 retains nonterminal raw (`drain_ok=false`), exact snapshots, canaries and
+sequence. Summary v1 retains PID, topology, expected/completed cycles and final
+drain. Receipt binds source/host/features, binary and every artifact digest. Missing,
+extra, reordered, reset or unsuccessful cycles reject. Timeout/interruption retains
+partial diagnostics and cannot PASS. Disk-write failure cannot guarantee full retention.
+
+Same-PID resources observe the whole process window. Unavailable/capped samples
+stay unavailable; even complete samples are observations, not a leak-free verdict.
+Rust cycle-relative clocks are not subtracted from controller monotonic timestamps.
+A successful functional diagnostic always keeps `performance=UNQUALIFIED`.
+The ten-minute fixture includes idle between finite bursts; it does not claim sustained
+saturation or production soak duration. No extra gate or automatic ten-minute CI run
+is added. Owner-local closure and actual execution receipts are recorded in
+[B07](../plans/sep-25-taskmesh-benchmark/tickets/B07-minimal-recovery-soak.md).
+
+
+B07 owner-local checkpoint (2026-09-27): H2 completed 1,000 cycles over 600.003s;
+H5 completed three cycles. Both report functional PASS and UNQUALIFIED performance.
+Their retained local bundles are under `bench-results/receipts/owner-b07-61d4e47/`;
+source identities and exact commands are recorded in B07. Two interrupted studies
+remain invalid and are excluded from the successful study population. Current-source
+CI and optimized measurement qualification remain separate open work.

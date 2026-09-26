@@ -142,11 +142,10 @@ impl LocalHostRun {
         if let Some(reason) = &self.invalid_reason {
             return Err(format!("invalid local host run: {reason}"));
         }
-        let expected_samples = if self.snapshot_cadence_ns == 0 {
-            0
-        } else {
-            self.injection_window_ns / self.snapshot_cadence_ns
-        };
+        let expected_samples = self
+            .injection_window_ns
+            .checked_div(self.snapshot_cadence_ns)
+            .unwrap_or(0);
         if self.snapshots.len() as u64 != expected_samples {
             return Err("local Snapshot population differs".into());
         }
@@ -212,7 +211,7 @@ impl LocalHostRun {
                             || row.response_ns.is_some()
                             || row.outcome.is_some()
                             || row.body_finished_ns.is_some_and(|finish| {
-                                row.body_started_ns.is_none_or(|start| finish < start)
+                                row.body_started_ns.map_or(true, |start| finish < start)
                                     || finish > dropped
                             })
                         {

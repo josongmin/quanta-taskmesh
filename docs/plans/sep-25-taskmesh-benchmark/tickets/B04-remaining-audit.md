@@ -18,10 +18,12 @@ acquisition/admission defects, not demonstrated product-engine defects.
 | Cargo configuration custody | Only Cargo-home config was hashed; Cargo also discovers ancestor config outside the frozen archive. | Build witness v2 binds source/ancestor/home `config` and `config.toml`; changes reject. v1 witnesses need reacquisition. Capture Cargo build/target/profile environment and workspace wrapper/toolchain selectors. |
 | Effective build semantics | Cargo's example profile can claim optimization while rustflags override it, or governed libraries use different per-package profiles. Oracle environment flags alone do not prove its actual profile. | Measured admission rejects custom rustflags/compiler/wrappers/config `[env]` injection. Check four governed library profiles in both cold logs; check three governed libraries and four test targets in actual oracle Cargo JSON. Optimization/assertion/overflow semantics must match the measured probe. |
 | Validated byte custody | The admission rereads raw for tail analysis after typed validation, without comparing that read to the validated digest; validated artifacts also need a direct ledger link. | Bind every validated run artifact to its sealed ledger digest, then hash the exact raw bytes used for tail statistics. Regressions reject differing typed/ledger populations and an altered second read before any rebuild/oracle. |
+| Local validator / MSRV | Final CI at `71f0edb` reproduced `manual_checked_ops` and use of `Option::is_none_or` (stable since 1.82) under the declared 1.81 MSRV. | Use `checked_div(...).unwrap_or(0)` and `map_or(true, ...)`, preserving zero-cadence and invalid-timestamp semantics. Confirm through the benchmark Clippy gate and local validator tests. |
 | Statistical model | Exchangeability alone does not justify a binomial rank interval for correlated samples. | State **iid within-run success latencies, unverified** in output and workflow. The interval remains conditional; no empirical correlation/stationarity proof or universal precision claim is inferred. |
 
 Owner files: `tools/bench/{host_study,host_build,host_admission,host_perf}.py`,
-their existing test modules, and `docs/benchmarks/host-series.md`. No public engine
+their existing test modules, `crates/taskmesh-bench/src/local_host.rs`, and
+`docs/benchmarks/host-series.md`. No public engine
 API or runtime inventory is changed. Tests of synthetic admission orchestration
 remain synthetic; real subprocess cleanup tests prove only process ownership.
 An initial `561a00e` cold build and CI attempt were intentionally interrupted
@@ -35,6 +37,12 @@ Focused owner checks on the final working change: 78 Python tests passed across
 current clean-source CI result belongs to `target/verification/macos-gates.json`
 and must be validated against its exact HEAD; build/oracle artifacts are
 separate and never establish a measured performance result.
+
+CI at `71f0edb` failed Clippy on the two local-validator issues above; downstream
+gates were not run. Separate changes to `docs/bugbash/sep-21/` and `tools/pm/`
+also made the shared checkout dirty during that attempt. Preserve those other
+owner changes and run final qualification in an isolated clean checkout. The
+failed/interrupted attempts cannot supply final CI proof.
 
 ### Remaining completion requirements
 

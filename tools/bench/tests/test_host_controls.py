@@ -23,7 +23,14 @@ def encoded(value: dict) -> bytes:
 def resource(pid: int, start: int, end: int, cadence: int = 250) -> bytes:
     return encoded(
         {
-            "schema_version": 2,
+            "schema_version": 3,
+            "execution": {
+                "timeout_seconds": 1800,
+                "returncode": 0,
+                "timed_out": False,
+                "interrupted_by_signal": None,
+                "aborted_early": False,
+            },
             "status": "complete",
             "reason": None,
             "pid": pid,

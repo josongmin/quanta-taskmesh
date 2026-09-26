@@ -34,6 +34,7 @@ def build_runner(
         "host_local_probe",
         "host_composite_probe",
         "host_special_validate",
+        "host_stability_probe",
     ):
         raise host_perf.ReceiptError("unsupported benchmark runner")
     witness_home = os.environ.get("TASKMESH_BENCH_BUILD_WITNESSES")
@@ -64,7 +65,9 @@ def build_runner(
             execution_path = Path(tempfile.mkdtemp(prefix="taskmesh-host-build-failure-")) / "build"
             retain_execution(execution_path, result, command, host_perf.REPO, timeout_seconds)
         raise host_perf.ReceiptError(
-            f"host runner build failed: {result.stderr[-2000:]} "
+            f"host runner build failed: timeout={result.timed_out} "
+            f"signal={result.interrupted_by_signal} aborted={result.aborted_early} "
+            f"{result.stderr[-2000:]} "
             f"execution={execution_artifacts(execution_path)[2]}"
         )
     artifacts: list[dict[str, Any]] = []

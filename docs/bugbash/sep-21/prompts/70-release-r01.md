@@ -14,6 +14,7 @@ Assigned ticket: `SEP21-R01`.
 - V02/V03 producer-ready와 V01 phase B shared integration 완료
 - 각 ticket acceptance evidence, changed paths, negative fixtures, doc delta
 - final candidate HEAD/tree와 clean source policy
+- 현재 사용자 요청의 mutation을 포함하는 final release qualification 명시적 실행 권한
 
 하나라도 없으면 `NOT_QUALIFIED`로 종료하고 원 owner ticket을 reopen한다.
 

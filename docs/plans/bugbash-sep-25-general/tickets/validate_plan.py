@@ -12,10 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SCENARIO = re.compile(r"\b([ABHD])(\d{2})(?:[–-]([ABHD])(\d{2}))?\b")
 LINK = re.compile(r"\[[^]]+\]\(([^)]+)\)")
-SECTIONS = (
-    "## 목적", "## 근거", "## 변경 파일", "## 작업 계획",
-    "## DoD", "## 검증", "## 인계 및 중단 조건",
-)
+ADR = (ROOT / "../../../adr/0007-sep-25-implementation-closure.md").resolve()
 MODES = {
     "decision",
     "conditional-implementation",
@@ -80,6 +77,25 @@ def check_links(path: Path) -> None:
             fail(f"broken link in {path.name}: {target}")
 
 
+def implementation_rows(text: str) -> set[str]:
+    rows: set[str] = set()
+    for line in text.splitlines():
+        if not line.startswith("| BG25-"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if (
+            len(cells) != 3
+            or not re.fullmatch(r"BG25-\d{3}", cells[0])
+            or not cells[1]
+            or not cells[2]
+        ):
+            fail(f"incomplete implementation ADR row: {line}")
+        if cells[0] in rows:
+            fail(f"duplicate implementation ADR row: {cells[0]}")
+        rows.add(cells[0])
+    return rows
+
+
 def main() -> None:
     data = json.loads((ROOT / "plan.json").read_text())
     if data.get("schema_version") != 1:
@@ -114,6 +130,13 @@ def main() -> None:
         )
     if by_id["BG25-001"]["scenarios"] or by_id["BG25-012"]["scenarios"]:
         fail("cross-cutting tickets cannot own scenario IDs")
+    if not ADR.is_file():
+        fail(f"missing implementation ADR: {ADR}")
+    adr_text = ADR.read_text()
+    check_links(ADR)
+    adr_rows = implementation_rows(adr_text)
+    if adr_rows != set(by_id):
+        fail(f"implementation ADR rows differ: {sorted(adr_rows ^ set(by_id))}")
     for ticket in tickets:
         if ticket.get("priority") not in {"P0", "P1"}:
             fail(f"invalid priority: {ticket['id']}")
@@ -127,29 +150,12 @@ def main() -> None:
             fail(f"invalid external status: {ticket['id']}")
         if not ticket.get("owner"):
             fail(f"missing owner: {ticket['id']}")
-        path = ROOT / ticket["file"]
-        if not path.is_file():
-            fail(f"missing ticket: {path}")
-        text = path.read_text()
-        expected_status_lines = (
-            f"- 구현 상태: {ticket['implementation_status']}",
-            f"- 증명 상태: {ticket['proof_status']}",
-            f"- 외부 상태: {ticket['external_status']}",
-        )
-        if not text.startswith(f"# {ticket['id']} ") or any(
-            line not in text for line in expected_status_lines
-        ):
-            fail(f"heading/status mismatch: {ticket['id']}")
-        for section in SECTIONS:
-            if not re.search(rf"^{re.escape(section)}(?:\s|$)", text, re.M):
-                fail(f"missing section: {ticket['id']} {section}")
-        for scenario in ticket["scenarios"]:
-            if f"`{ticket['id']}-{scenario}`" not in text:
-                fail(f"missing acceptance: {ticket['id']}-{scenario}")
+        path = (ROOT / ticket["file"]).resolve()
+        if path != ADR:
+            fail(f"unexpected implementation ADR: {ticket['id']}")
         for dependency in ticket["depends_on"]:
             if dependency not in by_id or dependency == ticket["id"]:
                 fail(f"invalid dependency: {ticket['id']} -> {dependency}")
-        check_links(path)
     visiting: set[str] = set()
     visited: set[str] = set()
 

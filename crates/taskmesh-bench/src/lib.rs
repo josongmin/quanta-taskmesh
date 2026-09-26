@@ -13,6 +13,7 @@ pub mod composite_host;
 pub mod generator_calibration;
 pub mod host_load;
 pub mod host_scenarios;
+pub mod host_stability;
 pub mod loadgen;
 pub mod local_host;
 pub mod metrics;

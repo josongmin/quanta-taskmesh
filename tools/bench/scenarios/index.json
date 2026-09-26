@@ -37,9 +37,9 @@
       "topology_scope": "same topology and body as a qualifying H1 point",
       "oracle_cells": ["E1", "E8"],
       "correctness_oracles": ["crates/taskmesh-engine/tests/hardening_admission_matrix.rs", "crates/taskmesh/tests/hardening_mixed_overload.rs"],
-      "current_artifacts": ["tools/bench/scenarios/h2-burst-recovery-smoke.json", "crates/taskmesh-bench/tests/host_load_integration.rs"],
+      "current_artifacts": ["tools/bench/scenarios/h2-burst-recovery-smoke.json", "crates/taskmesh-bench/tests/host_load_integration.rs", "crates/taskmesh-bench/src/host_stability.rs", "crates/taskmesh-bench/tests/host_stability_integration.rs", "tools/bench/host_stability.py", "tools/bench/scenarios/h2-stability-smoke.json", "tools/bench/scenarios/h2-stability-stress.json"],
       "support": "partial",
-      "missing": "Base-burst-recovery diagnostic fixture has ten raw intervals; no repeated fixed-rate baseline, measured recovery bound or qualified fixed-host receipt."
+      "missing": "Same-host repeat diagnostics with exact zero-owned checkpoints and real recovery canaries are implemented. Owner proof and actual opt-in stress are recorded in B07; no measured recovery SLO, latency qualification or quiet-host performance series."
     },
     {
       "id": "H3",
@@ -76,9 +76,9 @@
       "topology_scope": "fixed worker and queue bounds with retained post-response custody",
       "oracle_cells": ["E2", "E6"],
       "correctness_oracles": ["crates/taskmesh/tests/hardening_executor_protocol.rs", "crates/taskmesh/tests/hardening_deadline_custody.rs", "crates/taskmesh/tests/hardening_drain.rs"],
-      "current_artifacts": ["tools/bench/scenarios/h5-custody-smoke.json", "crates/taskmesh-bench/tests/host_load_integration.rs"],
+      "current_artifacts": ["tools/bench/scenarios/h5-custody-smoke.json", "crates/taskmesh-bench/tests/host_load_integration.rs", "crates/taskmesh-bench/src/host_stability.rs", "crates/taskmesh-bench/tests/host_stability_integration.rs", "tools/bench/host_stability.py", "tools/bench/scenarios/h5-stability-smoke.json"],
       "support": "partial",
-      "missing": "Barrier correctness and a finite mixed cancel/deadline/drop diagnostic fixture exist; no sustained burst/recovery, repeated custody latency or qualified fixed-host receipt."
+      "missing": "Same-host repeat diagnostics with exact zero-owned checkpoints and real recovery canaries are implemented. Owner proof and actual opt-in stress are recorded in B07; no measured recovery SLO, latency qualification or quiet-host performance series."
     },
     {
       "id": "H6",

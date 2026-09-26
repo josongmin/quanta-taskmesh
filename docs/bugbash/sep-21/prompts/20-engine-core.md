@@ -84,7 +84,7 @@ queue, class, capability, CPU, memory, root attribution 보존을 검사한다.
 
 ## handoff
 
-E01-A01~A05, E02-A01~A05, E03-A01~A06, E04-A01~A08을 개별 증거에 연결한다.
+E01-A01~A05, E02-A01~A05, E03-A01~A04, E04-A01~A08을 개별 증거에 연결한다.
 
 ```text
 signal: E04_RESOLVER_READY

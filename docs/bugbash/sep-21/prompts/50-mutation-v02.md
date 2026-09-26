@@ -45,8 +45,9 @@ uv run python docs/bugbash/sep-21/tickets/validate_plan.py --structure-only
 git diff --check
 ```
 
-generated sweep는 비용이 크더라도 R01 전 current-source에서 실제 실행되어야 한다. 이번 worker가
-완료하지 못하면 runner 구현 PASS와 campaign NOT_RUN을 분리한다.
+generated sweep는 승인된 final release qualification에서 R01 전 current-source로 실행한다.
+현재 사용자 요청이 mutation 또는 이를 포함하는 final release qualification을 명시적으로
+허용하지 않았다면 실행하지 않는다. runner 구현 PASS와 campaign `NOT_RUN`을 분리한다.
 
 ## handoff
 

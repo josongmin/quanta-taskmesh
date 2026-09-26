@@ -39,6 +39,17 @@ def test_deadline_rejects_nonpositive_nonfinite_and_boolean(tmp_path: Path, valu
         )
 
 
+@pytest.mark.parametrize("value", [True, 0, -1, float("nan"), float("inf")])
+def test_termination_grace_rejects_invalid_values_before_launch(tmp_path: Path, value) -> None:
+    with pytest.raises(ValueError, match="positive and finite"):
+        acquisition.run_acquisition(
+            [sys.executable, "-c", "pass"],
+            cwd=tmp_path,
+            timeout_seconds=1,
+            termination_grace_seconds=value,
+        )
+
+
 def test_hung_child_retains_partial_output_and_deadline(tmp_path: Path) -> None:
     pids = []
     started = time.monotonic()

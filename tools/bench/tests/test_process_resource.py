@@ -85,5 +85,7 @@ def test_sample_subprocess_timeout_retains_pid_partial_output_and_failure(tmp_pa
     assert resources["schema_version"] == 3
     assert resources["pid"] == pid
     assert resources["execution"]["timed_out"] is True
+    assert resources["status"] == "unavailable"
+    assert resources["reason"] == "probe execution failed"
     assert resources["sampling_started_epoch_ns"] <= resources["sampling_ended_epoch_ns"]
     assert "partial stdout" in stderr

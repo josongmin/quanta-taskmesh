@@ -1,6 +1,6 @@
 # Taskmesh 엔진 필수 유즈케이스·적대 시나리오 체크리스트
 
-- 기준: `main@76559c483bdd1d6b0b5226f7c5b5591b919afae9` (2026-09-25)의 원본 oracle inventory. 현재 매핑과 잔여 작업은 `docs/plans/bugbash-sep-25-general/tickets/{scenario-evidence.json,OPEN-FOLLOWUPS.md,EXTERNAL-ADOPTION.md}`를 따른다. 당시 구현 감사는 `docs/archive/2026-09-25/bugbash-sep-25-general/tickets/FINAL-REVIEW.md`에 보존한다. 아래 fixture 참조는 clean-HEAD 실행 증거가 아니다.
+- 기준: `main@76559c483bdd1d6b0b5226f7c5b5591b919afae9` (2026-09-25)의 원본 oracle inventory. 현재 매핑과 잔여 작업은 `docs/plans/bugbash-sep-25-general/tickets/{scenario-evidence.json,OPEN-FOLLOWUPS.md,EXTERNAL-ADOPTION.md}`를 따른다. 당시 구현 감사는 `docs/adr/0007-sep-25-implementation-closure.md`에 보존한다. 아래 fixture 참조는 clean-HEAD 실행 증거가 아니다.
 - 범위: 현재 `taskmesh-contract` / `taskmesh-engine` / Tokio facade / Rayon adapter / benchmark harness의 기능과 그 경계에 필요한 안전 시나리오. 현행 보장과 미결정 목표 계약은 각 행에서 구분한다. 미래의 실행형 flow·분산 복구·자동 checkpoint 실행은 제외한다.
 - 상태: 시나리오 설계 목록. 관련 테스트 파일은 탐색 앵커일 뿐, 각 행의 완전한 커버리지나 현재 HEAD의 PASS 영수증이 아니다. 원본 목록 작성 시 테스트·mutation·nightly는 실행하지 않았다. 2026-09-26의 별도 재검증 범위는 아래에 기록한다.
 - 규모: 기본 16·엣지 28·헬게이트 35·코너 25, 총 104개. 미결정 계약과 source-backed 실패 후보는 해당 행에 표시했다.
@@ -181,7 +181,7 @@ H12의 최종 clean-HEAD CI 자격과 H28 성능 자격의 실행 작업은 `doc
 
 ## 역사적 소스 감사 스냅샷
 
-아래 표와 우선순위는 `76559c4` 당시의 감사 입력이며 현재 미해결 목록이 아니다. H30, H34, D17, B28 등은 이후 구현됐다. 현재 판정은 위 2026-09-26 재감사, `scenario-evidence.json`, `OPEN-FOLLOWUPS.md`를 따르고 당시 구현 판정은 아카이브 `FINAL-REVIEW.md`에서 확인한다. fixture의 존재는 해당 시나리오 전체의 PASS나 clean-HEAD 자격을 뜻하지 않는다.
+아래 표와 우선순위는 `76559c4` 당시의 감사 입력이며 현재 미해결 목록이 아니다. H30, H34, D17, B28 등은 이후 구현됐다. 현재 판정은 위 2026-09-26 재감사, `scenario-evidence.json`, `OPEN-FOLLOWUPS.md`를 따르고 당시 구현 판정은 ADR 0007에서 확인한다. fixture의 존재는 해당 시나리오 전체의 PASS나 clean-HEAD 자격을 뜻하지 않는다.
 
 | 대상 | 확인된 근거 | 남은 판정 |
 |---|---|---|

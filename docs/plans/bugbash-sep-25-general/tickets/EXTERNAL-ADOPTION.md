@@ -2,6 +2,26 @@
 
 This ledger separates a discovered Rust consumer from deployment acceptance. The source observation below is pinned to the consumer checkout and must be refreshed before a final adoption claim.
 
+2026-09-27 SDK migration 소스 비교: Taskmesh
+`8a4f3a6e58403c8aede2355a658a8884831a0745`와 Semantica
+`ee4d72c6cb6a61182639e922b878405f24c27960`의 governance adapter를 읽었다.
+관찰한 Semantica governance 경로와 named contract test에는 미커밋 변경이 없었다.
+이번 관찰에서는 consumer 테스트를 실행하지 않았다. 이전 실행 PASS를 현재 pair의
+결과로 재사용하지 않는다. 상세 mapping과 해결 계획은
+[SEP-27 use case / engine integration](../../../rfc/sep-27-sdk-usecase-engine-integration.md)에 있다.
+
+- `run_execute_query_task_before_v1` → `run_blocking_before_v1`은 synchronous 작업에
+  `CompleteBy`를 전달하지만 public query class는 `PreSubmitOnly`로 등록되어 있다.
+  현재 Taskmesh에서는 class preflight의 `DeadlineUnsupported`가 예상되며, class 정책만
+  바꿔도 sync dispatch의 absolute-deadline 거부가 남는다. consumer deadline 테스트의
+  기대와 충돌하므로 별도 response-only 계약 또는 실제 cooperative 작업 전환이 필요하다.
+  이는 소스에서 도출한 계약 충돌이며 새 실행 실패나 배포 장애를 관찰한 결과는 아니다.
+- adapter의 `inflight + queue + 1` worker sizing 주석은 과거 별도 substrate gate를
+  전제한다. 현재 단일 Governor admission에 맞게 설명과 sizing 근거를 재검토해야 한다.
+  측정 없이 기존 worker 수를 변경하지 않는다.
+- root invocation ID 발급, `source/reason`, BackgroundOnly의 maintenance role,
+  requested-stack async factory를 그대로 보존하는 adapter migration이 필요하다.
+
 2026-09-26 최신 HEAD 관찰: 공유 Semantica checkout은
 `597838158e6c0de4230dc01ca27f52758d1186db`이며 다른 경로의 미커밋 변경이
 있다. 이 관찰은 HEAD만 확인했고 governance 호출 경로, 실제 배포 소스,

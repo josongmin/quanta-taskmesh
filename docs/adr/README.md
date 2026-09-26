@@ -8,6 +8,7 @@
 | [0004](0004-sep-25-ingress-plan-identity-and-wire.md) | Accepted, library scope | Trust, plan, identity, and wire authorities |
 | [0005](0005-sep-25-execution-response-and-custody.md) | Accepted, library scope | Executor, deadline, response, and custody authorities |
 | [0006](0006-source-bound-verification-authority.md) | Accepted, current local policy | Static mapping and exact-source proof boundaries |
+| [0007](0007-sep-25-implementation-closure.md) | Accepted, repository scope | Compressed BG25 implementation map; proof and adoption remain open |
 | [9000](9000-benchmark-strategy.md) | Proposed | Benchmark north star, not current qualification |
 
 Public API and wire details live in the

@@ -27,6 +27,11 @@ SOURCE_CITATION = re.compile(
     r"(?P<ranges>\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*)`"
 )
 LOCAL_LINK = re.compile(r"\[[^]]+\]\((?P<target>[^)]+)\)")
+ACCEPTANCE_REFERENCE = re.compile(
+    r"(?<![A-Za-z0-9-])(?:SEP21-)?(?P<ticket>[A-Z]\d{2})-A(?P<first>\d{2})"
+    r"(?:~A(?P<last>\d{2}))?(?![0-9])"
+)
+SIGNAL_REFERENCE = re.compile(r"\b[A-Z][A-Z0-9_]+_(?:READY|CLOSED)\b")
 ALLOWED_STATUSES = {
     "PLANNED",
     "IN_PROGRESS",
@@ -118,6 +123,59 @@ def find_cycle(graph: dict[str, list[str]]) -> list[str] | None:
         if cycle:
             return cycle
     return None
+
+
+def validate_prompt_acceptance(document: Path, body: str, expected: set[str]) -> None:
+    actual: set[str] = set()
+    for match in ACCEPTANCE_REFERENCE.finditer(body):
+        first = int(match.group("first"))
+        last = int(match.group("last") or match.group("first"))
+        if first < 1 or last < first:
+            fail(f"{document.name}: invalid acceptance range {match.group(0)}")
+        actual.update(
+            f"SEP21-{match.group('ticket')}-A{index:02d}" for index in range(first, last + 1)
+        )
+    if actual != expected:
+        fail(
+            f"{document.name}: prompt acceptance differs from assigned tickets: "
+            f"missing={sorted(expected - actual)} extra={sorted(actual - expected)}"
+        )
+
+
+def validate_prompt_commands(document: Path, body: str, justfile: str) -> None:
+    recipes = set(re.findall(r"^([A-Za-z0-9_-]+)(?:[^:\n]*):(?![=])", justfile, re.MULTILINE))
+    for block in re.findall(r"^```sh\n(.*?)^```", body, re.MULTILINE | re.DOTALL):
+        for recipe in re.findall(
+            r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*just\s+([A-Za-z0-9_-]+)(?:\s|$)",
+            block,
+            re.MULTILINE,
+        ):
+            if recipe not in recipes:
+                fail(f"{document.name}: unknown Justfile recipe: {recipe}")
+
+
+def validate_prompt_signals(readme: str, prompts: dict[Path, str]) -> None:
+    section = re.search(
+        r"^## dependency signal 이름\n(.*?)(?=^## |\Z)", readme, re.MULTILINE | re.DOTALL
+    )
+    if section is None:
+        fail("prompt README: missing dependency signal inventory")
+    registered = re.findall(r"^- `([A-Z][A-Z0-9_]+)`$", section.group(1), re.MULTILINE)
+    if len(registered) != len(set(registered)):
+        fail("prompt README: duplicate dependency signal")
+    produced = [
+        signal
+        for body in prompts.values()
+        for signal in re.findall(r"^signal: ([A-Z][A-Z0-9_]+)$", body, re.MULTILINE)
+    ]
+    if len(produced) != len(set(produced)):
+        fail("prompt pack: dependency signal has multiple producers")
+    if set(registered) != set(produced):
+        fail("prompt README: signal inventory differs from producer handoffs")
+    for document, body in prompts.items():
+        unknown = set(SIGNAL_REFERENCE.findall(body)) - set(registered)
+        if unknown:
+            fail(f"{document.name}: unknown dependency signals: {sorted(unknown)}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -240,6 +298,7 @@ def main() -> None:
     graph: dict[str, list[str]] = {}
     mapped_findings: list[str] = []
     acceptance_ids: list[str] = []
+    acceptance_by_ticket: dict[str, set[str]] = {}
     readme = README_PATH.read_text(encoding="utf-8")
     link_count += validate_local_links(README_PATH, readme)
     for ticket in tickets:
@@ -287,6 +346,7 @@ def main() -> None:
         if len(ticket_acceptance) != len(set(ticket_acceptance)):
             fail(f"{ticket_id}: duplicate acceptance IDs")
         acceptance_ids.extend(ticket_acceptance)
+        acceptance_by_ticket[ticket_id] = set(ticket_acceptance)
         if f"({ticket['file']})" not in readme:
             fail(f"{ticket_id}: README link missing")
 
@@ -335,9 +395,7 @@ def main() -> None:
     prompt_readme = prompt_root / "README.md"
     if not prompt_readme.is_file():
         fail("prompt pack README is missing")
-    link_count += validate_local_links(
-        prompt_readme, prompt_readme.read_text(encoding="utf-8")
-    )
+    link_count += validate_local_links(prompt_readme, prompt_readme.read_text(encoding="utf-8"))
     orchestrator_prompt = (HERE / plan.get("orchestrator_prompt", "")).resolve()
     if not orchestrator_prompt.is_file():
         fail("orchestrator prompt is missing")
@@ -356,12 +414,15 @@ def main() -> None:
         fail("execution packet files must be present and unique")
     packet_tickets: list[str] = []
     planned_prompts = {prompt_readme.resolve(), orchestrator_prompt}
+    prompt_bodies = {orchestrator_prompt: orchestrator_prompt.read_text(encoding="utf-8")}
+    justfile = (REPO / "Justfile").read_text(encoding="utf-8")
     for packet in packets:
         packet_file = (HERE / packet["file"]).resolve()
         planned_prompts.add(packet_file)
         if not packet_file.is_file():
             fail(f"{packet['id']}: execution prompt is missing")
         packet_body = packet_file.read_text(encoding="utf-8")
+        prompt_bodies[packet_file] = packet_body
         link_count += validate_local_links(packet_file, packet_body)
         assigned = packet.get("tickets")
         if not isinstance(assigned, list) or not assigned:
@@ -372,12 +433,15 @@ def main() -> None:
             if ticket_id not in packet_body:
                 fail(f"{packet['id']}: prompt does not name {ticket_id}")
         packet_tickets.extend(assigned)
+        validate_prompt_acceptance(
+            packet_file,
+            packet_body,
+            set().union(*(acceptance_by_ticket[ticket_id] for ticket_id in assigned)),
+        )
     if sorted(packet_tickets) != sorted(ids):
         missing = sorted(id_set - set(packet_tickets))
         duplicates = sorted(
-            ticket_id
-            for ticket_id in set(packet_tickets)
-            if packet_tickets.count(ticket_id) > 1
+            ticket_id for ticket_id in set(packet_tickets) if packet_tickets.count(ticket_id) > 1
         )
         fail(f"execution packet coverage mismatch missing={missing} duplicates={duplicates}")
     actual_prompts = {path.resolve() for path in prompt_root.glob("*.md")}
@@ -385,6 +449,9 @@ def main() -> None:
         missing = sorted(path.name for path in planned_prompts - actual_prompts)
         extra = sorted(path.name for path in actual_prompts - planned_prompts)
         fail(f"prompt inventory mismatch missing={missing} extra={extra}")
+    validate_prompt_signals(prompt_readme.read_text(encoding="utf-8"), prompt_bodies)
+    for document, body in prompt_bodies.items():
+        validate_prompt_commands(document, body, justfile)
 
     source_status = "not_checked" if args.structure_only else "current"
     citation_status = "not_checked" if args.structure_only else str(citation_count)

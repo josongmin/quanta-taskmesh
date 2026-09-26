@@ -182,8 +182,10 @@ def run_acquisition(
     env: dict[str, str] | None = None,
     on_started: Callable[[subprocess.Popen[str]], None] | None = None,
     stdin_data: bytes | None = None,
+    termination_grace_seconds: float = TERMINATION_GRACE_SECONDS,
 ) -> SupervisedProcess:
     timeout_seconds = deadline(timeout_seconds)
+    termination_grace_seconds = deadline(termination_grace_seconds)
     environment = dict(os.environ if env is None else env)
     inherited = os.environ.get(OWNER_DIRECTORY)
     supplied = environment.get(OWNER_DIRECTORY)
@@ -217,7 +219,7 @@ def run_acquisition(
             cwd=cwd,
             env=environment,
             timeout_seconds=timeout_seconds,
-            termination_grace_seconds=TERMINATION_GRACE_SECONDS,
+            termination_grace_seconds=termination_grace_seconds,
             max_capture_bytes=MAX_CAPTURE_BYTES,
             on_started=started,
             stdin_data=stdin_data,

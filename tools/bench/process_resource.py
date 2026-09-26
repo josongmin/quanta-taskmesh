@@ -147,6 +147,9 @@ def sample_subprocess(
     code = result.returncode if result.returncode is not None else 1
     if incomplete and code == 0:
         code = 1
+    if incomplete:
+        resources["status"] = "unavailable"
+        resources["reason"] = "probe execution failed"
     stderr = result.stderr
     if incomplete and result.stdout:
         stderr += "\nACQUISITION: partial stdout\n" + result.stdout

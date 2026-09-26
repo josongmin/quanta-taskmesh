@@ -42,6 +42,7 @@ EXAMPLES = {
     "host_local_probe",
     "host_composite_probe",
     "host_special_validate",
+    "host_stability_probe",
 }
 KEYS = {
     "schema_version",

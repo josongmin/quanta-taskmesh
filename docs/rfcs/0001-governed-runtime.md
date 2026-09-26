@@ -1,6 +1,14 @@
 # Governed Runtime RFC
 
-Status: `Final Draft`
+Status: `Historical design summary`
+
+This early RFC records the original principles and is not an active implementation
+plan or a complete inventory of today's public API. Current architecture is owned by
+[ADR 0001](../adr/0001-hexagonal-feature-sliced-architecture.md); implemented APIs are
+specified in the [library spec](../taskmesh-library-spec.md) and
+[external interface](../taskmesh-external-interface.md).
+The active SDK improvement proposal is
+[SEP-27 SDK DX and extensibility](../rfc/sep-27-sdk-dx-extensibility.md).
 
 ## Executive Decision
 

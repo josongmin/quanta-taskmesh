@@ -1,0 +1,7 @@
+[profile.default]
+# Mutation runs stop scheduling after the first failure, but tests that were
+# already started can otherwise wait forever after a wake/deadline mutant.
+# All product tests have tighter owner-local bounds; this is the final harness
+# backstop that keeps a semantic failure below the generated runner's 120s
+# per-mutant timeout.
+slow-timeout = { period = "30s", terminate-after = 2 }

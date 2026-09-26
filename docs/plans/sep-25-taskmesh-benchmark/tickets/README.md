@@ -3,7 +3,8 @@
 ## Current checkpoint
 
 At clean detached `f7834d7`, structural `closed_loop`, `local` v2 and `composite`
-receipts were acquired under `/tmp`. They are not repository-retained and all
+receipts were acquired under `/tmp` and copied byte-for-byte to ignored
+`bench-results/receipts/clean-f7834d7/`. They are not Git-tracked and all
 report `UNQUALIFIED`. This benchmark change set preserves a
 separate invalid H6 raw on parent timeout/failure and adds a source/scenario-bound
 control-budget evaluator; neither has a clean exact-HEAD receipt yet. B00 values,

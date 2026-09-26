@@ -33,30 +33,52 @@ fn scenario(
     (lat.p50(), lat.p99(), lat.p999(), lat.dropped(), res)
 }
 
-#[test]
-fn invariants_hold_across_seeds_and_regimes() {
+fn check_regimes(seed: u64) {
     let capacity = 50_000.0;
     let depth = 128u32;
-    for &seed in &[1u64, 7, 42, 0xC0FFEE, 0xDEADBEEF] {
-        for &lambda in &[5_000.0_f64, 25_000.0, 50_000.0, 120_000.0, 300_000.0] {
-            let (_p50, _p99, _p999, dropped, res) = scenario(lambda, seed, 32, depth, capacity);
-            assert!(
-                res.is_conserved(),
-                "conservation violated (seed={seed}, λ={lambda}): {res:?}"
-            );
-            assert_eq!(
-                dropped, 0,
-                "latency samples dropped (seed={seed}, λ={lambda})"
-            );
-            assert!(
-                res.max_queue_observed <= depth as usize,
-                "queue exceeded its bound (seed={seed}, λ={lambda}): {} > {depth}",
-                res.max_queue_observed
-            );
-            // Single class with a free budget always fully drains.
-            assert_eq!(res.leftover_queued, 0, "leftover (seed={seed}, λ={lambda})");
-        }
+    for &lambda in &[5_000.0_f64, 25_000.0, 50_000.0, 120_000.0, 300_000.0] {
+        let (_p50, _p99, _p999, dropped, res) = scenario(lambda, seed, 32, depth, capacity);
+        assert!(
+            res.is_conserved(),
+            "conservation violated (seed={seed}, λ={lambda}): {res:?}"
+        );
+        assert_eq!(
+            dropped, 0,
+            "latency samples dropped (seed={seed}, λ={lambda})"
+        );
+        assert!(
+            res.max_queue_observed <= depth as usize,
+            "queue exceeded its bound (seed={seed}, λ={lambda}): {} > {depth}",
+            res.max_queue_observed
+        );
+        // Single class with a free budget always fully drains.
+        assert_eq!(res.leftover_queued, 0, "leftover (seed={seed}, λ={lambda})");
     }
+}
+
+#[test]
+fn invariants_hold_across_regimes_seed_one() {
+    check_regimes(1);
+}
+
+#[test]
+fn invariants_hold_across_regimes_seed_seven() {
+    check_regimes(7);
+}
+
+#[test]
+fn invariants_hold_across_regimes_seed_forty_two() {
+    check_regimes(42);
+}
+
+#[test]
+fn invariants_hold_across_regimes_seed_coffee() {
+    check_regimes(0xC0FFEE);
+}
+
+#[test]
+fn invariants_hold_across_regimes_seed_deadbeef() {
+    check_regimes(0xDEADBEEF);
 }
 
 #[test]

@@ -17,6 +17,7 @@
 | Complete raw run | `drain_ok=false` disabled conservation/retained-ownership checks | Complete evidence requires settled conservation and no held capacity |
 | Raw capability inventory | Arbitrary zero-valued capability names could replace the actual runtime catalog | Bind raw final and sampled capability catalogs to freshly resolved runtime topology |
 | Integrated local validator | Latest main used `Option::is_none_or` beyond declared Rust 1.81 MSRV and a manual checked division rejected by Clippy | Preserve validation semantics with MSRV-compatible `map_or` and `checked_div` |
+| Bounded property execution | One test bundled 3,000 fairness seeds; another bundled all 25 hellgate combinations, exceeding the fixed per-test budget on a heavily loaded host | Six nonoverlapping fairness populations cover seeds 0..3000; five hellgate tests cover the original five seeds and every original regime. Assertions and timeout remain unchanged; all cases enter the mandatory nextest denominator |
 
 ## Verification boundary
 

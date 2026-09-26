@@ -101,9 +101,8 @@ fn build(nclasses: usize, disciplines_seed: u64) -> (Fixture, Vec<String>) {
     (fixture(classes, 1, 0), names)
 }
 
-#[test]
-fn random_configs_satisfy_fairness_invariants() {
-    for seed in 0..3_000u64 {
+fn check_fairness_seeds(seeds: std::ops::Range<u64>) {
+    for seed in seeds {
         let mut rng = StdRng::seed_from_u64(seed);
         let nclasses = rng.gen_range(2..=4);
         let qlen = rng.gen_range(1..=30);
@@ -141,4 +140,37 @@ fn random_configs_satisfy_fairness_invariants() {
             "seed={seed}: dispatch order is not deterministic"
         );
     }
+}
+
+// The original 3,000 seeds remain mandatory; bounded test populations share
+// the same oracle and retain the normal nextest timeout.
+
+#[test]
+fn fairness_seeds_0000_0499() {
+    check_fairness_seeds(0..500);
+}
+
+#[test]
+fn fairness_seeds_0500_0999() {
+    check_fairness_seeds(500..1000);
+}
+
+#[test]
+fn fairness_seeds_1000_1499() {
+    check_fairness_seeds(1000..1500);
+}
+
+#[test]
+fn fairness_seeds_1500_1999() {
+    check_fairness_seeds(1500..2000);
+}
+
+#[test]
+fn fairness_seeds_2000_2499() {
+    check_fairness_seeds(2000..2500);
+}
+
+#[test]
+fn fairness_seeds_2500_2999() {
+    check_fairness_seeds(2500..3000);
 }

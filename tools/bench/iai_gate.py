@@ -22,16 +22,18 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 CONFIG = REPO / "tools" / "bench" / "perf-gate.json"
 RUNNER = "iai-callgrind-runner"
-BASELINE_MANIFEST_VERSION = 2
-COMPARISON_MANIFEST_VERSION = 2
+BASELINE_MANIFEST_VERSION = 3
+COMPARISON_MANIFEST_VERSION = 3
 BASELINE_MANIFEST = "baseline-manifest.json"
 COMPARISON_MANIFEST = "comparison-manifest.json"
 
@@ -42,9 +44,11 @@ _INSTALL_LIST_LINE = re.compile(
 )
 # The runner's own complaint when invoked without a library version, e.g.
 # `... but iai-callgrind-runner (0.14.2) is >= '0.3.0'`.
-_SELF_REPORT = re.compile(
-    r"iai-callgrind-runner \((\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?(?:\+[0-9A-Za-z.]+)?)\)"
-)
+_VERSION = r"(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?(?:\+[0-9A-Za-z.]+)?)"
+_SELF_REPORT = re.compile(rf"iai-callgrind-runner \({_VERSION}\)")
+_BARE_REPORT = re.compile(rf"Detected version of iai-callgrind-runner is {_VERSION}")
+_IR_LIMIT = re.compile(r"Ir=(0|[1-9][0-9]*)(?:\.([0-9]+))?\Z")
+_U64_MAX = (1 << 64) - 1
 
 
 def gate_config() -> dict:
@@ -78,7 +82,7 @@ def runner_version_from_install_list(text: str) -> str | None:
 
 def runner_version_from_self_report(text: str) -> str | None:
     """Parse the version the runner names in its own usage error."""
-    match = _SELF_REPORT.search(text)
+    match = _SELF_REPORT.search(text) or _BARE_REPORT.search(text)
     return match.group(1) if match else None
 
 
@@ -86,45 +90,62 @@ def detect_runner_version() -> tuple[str | None, str]:
     """Returns (version, explanation). `version` is None when it could not be
     determined; the explanation always says what was tried."""
     tried: list[str] = []
+    # The executable on PATH is what iai-callgrind actually executes. Cargo's
+    # installation registry may describe a different, shadowed executable.
+    try:
+        probe = subprocess.run([RUNNER], capture_output=True, text=True, check=False)
+        path_version = runner_version_from_self_report(probe.stdout + probe.stderr)
+        if path_version is None:
+            return None, "the runner on PATH did not report its version"
+    except OSError as error:
+        return None, f"the runner on PATH could not be executed: {error}"
     try:
         listing = subprocess.run(
             ["cargo", "install", "--list"], capture_output=True, text=True, check=False
         )
-        version = runner_version_from_install_list(listing.stdout)
-        if version:
-            return version, f"from `cargo install --list` ({RUNNER} v{version})"
-        tried.append("`cargo install --list` does not list it")
+        installed_version = runner_version_from_install_list(listing.stdout)
+        if installed_version and installed_version != path_version:
+            return (
+                None,
+                f"PATH runner {path_version} differs from cargo install {installed_version}",
+            )
+        if installed_version:
+            tried.append(f"cargo install agrees ({installed_version})")
+        else:
+            tried.append("runner is not listed by cargo install")
     except OSError as error:
         tried.append(f"`cargo install --list` failed: {error}")
-    try:
-        # The runner has no --version flag; invoked bare it reports its own
-        # version inside an error message, which is the only self-report it has.
-        probe = subprocess.run([RUNNER], capture_output=True, text=True, check=False)
-        version = runner_version_from_self_report(probe.stdout + probe.stderr)
-        if version:
-            return version, f"from the runner's own report ({RUNNER} {version})"
-        tried.append(f"bare `{RUNNER}` did not name its version")
-    except OSError as error:
-        tried.append(f"`{RUNNER}` could not be executed: {error}")
-    return None, "; ".join(tried)
+    return path_version, "; ".join(tried)
 
 
-def cargo_build_context(root: Path) -> dict[str, object]:
+def cargo_build_context(root: Path, runner_executable: Path | None = None) -> dict[str, object]:
     """Capture build inputs that can change codegen without changing rustc -Vv."""
     names = {
-        "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER",
-        "RUSTC_WORKSPACE_WRAPPER", "RUSTC_BOOTSTRAP", "CARGO_INCREMENTAL",
-        "CARGO_HOME", "CARGO_BUILD_RUSTFLAGS", "CARGO_BUILD_TARGET",
-        "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER", "CC", "CXX",
-        "CFLAGS", "CXXFLAGS", "AR", "RANLIB",
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "RUSTC",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTC_BOOTSTRAP",
+        "CARGO_INCREMENTAL",
+        "CARGO_HOME",
+        "CARGO_BUILD_RUSTFLAGS",
+        "CARGO_BUILD_TARGET",
+        "CARGO_BUILD_RUSTC",
+        "CARGO_BUILD_RUSTC_WRAPPER",
+        "CC",
+        "CXX",
+        "CFLAGS",
+        "CXXFLAGS",
+        "AR",
+        "RANLIB",
     }
     environment = {
-        key: value for key, value in sorted(os.environ.items())
+        key: value
+        for key, value in sorted(os.environ.items())
         if key in names
         or key.startswith(("CARGO_PROFILE_BENCH_", "CARGO_PROFILE_RELEASE_"))
-        or (key.startswith("CARGO_TARGET_") and key.endswith(
-            ("_RUSTFLAGS", "_LINKER", "_RUNNER")
-        ))
+        or (key.startswith("CARGO_TARGET_") and key.endswith(("_RUSTFLAGS", "_LINKER", "_RUNNER")))
     }
     cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
     directories = [cargo_home]
@@ -135,20 +156,39 @@ def cargo_build_context(root: Path) -> dict[str, object]:
             path = directory / name
             if path.is_file():
                 configs[str(path.resolve())] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return {"environment": environment, "cargo_configs": dict(sorted(configs.items()))}
+    if runner_executable is None:
+        located = shutil.which(RUNNER)
+        runner_executable = Path(located) if located else None
+    runner_sha256 = (
+        hashlib.sha256(runner_executable.read_bytes()).hexdigest()
+        if runner_executable is not None and runner_executable.is_file()
+        else None
+    )
+    return {
+        "environment": environment,
+        "cargo_configs": dict(sorted(configs.items())),
+        "runner_sha256": runner_sha256,
+    }
 
 
 def build_context_valid(value: object) -> bool:
-    if not isinstance(value, dict) or set(value) != {"environment", "cargo_configs"}:
+    if not isinstance(value, dict) or set(value) != {
+        "environment",
+        "cargo_configs",
+        "runner_sha256",
+    }:
         return False
     environment = value["environment"]
     configs = value["cargo_configs"]
     return (
-        isinstance(environment, dict)
+        isinstance(value["runner_sha256"], str)
+        and re.fullmatch(r"[0-9a-f]{64}", value["runner_sha256"]) is not None
+        and isinstance(environment, dict)
         and all(isinstance(key, str) and isinstance(item, str) for key, item in environment.items())
         and isinstance(configs, dict)
         and all(
-            isinstance(key, str) and isinstance(item, str)
+            isinstance(key, str)
+            and isinstance(item, str)
             and re.fullmatch(r"[0-9a-f]{64}", item) is not None
             for key, item in configs.items()
         )
@@ -156,8 +196,13 @@ def build_context_valid(value: object) -> bool:
 
 
 def fingerprint(
-    inputs: list[Path], schema: object, runner: str, valgrind: str, rustc: str,
-    *, build_context: dict[str, object],
+    inputs: list[Path],
+    schema: object,
+    runner: str,
+    valgrind: str,
+    rustc: str,
+    *,
+    build_context: dict[str, object],
 ) -> str:
     """Hash of everything that defines whether two baselines are comparable:
     the measured definition and its dependency graph (the input files), the
@@ -386,12 +431,151 @@ def _raw_output_paths(summary: object, root: Path) -> list[str] | None:
     return checked
 
 
-def inspect_summaries(root: Path) -> dict[str, object]:
+def _u64(value: object) -> bool:
+    return type(value) is int and 0 <= value <= _U64_MAX
+
+
+def _raw_ir(path: Path) -> int | None:
+    """Mirror iai-callgrind 0.14.2 SummaryParser's totals/summary precedence."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    events: list[str] | None = None
+    summary: list[str] | None = None
+    totals: list[str] | None = None
+    version = False
+    for line in lines:
+        if line.startswith("version:"):
+            version = line.split(":", 1)[1].strip() == "1"
+        elif line.startswith("events:"):
+            if events is not None:
+                return None
+            events = line.split(":", 1)[1].split()
+        elif line.startswith("summary:"):
+            summary = line.split(":", 1)[1].split()
+        elif line.startswith("totals:"):
+            totals = line.split(":", 1)[1].split()
+            break
+    if not version or events is None or events.count("Ir") != 1:
+        return None
+    values = totals if totals is not None else summary
+    if values is None or len(values) > len(events):
+        return None
+    try:
+        counts = [int(value) for value in values]
+    except ValueError:
+        return None
+    if any(not _u64(value) for value in counts):
+        return None
+    index = events.index("Ir")
+    return counts[index] if index < len(counts) else 0
+
+
+def _old_output_paths(summary: dict, root: Path) -> list[str] | None:
+    run = summary["callgrind_summary"].get("callgrind_run")
+    segments = run.get("segments") if isinstance(run, dict) else None
+    if not isinstance(segments, list) or not segments:
+        return None
+    result: list[str] = []
+    for segment in segments:
+        baseline = segment.get("baseline") if isinstance(segment, dict) else None
+        if baseline is None:
+            continue
+        named = baseline.get("path") if isinstance(baseline, dict) else None
+        if not isinstance(named, str):
+            return None
+        path = Path(named)
+        try:
+            relative = path.relative_to(root.resolve()) if path.is_absolute() else path
+        except ValueError:
+            return None
+        artifact = confined_artifact(root, relative.as_posix())
+        if (
+            artifact is None
+            or not relative.as_posix().endswith(".out.old")
+            or not artifact.is_file()
+        ):
+            return None
+        result.append(relative.as_posix())
+    return result or None
+
+
+def _ir_limit() -> Decimal:
+    value = gate_config().get("regression")
+    if not isinstance(value, str) or _IR_LIMIT.fullmatch(value) is None:
+        raise ValueError("IAI regression must be a non-negative Ir percentage")
+    try:
+        return Decimal(value.split("=", 1)[1])
+    except InvalidOperation as exc:
+        raise ValueError("IAI regression percentage is invalid") from exc
+
+
+def _ir_semantic_problems(
+    summary: dict,
+    root: Path,
+    current_paths: list[str],
+    *,
+    comparison: bool,
+) -> tuple[list[str], list[str]]:
+    problems: list[str] = []
+    old_paths = _old_output_paths(summary, root) if comparison else []
+    if comparison and old_paths is None:
+        return [], ["old Callgrind output paths are missing or unsafe"]
+    assert old_paths is not None
+    if len(current_paths) != len(set(current_paths)) or len(old_paths) != len(set(old_paths)):
+        problems.append("duplicate raw Callgrind output path")
+    sums: list[int] = []
+    for label, paths in (("current", current_paths), ("old", old_paths)):
+        if not paths:
+            if label == "old" and not comparison:
+                continue
+            problems.append(f"{label} Callgrind output is missing")
+            continue
+        counts = [_raw_ir(root / path) for path in paths]
+        if any(count is None for count in counts):
+            problems.append(f"{label} Callgrind Ir is unreadable")
+            continue
+        total = sum(count for count in counts if count is not None)
+        if not _u64(total):
+            problems.append(f"{label} Callgrind Ir total overflows u64")
+        sums.append(total)
+    metrics = _total_metrics(summary)
+    ir = metrics.get("Ir") if isinstance(metrics, dict) else None
+    values = ir.get("metrics") if isinstance(ir, dict) else None
+    expected_key = "Both" if comparison else "Left"
+    pair = values.get(expected_key) if isinstance(values, dict) else None
+    expected = (
+        pair
+        if comparison and isinstance(pair, list) and len(pair) == 2
+        else [pair]
+        if not comparison
+        else None
+    )
+    if not isinstance(expected, list) or any(not _u64(value) for value in expected):
+        problems.append("summary Ir metric is missing or malformed")
+    elif len(sums) == len(expected) and sums != expected:
+        problems.append("summary Ir differs from raw Callgrind totals")
+    if (
+        comparison
+        and isinstance(expected, list)
+        and len(expected) == 2
+        and all(_u64(v) for v in expected)
+    ):
+        new, old = expected
+        if old == 0 or Decimal(new) * 100 > Decimal(old) * (100 + _ir_limit()):
+            problems.append("Ir regression exceeds reviewed threshold")
+    return old_paths, problems
+
+
+def inspect_summaries(root: Path, *, expected_comparison: bool = False) -> dict[str, object]:
     paths = sorted(root.rglob("summary.json"))
     invalid: list[str] = []
     compared = 0
     cases: list[str] = []
     raw_outputs: list[str] = []
+    old_outputs: list[str] = []
+    semantic_problems: list[str] = []
     for path in paths:
         relative = path.relative_to(root).as_posix()
         if confined_artifact(root, relative) is None:
@@ -409,6 +593,11 @@ def inspect_summaries(root: Path) -> dict[str, object]:
             continue
         cases.append(case)
         raw_outputs.extend(outputs)
+        old, problems = _ir_semantic_problems(
+            payload, root, outputs, comparison=expected_comparison
+        )
+        old_outputs.extend(old)
+        semantic_problems.extend(f"{relative}: {problem}" for problem in problems)
         if _summary_comparison_complete(payload):
             compared += 1
     return {
@@ -417,6 +606,8 @@ def inspect_summaries(root: Path) -> dict[str, object]:
         "comparison_count": compared,
         "cases": cases,
         "raw_outputs": raw_outputs,
+        "old_outputs": old_outputs,
+        "semantic_problems": semantic_problems,
         "invalid_summaries": invalid,
         "summaries": [path.relative_to(root).as_posix() for path in paths],
     }
@@ -434,11 +625,12 @@ def finalize_run(
 ) -> tuple[str, list[str]]:
     if not build_context_valid(build_context):
         return "NOT_RUN", ["Cargo build context is malformed"]
-    inspection = inspect_summaries(root)
+    inspection = inspect_summaries(root, expected_comparison=expected_comparison)
     selected = inspection["selected_count"]
     executed = inspection["executed_count"]
     compared = inspection["comparison_count"]
     problems: list[str] = []
+    problems.extend(inspection["semantic_problems"])
     if not isinstance(selected, int) or selected <= 0:
         problems.append("runner produced no summary.json artifacts")
     if executed != selected:
@@ -459,6 +651,9 @@ def finalize_run(
     raw_outputs = inspection["raw_outputs"]
     if len(raw_outputs) != len(set(raw_outputs)):
         problems.append("raw callgrind output is shared across benchmark cases")
+    old_outputs = inspection["old_outputs"]
+    if len(old_outputs) != len(set(old_outputs)):
+        problems.append("old callgrind output is shared across benchmark cases")
     artifacts = baseline_artifacts(root)
     if not any(str(item["path"]).endswith(".out") for item in artifacts):
         problems.append("raw callgrind .out artifact is missing")
@@ -480,6 +675,7 @@ def finalize_run(
             for path in inspection["summaries"]
             if confined_artifact(root, path) is not None and (root / path).is_file()
         ],
+        "old_artifacts": [_artifact(root / path, root) for path in inspection["old_outputs"]],
         "raw_output": _artifact(raw_log, root)
         if safe_raw_log is not None and raw_log.is_file() and raw_log.stat().st_size
         else None,
@@ -558,6 +754,27 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(version)
         return 0
+    if args.command in {"validate-baseline", "finalize"}:
+        try:
+            config = gate_config()
+            context = cargo_build_context(REPO)
+            actual_fingerprint = fingerprint(
+                [REPO / path for path in config["fingerprint_inputs"]],
+                config["measurement_schema"],
+                args.runner,
+                args.valgrind,
+                args.rustc_file.read_text(encoding="utf-8"),
+                build_context=context,
+            )
+        except (OSError, KeyError, TypeError, ValueError) as error:
+            print(f"bench-iai: cannot verify current fingerprint: {error}", file=sys.stderr)
+            return 2
+        if actual_fingerprint != args.fingerprint:
+            print(
+                "bench-iai: source, build context, or runner changed during the run",
+                file=sys.stderr,
+            )
+            return 2
     if args.command == "validate-baseline":
         problems = baseline_manifest_problems(
             args.root,
@@ -565,7 +782,7 @@ def main(argv: list[str] | None = None) -> int:
             runner=args.runner,
             valgrind=args.valgrind,
             rustc=args.rustc_file.read_text(encoding="utf-8"),
-            build_context=cargo_build_context(REPO),
+            build_context=context,
         )
         if problems:
             print("; ".join(problems), file=sys.stderr)
@@ -578,7 +795,7 @@ def main(argv: list[str] | None = None) -> int:
             runner=args.runner,
             valgrind=args.valgrind,
             rustc=args.rustc_file.read_text(encoding="utf-8"),
-            build_context=cargo_build_context(REPO),
+            build_context=context,
             expected_comparison=args.expected_comparison == "yes",
         )
         print(status)

@@ -64,7 +64,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: target/iai
-          key: iai-v4-${{ runner.os }}-${{ steps.fingerprint.outputs.value }}
+          key: iai-v5-${{ runner.os }}-${{ steps.fingerprint.outputs.value }}
 
       - name: Instruction-count benchmark (thresholds from tools/bench/perf-gate.json)
         id: iai

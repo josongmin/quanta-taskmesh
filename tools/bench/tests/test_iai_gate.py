@@ -27,7 +27,11 @@ sys.path.insert(0, str(HELPER.parent))
 import iai_gate  # noqa: E402
 
 RUNNER_VERSION = iai_gate.gate_config()["iai_callgrind_runner"]
-EMPTY_BUILD_CONTEXT = {"environment": {}, "cargo_configs": {}}
+EMPTY_BUILD_CONTEXT = {
+    "environment": {},
+    "cargo_configs": {},
+    "runner_sha256": "a" * 64,
+}
 
 # This module validates the Linux-only IAI qualification producer, including
 # its shell/toolchain boundary. Full `py-test` retains it; the macOS daily
@@ -69,15 +73,63 @@ def test_runner_version_is_read_from_its_own_error_report() -> None:
         "but iai-callgrind-runner (0.14.2) is >= '0.3.0'."
     )
     assert iai_gate.runner_version_from_self_report(complaint) == "0.14.2"
+    assert (
+        iai_gate.runner_version_from_self_report(
+            "Detected version of iai-callgrind-runner is 0.14.2."
+        )
+        == "0.14.2"
+    )
     assert iai_gate.runner_version_from_self_report("") is None
+
+
+def test_raw_ir_prefers_totals_and_requires_a_real_callgrind_file(tmp_path: Path) -> None:
+    raw = tmp_path / "callgrind.out"
+    raw.write_text(
+        "# callgrind format\nversion: 1\nevents: Dr Ir Dw\n"
+        "summary: 1 2 3\ntotals: 4 105 6\n",
+        encoding="utf-8",
+    )
+    assert iai_gate._raw_ir(raw) == 105
+    raw.write_text("garbage\n", encoding="utf-8")
+    assert iai_gate._raw_ir(raw) is None
+
+
+@pytest.mark.parametrize(
+    ("new", "expected_problem"),
+    [(105, False), (106, True), (200, True)],
+)
+def test_ir_limit_is_exact_and_strict(
+    tmp_path: Path, new: int, expected_problem: bool
+) -> None:
+    store = tmp_path.resolve()
+    current = store / "case.out"
+    old = store / "case.out.old"
+    current.write_text(f"version: 1\nevents: Ir\ntotals: {new}\n")
+    old.write_text("version: 1\nevents: Ir\ntotals: 100\n")
+    summary = {
+        "callgrind_summary": {
+            "callgrind_run": {
+                "total": {"summary": {"Ir": {"metrics": {"Both": [new, 100]}}}},
+                "segments": [{"baseline": {"path": str(old)}}],
+            }
+        }
+    }
+    _, problems = iai_gate._ir_semantic_problems(
+        summary, store, ["case.out"], comparison=True
+    )
+    assert ("Ir regression exceeds reviewed threshold" in problems) is expected_problem
 
 
 def test_fingerprint_changes_with_every_compatibility_input(tmp_path: Path) -> None:
     bench = tmp_path / "bench.rs"
     bench.write_text("fn main() {}\n")
     base = dict(
-        inputs=[bench], schema=2, runner="0.14.2", valgrind="valgrind-3.22", rustc="rustc 1.95.0",
-        build_context={"environment": {}, "cargo_configs": {}},
+        inputs=[bench],
+        schema=2,
+        runner="0.14.2",
+        valgrind="valgrind-3.22",
+        rustc="rustc 1.95.0",
+        build_context=EMPTY_BUILD_CONTEXT,
     )
     reference = iai_gate.fingerprint(**base)
     assert reference == iai_gate.fingerprint(**base), "deterministic"
@@ -88,7 +140,7 @@ def test_fingerprint_changes_with_every_compatibility_input(tmp_path: Path) -> N
         ("rustc", "rustc 1.96.0"),
         (
             "build_context",
-            {"environment": {"RUSTFLAGS": "-C opt-level=0"}, "cargo_configs": {}},
+            {**EMPTY_BUILD_CONTEXT, "environment": {"RUSTFLAGS": "-C opt-level=0"}},
         ),
     ]:
         assert iai_gate.fingerprint(**{**base, key: value}) != reference, key
@@ -342,11 +394,8 @@ class Harness:
         if version and not self_report:
             listing = f"iai-callgrind-runner v{version}:\n    iai-callgrind-runner\n"
         report = "echo 'iai_callgrind_runner: Error: unusable' >&2; exit 1\n"
-        if version and self_report:
-            report = (
-                'echo "iai_callgrind_runner: Error: ... but iai-callgrind-runner '
-                f"({version}) is >= '0.3.0'.\" >&2; exit 1\n"
-            )
+        if version:
+            report = f"echo 'Detected version of iai-callgrind-runner is {version}.' >&2; exit 1\n"
         _shim(self.bin, "iai-callgrind-runner", report)
         self._listing = listing
         self._write_cargo()
@@ -401,7 +450,16 @@ class Harness:
                 "callgrind_summary": {
                     "out_paths": [str(self.root / raw_directory / "callgrind.fake.out")],
                     "callgrind_run": {
-                        "total": {"summary": {"Ir": {"metrics": "__METRICS__"}}, "regressions": []}
+                        "total": {"summary": {"Ir": {"metrics": "__METRICS__"}}, "regressions": []},
+                        "segments": [
+                            {
+                                "baseline": {
+                                    "path": str(
+                                        self.root / raw_directory / "callgrind.fake.out.old"
+                                    )
+                                }
+                            }
+                        ],
                     },
                 },
             }
@@ -409,13 +467,19 @@ class Harness:
             case_commands += (
                 f"  mkdir -p {directory}\n"
                 f"  if [[ -f {directory}/callgrind.fake.out && {comparison_flag} -eq 1 ]]; then\n"
+                f"    mv {directory}/callgrind.fake.out {directory}/callgrind.fake.out.old\n"
                 "    metrics='{\"Both\":[101,100]}'\n"
+                "    ir=101\n"
                 "  else\n"
-                "    metrics='{\"Left\":101}'\n"
+                "    metrics='{\"Left\":100}'\n"
+                "    ir=100\n"
                 "  fi\n"
             )
             if index < getattr(self, "_raw_case_count", len(cases)):
-                case_commands += f"  echo 'events: Ir' >{directory}/callgrind.fake.out\n"
+                case_commands += (
+                    "  printf '# callgrind format\\nversion: 1\\nevents: Ir\\ntotals: %s\\n' "
+                    f'"$ir" >{directory}/callgrind.fake.out\n'
+                )
             if emits_summary:
                 case_commands += f"  printf '{encoded}\\n' \"$metrics\" >{directory}/summary.json\n"
         _shim(
@@ -550,6 +614,42 @@ def test_a_runner_version_mismatch_names_both_versions(harness: Harness) -> None
     assert proc.returncode == 1
     assert "iai-callgrind-runner 0.9.9 on PATH" in proc.stderr
     assert f"config requires {RUNNER_VERSION}" in proc.stderr
+
+
+def test_shadowed_path_runner_is_not_misidentified_by_cargo_list(harness: Harness) -> None:
+    _shim(
+        harness.bin,
+        "iai-callgrind-runner",
+        "echo 'Detected version of iai-callgrind-runner is 0.15.0.' >&2; exit 1\n",
+    )
+    proc = harness.run()
+    assert proc.returncode == 1
+    assert "PATH runner 0.15.0 differs from cargo install 0.14.2" in proc.stderr
+
+
+def test_same_version_runner_binary_change_moves_fingerprint(harness: Harness) -> None:
+    before = harness.run("fingerprint")
+    assert before.returncode == 0, before.stderr
+    runner = harness.bin / "iai-callgrind-runner"
+    runner.write_text(runner.read_text() + "# changed binary\n")
+    after = harness.run("fingerprint")
+    assert after.returncode == 0, after.stderr
+    assert after.stdout != before.stdout
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "IAI_CALLGRIND_BASELINE",
+        "IAI_CALLGRIND_SAVE_BASELINE",
+        "IAI_CALLGRIND_LOAD_BASELINE",
+        "IAI_CALLGRIND_FILTER",
+    ],
+)
+def test_ambient_baseline_and_filter_controls_are_rejected(harness: Harness, name: str) -> None:
+    proc = harness.run(env={name: "unexpected"})
+    assert proc.returncode == 1
+    assert f"{name} cannot alter" in proc.stderr
 
 
 def test_first_run_records_a_baseline_and_second_run_qualifies(harness: Harness) -> None:

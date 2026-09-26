@@ -19,14 +19,14 @@ use taskmesh::ext::{
     ExecutorCapabilities, Governor, ManualClock, PolicySet, ReconcileOutcome, ReleaseOutcome,
     StageReleaseOutcome, BUILTIN_SUBSTRATES,
 };
+#[cfg(not(feature = "rayon"))]
+use taskmesh::PHYSICAL_SHARED_BLOCKING;
 use taskmesh::{
     AdmissionVerdict, Builder, CancellationPolicy, ClassPolicy, ExecutionPhase, GovernorError,
     HeldCapacity, MemoryReleasePolicy, MemoryUnitScale, OverflowPolicy, ResourceBudget, RunError,
     Runtime, SubmitOptions, TaskClass, TaskScope, TaskSpec, TaskStage, TokioRuntime,
     TopologyConfig, TopologyError, PHYSICAL_CPU,
 };
-#[cfg(not(feature = "rayon"))]
-use taskmesh::PHYSICAL_SHARED_BLOCKING;
 
 /// The wire schema a 0.2.0 consumer must expect. The literal is the consumer's
 /// own knowledge (what its deserializer was written against); the facade's
@@ -926,7 +926,8 @@ fn memory_outcomes() {
     let policy = PolicySet::new(ResourceBudget::new().cpu_units(8).memory_units(64), classes);
     let governor = Governor::new(policy, Arc::new(ManualClock::new(0))).expect("builds");
     let foreign = direct_governor();
-    let foreign_permit = match foreign.admit(&TaskSpec::io(retrieval()).operation("foreign-memory")) {
+    let foreign_permit = match foreign.admit(&TaskSpec::io(retrieval()).operation("foreign-memory"))
+    {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => {
             check!(false, "foreign memory permit admits, got {other:?}");
@@ -972,8 +973,7 @@ fn memory_outcomes() {
         "refusal frees nothing"
     );
     check!(
-        governor.release_stage_memory(foreign_permit, 1)
-            == StageReleaseOutcome::UnknownPermit,
+        governor.release_stage_memory(foreign_permit, 1) == StageReleaseOutcome::UnknownPermit,
         "stage release of a foreign permit"
     );
     // Explicit sequence numbers reject replayed stage events.

@@ -48,6 +48,8 @@ RAYON_SCOPES = (
     ),
 )
 RECIPE_FRAGMENTS = {
+    "fmt-check": ("uv run python tools/gates/execute_rust_fmt.py --check",),
+    "py-lint": ("uv run python tools/gates/execute_py_lint.py",),
     "test": (
         "uv run python tools/gates/execute_rust_tests.py",
     ),

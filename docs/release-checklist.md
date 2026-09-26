@@ -81,6 +81,11 @@ Run the registered recipes through `just`:
       its process exits 0. Python skip/xfail cases do not count as a passing
       `py-test` denominator. The Rust target census checks source files against
       Cargo metadata so disabled auto-discovery cannot hide tests or benches.
+      `fmt-check` discovers every Git-visible Cargo manifest, including the
+      separate fuzz and consumer-MSRV workspaces. `py-lint` enumerates every
+      Git-visible Python source rather than assuming all gate scripts live in
+      `tools/`. Hosted inventory-gate steps must invoke a single direct `just`
+      command so shell composition cannot mask a failing gate.
 - [ ] Remote `main` protection requires the single `required 16-gate verdict`
       check with an up-to-date branch. A PR run must inspect GitHub's synthetic
       merge SHA (`github.sha`), while the main push run inspects its commit SHA.
@@ -132,7 +137,7 @@ Run the registered recipes through `just`:
       not a pass)
 - [ ] `just bench-iai` on Linux — `status=QUALIFIED`. The first run for a given
       fingerprint (bench definition, deps, workspace bench profile, Cargo build
-      configuration/environment, toolchain, valgrind, runner) records a
+      configuration/environment, toolchain, valgrind, PATH runner binary) records a
       baseline and reports `BASELINE_CREATED`; the *next* run with the same
       fingerprint qualifies. A deliberately dispatched hosted reproduction may
       reuse its cache keyed by `tools/bench-iai.sh fingerprint`; ordinary local
@@ -143,6 +148,12 @@ Run the registered recipes through `just`:
       `.out` artifact in the runner summaries, without sharing an output path
       or aliasing one through a symlinked parent directory across cases. The
       gate refuses a symlinked `target` parent before touching its baseline store.
+      The final comparison re-derives each `Ir` total from current `.out` and
+      prior `.out.old` Callgrind files, binds both kinds of raw file to the
+      saved comparison manifest, and rejects a strict increase above the
+      reviewed `Ir=5.0` limit even if a runner exits zero. PATH runner version
+      and binary digest are part of compatibility; ambient baseline and case
+      filter overrides are refused.
       Linux Valgrind measurement and the >5% negative control remain required.
 - [ ] `uv run python tools/qualification/receipt.py collect --local-qualified
       --out target/qualification/local-receipt.json` from a clean local Linux

@@ -440,6 +440,20 @@ def test_a_gate_step_that_cannot_fail_the_job_is_reported(tmp_path: Path) -> Non
     assert vi.workflow_enforcement_problems(vi.WORKFLOWS, recipes) == [], gate_deps
 
 
+def test_gate_step_shell_composition_cannot_mask_a_failure() -> None:
+    for script in (
+        "just fmt-check | cat",
+        "if just fmt-check; then :; else :; fi",
+        "just fmt-check || printf failed",
+        "just fmt-check && echo done",
+    ):
+        document = {"jobs": {"gate": {"steps": [{"run": script}]}}}
+        problems = vi.unenforced_gate_steps(document, {"fmt-check"})
+        assert any("not a direct gate command" in problem for problem in problems), script
+    direct = {"jobs": {"gate": {"steps": [{"run": "just fmt-check"}]}}}
+    assert vi.unenforced_gate_steps(direct, {"fmt-check"}) == []
+
+
 def test_required_and_inventory_are_different_files() -> None:
     """If one file generated both, deleting a gate would delete its requirement."""
     assert vi.INVENTORY != vi.REQUIRED

@@ -12,10 +12,10 @@ default:
     @just --list
 
 fmt:
-    cargo fmt --all
+    uv run python tools/gates/execute_rust_fmt.py
 
 fmt-check:
-    cargo fmt --all --check
+    uv run python tools/gates/execute_rust_fmt.py --check
 
 check:
     # Keep the rayon-enabled documentation fixture from feature-unifying the
@@ -65,7 +65,7 @@ test-architecture:
     uv run python docs/plans/bugbash-sep-25-general/tickets/validate_scenario_evidence.py
 
 py-lint:
-    uv run ruff check --no-respect-gitignore tools
+    uv run python tools/gates/execute_py_lint.py
 
 py-test:
     uv run python tools/gates/execute_py_tests.py

@@ -21,6 +21,86 @@ def test_current_prompt_surfaces_pass() -> None:
     assert reports[-1] == "scoped Cursor rules: 2"
 
 
+@pytest.mark.parametrize("surface", ["CLAUDE.md", "AGENTS.override.md", ".cursorrules"])
+def test_unregistered_root_startup_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, surface: str
+) -> None:
+    (tmp_path / "AGENTS.md").write_text("project rules\n", encoding="utf-8")
+    (tmp_path / surface).write_text("competing rules\n", encoding="utf-8")
+    inventory = tmp_path / "inventory.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "startup": [{"path": "AGENTS.md", "max_bytes": 64, "max_lines": 4, "imports": []}],
+                "cursor_rules": [],
+                "generated": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(CHECK, "REPO", tmp_path)
+    monkeypatch.setattr(CHECK, "INVENTORY", inventory)
+    with pytest.raises(CHECK.PolicyError, match="unregistered startup"):
+        CHECK.check()
+
+
+def test_empty_startup_inventory_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inventory = tmp_path / "inventory.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "startup": [],
+                "cursor_rules": [],
+                "generated": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(CHECK, "REPO", tmp_path)
+    monkeypatch.setattr(CHECK, "INVENTORY", inventory)
+    with pytest.raises(CHECK.PolicyError, match="must include AGENTS.md"):
+        CHECK.check()
+
+
+@pytest.mark.parametrize("budget", [True, 0, -1])
+def test_invalid_startup_budget_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, budget: object
+) -> None:
+    (tmp_path / "AGENTS.md").write_text("", encoding="utf-8")
+    monkeypatch.setattr(CHECK, "REPO", tmp_path)
+    with pytest.raises(CHECK.PolicyError, match="startup budgets must be"):
+        CHECK._check_startup(
+            [
+                {"path": "AGENTS.md", "max_bytes": budget, "max_lines": 4, "imports": []},
+            ]
+        )
+
+
+@pytest.mark.parametrize("cycle", [False, True])
+def test_eager_import_must_be_inventoried_and_acyclic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cycle: bool
+) -> None:
+    (tmp_path / "AGENTS.md").write_text("@extra.md\n", encoding="utf-8")
+    (tmp_path / "extra.md").write_text("@AGENTS.md\n" if cycle else "rules\n", encoding="utf-8")
+    entries = [{"path": "AGENTS.md", "max_bytes": 64, "max_lines": 4, "imports": ["extra.md"]}]
+    if cycle:
+        entries.append(
+            {
+                "path": "extra.md",
+                "max_bytes": 64,
+                "max_lines": 4,
+                "imports": ["AGENTS.md"],
+            }
+        )
+    monkeypatch.setattr(CHECK, "REPO", tmp_path)
+    with pytest.raises(CHECK.PolicyError, match="cycle" if cycle else "not inventoried"):
+        CHECK._check_startup(entries)
+
+
 def test_inventory_must_be_repository_owned_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -28,7 +108,7 @@ def test_inventory_must_be_repository_owned_file(
     repo.mkdir()
     external = tmp_path / "inventory.json"
     external.write_text(
-        json.dumps({"schema_version": 1, "startup": [], "cursor_rules": []}),
+        json.dumps({"schema_version": 2, "startup": [], "cursor_rules": [], "generated": []}),
         encoding="utf-8",
     )
     inventory = repo / "inventory.json"

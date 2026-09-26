@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "startup": [
     {
       "path": "AGENTS.md",
@@ -47,6 +47,23 @@
         "tools/tsan/**",
         "tools/verification/**"
       ]
+    }
+  ],
+  "generated": [
+    {
+      "path": "AGENTS.md",
+      "max_bytes": 4096,
+      "max_lines": 80
+    },
+    {
+      "path": ".cursor/rules/runtime-governance.mdc",
+      "max_bytes": 3072,
+      "max_lines": 60
+    },
+    {
+      "path": ".cursor/rules/verification-and-release.mdc",
+      "max_bytes": 4096,
+      "max_lines": 80
     }
   ]
 }

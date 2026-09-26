@@ -24,11 +24,13 @@ alwaysApply: false
 
 # Verification and release
 
-- Treat `tools/gates/inventory.json` and `tools/gates/required.json` as the gate inventory and
-  required-set authorities. Keep recipe, inventory, workflow, and validation changes explicit.
-- Use the relevant section of `docs/release-checklist.md`; do not load historical plans or
-  receipts unless the task names them.
-- A focused test, static check, or diagnostic subset is not a qualification receipt. Preserve
-  the repository's exact-source and clean-tree requirements when changing proof producers.
-- Add expensive work only to the explicit qualification path. Keep the laptop edit loop
-  purpose-scoped and bounded.
+Read relevant sections only when the change meets a route condition.
+
+<!-- pm:routes:start -->
+- Gate wiring changes: `tools/gates/inventory.json`; `tools/gates/required.json`.
+- Evidence producer or receipt changes: `docs/adr/0006-source-bound-verification-authority.md`
+  (section: Decision).
+- Release decisions: `docs/release-checklist.md`.
+- Benchmark or measurement changes: `docs/adr/9000-benchmark-strategy.md`.
+- Selecting checks for changed owner paths: `Justfile`.
+<!-- pm:routes:end -->

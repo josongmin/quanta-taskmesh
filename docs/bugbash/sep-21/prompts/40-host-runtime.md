@@ -78,7 +78,7 @@ sleep/yield timing test, spawn 후 취소, arbitrary nonzero default, hidden que
 
 ## handoff
 
-H01-A01~A06, H03-A01~A06, H02-A01~A06을 각각 증거에 연결한다.
+H01-A01~A05, H03-A01~A06, H02-A01~A06을 각각 증거에 연결한다.
 
 ```text
 signal: HOST_LANE_CLOSED

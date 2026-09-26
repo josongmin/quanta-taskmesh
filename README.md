@@ -536,7 +536,7 @@ lease를 돌려준다 — 그 뒤로는 `release_leased(token)`만 permit을 끝
 
 문서:
 
-1. [RFC](docs/rfcs/0001-governed-runtime.md)
+1. [SDK DX와 확장성 제안 — SEP-27 (Proposed)](docs/rfc/sep-27-sdk-dx-extensibility.md)
 2. [Library Spec](docs/taskmesh-library-spec.md)
 3. [External Interface](docs/taskmesh-external-interface.md)
 4. [Accepted ADR index](docs/adr/README.md)

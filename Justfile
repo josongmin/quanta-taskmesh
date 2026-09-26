@@ -73,6 +73,10 @@ py-test:
 prompt-check:
     uv run python tools/pm/check.py
 
+# Explicit synchronization; check/CI never rewrites instruction surfaces.
+prompt-build:
+    uv run python tools/pm/build.py
+
 # Targeted Python tooling checks. Keep lint-only and test-only edits separate;
 # `dev-python-fast` is the convenience path when both changed.
 dev-python-lint *files:

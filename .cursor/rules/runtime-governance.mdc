@@ -9,12 +9,16 @@ alwaysApply: false
 
 # Runtime governance
 
-- Locate the owning crate before editing: contract owns public vocabulary and ports, engine
-  owns governance decisions, taskmesh owns host adapters, and taskmesh-rayon owns the Rayon
-  adapter.
-- Read `docs/adr/0001-hexagonal-feature-sliced-architecture.md` only for crate or dependency
-  boundary changes.
-- For public API changes, read the relevant part of `docs/taskmesh-library-spec.md`; for wire or
-  external behavior, use `docs/taskmesh-external-interface.md`.
-- Run the owning crate's focused tests first. Broaden verification only when the changed
-  surface crosses crate boundaries or a required gate demands it.
+Read relevant sections only when the change meets a route condition.
+
+<!-- pm:routes:start -->
+- Crate or dependency boundary changes:
+  `docs/adr/0001-hexagonal-feature-sliced-architecture.md`.
+- Public API changes: `docs/taskmesh-library-spec.md`.
+- Stages, wire or external behavior changes: `docs/taskmesh-external-interface.md`.
+- Untrusted ingress or plan identity changes:
+  `docs/adr/0004-sep-25-ingress-plan-identity-and-wire.md` (section: Decision).
+- Executor, cancellation, deadline or drain changes:
+  `docs/adr/0005-sep-25-execution-response-and-custody.md` (section: Decision).
+- Selecting checks for changed owner paths: `Justfile`.
+<!-- pm:routes:end -->

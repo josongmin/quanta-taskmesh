@@ -24,9 +24,9 @@
       "topology_scope": "declared CPU and blocking capacities; resolve at run time",
       "oracle_cells": ["E1"],
       "correctness_oracles": ["crates/taskmesh-engine/tests/hardening_policy_interactions.rs", "crates/taskmesh/tests/hardening_mixed_overload.rs"],
-      "current_artifacts": ["tools/bench/scenarios/h1-default-send-smoke.json"],
+      "current_artifacts": ["tools/bench/scenarios/h1-default-send-smoke.json", "tools/bench/scenarios/h1-blocking-rate-template.json", "tools/bench/scenario_grid.py"],
       "support": "partial",
-      "missing": "Existing three-offer mixed-path smoke is not a one-path rate sweep; closed-loop capacity mode and qualifying fixed-host runs are absent."
+      "missing": "One-path blocking template and deterministic absolute-rate expansion exist; no frozen multi-rate grid, IO/CPU templates, closed-loop capacity mode or qualifying fixed-host runs. The old three-offer mixed-path smoke is not a capacity point."
     },
     {
       "id": "H2",

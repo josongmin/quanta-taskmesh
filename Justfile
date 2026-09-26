@@ -169,6 +169,11 @@ bench:
 bench-host scenario raw summary calibration *ARGS:
     uv run python tools/bench/host_run.py {{scenario}} {{raw}} {{summary}} {{calibration}} {{ARGS}}
 
+# Expand a one-offer template at an explicit absolute rate. This does not
+# freeze the comparison grid or establish any performance result.
+bench-scenario-rate template rate_per_second output:
+    uv run python tools/bench/scenario_grid.py {{template}} {{rate_per_second}} {{output}}
+
 # Null-work producer control for the same typed host scenario. Diagnostic only:
 # a valid control is necessary but does not qualify a host performance claim.
 bench-generator scenario raw *ARGS:

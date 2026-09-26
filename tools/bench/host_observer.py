@@ -93,7 +93,12 @@ def verify_bundle(bundle_bytes: bytes, directory: Path) -> dict[str, Any]:
 
 
 def acquire(
-    scenario: Path, calibration: Path, directory: Path, pairs: int, cadence_ms: int
+    scenario: Path,
+    calibration: Path,
+    directory: Path,
+    pairs: int,
+    cadence_ms: int,
+    features: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     if pairs < 1 or pairs > 50:
         raise host_perf.ReceiptError("Snapshot pairs must be 1..=50")
@@ -120,6 +125,7 @@ def acquire(
                 str(artifact["raw"]),
                 str(artifact["summary"]),
                 str(calibration),
+                *(part for feature in features for part in ("--feature", feature)),
             ],
             cwd=host_perf.REPO,
             capture_output=True,
@@ -169,10 +175,16 @@ def main() -> int:
     parser.add_argument("directory", type=Path)
     parser.add_argument("--pairs", type=int, default=1)
     parser.add_argument("--snapshot-ms", type=int, required=True)
+    parser.add_argument("--feature", action="append", default=[])
     args = parser.parse_args()
     try:
         bundle = acquire(
-            args.scenario, args.calibration, args.directory, args.pairs, args.snapshot_ms
+            args.scenario,
+            args.calibration,
+            args.directory,
+            args.pairs,
+            args.snapshot_ms,
+            tuple(args.feature),
         )
         print(
             f"SNAPSHOT_DIAGNOSTIC performance=UNQUALIFIED runs={len(bundle['runs'])} "

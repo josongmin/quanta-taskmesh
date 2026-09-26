@@ -113,7 +113,13 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
     return bundle
 
 
-def acquire(scenario: Path, calibration: Path, directory: Path, pairs: int) -> dict[str, Any]:
+def acquire(
+    scenario: Path,
+    calibration: Path,
+    directory: Path,
+    pairs: int,
+    features: tuple[str, ...] = (),
+) -> dict[str, Any]:
     if pairs < 1 or pairs > 50:
         raise host_perf.ReceiptError("A/A pairs must be 1..=50")
     directory.mkdir(parents=True, exist_ok=False)
@@ -133,6 +139,7 @@ def acquire(scenario: Path, calibration: Path, directory: Path, pairs: int) -> d
                 str(artifact["raw"]),
                 str(artifact["summary"]),
                 str(calibration),
+                *(part for feature in features for part in ("--feature", feature)),
             ],
             cwd=host_perf.REPO,
             capture_output=True,
@@ -178,9 +185,12 @@ def main() -> int:
     parser.add_argument("calibration", type=Path)
     parser.add_argument("directory", type=Path)
     parser.add_argument("--pairs", type=int, default=1)
+    parser.add_argument("--feature", action="append", default=[])
     args = parser.parse_args()
     try:
-        bundle = acquire(args.scenario, args.calibration, args.directory, args.pairs)
+        bundle = acquire(
+            args.scenario, args.calibration, args.directory, args.pairs, tuple(args.feature)
+        )
         print(
             f"AA_DIAGNOSTIC performance=UNQUALIFIED runs={len(bundle['runs'])} "
             f"bundle={args.directory / 'aa-bundle.json'}"

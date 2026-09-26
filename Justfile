@@ -166,23 +166,23 @@ bench:
 
 # Diagnostic public-host run. Raw and summary paths must be fresh. The
 # calibration file is an explicit input; this command makes no timing claim.
-bench-host scenario raw summary calibration:
-    uv run python tools/bench/host_run.py {{scenario}} {{raw}} {{summary}} {{calibration}}
+bench-host scenario raw summary calibration *ARGS:
+    uv run python tools/bench/host_run.py {{scenario}} {{raw}} {{summary}} {{calibration}} {{ARGS}}
 
 # Null-work producer control for the same typed host scenario. Diagnostic only:
 # a valid control is necessary but does not qualify a host performance claim.
-bench-generator scenario raw:
-    uv run python tools/bench/generator_run.py {{scenario}} {{raw}}
+bench-generator scenario raw *ARGS:
+    uv run python tools/bench/generator_run.py {{scenario}} {{raw}} {{ARGS}}
 
 # Replay the exact finite schedule twice within the same injection window.
 # The v2 structural control bundle requires this separate generator artifact.
-bench-generator-above scenario raw:
-    uv run python tools/bench/generator_run.py {{scenario}} {{raw}} --rate-factor 2
+bench-generator-above scenario raw *ARGS:
+    uv run python tools/bench/generator_run.py {{scenario}} {{raw}} --rate-factor 2 {{ARGS}}
 
 # Same host executable/workload with per-request timestamps disabled. Counts
 # remain typed and bounded; response latency is unavailable by construction.
-bench-host-minimal scenario raw:
-    uv run python tools/bench/minimal_run.py {{scenario}} {{raw}}
+bench-host-minimal scenario raw *ARGS:
+    uv run python tools/bench/minimal_run.py {{scenario}} {{raw}} {{ARGS}}
 
 # Repeated fresh-process A/A study; output remains diagnostic until measured
 # generator/observer calibration and a predeclared noise policy are present.

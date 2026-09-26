@@ -134,7 +134,13 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
     return bundle
 
 
-def acquire(scenario: Path, calibration: Path, directory: Path, pairs: int) -> dict[str, Any]:
+def acquire(
+    scenario: Path,
+    calibration: Path,
+    directory: Path,
+    pairs: int,
+    features: tuple[str, ...] = (),
+) -> dict[str, Any]:
     if pairs < 1 or pairs > 50:
         raise host_perf.ReceiptError("recorder pairs must be 1..=50")
     scenario_bytes = scenario.read_bytes()
@@ -158,6 +164,7 @@ def acquire(scenario: Path, calibration: Path, directory: Path, pairs: int) -> d
                 str(artifact["raw"]),
                 str(artifact["summary"]),
                 str(calibration),
+                *(part for feature in features for part in ("--feature", feature)),
             ]
         else:
             command = [
@@ -165,6 +172,7 @@ def acquire(scenario: Path, calibration: Path, directory: Path, pairs: int) -> d
                 str(Path(__file__).with_name("minimal_run.py")),
                 str(scenario),
                 str(artifact["raw"]),
+                *(part for feature in features for part in ("--feature", feature)),
             ]
         result = subprocess.run(
             command, cwd=host_perf.REPO, capture_output=True, text=True, check=False
@@ -208,9 +216,12 @@ def main() -> int:
     parser.add_argument("calibration", type=Path)
     parser.add_argument("directory", type=Path)
     parser.add_argument("--pairs", type=int, default=1)
+    parser.add_argument("--feature", action="append", default=[])
     args = parser.parse_args()
     try:
-        bundle = acquire(args.scenario, args.calibration, args.directory, args.pairs)
+        bundle = acquire(
+            args.scenario, args.calibration, args.directory, args.pairs, tuple(args.feature)
+        )
         print(
             f"RECORDER_DIAGNOSTIC performance=UNQUALIFIED runs={len(bundle['runs'])} "
             f"bundle={args.directory / 'recorder-bundle.json'}"

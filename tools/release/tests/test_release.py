@@ -484,12 +484,14 @@ def iai_release_fixture(tmp_path: Path) -> tuple[dict, dict, dict, str]:
     runner = gate["iai_callgrind_runner"]
     valgrind = "valgrind-3.22"
     rustc = "rustc 1.95.0\nhost: x86_64-unknown-linux-gnu"
+    build_context = receipt.iai_gate.cargo_build_context(tmp_path)
     fingerprint = receipt.iai_gate.fingerprint(
         [tmp_path / name for name in gate["fingerprint_inputs"]],
         gate["measurement_schema"],
         runner,
         valgrind,
         rustc,
+        build_context=build_context,
     )
     status, problems = receipt.iai_gate.finalize_run(
         store,
@@ -497,6 +499,7 @@ def iai_release_fixture(tmp_path: Path) -> tuple[dict, dict, dict, str]:
         runner=runner,
         valgrind=valgrind,
         rustc=rustc,
+        build_context=build_context,
         expected_comparison=True,
     )
     assert (status, problems) == ("QUALIFIED", [])
@@ -518,6 +521,15 @@ def test_release_iai_raw_semantics_match_current_source_and_ordinary_gate(tmp_pa
         return receipt.iai_raw_problems(tmp_path, baseline, comparison, output_ref, line)
 
     assert check() == []
+
+    changed_context = deepcopy(comparison)
+    changed_context["build_context"]["environment"]["RUSTFLAGS"] = "-C opt-level=0"
+    assert any(
+        "build context" in reason
+        for reason in receipt.iai_raw_problems(
+            tmp_path, baseline, changed_context, output_ref, line
+        )
+    )
 
     bad = deepcopy(comparison)
     bad["cases"] = bad["cases"][:-1]

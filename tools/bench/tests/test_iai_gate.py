@@ -27,6 +27,7 @@ sys.path.insert(0, str(HELPER.parent))
 import iai_gate  # noqa: E402
 
 RUNNER_VERSION = iai_gate.gate_config()["iai_callgrind_runner"]
+EMPTY_BUILD_CONTEXT = {"environment": {}, "cargo_configs": {}}
 
 # This module validates the Linux-only IAI qualification producer, including
 # its shell/toolchain boundary. Full `py-test` retains it; the macOS daily
@@ -85,7 +86,10 @@ def test_fingerprint_changes_with_every_compatibility_input(tmp_path: Path) -> N
         ("runner", "0.14.3"),
         ("valgrind", "valgrind-3.23"),
         ("rustc", "rustc 1.96.0"),
-        ("build_context", {"environment": {"RUSTFLAGS": "-C opt-level=0"}}),
+        (
+            "build_context",
+            {"environment": {"RUSTFLAGS": "-C opt-level=0"}, "cargo_configs": {}},
+        ),
     ]:
         assert iai_gate.fingerprint(**{**base, key: value}) != reference, key
     bench.write_text("fn main() { let _ = 1; }\n")
@@ -189,6 +193,7 @@ def test_manifest_rejects_a_baseline_artifact_outside_the_store(tmp_path: Path) 
         "runner": "0.14.2",
         "valgrind": "valgrind-3.22",
         "rustc": "rustc 1.95.0",
+        "build_context": EMPTY_BUILD_CONTEXT,
         "config_sha256": iai_gate._sha256(iai_gate.CONFIG),
         "artifacts": [
             {
@@ -205,6 +210,7 @@ def test_manifest_rejects_a_baseline_artifact_outside_the_store(tmp_path: Path) 
         runner="0.14.2",
         valgrind="valgrind-3.22",
         rustc="rustc 1.95.0",
+        build_context=EMPTY_BUILD_CONTEXT,
     )
     assert "baseline artifact '../outside.out' escapes the baseline store" in problems
 
@@ -254,6 +260,7 @@ def test_comparison_requires_real_instruction_counts_and_keeps_baseline_on_failu
         runner="0.14.2",
         valgrind="valgrind-3.22",
         rustc="rustc 1.95.0",
+        build_context=EMPTY_BUILD_CONTEXT,
         expected_comparison=True,
     )
     assert status == "NOT_RUN"
@@ -281,6 +288,7 @@ def test_first_run_without_raw_callgrind_output_cannot_create_a_baseline(tmp_pat
         runner="0.14.2",
         valgrind="valgrind-3.22",
         rustc="rustc 1.95.0",
+        build_context=EMPTY_BUILD_CONTEXT,
         expected_comparison=False,
     )
     assert status == "NOT_RUN"

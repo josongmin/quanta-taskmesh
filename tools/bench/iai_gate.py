@@ -30,7 +30,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 CONFIG = REPO / "tools" / "bench" / "perf-gate.json"
 RUNNER = "iai-callgrind-runner"
-BASELINE_MANIFEST_VERSION = 1
+BASELINE_MANIFEST_VERSION = 2
+COMPARISON_MANIFEST_VERSION = 2
 BASELINE_MANIFEST = "baseline-manifest.json"
 COMPARISON_MANIFEST = "comparison-manifest.json"
 
@@ -137,6 +138,23 @@ def cargo_build_context(root: Path) -> dict[str, object]:
     return {"environment": environment, "cargo_configs": dict(sorted(configs.items()))}
 
 
+def build_context_valid(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != {"environment", "cargo_configs"}:
+        return False
+    environment = value["environment"]
+    configs = value["cargo_configs"]
+    return (
+        isinstance(environment, dict)
+        and all(isinstance(key, str) and isinstance(item, str) for key, item in environment.items())
+        and isinstance(configs, dict)
+        and all(
+            isinstance(key, str) and isinstance(item, str)
+            and re.fullmatch(r"[0-9a-f]{64}", item) is not None
+            for key, item in configs.items()
+        )
+    )
+
+
 def fingerprint(
     inputs: list[Path], schema: object, runner: str, valgrind: str, rustc: str,
     *, build_context: dict[str, object],
@@ -148,6 +166,8 @@ def fingerprint(
         raise ValueError("fingerprint needs at least one input file")
     if not valgrind.strip() or not rustc.strip():
         raise ValueError("fingerprint needs non-empty valgrind and rustc descriptions")
+    if not build_context_valid(build_context):
+        raise ValueError("fingerprint needs a complete Cargo build context")
     digest = hashlib.sha256()
     for path in inputs:
         digest.update(f"{path.as_posix()}\n".encode())
@@ -217,6 +237,7 @@ def baseline_manifest_problems(
     runner: str,
     valgrind: str,
     rustc: str,
+    build_context: dict[str, object],
     config_path: Path = CONFIG,
 ) -> list[str]:
     path = root / BASELINE_MANIFEST
@@ -237,6 +258,7 @@ def baseline_manifest_problems(
         "runner": runner,
         "valgrind": valgrind.strip(),
         "rustc": rustc.strip(),
+        "build_context": build_context,
         "config_sha256": _sha256(config_path),
     }
     for key, value in expected.items():
@@ -407,8 +429,11 @@ def finalize_run(
     runner: str,
     valgrind: str,
     rustc: str,
+    build_context: dict[str, object],
     expected_comparison: bool,
 ) -> tuple[str, list[str]]:
+    if not build_context_valid(build_context):
+        return "NOT_RUN", ["Cargo build context is malformed"]
     inspection = inspect_summaries(root)
     selected = inspection["selected_count"]
     executed = inspection["executed_count"]
@@ -444,10 +469,11 @@ def finalize_run(
         problems.append("raw benchmark output is missing")
         status = "NOT_RUN"
     comparison = {
-        "schema_version": 1,
+        "schema_version": COMPARISON_MANIFEST_VERSION,
         "kind": "iai-callgrind-comparison",
         "status": status,
         "fingerprint": fingerprint_value,
+        "build_context": build_context,
         **inspection,
         "summary_artifacts": [
             _artifact(root / path, root)
@@ -473,6 +499,7 @@ def finalize_run(
         "runner": runner,
         "valgrind": valgrind.strip(),
         "rustc": rustc.strip(),
+        "build_context": build_context,
         "config_sha256": _sha256(CONFIG),
         "artifacts": artifacts,
     }
@@ -538,6 +565,7 @@ def main(argv: list[str] | None = None) -> int:
             runner=args.runner,
             valgrind=args.valgrind,
             rustc=args.rustc_file.read_text(encoding="utf-8"),
+            build_context=cargo_build_context(REPO),
         )
         if problems:
             print("; ".join(problems), file=sys.stderr)
@@ -550,6 +578,7 @@ def main(argv: list[str] | None = None) -> int:
             runner=args.runner,
             valgrind=args.valgrind,
             rustc=args.rustc_file.read_text(encoding="utf-8"),
+            build_context=cargo_build_context(REPO),
             expected_comparison=args.expected_comparison == "yes",
         )
         print(status)

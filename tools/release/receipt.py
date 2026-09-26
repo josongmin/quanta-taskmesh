@@ -130,7 +130,7 @@ def iai_raw_problems(
     if comparison.get("status") != "QUALIFIED":
         problems.append("IAI comparison status is not QUALIFIED")
     if (
-        comparison.get("schema_version") != 1
+        comparison.get("schema_version") != iai_gate.COMPARISON_MANIFEST_VERSION
         or comparison.get("kind") != "iai-callgrind-comparison"
     ):
         problems.append("IAI comparison manifest schema/kind mismatch")
@@ -175,8 +175,16 @@ def iai_raw_problems(
     ):
         problems.append("IAI baseline toolchain identity is missing or incompatible")
         return problems
+    build_context = baseline.get("build_context")
+    if (
+        not iai_gate.build_context_valid(build_context)
+        or comparison.get("build_context") != build_context
+    ):
+        problems.append("IAI build context is missing or differs between manifests")
+        return problems
     fingerprint = iai_gate.fingerprint(
-        input_paths, gate.get("measurement_schema"), runner, valgrind, rustc
+        input_paths, gate.get("measurement_schema"), runner, valgrind, rustc,
+        build_context=build_context,
     )
     if baseline.get("fingerprint") != fingerprint or comparison.get("fingerprint") != fingerprint:
         problems.append("IAI baseline/comparison fingerprint differs from current source")
@@ -211,6 +219,7 @@ def iai_raw_problems(
             runner=runner,
             valgrind=valgrind,
             rustc=rustc,
+            build_context=build_context,
             config_path=config_path,
         )
     )

@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -21,6 +20,7 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from tools.inspection import inspect_process, metadata_output, read_regular_bytes  # noqa: E402
 from tools.process_supervisor import run_process  # noqa: E402
 from tools.qualification.evidence import (  # noqa: E402
     canonical_bytes,  # noqa: F401 - compatibility re-export for callers
@@ -77,32 +77,27 @@ def utc_now() -> str:
 
 
 def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(read_regular_bytes(path)).hexdigest()
 
 
 tree_digest = source_tree_digest
 
 
 def git_head(repo: Path) -> str:
-    proc = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=False
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"git rev-parse failed: {proc.stderr.strip()}")
-    return proc.stdout.strip()
+    try:
+        return metadata_output(["git", "rev-parse", "HEAD"], cwd=repo).decode().strip()
+    except OSError as error:
+        raise RuntimeError(f"git rev-parse failed: {error}") from error
 
 
 def git_dirty(repo: Path) -> bool:
-    proc = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"git status failed: {proc.stderr.strip()}")
-    return bool(proc.stdout.strip())
+    try:
+        output = metadata_output(
+            ["git", "status", "--porcelain", "--untracked-files=all"], cwd=repo
+        )
+    except OSError as error:
+        raise RuntimeError(f"git status failed: {error}") from error
+    return bool(output.strip())
 
 
 @dataclass
@@ -145,13 +140,15 @@ class IsolatedCampaign:
 
 
 def create_isolated_campaign(repo: Path, *, parent: Path | None = None) -> IsolatedCampaign:
-    """Copy a stable current-source snapshot without reading or writing normal target state."""
+    """Copy stable source on the producer's main thread, preserving normal target state.
+
+    Concurrent producers use separate processes so each owns cancellation of its
+    metadata subprocesses. Worker threads cannot install Python signal handlers.
+    """
     repo = repo.resolve()
     head = git_head(repo)
     paths = git_source_paths(repo)
-    tracked = subprocess.run(
-        ["git", "ls-files", "--cached", "-z"], cwd=repo, capture_output=True, check=True
-    ).stdout
+    tracked = metadata_output(["git", "ls-files", "--cached", "-z"], cwd=repo)
     before = tree_digest(repo, paths)
     dirty = git_dirty(repo)
     campaign_id = uuid.uuid4().hex
@@ -177,17 +174,13 @@ def create_isolated_campaign(repo: Path, *, parent: Path | None = None) -> Isola
         # must still distinguish it from committed files. Recreate only git's
         # tracked-file index locally; copying sources without an index makes
         # inventory tests fail before a mutation reaches its intended oracle.
-        subprocess.run(["git", "init", "-q"], cwd=source, check=True)
-        subprocess.run(
+        metadata_output(["git", "init", "-q"], cwd=source)
+        metadata_output(
             ["git", "add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"],
             cwd=source,
-            input=tracked,
-            capture_output=True,
-            check=True,
+            stdin_data=tracked,
         )
-        snapshot_tracked = subprocess.run(
-            ["git", "ls-files", "--cached", "-z"], cwd=source, capture_output=True, check=True
-        ).stdout
+        snapshot_tracked = metadata_output(["git", "ls-files", "--cached", "-z"], cwd=source)
         if snapshot_tracked != tracked:
             raise RuntimeError("isolated snapshot tracked-file index differs from source")
         target.mkdir()
@@ -239,7 +232,11 @@ class ProcessResult:
 
 
 def execute(
-    argv: list[str], *, cwd: Path, env: dict[str, str], timeout_seconds: int,
+    argv: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: int,
     abort_when: Callable[[], bool] | None = None,
 ) -> ProcessResult:
     """Run one process group and reap it on timeout or parent cancellation."""
@@ -266,8 +263,8 @@ def execute(
 
 
 def exact_tool_version(argv: list[str], *, cwd: Path) -> str:
-    proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False)
-    output = (proc.stdout or proc.stderr).strip()
+    proc = inspect_process(argv, cwd=cwd)
+    output = (proc.stdout or proc.stderr).decode("utf-8").strip()
     if proc.returncode != 0 or not output:
         raise RuntimeError(f"could not identify tool with {argv!r}: {output}")
     return output

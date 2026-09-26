@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import psutil
-from bench_process import PROBE_TIMEOUT_SECONDS, run_bench
+from acquisition_process import execution_record, run_acquisition
 
 
 class ProcessResourceSampler:
@@ -97,30 +97,31 @@ def sample_subprocess(
     cadence_ms: int = 250,
     *,
     sample_resources: bool = True,
-    timeout_seconds: float = PROBE_TIMEOUT_SECONDS,
+    timeout_seconds: float = 1800,
 ) -> tuple[int, int, str, dict[str, Any]]:
-    """Bound execution/capture and retain the measured probe PID and sample window."""
-    if type(cadence_ms) is not int or cadence_ms <= 0:
-        raise ValueError("cadence_ms must be a positive integer")
+    """Run an owned bounded child and sample that exact launched PID."""
     started_ns = time.monotonic_ns()
     started_epoch_ns = time.time_ns()
     boot_time_ns = round(psutil.boot_time() * 1_000_000_000)
     sampler = None
     pid = None
 
-    def started(child_pid: int) -> None:
+    def started(child) -> None:
         nonlocal sampler, pid
-        pid = child_pid
+        pid = child.pid
         if sample_resources:
             sampler = ProcessResourceSampler(pid, cadence_ms=cadence_ms)
             sampler.start()
 
     try:
-        result = run_bench(command, cwd=cwd, timeout_seconds=timeout_seconds, on_started=started)
+        result = run_acquisition(
+            command, cwd=cwd, timeout_seconds=timeout_seconds, on_started=started
+        )
     finally:
-        resources = sampler.stop() if sampler is not None else None
+        if sampler is not None:
+            resources = sampler.stop()
     assert pid is not None
-    if resources is None:
+    if sampler is None:
         resources = {
             "schema_version": 2,
             "status": "unavailable",
@@ -135,7 +136,21 @@ def sample_subprocess(
             "sampling_ended_epoch_ns": time.time_ns(),
             "samples": [],
         }
-    if result.returncode is None or result.returncode != 0:
+    resources["schema_version"] = 3
+    resources["execution"] = execution_record(result, timeout_seconds)
+    incomplete = (
+        result.returncode != 0
+        or result.timed_out
+        or result.interrupted_by_signal is not None
+        or result.aborted_early
+    )
+    code = result.returncode if result.returncode is not None else 1
+    if incomplete and code == 0:
+        code = 1
+    if incomplete:
         resources["status"] = "unavailable"
-        resources["reason"] = "probe execution failed: " + result.stderr[-1000:]
-    return result.returncode if result.returncode is not None else -1, pid, result.stderr, resources
+        resources["reason"] = "probe execution failed"
+    stderr = result.stderr
+    if incomplete and result.stdout:
+        stderr += "\nACQUISITION: partial stdout\n" + result.stdout
+    return code, pid, stderr, resources

@@ -8,7 +8,6 @@ Deadlines are execution safety limits, not performance budgets.
 from __future__ import annotations
 
 import math
-import os
 import sys
 from pathlib import Path
 from typing import Callable, Optional
@@ -16,7 +15,9 @@ from typing import Callable, Optional
 REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
-from tools.process_supervisor import SupervisedProcess, run_process  # noqa: E402
+from acquisition_process import run_acquisition  # noqa: E402
+
+from tools.process_supervisor import SupervisedProcess  # noqa: E402
 
 BUILD_TIMEOUT_SECONDS = 1800
 PROBE_TIMEOUT_SECONDS = 1800
@@ -41,14 +42,14 @@ def run_bench(
     ):
         raise ValueError("benchmark timeout_seconds must be finite and positive")
     try:
-        result = run_process(
+        started = (lambda process: on_started(process.pid)) if on_started is not None else None
+        result = run_acquisition(
             command,
             cwd=cwd,
-            env=os.environ.copy(),
             timeout_seconds=timeout_seconds,
             termination_grace_seconds=termination_grace_seconds,
-            on_started=on_started,
-            input_text=input_text,
+            on_started=started,
+            stdin_data=input_text.encode("utf-8") if input_text is not None else None,
         )
     except UnicodeError as error:
         raise OSError("benchmark capture is not valid text") from error

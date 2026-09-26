@@ -65,7 +65,7 @@ def test_probe_timeout_and_orphan_cleanup_never_pass(
 
 @pytest.mark.parametrize("timeout", [0, -1, True, float("nan"), float("inf")])
 def test_invalid_execution_deadline_rejects_before_launch(tmp_path: Path, timeout: object) -> None:
-    with pytest.raises(ValueError, match="finite and positive"):
+    with pytest.raises(ValueError, match="positive and finite"):
         sample_subprocess(["must-not-launch"], tmp_path, timeout_seconds=timeout)
 
 
@@ -131,7 +131,7 @@ def test_control_failure_retains_incomplete_bundle_and_stops_next_arm(
             signal.SIGTERM if failure == "interrupt" else None,
         )
 
-    monkeypatch.setattr(bench_process, "run_process", failed)
+    monkeypatch.setattr(host_aa, "run_acquisition", failed)
     directory = tmp_path / mode
     with pytest.raises(host_perf.ReceiptError, match="acquisition incomplete"):
         if mode == "aa":
@@ -154,8 +154,8 @@ def test_diagnostic_build_timeout_is_a_rejection(
 ) -> None:
     monkeypatch.delenv("TASKMESH_BENCH_BUILD_WITNESSES", raising=False)
     monkeypatch.setattr(
-        bench_process,
-        "run_process",
+        host_run,
+        "run_acquisition",
         lambda *a, **k: SupervisedProcess(0, "partial cargo output", "", True, None),
     )
     with pytest.raises(host_perf.ReceiptError, match="(?s)host runner build failed.*timeout"):

@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import math
 import os
+import selectors
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -137,7 +139,7 @@ def run_process_batch(commands: list[SupervisedCommand]) -> list[SupervisedBatch
         or command.timeout_seconds <= 0
         for command in commands
     ):
-        raise ValueError("timeout_seconds must be finite and positive")
+        raise ValueError("timeout_seconds must be positive")
     if not commands:
         return []
 
@@ -304,8 +306,9 @@ def run_process(
     timeout_seconds: float,
     termination_grace_seconds: float | None = None,
     abort_when: Callable[[], bool] | None = None,
-    on_started: Callable[[int], None] | None = None,
-    input_text: str | None = None,
+    on_started: Callable[[subprocess.Popen[str]], None] | None = None,
+    max_capture_bytes: int | None = None,
+    stdin_data: bytes | None = None,
     binary_output: bool = False,
 ) -> SupervisedProcess | SupervisedBinaryProcess:
     """Capture complete output and reap the owned process group on every exit path."""
@@ -314,7 +317,7 @@ def run_process(
         or not math.isfinite(timeout_seconds)
         or timeout_seconds <= 0
     ):
-        raise ValueError("timeout_seconds must be finite and positive")
+        raise ValueError("timeout_seconds must be positive")
     if termination_grace_seconds is None:
         termination_grace_seconds = TERMINATION_GRACE_SECONDS
     if (
@@ -322,14 +325,24 @@ def run_process(
         or not math.isfinite(termination_grace_seconds)
         or termination_grace_seconds <= 0
     ):
-        raise ValueError("termination_grace_seconds must be finite and positive")
+        raise ValueError("termination_grace_seconds must be positive")
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError("supervised processes must be launched from the main thread")
 
+    if max_capture_bytes is not None and (
+        type(max_capture_bytes) is not int or max_capture_bytes <= 0
+    ):
+        raise ValueError("max_capture_bytes must be a positive integer")
+    if stdin_data is not None and not isinstance(stdin_data, bytes):
+        raise ValueError("stdin_data must be bytes")
+    input_file = tempfile.TemporaryFile() if stdin_data is not None else None
+    if input_file is not None:
+        input_file.write(stdin_data)
+        input_file.seek(0)
+    capture_selector = selectors.DefaultSelector() if max_capture_bytes is not None else None
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
+    capture_overflow = False
     process: subprocess.Popen[str] | None = None
-    input_pipe = None
-    input_bytes = b""
-    input_offset = 0
     timed_out = False
     aborted_early = False
     interrupted_by_signal: int | None = None
@@ -366,23 +379,20 @@ def run_process(
             argv,
             cwd=cwd,
             env=env,
-            stdin=subprocess.PIPE if input_text is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            stdin=input_file,
             text=not binary_output,
             start_new_session=True,
         )
-        timeout_deadline = time.monotonic() + timeout_seconds
+        if capture_selector is not None:
+            for name, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):
+                assert pipe is not None
+                os.set_blocking(pipe.fileno(), False)
+                capture_selector.register(pipe, selectors.EVENT_READ, name)
         if on_started is not None:
-            on_started(process.pid)
-        if process.stdin is not None:
-            # communicate() cannot resume backpressured input with input=None:
-            # CPython no longer registers stdin after the first timed poll.
-            # Own a nonblocking writer separately from captured pipe draining.
-            input_pipe = process.stdin
-            input_bytes = input_text.encode("utf-8" if binary_output else input_pipe.encoding)
-            os.set_blocking(input_pipe.fileno(), False)
-            process.stdin = None
+            on_started(process)
+        timeout_deadline = time.monotonic() + timeout_seconds
         if interrupted_by_signal is not None:
             signal_group(signal.SIGTERM)
             if termination_deadline is None:
@@ -410,33 +420,11 @@ def run_process(
                 not timed_out
                 and not aborted_early
                 and interrupted_by_signal is None
-                and abort_when is not None
-                and abort_when()
+                and (capture_overflow or (abort_when is not None and abort_when()))
             ):
                 aborted_early = True
                 signal_group(signal.SIGTERM)
                 termination_deadline = now + termination_grace_seconds
-
-            if input_pipe is not None:
-                if timed_out or aborted_early or interrupted_by_signal is not None:
-                    input_pipe.close()
-                    input_pipe = None
-                else:
-                    while input_offset < len(input_bytes):
-                        try:
-                            count = os.write(
-                                input_pipe.fileno(),
-                                input_bytes[input_offset : input_offset + 65536],
-                            )
-                        except BlockingIOError:
-                            break
-                        except BrokenPipeError:
-                            input_offset = len(input_bytes)
-                            break
-                        input_offset += count
-                    if input_offset == len(input_bytes):
-                        input_pipe.close()
-                        input_pipe = None
 
             deadlines = (
                 [timeout_deadline]
@@ -450,9 +438,26 @@ def run_process(
                 if deadlines
                 else POLL_INTERVAL_SECONDS
             )
-            wait_seconds = min(
-                0.001 if input_pipe is not None else POLL_INTERVAL_SECONDS, until_deadline
-            )
+            wait_seconds = min(POLL_INTERVAL_SECONDS, until_deadline)
+            if capture_selector is not None:
+                for key, _events in capture_selector.select(wait_seconds):
+                    chunk = os.read(key.fileobj.fileno(), 65536)
+                    if not chunk:
+                        capture_selector.unregister(key.fileobj)
+                        continue
+                    remaining = max_capture_bytes - sum(len(value) for value in captured.values())
+                    captured[key.data].extend(chunk[: max(0, remaining)])
+                    if len(chunk) > remaining:
+                        capture_overflow = True
+                leader_done = process.poll() is not None
+                if leader_done and not capture_selector.get_map():
+                    break
+                if hard_stop:
+                    if capture_selector.get_map():
+                        captured["stderr"].extend(OPEN_CAPTURE_DIAGNOSTIC.encode())
+                    _finish_leader_after_pipe_abort(process)
+                    break
+                continue
             try:
                 stdout, stderr = process.communicate(timeout=wait_seconds)
                 break
@@ -460,13 +465,26 @@ def run_process(
                 if hard_stop:
                     if binary_output:
                         stdout, stderr = exc.stdout or b"", exc.stderr or b""
-                        stderr += OPEN_CAPTURE_DIAGNOSTIC.encode()
                     else:
                         stdout, stderr = _partial_text(exc.stdout), _partial_text(exc.stderr)
-                        stderr += OPEN_CAPTURE_DIAGNOSTIC
+                    stderr += (
+                        OPEN_CAPTURE_DIAGNOSTIC.encode()
+                        if binary_output
+                        else OPEN_CAPTURE_DIAGNOSTIC
+                    )
                     _finish_leader_after_pipe_abort(process)
                     break
                 continue
+        if capture_selector is not None:
+            stdout = bytes(captured["stdout"])
+            stderr = bytes(captured["stderr"])
+            if not binary_output:
+                stdout = stdout.decode(errors="replace")
+                stderr = stderr.decode(errors="replace")
+            if capture_overflow:
+                diagnostic = "\nSUPERVISOR: capture byte limit exceeded\n"
+                stderr += diagnostic.encode() if binary_output else diagnostic
+                aborted_early = True
         cleanup = _kill_remaining_group(process.pid)
         if cleanup != "absent":
             diagnostic = (
@@ -497,17 +515,22 @@ def run_process(
                 _kill_remaining_group(process.pid)
         raise
     finally:
-        if input_pipe is not None:
-            input_pipe.close()
+        if input_file is not None:
+            input_file.close()
+        if capture_selector is not None:
+            capture_selector.close()
+            if process is not None:
+                _close_capture_pipes(process)
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
 
     assert process is not None
     result_type = SupervisedBinaryProcess if binary_output else SupervisedProcess
+    empty = b"" if binary_output else ""
     return result_type(
         returncode=None if orphaned_group else process.returncode,
-        stdout=stdout,
-        stderr=stderr,
+        stdout=stdout or empty,
+        stderr=stderr or empty,
         timed_out=timed_out,
         interrupted_by_signal=interrupted_by_signal,
         aborted_early=aborted_early,

@@ -12,4 +12,4 @@ if [ -n "${MAX_ALLOCS_PER_OP+set}" ]; then
   echo "bench-gate: MAX_ALLOCS_PER_OP cannot override the reviewed threshold" >&2
   exit 2
 fi
-exec python3 tools/bench/allocation_gate.py "$@"
+exec uv run python tools/bench/allocation_gate.py "$@"

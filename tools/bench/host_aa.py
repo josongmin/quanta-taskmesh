@@ -4,17 +4,18 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 import host_perf
-from bench_process import run_control
-from host_run import retain_control_bundle
+from acquisition_process import deadline, run_acquisition
+from host_run import retain_control_bundle, write_new
 
 from tools.inspection import read_regular_bytes
 
-BUNDLE_VERSION = 1
+BUNDLE_VERSION = 2
 RUN_KEYS = {
     "index",
     "pair",
@@ -27,6 +28,162 @@ RUN_KEYS = {
     "resources_sha256",
     "metrics",
 }
+
+
+def validate_timeout(timeout_seconds: float) -> None:
+    try:
+        deadline(timeout_seconds)
+    except ValueError as error:
+        raise host_perf.ReceiptError(
+            "control timeout_seconds must be positive and finite"
+        ) from error
+
+
+def execution_paths(directory: Path, index: int) -> dict[str, Path]:
+    return {
+        name: directory / f"run-{index:03d}.{name}"
+        for name in ("stdout", "stderr", "execution.json")
+    }
+
+
+def execute_arm(
+    directory: Path,
+    index: int,
+    command: list[str],
+    timeout_seconds: float,
+    *,
+    not_launched: str | None = None,
+) -> tuple[dict, str | None]:
+    """Retain every planned terminal, including the arms stopped after failure."""
+    stdout, stderr, code, timed_out, signum, aborted = "", "", None, False, None, False
+    reason = not_launched
+    if reason is None:
+        try:
+            process = run_acquisition(command, cwd=host_perf.REPO, timeout_seconds=timeout_seconds)
+            stdout, stderr = process.stdout, process.stderr
+            code, timed_out = process.returncode, process.timed_out
+            signum, aborted = process.interrupted_by_signal, process.aborted_early
+            if timed_out:
+                reason = f"control timeout after {timeout_seconds}s"
+            elif signum is not None:
+                reason = f"control interrupted by signal {signum}"
+            elif aborted or code != 0:
+                reason = (
+                    f"control execution failed: exit={code}, aborted={aborted}: {stderr[-1000:]}"
+                )
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            reason = f"control launch failed: {error}"
+    status = "not_launched" if not_launched else "failed" if reason else "completed"
+    paths = execution_paths(directory, index)
+    out, err = stdout.encode(), stderr.encode()
+    write_new(paths["stdout"], out)
+    write_new(paths["stderr"], err)
+    body = (
+        host_perf.canonical(
+            {
+                "schema_version": 1,
+                "index": index,
+                "status": status,
+                "reason": reason,
+                "command": command,
+                "timeout_seconds": timeout_seconds,
+                "returncode": code,
+                "timed_out": timed_out,
+                "interrupted_by_signal": signum,
+                "aborted_early": aborted,
+                "stdout_sha256": host_perf.sha256(out),
+                "stderr_sha256": host_perf.sha256(err),
+            }
+        )
+        + b"\n"
+    )
+    write_new(paths["execution.json"], body)
+    return {"index": index, "status": status, "execution_sha256": host_perf.sha256(body)}, reason
+
+
+def validate_executions(bundle: dict, directory: Path, runs: list) -> None:
+    validate_timeout(bundle["timeout_seconds"])
+    expected = bundle["expected_runs"]
+    if type(expected) is not int or expected != len(runs):
+        raise host_perf.ReceiptError("control execution population differs from planned runs")
+    executions = bundle["executions"]
+    if not isinstance(executions, list) or len(executions) != expected:
+        raise host_perf.ReceiptError("control execution population is incomplete")
+    for index, recorded in enumerate(executions):
+        if not isinstance(recorded, dict):
+            raise host_perf.ReceiptError("control execution reference must be an object")
+        host_perf.exact_keys(
+            recorded, {"index", "status", "execution_sha256"}, "execution reference"
+        )
+        paths = execution_paths(directory, index)
+        if any(path.is_symlink() or not path.is_file() for path in paths.values()):
+            raise host_perf.ReceiptError("control execution evidence requires regular owned files")
+        data = read_regular_bytes(paths["execution.json"])
+        row = host_perf.parse_object(data, "control execution")
+        host_perf.exact_keys(
+            row,
+            {
+                "schema_version",
+                "index",
+                "status",
+                "reason",
+                "command",
+                "timeout_seconds",
+                "returncode",
+                "timed_out",
+                "interrupted_by_signal",
+                "aborted_early",
+                "stdout_sha256",
+                "stderr_sha256",
+            },
+            "control execution",
+        )
+        validate_timeout(row["timeout_seconds"])
+        if (
+            type(recorded["index"]) is not int
+            or recorded
+            != {"index": index, "status": "completed", "execution_sha256": host_perf.sha256(data)}
+            or type(row["schema_version"]) is not int
+            or row["schema_version"] != 1
+            or type(row["index"]) is not int
+            or row["index"] != index
+            or row["status"] != "completed"
+            or row["reason"] is not None
+            or type(row["returncode"]) is not int
+            or row["returncode"] != 0
+            or row["timed_out"] is not False
+            or row["aborted_early"] is not False
+            or row["interrupted_by_signal"] is not None
+            or row["timeout_seconds"] != bundle["timeout_seconds"]
+        ):
+            raise host_perf.ReceiptError("control execution terminal differs or is unsuccessful")
+        command = row["command"]
+        if (
+            not isinstance(command, list)
+            or len(command) < 4
+            or any(not isinstance(arg, str) or not arg for arg in command)
+            or Path(command[1]).name
+            != ("minimal_run.py" if runs[index].get("mode") == "minimal" else "host_run.py")
+            or Path(command[3]).resolve() != paths_for_raw(directory, index).resolve()
+        ):
+            raise host_perf.ReceiptError("control execution command differs from indexed arm")
+        for name in ("stdout", "stderr"):
+            if host_perf.sha256(read_regular_bytes(paths[name])) != row[f"{name}_sha256"]:
+                raise host_perf.ReceiptError("control execution capture changed")
+
+
+def paths_for_raw(directory: Path, index: int) -> Path:
+    return paths(directory, index)["raw"]
+
+
+def account_unlaunched(
+    directory: Path, executions: list, failures: list, expected: int, timeout_seconds: float
+) -> None:
+    for index in range(len(executions), expected):
+        reason = f"not launched after failed arm {failures[0]['index']}"
+        terminal, _ = execute_arm(directory, index, [], timeout_seconds, not_launched=reason)
+        executions.append(terminal)
+        failures.append({"index": index, "reason": reason})
 
 
 def paths(directory: Path, index: int) -> dict[str, Path]:
@@ -121,10 +278,17 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
             "identity",
             "runs",
             "failures",
+            "expected_runs",
+            "timeout_seconds",
+            "executions",
         },
         "A/A bundle",
     )
-    if bundle["schema_version"] != BUNDLE_VERSION or bundle["kind"] != "same_binary_aa":
+    if (
+        type(bundle["schema_version"]) is not int
+        or bundle["schema_version"] != BUNDLE_VERSION
+        or bundle["kind"] != "same_binary_aa"
+    ):
         raise host_perf.ReceiptError("unsupported A/A bundle")
     if bundle["status"] != "diagnostic_complete" or bundle["failures"] != []:
         raise host_perf.ReceiptError("A/A bundle is incomplete")
@@ -133,6 +297,7 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
     runs = bundle["runs"]
     if not isinstance(runs, list) or len(runs) < 2 or len(runs) % 2:
         raise host_perf.ReceiptError("A/A run population must contain complete pairs")
+    validate_executions(bundle, directory, runs)
     host_perf.validate_identity(bundle["identity"])
     for index, recorded in enumerate(runs):
         if not isinstance(recorded, dict):
@@ -153,19 +318,25 @@ def acquire(
     directory: Path,
     pairs: int,
     features: tuple[str, ...] = (),
+    *,
+    timeout_seconds: float = 1800,
 ) -> dict[str, Any]:
+    validate_timeout(timeout_seconds)
     if pairs < 1 or pairs > 50:
         raise host_perf.ReceiptError("A/A pairs must be 1..=50")
     directory.mkdir(parents=True, exist_ok=False)
     scenario_bytes = read_regular_bytes(scenario)
     host_perf.parse_object(scenario_bytes, "scenario")
     runs = []
+    executions = []
     failures = []
     common_identity = None
     common_binary = None
     for index in range(pairs * 2):
         artifact = paths(directory, index)
-        result = run_control(
+        terminal, reason = execute_arm(
+            directory,
+            index,
             [
                 sys.executable,
                 str(Path(__file__).with_name("host_run.py")),
@@ -175,10 +346,11 @@ def acquire(
                 str(calibration),
                 *(part for feature in features for part in ("--feature", feature)),
             ],
-            cwd=host_perf.REPO,
+            timeout_seconds,
         )
-        if result.returncode != 0:
-            failures.append({"index": index, "reason": result.stderr[-1000:]})
+        executions.append(terminal)
+        if reason:
+            failures.append({"index": index, "reason": reason})
             break
         try:
             row, identity = verified_run(directory, index, scenario_bytes)
@@ -192,6 +364,7 @@ def acquire(
             failures.append({"index": index, "reason": "A/A source, host or binary changed"})
             break
         runs.append(row)
+    account_unlaunched(directory, executions, failures, pairs * 2, timeout_seconds)
     bundle = {
         "schema_version": BUNDLE_VERSION,
         "kind": "same_binary_aa",
@@ -201,6 +374,9 @@ def acquire(
         "identity": common_identity,
         "runs": runs,
         "failures": failures,
+        "expected_runs": pairs * 2,
+        "timeout_seconds": timeout_seconds,
+        "executions": executions,
     }
     retain_control_bundle(
         directory / "aa-bundle.json",
@@ -218,10 +394,16 @@ def main() -> int:
     parser.add_argument("directory", type=Path)
     parser.add_argument("--pairs", type=int, default=1)
     parser.add_argument("--feature", action="append", default=[])
+    parser.add_argument("--timeout-seconds", type=float, default=1800)
     args = parser.parse_args()
     try:
         bundle = acquire(
-            args.scenario, args.calibration, args.directory, args.pairs, tuple(args.feature)
+            args.scenario,
+            args.calibration,
+            args.directory,
+            args.pairs,
+            tuple(args.feature),
+            timeout_seconds=args.timeout_seconds,
         )
         print(
             f"AA_DIAGNOSTIC performance=UNQUALIFIED runs={len(bundle['runs'])} "

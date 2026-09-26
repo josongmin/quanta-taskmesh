@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -45,7 +46,12 @@ def run_gate(
 ) -> subprocess.CompletedProcess[str]:
     captured = tmp_path / "producer.txt"
     captured.write_text(output, encoding="utf-8")
-    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path)}
+    uv = shutil.which("uv")
+    assert uv is not None, "allocation entrypoint requires the declared uv runtime"
+    env = {
+        "PATH": str(Path(uv).parent) + os.pathsep + "/usr/bin:/bin:/usr/local/bin",
+        "HOME": str(tmp_path),
+    }
     if threshold is not None:
         env["MAX_ALLOCS_PER_OP"] = threshold
     return subprocess.run(
@@ -68,32 +74,24 @@ def test_below_limit_passes(tmp_path: Path) -> None:
 
 
 def test_equal_to_limit_passes(tmp_path: Path) -> None:
-    proc = run_gate(
-        metric_line(allocs_per_op="8.000", total_allocations=1600000), tmp_path
-    )
+    proc = run_gate(metric_line(allocs_per_op="8.000", total_allocations=1600000), tmp_path)
     assert proc.returncode == 0, proc.stderr
 
 
 def test_above_limit_fails_with_the_numbers(tmp_path: Path) -> None:
-    proc = run_gate(
-        metric_line(allocs_per_op="9.000", total_allocations=1800000), tmp_path
-    )
+    proc = run_gate(metric_line(allocs_per_op="9.000", total_allocations=1800000), tmp_path)
     assert proc.returncode == 1
     assert "exceeds baseline 8" in proc.stderr
 
 
 def test_one_allocation_above_baseline_fails_despite_rounded_average(tmp_path: Path) -> None:
-    proc = run_gate(
-        metric_line(allocs_per_op="8.000", total_allocations=1600001), tmp_path
-    )
+    proc = run_gate(metric_line(allocs_per_op="8.000", total_allocations=1600001), tmp_path)
     assert proc.returncode == 1
     assert "1600001 allocations" in proc.stderr
 
 
 def test_total_and_reported_average_must_agree(tmp_path: Path) -> None:
-    proc = run_gate(
-        metric_line(allocs_per_op="3.000", total_allocations=1600000), tmp_path
-    )
+    proc = run_gate(metric_line(allocs_per_op="3.000", total_allocations=1600000), tmp_path)
     assert proc.returncode == 1
     assert "disagrees with total_allocations" in proc.stderr
 
@@ -112,12 +110,11 @@ def test_malformed_metric_values_are_rejected(malformed: str, tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("threshold", ["9", "", "NaN"])
-def test_environment_cannot_change_the_reviewed_threshold(
-    threshold: str, tmp_path: Path
-) -> None:
+def test_environment_cannot_change_the_reviewed_threshold(threshold: str, tmp_path: Path) -> None:
     proc = run_gate(
         metric_line(allocs_per_op="9.000", total_allocations=1800000),
-        tmp_path, threshold=threshold,
+        tmp_path,
+        threshold=threshold,
     )
     assert proc.returncode == 2
     assert "cannot override" in proc.stderr

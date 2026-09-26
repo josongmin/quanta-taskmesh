@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import host_perf  # noqa: E402
 import host_sampler  # noqa: E402
 
+from tools.process_supervisor import SupervisedProcess  # noqa: E402
+
 
 def encoded(value: dict) -> bytes:
     return host_perf.canonical(value) + b"\n"
@@ -21,7 +23,14 @@ def resource(pid: int, start: int, mode: str) -> bytes:
     sampled = mode == "on"
     return encoded(
         {
-            "schema_version": 2,
+            "schema_version": 3,
+            "execution": {
+                "timeout_seconds": 1800,
+                "returncode": 0,
+                "timed_out": False,
+                "interrupted_by_signal": None,
+                "aborted_early": False,
+            },
             "status": "complete" if sampled else "unavailable",
             "reason": None if sampled else host_sampler.OFF_REASON,
             "pid": pid,
@@ -62,14 +71,28 @@ def setup_study(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, 
         return row, identity
 
     monkeypatch.setattr(host_sampler.host_aa, "verified_run", verified)
+    monkeypatch.setattr(
+        host_sampler.host_aa,
+        "run_acquisition",
+        lambda *a, **k: SupervisedProcess(0, "complete", "", False, None),
+    )
+    executions = []
     for index in range(4):
         paths = host_sampler.host_aa.paths(tmp_path, index)
         paths["provenance"].write_bytes(encoded({"runner_pid": index + 1}))
         paths["resources"].write_bytes(
             resource(index + 1, 10 + index * 20, host_sampler.mode_for(index))
         )
+        terminal, reason = host_sampler.host_aa.execute_arm(
+            tmp_path,
+            index,
+            [sys.executable, "host_run.py", "scenario", str(paths["raw"])],
+            1800,
+        )
+        assert reason is None
+        executions.append(terminal)
     bundle = {
-        "schema_version": 1,
+        "schema_version": host_sampler.BUNDLE_VERSION,
         "kind": "resource_sampler_on_off",
         "status": "diagnostic_complete",
         "performance": "UNQUALIFIED",
@@ -79,6 +102,9 @@ def setup_study(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, 
         "max_span_ns": 100,
         "runs": [host_sampler.verified_run(tmp_path, index, scenario)[0] for index in range(4)],
         "failures": [],
+        "expected_runs": 4,
+        "timeout_seconds": 1800,
+        "executions": executions,
     }
     return bundle, scenario
 

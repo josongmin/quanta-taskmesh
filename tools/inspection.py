@@ -15,6 +15,7 @@ from tools.process_supervisor import SupervisedBinaryProcess, run_process
 
 METADATA_TIMEOUT_SECONDS = 30
 METADATA_GRACE_SECONDS = 0.5
+MAX_METADATA_CAPTURE_BYTES = 64 * 1024 * 1024
 
 
 class InspectionExecutionError(OSError):
@@ -27,6 +28,7 @@ def inspect_process(
     cwd: Path,
     env: dict[str, str] | None = None,
     timeout_seconds: float | None = None,
+    stdin_data: bytes | None = None,
 ) -> SupervisedBinaryProcess:
     result = run_process(
         command,
@@ -35,6 +37,8 @@ def inspect_process(
         timeout_seconds=METADATA_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds,
         termination_grace_seconds=METADATA_GRACE_SECONDS,
         binary_output=True,
+        max_capture_bytes=MAX_METADATA_CAPTURE_BYTES,
+        stdin_data=stdin_data,
     )
     assert isinstance(result, SupervisedBinaryProcess)
     if (
@@ -62,8 +66,11 @@ def metadata_output(
     cwd: Path,
     env: dict[str, str] | None = None,
     timeout_seconds: float | None = None,
+    stdin_data: bytes | None = None,
 ) -> bytes:
-    result = inspect_process(command, cwd=cwd, env=env, timeout_seconds=timeout_seconds)
+    result = inspect_process(
+        command, cwd=cwd, env=env, timeout_seconds=timeout_seconds, stdin_data=stdin_data
+    )
     if result.returncode != 0:
         detail = result.stderr.decode(errors="replace")[-1000:]
         raise OSError(f"metadata {' '.join(command[:2])} exit {result.returncode}: {detail}")

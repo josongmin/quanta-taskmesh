@@ -4,6 +4,8 @@
 //! caller awaits all children and performs the keyed reduction itself.
 
 use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -124,15 +126,19 @@ impl CompositeScenario {
 }
 
 struct Markers {
+    submitted: AtomicU64,
     started: AtomicU64,
     finished: AtomicU64,
+    responded: AtomicU64,
 }
 
 impl Markers {
     fn new() -> Self {
         Self {
+            submitted: AtomicU64::new(UNSET),
             started: AtomicU64::new(UNSET),
             finished: AtomicU64::new(UNSET),
+            responded: AtomicU64::new(UNSET),
         }
     }
 
@@ -143,7 +149,156 @@ impl Markers {
         };
         (value(&self.started), value(&self.finished))
     }
+
+    fn observation(&self, key: u8, path: HostPath) -> CompositePartialChild {
+        let value = |atomic: &AtomicU64| match atomic.load(Ordering::Acquire) {
+            UNSET => None,
+            nanos => Some(nanos),
+        };
+        CompositePartialChild {
+            key,
+            path,
+            submitted_ns: value(&self.submitted),
+            body_started_ns: value(&self.started),
+            body_finished_ns: value(&self.finished),
+            response_ns: value(&self.responded),
+        }
+    }
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompositePartialChild {
+    pub key: u8,
+    pub path: HostPath,
+    pub submitted_ns: Option<u64>,
+    pub body_started_ns: Option<u64>,
+    pub body_finished_ns: Option<u64>,
+    pub response_ns: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompositeFailureRaw {
+    pub schema_version: u32,
+    pub status: String,
+    pub mode: String,
+    pub scenario_id: String,
+    pub reason: String,
+    pub parent_submitted_ns: u64,
+    pub observed_ns: u64,
+    pub children: Vec<CompositePartialChild>,
+    pub root_attribution_cleared: bool,
+    pub class_counters: BTreeMap<String, ClassCounters>,
+    pub final_capabilities: BTreeMap<String, u32>,
+    pub drain_ok: bool,
+    pub conservation_ok: bool,
+}
+
+impl CompositeFailureRaw {
+    pub fn validate_against(&self, scenario: &CompositeScenario) -> Result<(), String> {
+        scenario.validate()?;
+        if self.schema_version != COMPOSITE_HOST_VERSION
+            || self.status != "invalid"
+            || self.mode != "caller_orchestrated_composite"
+            || self.scenario_id != scenario.id
+            || self.reason.is_empty()
+            || self.parent_submitted_ns > self.observed_ns
+            || self.children.len() != 3
+        {
+            return Err("invalid composite failure identity or population".into());
+        }
+        for (index, (row, path)) in self
+            .children
+            .iter()
+            .zip([HostPath::Io, HostPath::Blocking, HostPath::Cpu])
+            .enumerate()
+        {
+            if row.key != (index + 1) as u8 || row.path != path {
+                return Err(format!(
+                    "composite failure child {index}: key or path differs"
+                ));
+            }
+            let timestamps = [
+                row.submitted_ns,
+                row.body_started_ns,
+                row.body_finished_ns,
+                row.response_ns,
+            ];
+            let mut previous = Some(self.parent_submitted_ns);
+            for timestamp in timestamps.into_iter().flatten() {
+                if previous.is_some_and(|earlier| timestamp < earlier)
+                    || timestamp > self.observed_ns
+                {
+                    return Err(format!("composite failure child {index}: time differs"));
+                }
+                previous = Some(timestamp);
+            }
+            if row.submitted_ns.is_none()
+                && (row.body_started_ns.is_some()
+                    || row.body_finished_ns.is_some()
+                    || row.response_ns.is_some())
+                || row.body_started_ns.is_none() && row.body_finished_ns.is_some()
+            {
+                return Err(format!(
+                    "composite failure child {index}: event order differs"
+                ));
+            }
+        }
+        if self.class_counters.len() != scenario.classes.len() || self.final_capabilities.is_empty()
+        {
+            return Err("composite failure governance inventory differs".into());
+        }
+        for class in &scenario.classes {
+            let counters = self
+                .class_counters
+                .get(&class.name)
+                .ok_or_else(|| format!("composite failure class {} missing", class.name))?;
+            let maximum = if class.name == scenario.parent_class {
+                1
+            } else if class.name == scenario.child_class {
+                3
+            } else {
+                0
+            };
+            if counters.admitted > maximum
+                || counters.started > counters.admitted
+                || counters.terminated > counters.admitted
+            {
+                return Err(format!(
+                    "composite failure class {} counters differ",
+                    class.name
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct CompositeRunFailure {
+    pub reason: String,
+    pub raw: Option<CompositeFailureRaw>,
+    pub topology: Option<ResolvedHostTopology>,
+}
+
+impl CompositeRunFailure {
+    fn early(reason: String) -> Self {
+        Self {
+            reason,
+            raw: None,
+            topology: None,
+        }
+    }
+}
+
+impl fmt::Display for CompositeRunFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.reason.fmt(formatter)
+    }
+}
+
+impl Error for CompositeRunFailure {}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -268,6 +423,7 @@ fn child_result(
     markers: &Markers,
     result: Result<u64, RunError<()>>,
 ) -> CompositeChildRow {
+    markers.responded.store(response_ns, Ordering::Release);
     let (outcome, value) = match result {
         Ok(value) => (ResponseOutcome::Success, Some(value)),
         Err(error) => (classify_response(Err(error)), None),
@@ -295,12 +451,16 @@ struct ParentResult {
 
 pub async fn run_composite_with_topology(
     scenario: &CompositeScenario,
-) -> Result<(CompositeRaw, ResolvedHostTopology), String> {
-    scenario.validate()?;
+) -> Result<(CompositeRaw, ResolvedHostTopology), CompositeRunFailure> {
+    scenario.validate().map_err(CompositeRunFailure::early)?;
     let host_shape = scenario.host_shape();
-    let runtime = host_shape.build_runtime()?;
+    let runtime = host_shape
+        .build_runtime()
+        .map_err(CompositeRunFailure::early)?;
     let topology = ResolvedHostTopology::from_runtime(&runtime);
-    warmup_runtime(&host_shape, &runtime).await?;
+    warmup_runtime(&host_shape, &runtime)
+        .await
+        .map_err(CompositeRunFailure::early)?;
     let baseline = runtime.snapshot();
     if baseline.conservation_violation().is_some()
         || baseline
@@ -308,7 +468,9 @@ pub async fn run_composite_with_topology(
             .values()
             .any(|class| class.inflight != 0 || class.queued != 0)
     {
-        return Err("composite warmup did not settle".into());
+        return Err(CompositeRunFailure::early(
+            "composite warmup did not settle".into(),
+        ));
     }
     let origin = Instant::now();
     let parent_submitted_ns = since(origin);
@@ -334,11 +496,20 @@ pub async fn run_composite_with_topology(
     let blocking_delay = scenario.blocking_delay_ms;
     let cpu_iterations = scenario.cpu_iterations;
     let fail_key = scenario.fail_child_key;
+    let io_markers = Arc::new(Markers::new());
+    let blocking_markers = Arc::new(Markers::new());
+    let cpu_markers = Arc::new(Markers::new());
+    let retained_markers = [
+        Arc::clone(&io_markers),
+        Arc::clone(&blocking_markers),
+        Arc::clone(&cpu_markers),
+    ];
     let parent = runtime.run_io(parent_spec, async move {
         let io = async {
-            let markers = Arc::new(Markers::new());
+            let markers = io_markers;
             let body_markers = Arc::clone(&markers);
             let submitted = since(origin);
+            markers.submitted.store(submitted, Ordering::Release);
             let result = io_runtime
                 .run_io(
                     TaskSpec::io(io_class)
@@ -361,9 +532,10 @@ pub async fn run_composite_with_topology(
             child_result(1, HostPath::Io, submitted, since(origin), &markers, result)
         };
         let blocking = async {
-            let markers = Arc::new(Markers::new());
+            let markers = blocking_markers;
             let body_markers = Arc::clone(&markers);
             let submitted = since(origin);
+            markers.submitted.store(submitted, Ordering::Release);
             let result = blocking_runtime
                 .run_blocking(
                     TaskSpec::blocking(blocking_class)
@@ -393,9 +565,10 @@ pub async fn run_composite_with_topology(
             )
         };
         let cpu = async {
-            let markers = Arc::new(Markers::new());
+            let markers = cpu_markers;
             let body_markers = Arc::clone(&markers);
             let submitted = since(origin);
+            markers.submitted.store(submitted, Ordering::Release);
             let result = cpu_runtime
                 .run_cpu(
                     TaskSpec::cpu(child_class)
@@ -439,10 +612,8 @@ pub async fn run_composite_with_topology(
             checksum,
         })
     });
-    let result = tokio::time::timeout(Duration::from_millis(scenario.settlement_ms), parent)
-        .await
-        .map_err(|_| "composite parent exceeded settlement bound".to_string())?
-        .map_err(|error| format!("composite parent failed: {error:?}"))?;
+    let parent_result =
+        tokio::time::timeout(Duration::from_millis(scenario.settlement_ms), parent).await;
     let parent_response_ns = since(origin);
     let drain_ok = runtime
         .drain(Duration::from_millis(scenario.settlement_ms))
@@ -469,6 +640,46 @@ pub async fn run_composite_with_topology(
             )
         })
         .collect();
+    let result = match parent_result {
+        Ok(Ok(result)) => result,
+        result => {
+            let reason = match result {
+                Err(_) => "composite parent exceeded settlement bound".to_string(),
+                Ok(Err(error)) => format!("composite parent failed: {error:?}"),
+                Ok(Ok(_)) => unreachable!(),
+            };
+            let children = retained_markers
+                .iter()
+                .zip([HostPath::Io, HostPath::Blocking, HostPath::Cpu])
+                .enumerate()
+                .map(|(index, (markers, path))| markers.observation((index + 1) as u8, path))
+                .collect();
+            let raw = CompositeFailureRaw {
+                schema_version: COMPOSITE_HOST_VERSION,
+                status: "invalid".into(),
+                mode: "caller_orchestrated_composite".into(),
+                scenario_id: scenario.id.clone(),
+                reason: reason.clone(),
+                parent_submitted_ns,
+                observed_ns: since(origin),
+                children,
+                root_attribution_cleared,
+                class_counters,
+                final_capabilities: final_snapshot
+                    .capabilities
+                    .iter()
+                    .map(|(pool, usage)| (pool.clone(), usage.in_use))
+                    .collect(),
+                drain_ok,
+                conservation_ok: final_snapshot.conservation_violation().is_none(),
+            };
+            return Err(CompositeRunFailure {
+                reason,
+                raw: Some(raw),
+                topology: Some(topology),
+            });
+        }
+    };
     Ok((
         CompositeRaw {
             schema_version: COMPOSITE_HOST_VERSION,

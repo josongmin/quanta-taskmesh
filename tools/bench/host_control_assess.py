@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""Evaluate measured host-control budgets without granting performance status.
+
+The policy is an explicit, source- and scenario-bound input. This tool does not
+freeze B00, measure the resource sampler's effect, or qualify a rate series.
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import sys
+from pathlib import Path
+from typing import Any
+
+import host_controls
+import host_perf
+from host_run import write_new
+
+SCHEMA_VERSION = 1
+POLICY_KEYS = {
+    "schema_version",
+    "scenario_sha256",
+    "source_head",
+    "min_pairs",
+    "max_span_ns",
+    "max_generator_lag_ns",
+    "max_host_lag_ns",
+    "max_aa_relative_delta",
+    "max_snapshot_relative_delta",
+    "max_recorder_response_fraction_delta",
+}
+
+
+def finite_fraction(value: Any, label: str) -> float:
+    if type(value) not in (int, float) or not 0 <= value <= 1 or not math.isfinite(value):
+        raise host_perf.ReceiptError(f"{label} must be a finite fraction in [0, 1]")
+    return float(value)
+
+
+def parse_policy(data: bytes) -> dict[str, Any]:
+    policy = host_perf.parse_object(data, "control budget policy")
+    host_perf.exact_keys(policy, POLICY_KEYS, "control budget policy")
+    if type(policy["schema_version"]) is not int or policy["schema_version"] != SCHEMA_VERSION:
+        raise host_perf.ReceiptError("unsupported control budget policy version")
+    for key in ("scenario_sha256", "source_head"):
+        value = policy[key]
+        if (
+            not isinstance(value, str)
+            or len(value) != (64 if key == "scenario_sha256" else 40)
+            or any(char not in "0123456789abcdef" for char in value)
+        ):
+            raise host_perf.ReceiptError(f"control budget {key} is invalid")
+    pairs = host_perf.nat(policy["min_pairs"], "control budget min_pairs")
+    if pairs < 2 or pairs > 50:
+        raise host_perf.ReceiptError("control budget min_pairs must be 2..=50")
+    for key in ("max_span_ns", "max_generator_lag_ns", "max_host_lag_ns"):
+        if host_perf.nat(policy[key], f"control budget {key}") == 0:
+            raise host_perf.ReceiptError(f"control budget {key} must be positive")
+    for key in (
+        "max_aa_relative_delta",
+        "max_snapshot_relative_delta",
+        "max_recorder_response_fraction_delta",
+    ):
+        finite_fraction(policy[key], f"control budget {key}")
+    return policy
+
+
+def pair_runs(runs: Any, minimum: int, label: str) -> list[tuple[dict, dict]]:
+    if not isinstance(runs, list) or len(runs) % 2 or len(runs) < minimum * 2:
+        raise host_perf.ReceiptError(f"{label} lacks the declared independent pairs")
+    return [(runs[index], runs[index + 1]) for index in range(0, len(runs), 2)]
+
+
+def cohort_rates(run: dict, label: str) -> dict[str, float]:
+    cohorts = run["metrics"]["cohort_goodput"]
+    if not isinstance(cohorts, dict) or not cohorts:
+        raise host_perf.ReceiptError(f"{label} has no SLO-goodput cohorts")
+    return {name: cohort["slo_per_sec"] for name, cohort in cohorts.items()}
+
+
+def relative_delta(first: float, second: float, label: str) -> float:
+    if (
+        type(first) not in (int, float)
+        or type(second) not in (int, float)
+        or not math.isfinite(first)
+        or not math.isfinite(second)
+        or first < 0
+        or second < 0
+        or max(first, second) == 0
+    ):
+        raise host_perf.ReceiptError(f"{label} has no positive comparable SLO-goodput")
+    return abs(first - second) / max(first, second)
+
+
+def rate_effects(first: dict, second: dict, label: str) -> dict[str, float]:
+    first_rates = cohort_rates(first, label)
+    second_rates = cohort_rates(second, label)
+    if first_rates.keys() != second_rates.keys():
+        raise host_perf.ReceiptError(f"{label} cohort catalog differs")
+    return {
+        name: relative_delta(first_rates[name], second_rates[name], f"{label}/{name}")
+        for name in first_rates
+    }
+
+
+def recorder_response_effect(first: dict, second: dict) -> float:
+    first_counts = first["metrics"]["counts"]
+    second_counts = second["metrics"]["counts"]
+    intended = first_counts["intended"]
+    if intended <= 0 or intended != second_counts["intended"]:
+        raise host_perf.ReceiptError("recorder pair intended population differs")
+    return abs(first_counts["responded"] - second_counts["responded"]) / intended
+
+
+def assess(
+    policy_bytes: bytes,
+    scenario_path: Path,
+    host_raw: Path,
+    host_summary: Path,
+    generator_raw: Path,
+    aa_directory: Path,
+    snapshot_directory: Path,
+    recorder_directory: Path,
+    bundle_path: Path,
+) -> dict[str, Any]:
+    policy = parse_policy(policy_bytes)
+    scenario_bytes = scenario_path.read_bytes()
+    if host_perf.sha256(scenario_bytes) != policy["scenario_sha256"]:
+        raise host_perf.ReceiptError("control budget scenario differs")
+    bundle_bytes = bundle_path.read_bytes()
+    bundle = host_controls.verify_bundle(
+        bundle_bytes,
+        scenario_path,
+        host_raw,
+        host_summary,
+        generator_raw,
+        aa_directory,
+        snapshot_directory,
+        recorder_directory,
+    )
+    identity = bundle["identity"]
+    if identity["source_dirty"] or identity["source_head"] != policy["source_head"]:
+        raise host_perf.ReceiptError("control budget requires its declared clean source")
+    if bundle["observed_span_ns"] > policy["max_span_ns"]:
+        raise host_perf.ReceiptError("control budget acquisition span exceeded")
+    aa = host_perf.parse_object((aa_directory / "aa-bundle.json").read_bytes(), "A/A bundle")
+    snapshot = host_perf.parse_object(
+        (snapshot_directory / "snapshot-bundle.json").read_bytes(), "Snapshot bundle"
+    )
+    recorder = host_perf.parse_object(
+        (recorder_directory / "recorder-bundle.json").read_bytes(), "recorder bundle"
+    )
+    aa_effects = [
+        rate_effects(first, second, f"A/A pair {index}")
+        for index, (first, second) in enumerate(pair_runs(aa["runs"], policy["min_pairs"], "A/A"))
+    ]
+    snapshot_effects = []
+    for index, (first, second) in enumerate(
+        pair_runs(snapshot["runs"], policy["min_pairs"], "Snapshot")
+    ):
+        off, on = (first, second) if first["mode"] == "off" else (second, first)
+        snapshot_effects.append(rate_effects(off, on, f"Snapshot pair {index}"))
+    recorder_effects = []
+    for first, second in pair_runs(recorder["runs"], policy["min_pairs"], "recorder"):
+        full, minimal = (first, second) if first["mode"] == "full" else (second, first)
+        recorder_effects.append(recorder_response_effect(full, minimal))
+    max_aa = max(value for pair in aa_effects for value in pair.values())
+    max_snapshot = max(value for pair in snapshot_effects for value in pair.values())
+    max_recorder = max(recorder_effects)
+    observations = {
+        "generator_not_submitted": bundle["generator_not_submitted"],
+        "host_not_submitted": bundle["host_not_submitted"],
+        "generator_max_lag_ns": bundle["generator_max_lag_ns"],
+        "host_max_lag_ns": bundle["host_max_lag_ns"],
+        "max_aa_relative_delta": max_aa,
+        "max_snapshot_relative_delta": max_snapshot,
+        "max_recorder_response_fraction_delta": max_recorder,
+        "aa_pairs": len(aa_effects),
+        "snapshot_pairs": len(snapshot_effects),
+        "recorder_pairs": len(recorder_effects),
+    }
+    violations = []
+    for key in ("generator_not_submitted", "host_not_submitted"):
+        if observations[key] != 0:
+            violations.append(key)
+    for observed, limit in (
+        ("generator_max_lag_ns", "max_generator_lag_ns"),
+        ("host_max_lag_ns", "max_host_lag_ns"),
+        ("max_aa_relative_delta", "max_aa_relative_delta"),
+        ("max_snapshot_relative_delta", "max_snapshot_relative_delta"),
+        ("max_recorder_response_fraction_delta", "max_recorder_response_fraction_delta"),
+    ):
+        if observations[observed] > policy[limit]:
+            violations.append(observed)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": "BUDGET_PASS_DIAGNOSTIC" if not violations else "BUDGET_FAIL",
+        "performance": "UNQUALIFIED",
+        "reason": "B00 contract, sampler distortion and fixed-host series require separate proof",
+        "policy_sha256": host_perf.sha256(policy_bytes),
+        "bundle_sha256": host_perf.sha256(bundle_bytes),
+        "scenario_sha256": policy["scenario_sha256"],
+        "source_head": policy["source_head"],
+        "observations": observations,
+        "violations": violations,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("policy", type=Path)
+    parser.add_argument("scenario", type=Path)
+    parser.add_argument("host_raw", type=Path)
+    parser.add_argument("host_summary", type=Path)
+    parser.add_argument("generator_raw", type=Path)
+    parser.add_argument("aa_directory", type=Path)
+    parser.add_argument("snapshot_directory", type=Path)
+    parser.add_argument("recorder_directory", type=Path)
+    parser.add_argument("control_bundle", type=Path)
+    parser.add_argument("output", type=Path)
+    args = parser.parse_args()
+    try:
+        policy_bytes = args.policy.read_bytes()
+        report = assess(
+            policy_bytes,
+            args.scenario,
+            args.host_raw,
+            args.host_summary,
+            args.generator_raw,
+            args.aa_directory,
+            args.snapshot_directory,
+            args.recorder_directory,
+            args.control_bundle,
+        )
+    except (OSError, ValueError, KeyError, TypeError, host_perf.ReceiptError) as error:
+        report = {
+            "schema_version": SCHEMA_VERSION,
+            "status": "REJECTED",
+            "performance": "UNQUALIFIED",
+            "reason": str(error),
+        }
+    try:
+        write_new(args.output, host_perf.canonical(report) + b"\n")
+    except (OSError, host_perf.ReceiptError) as error:
+        print(f"control budget report could not be retained: {error}", file=sys.stderr)
+        return 1
+    print(f"{report['status']} performance=UNQUALIFIED output={args.output}")
+    return 0 if report["status"] == "BUDGET_PASS_DIAGNOSTIC" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

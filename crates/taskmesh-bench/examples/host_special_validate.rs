@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 
 use taskmesh_bench::closed_loop::{ClosedLoopRun, ClosedLoopScenario};
-use taskmesh_bench::composite_host::{CompositeRaw, CompositeScenario};
+use taskmesh_bench::composite_host::{CompositeFailureRaw, CompositeRaw, CompositeScenario};
 use taskmesh_bench::host_load::ResolvedHostTopology;
 use taskmesh_bench::local_host::{LocalHostRun, LocalHostScenario};
 
@@ -44,6 +44,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if topology != scenario.resolved_topology()? {
                 return Err("composite resolved topology differs".into());
             }
+        }
+        "composite_invalid" => {
+            let scenario = CompositeScenario::from_json(&scenario)?;
+            let raw: CompositeFailureRaw = serde_json::from_slice(&raw)?;
+            raw.validate_against(&scenario)?;
+            if topology != scenario.resolved_topology()? {
+                return Err("composite failure resolved topology differs".into());
+            }
+            println!("SPECIAL_INVALID_RAW_STRUCTURALLY_VALID performance=UNQUALIFIED");
+            return Ok(());
         }
         _ => return Err("unsupported special diagnostic mode".into()),
     }

@@ -1,5 +1,16 @@
 # Taskmesh benchmark qualification: source audit and work plan
 
+## Current checkpoint
+
+At clean detached `f7834d7`, structural `closed_loop`, `local` v2 and `composite`
+receipts were acquired under `/tmp`. They are not repository-retained and all
+report `UNQUALIFIED`. This benchmark change set preserves a
+separate invalid H6 raw on parent timeout/failure and add a source/scenario-bound
+control-budget evaluator; neither has a clean exact-HEAD receipt yet. B00 values,
+measured sampler distortion, fixed-host rate series, H7 and an equivalent peer
+remain open. The older checkpoint notes below are historical and must not be
+used as current qualification evidence.
+
 Status: **B01 implementation and B02 partial; industry SOTA performance claim unsupported**. A clean detached worktree at `b24fbc1` passed `just bench-smoke` (53 bench-crate unit tests and every Criterion `--test` target, including B01); that is an execution smoke, not a measured benchmark or full CI receipt. Clean `verify-macos-ci` at `4f3eee7` stopped at `fmt-check` because committed `crates/taskmesh/src/ingress.rs` needed the two formatting edits that are already present as another owner's uncommitted main-checkout change. Downstream gates did not run; this is `NOT_QUALIFIED`, and later source changes need their own proof. P0a/P0b execution artifacts, typed raw validation, generator, A/A, Snapshot and same-executable recorder controls, plus a cross-control structural bundle, are implemented as diagnostics. The recorder and bundle code passed focused Rust/Python checks and an eight-process control smoke on dirty source; these are neither clean exact-HEAD CI nor measured fixed-host performance receipts. `host_perf.py --require-performance` still rejects absent measured calibration. Earlier clean `py-test` 773/773 and `test-architecture` passed at `404245d`; they do not qualify the current source. Historical benchmark measurements do not establish current-source performance.
 
 CI probe `codex/benchmark-ci-probe@a72c4e9` applies only the already present ingress formatting in an isolated branch and includes benchmark test assertions from `7de5d1d`. It passed fmt, inventory, Python lint, architecture, semgrep, deny, Clippy and Rust `test`. Its `py-test` was interrupted after 258 seconds while other projects' Cargo work contended for the host; the gate labels this interrupted step `FAIL`, and later gates are `NOT_RUN`. This is **not** a qualified main receipt. The 17 bench-test semgrep findings were repaired by asserting named errors; one former “valid” test row was actually invalid for an unrelated reason and is now constructed correctly.
@@ -259,12 +270,26 @@ Use a small declared matrix, not the Cartesian product of all policies and execu
 
 ### B03 — Run the Taskmesh scenario matrix and establish honest baselines
 
+H6 code update: a parent timeout/failure now retains an `invalid` raw with
+per-child partial timestamps and post-drain governance observations. The typed
+validator checks this failure schema during acquisition; the receipt remains
+invalid and cannot enter a successful comparison. A preflight/build failure
+before the runner starts still has only a rejection record.
+
 - **Purpose:** Characterize capacity and failure behavior on the real host; distinguish governance cost from CPU/body cost and simulator behavior.
 - **Files:** bench-owned scenario fixtures/examples under `crates/taskmesh-bench/`, a versioned `tools/bench/scenarios/index.json` mapping H0–H8 to path/feature/topology, E-cell, existing correctness oracle, and unique measurement question, raw acquisition artifacts and source-backed scenario documentation in this plan. B04 owns `tools/bench/host_perf.py` admission and comparison logic.
 - **DoD:** Run P0 before P1. Each measured scenario identifies its applicable existing deterministic oracle from the duplication table; do not implement a second verdict test under a benchmark name. A declared fixed workload is swept across arrival rate with repeat runs on the same quiet host, including a low-rate baseline, steady saturation, spike and recovery. Use fixed concurrency as a separate capacity comparison. Report per path/class success goodput and SLO-goodput per measured wall time **plus their fractions of intended arrivals**, tail sample counts and success fractions, reject types, caller drops, unanswered, send lag, interval started/response counts, sampled queue/capability peaks (explicit lower bounds, never exact high-water claims), custody after response/drop, and final conservation. Include CPU/core-seconds per completed task, allocated bytes and retained/peak memory where measured; add a long soak before making bounded-resource claims. Run the consumer-derived H7 profile when representative behavior is claimed. Record clean HEAD, tree/lock digest, rustc, features, CPU/OS and power state, resolved topology, seed/trace digest, work-body definition, warmup, measurement duration, exclusions, and raw results. Compare only compatible runs. A knee or throughput limit is reported only from sustained measured points and an explicit application SLO, not a fitted USL extrapolation alone. If an exact oracle fails, preserve that scenario's raw artifact and exclude its performance point from qualification; do not skip the scenario silently.
 - **Current partial:** The H0–H8 index records support and missing fixtures. H1's one-path IO/blocking/CPU templates expand by a preselected integer absolute rate while retaining each body/topology/producer cap; the 25/s, 60-second diagnostic output had 1,500 intended rows per path and each passed Rust scenario preflight. H2/H5 diagnostic CLI runs produced 15/6 intended rows respectively and ten interval summaries each; those runs were on dirty source and supply no recovery/custody timing threshold. Do not promote the mixed three-offer smoke to H1 capacity evidence, the H3 weighted host smoke to a fairness result, or the H8 quiescent drain to active teardown. No H1–H8 fixed-host measurement receipt exists.
 
 ### B04 — Add performance qualification after a stable measurement contract
+
+Code update: `just bench-host-control-assess` revalidates the v3 control bundle
+and evaluates explicitly supplied clean-source/scenario budgets for producer
+lag and omission, A/A SLO-goodput spread, Snapshot effect, and recorder response
+fraction. It retains a pass/fail/rejected diagnostic report. The budget policy
+must be frozen before candidate acquisition; this evaluator does not measure
+external resource-sampler distortion, establish B00, or grant performance
+qualification.
 
 - **Purpose:** Prevent noisy hosted timing from becoming a misleading PR gate while retaining cheap correctness checks.
 - **Files:** existing `tools/bench/host_perf.py` and `tools/bench/tests/test_host_perf.py`, new measured calibration/resource/comparison tools under `tools/bench/`, `Justfile`, `tools/gates/{inventory,required}.json` only if a new required gate is intentionally adopted, workflow only after runner ownership is decided, release checklist/ADR.

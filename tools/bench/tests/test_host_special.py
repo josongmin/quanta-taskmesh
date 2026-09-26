@@ -36,7 +36,19 @@ def receipt_directory(tmp_path: Path) -> Path:
         "runner_pid": 123,
         "runner_exit_code": 0,
         "validator_exit_code": 0,
-        "build_commands": [],
+        "build_commands": [
+            [
+                "cargo",
+                "build",
+                "--locked",
+                "-p",
+                "taskmesh-bench",
+                "--example",
+                example,
+                "--message-format=json",
+            ]
+            for example in ("host_composite_probe", "host_special_validate")
+        ],
         "features": [],
         "build_artifact_features": ["default"],
         "start_identity": identity,

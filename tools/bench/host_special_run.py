@@ -89,6 +89,25 @@ def verify_receipt(directory: Path, *, require_current_source: bool = False) -> 
     host_perf.validate_identity(receipt["start_identity"])
     if receipt["features"] != receipt["start_identity"]["features"]:
         raise host_perf.ReceiptError("special feature identity differs")
+    if type(receipt["runner_pid"]) is not int or receipt["runner_pid"] <= 0:
+        raise host_perf.ReceiptError("special runner PID is invalid")
+    expected_commands = []
+    for example in (RUNNERS[receipt["mode"]], "host_special_validate"):
+        command = [
+            "cargo",
+            "build",
+            "--locked",
+            "-p",
+            "taskmesh-bench",
+            "--example",
+            example,
+            "--message-format=json",
+        ]
+        if receipt["features"]:
+            command.extend(["--features", ",".join(receipt["features"])])
+        expected_commands.append(command)
+    if receipt["build_commands"] != expected_commands:
+        raise host_perf.ReceiptError("special build command provenance differs")
     built_features = receipt["build_artifact_features"]
     if (
         not isinstance(built_features, list)
@@ -192,11 +211,18 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
         )
         host_run.write_new(directory / "resources", host_perf.canonical(resources) + b"\n")
         validator_exit = None
-        if exit_code == 0 and (directory / "raw").is_file() and (directory / "topology").is_file():
+        validator_mode = (
+            mode if exit_code == 0 else "composite_invalid" if mode == "composite" else None
+        )
+        if (
+            validator_mode is not None
+            and (directory / "raw").is_file()
+            and (directory / "topology").is_file()
+        ):
             checked = subprocess.run(
                 [
                     str(sealed_validator),
-                    mode,
+                    validator_mode,
                     str(directory / "scenario"),
                     str(directory / "raw"),
                     str(directory / "topology"),

@@ -38,7 +38,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("composite raw and topology output paths must be fresh".into());
     }
     let scenario = CompositeScenario::from_json(&fs::read(&scenario_path)?)?;
-    let (run, topology) = run_composite_with_topology(&scenario).await?;
+    let (run, topology) = match run_composite_with_topology(&scenario).await {
+        Ok(result) => result,
+        Err(failure) => {
+            if let (Some(raw), Some(topology)) = (&failure.raw, &failure.topology) {
+                write_new(&raw_path, &serde_json::to_vec_pretty(raw)?)?;
+                write_new(&topology_path, &serde_json::to_vec_pretty(topology)?)?;
+            }
+            return Err(failure.into());
+        }
+    };
     write_new(&raw_path, &serde_json::to_vec_pretty(&run)?)?;
     write_new(&topology_path, &serde_json::to_vec_pretty(&topology)?)?;
     run.validate_against(&scenario)?;

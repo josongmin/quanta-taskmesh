@@ -231,6 +231,11 @@ bench-host-recorder scenario calibration directory *ARGS:
 bench-host-controls scenario host_raw host_summary generator_raw aa_dir snapshot_dir recorder_dir output max_span_seconds:
     uv run python tools/bench/host_controls.py {{scenario}} {{host_raw}} {{host_summary}} {{generator_raw}} {{aa_dir}} {{snapshot_dir}} {{recorder_dir}} {{output}} --max-span-seconds {{max_span_seconds}}
 
+# Compare revalidated control observations to a source/scenario-bound budget.
+# Passing this diagnostic does not grant host performance qualification.
+bench-host-control-assess policy scenario host_raw host_summary generator_raw aa_dir snapshot_dir recorder_dir control_bundle output:
+    uv run python tools/bench/host_control_assess.py {{policy}} {{scenario}} {{host_raw}} {{host_summary}} {{generator_raw}} {{aa_dir}} {{snapshot_dir}} {{recorder_dir}} {{control_bundle}} {{output}}
+
 # Revalidate independent baseline/candidate raw pairs at each absolute rate.
 # Its run-level interval is descriptive; B00/B04 qualification is still absent.
 bench-host-compare manifest output:

@@ -26,7 +26,7 @@
       "correctness_oracles": ["crates/taskmesh-engine/tests/hardening_policy_interactions.rs", "crates/taskmesh/tests/hardening_mixed_overload.rs"],
       "current_artifacts": ["tools/bench/scenarios/h1-default-send-smoke.json", "tools/bench/scenarios/h1-io-rate-template.json", "tools/bench/scenarios/h1-blocking-rate-template.json", "tools/bench/scenarios/h1-cpu-rate-template.json", "tools/bench/scenarios/h1-io-closed-loop-smoke.json", "crates/taskmesh-bench/src/closed_loop.rs", "tools/bench/scenario_grid.py", "tools/bench/host_special_run.py"],
       "support": "partial",
-      "missing": "One-path IO/blocking/CPU open-loop templates, deterministic absolute-rate expansion and a separate fixed-concurrency IO completion diagnostic exist. Closed-loop has a separate structural acquisition/verification path, but no retained clean-source receipt, intended-arrival clock, frozen multi-rate grid or qualifying fixed-host run. The old three-offer mixed-path smoke is not a capacity point."
+      "missing": "One-path IO/blocking/CPU open-loop templates, deterministic absolute-rate expansion and a separate fixed-concurrency IO completion diagnostic exist. A clean closed-loop structural receipt was acquired at f7834d7 under /tmp; no repository-retained receipt, intended-arrival clock, frozen multi-rate grid or qualifying fixed-host run exists. The old three-offer mixed-path smoke is not a capacity point."
     },
     {
       "id": "H2",
@@ -65,7 +65,7 @@
       "correctness_oracles": ["crates/taskmesh/tests/hardening_executor_authority.rs", "crates/taskmesh/tests/hardening_role_pool_isolation.rs"],
       "current_artifacts": ["tools/bench/scenarios/h4-cpu-blocking-smoke.json", "tools/bench/scenarios/h4-requested-stack-smoke.json", "tools/bench/scenarios/h4-local-smoke.json", "crates/taskmesh-bench/src/local_host.rs", "crates/taskmesh-bench/tests/host_load_integration.rs", "crates/taskmesh-bench/tests/host_local.rs", "tools/bench/host_special_run.py"],
       "support": "partial",
-      "missing": "Default and Rayon CPU/blocking topology parity and requested-stack blocking/async parity are focused diagnostics only. One real H4 requested-stack raw/summary/Python receipt round trip passed on dirty source after the parser fix. The separate caller-affine !Send local diagnostic uses schema v2 with validated pacer observation, but no retained clean-source v2 receipt or measured comparison. No clean repeated feature-paired host receipt exists."
+      "missing": "Default and Rayon CPU/blocking topology parity and requested-stack blocking/async parity are focused diagnostics only. One real H4 requested-stack raw/summary/Python receipt round trip passed on dirty source after the parser fix. The separate caller-affine !Send local diagnostic uses schema v2 with validated pacer observation; a clean structural v2 receipt was acquired at f7834d7 under /tmp, but no repository-retained receipt or measured comparison exists. No clean repeated feature-paired host receipt exists."
     },
     {
       "id": "H5",
@@ -91,7 +91,7 @@
       "correctness_oracles": ["crates/taskmesh/tests/hardening_nested_wait.rs", "crates/taskmesh/tests/e2e_scenarios.rs"],
       "current_artifacts": ["tools/bench/scenarios/h6-composite-smoke.json", "crates/taskmesh-bench/src/composite_host.rs", "crates/taskmesh-bench/tests/host_composite.rs", "tools/bench/host_special_run.py"],
       "support": "partial",
-      "missing": "Bounded caller-orchestrated diagnostic covers one child failure, keyed reduce and settled governance; structural acquisition/verification exists, but no retained clean-source receipt, rate/repetition series or qualified host performance. Taskmesh does not execute the reducer."
+      "missing": "Bounded caller-orchestrated diagnostic covers one child failure, keyed reduce and settled governance; a clean structural receipt was acquired at f7834d7 under /tmp. Parent timeout/failure now retains separate invalid raw with partial child and governance observations. No repository-retained receipt, rate/repetition series or qualified host performance exists. Taskmesh does not execute the reducer."
     },
     {
       "id": "H7",

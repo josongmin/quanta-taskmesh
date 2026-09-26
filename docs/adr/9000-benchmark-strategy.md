@@ -112,6 +112,9 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   성공 키를 정렬해 합치며, 자식별 시각·결과, class 정산, root attribution 소멸을
   독립 raw schema로 검사한다. reduce 실행 주체는 caller다. 이 단일 smoke는
   fan-out 성능이나 내부 reducer 구현을 입증하지 않는다. H6 반복 고정 host 측정은 없다.
+  이 변경은 부모 timeout/실패 시 자식별 부분 관측과 drain 이후 상태를
+  별도 `invalid` raw에 보존하고 typed validator로 구조를 확인한다. 실패 실행은
+  성공 영수증으로 승격하지 않는다.
   `just bench-host-special`은 이 세 개의 독립 진단 schema를 소스 내용,
   빌드 feature, 보관된 실행 파일과 별도 typed validator, raw, topology, process
   resource digest에 묶는다. 빌드/실행 중 소스가 바뀌면 거부하고 실패 이유를 남긴다.
@@ -130,6 +133,9 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   `UNQUALIFIED`를 출력한다. 실측 보정 및 고정 host 반복 실행,
   closed-loop/local/H6의 반복 비교 측정, Rayon 비교 측정과
   대표 H7은 남아 있다.
+  별도 control-budget evaluator는 시나리오·clean HEAD에 묶인 예산으로
+  generator lag/미제출, A/A, Snapshot, recorder 응답수 변화를 계산한다.
+  예산 통과도 `UNQUALIFIED`이며 외부 sampler 왜곡과 B00 계약을 대체하지 않는다.
   구조 bundle v3는 target Snapshot-off 또는 control과 같은 cadence의 Snapshot-on을
   허용한다. Snapshot-on target을 쓸 때 A/A는 on workload, recorder full/minimal은
   같은 workload의 off 파생 시나리오를 사용하고 그 digest를 묶는다. On target의

@@ -152,14 +152,14 @@ def test_invalid_timeout_rejects_before_build(setup, monkeypatch, budget):
 
 
 def test_sealed_runner_execution_survives_original_replacement(bundle, monkeypatch):
-    original = host_stability.run_bench
+    original = host_stability.run_acquisition
 
     def run(command, **kwargs):
         assert Path(command[0]).parent != bundle
         (bundle / "runner").write_bytes(b"replaced after sealing")
         return original(command, **kwargs)
 
-    monkeypatch.setattr(host_stability, "run_bench", run)
+    monkeypatch.setattr(host_stability, "run_acquisition", run)
     assert host_stability.verify_receipt(bundle)["status"] == "complete"
 
 

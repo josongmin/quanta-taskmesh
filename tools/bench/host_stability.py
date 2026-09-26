@@ -10,7 +10,7 @@ from pathlib import Path
 
 import host_perf
 import host_run
-from bench_process import run_bench
+from acquisition_process import run_acquisition
 from host_special_run import source_content_sha256
 from process_resource import sample_subprocess
 
@@ -95,12 +95,17 @@ def typed_validate(directory: Path, artifacts: dict[str, str]) -> None:
 def _validate_private_bundle(directory: Path) -> None:
     """Replay only a private bundle whose bytes were checked during copying."""
     (directory / "runner").chmod(0o700)
-    result = run_bench(
+    result = run_acquisition(
         [str(directory / "runner"), "validate", str(directory / "manifest.json"), str(directory)],
         cwd=host_perf.REPO,
         timeout_seconds=120,
     )
-    if result.returncode != 0:
+    if (
+        result.returncode != 0
+        or result.timed_out
+        or result.interrupted_by_signal is not None
+        or result.aborted_early
+    ):
         raise host_perf.ReceiptError("typed stability validation failed: " + result.stderr[-2000:])
 
 
@@ -256,12 +261,17 @@ def _acquire_owned(
         sealed.chmod(0o700)
         sealed_manifest = Path(temporary) / "manifest.json"
         host_run.write_new(sealed_manifest, data)
-        checked = run_bench(
+        checked = run_acquisition(
             [str(sealed), "check", str(sealed_manifest)],
             cwd=host_perf.REPO,
             timeout_seconds=120,
         )
-        if checked.returncode != 0:
+        if (
+            checked.returncode != 0
+            or checked.timed_out
+            or checked.interrupted_by_signal is not None
+            or checked.aborted_early
+        ):
             raise host_perf.ReceiptError(
                 "invalid typed stability manifest: " + checked.stderr[-2000:]
             )

@@ -102,11 +102,10 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   schema에는 외생 intended-arrival 시각이 없으므로 open-loop의 overload tail이나
   intended-arrival SLO-goodput과 합치지 않는다.
   `local_host.rs`는 current-thread LocalSet에서 `!Send` payload를 실행하고,
-  같은 caller thread의 finite pacer 지연/미제출을 별도 raw에 남긴다. Snapshot,
-  deadline, cancel/drop은 이 진단 schema에서 지원하지 않으며 IO 경로로 대체하지
-  않는다. local schema v2는 미제출 offer도 pacer 관측 시각을 보관하고 lag와
-  재계산해 대조한다. v1 raw는 이 검사를 제공하지 않으므로 v2 증거로 승격할 수 없다.
-  비교 측정은 없다.
+  같은 caller thread의 finite pacer 지연/미제출을 별도 raw에 남긴다. 현재 local
+  schema v3는 Snapshot, deadline, cancel/drop도 지원하며 caller 종료와 worker
+  settlement를 구분한다. 미제출 offer의 pacer 관측 시각과 lag도 재계산한다.
+  v1/v2 raw는 v3 증거로 승격할 수 없다. 반복 성능 admission과 비교 측정은 없다.
   `composite_host.rs`는 H6에서 부모의 reduce 선언과 별도 공개 호출로 제출한
   IO/blocking/CPU 자식 세 건을 진단한다. 한 자식의 작업 오류에도 caller가
   성공 키를 정렬해 합치며, 자식별 시각·결과, class 정산, root attribution 소멸을
@@ -138,7 +137,7 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   `null`이며 자원 효율 우위를 주장하지 않는다.
   별도 sampler on/off 균형쌍은 동일 시나리오·소스·바이너리에서 외부 자원
   관측의 영향을 진단한다. control-budget evaluator는 시나리오·clean HEAD에
-  묶인 예산으로 generator lag/미제출, A/A, Snapshot, recorder 응답수 및
+  묶인 예산으로 generator lag/미제출, A/A, Snapshot, recorder 응답수·전체 probe 시간 및
   sampler on/off SLO-goodput 및 성공 응답 p99 변화를 계산한다. A/A와 Snapshot도
   동일하게 p99 변화와 각 class/path의 최소 성공 표본 수를 검사한다. 예산 통과도 `UNQUALIFIED`이며
   evaluator는 검증한 control bundle의 scenario·bundle·resource digest를 다시
@@ -195,13 +194,64 @@ The executable workflow and proof limits are in
 B00 values, quiet-host repeated measurements, consumer H7 and matched peers
 remain inputs to acquire; code presence is not a performance result.
 
-## 2026-09-27 same-host recovery diagnostic
+## 2026-09-27 code audit disposition
 
-[B07](../plans/sep-25-taskmesh-benchmark/tickets/B07-minimal-recovery-soak.md)
-adds bounded overload and settlement cycles on one host, exact owned-capacity
-return, and successful normal-work canaries after recovery. Short smoke is a
-correctness check; the longer stress run is an explicit local diagnostic.
-Mode-specific repeated performance admission, RSS trend gates, and recovery
-performance SLOs require separately declared claims and consumer budgets.
-Finite functional recovery does not establish long-term memory stability or
-qualified performance.
+- Measured admission and descriptive comparison share an exact workload
+  signature: topology, class policy, work bodies and proportional offer mix stay
+  fixed across rates. Only arrival timestamps and population-dependent
+  `max_records` are excluded. Per-rate digest preregistration alone is insufficient.
+- Measured admission explicitly rejects public paths outside IO/blocking/CPU;
+  requested-stack diagnostics cannot silently expand the admitted scope.
+- Admission parses and hashes the same control-bundle bytes. Special-mode
+  revalidation executes private copies of digest-checked inputs and validator,
+  with a 120-second supervised deadline; timeout/interruption cannot pass.
+- Follow-up audit adds owned bounded execution for standalone control arms,
+  diagnostic builds/probes (sampler on/off), Cargo-backed typed validation and
+  special acquisition validators. Inner/control/collector cancellation grace
+  is ordered at 1/3/5 seconds. Timeout/interruption/orphaned work cannot pass.
+- Prelaunch metadata/source enumeration, binary Git archive capture and tool
+  inspection use owned binary supervision with a 30-second safety budget.
+  Incomplete execution cannot become identity, including optional host queries.
+  Artifact reads/copies validate regular descriptors with nonblocking open;
+  FIFO/device/directory inputs reject before collection. Study ledger append
+  rejects nonregular/symlink replacements. Supervisor stdin survives delayed
+  readers and backpressure across capture polls. These checks do not bound
+  stalled regular-file kernel/network I/O or captured byte volume, and are not
+  universal filesystem isolation or standalone liveness qualification.
+- B07 adds one-host recovery diagnostics: one runtime/warmup, bounded repeated
+  overload windows, exact zero-owned checkpoints without intermediate drain,
+  successful real-body canaries for each used class/path, cumulative counters,
+  and one terminal drain. Online validation reuses installed topology; a separate
+  supervised replay checks the complete indexed cycle population. Failed or
+  interrupted populations cannot publish a successful receipt. Bounded writer
+  errors close admission and attempt drain; the original and cleanup errors are
+  both reported. Existing output cannot be mutated by a rejected acquisition.
+- B07's retained runner is digest-checked data, not a replay authority. Plain
+  `verify` uses a validator built from the current checkout and reports only
+  `structural=PASS`; a self-declared digest does not authenticate an external
+  bundle. `--require-current-source` also requires stable source/host endpoints
+  and byte equality between the current build and retained runner.
+- At the earlier owner snapshot, the opt-in H2 study completed 1,000 cycles in
+  600.003 seconds on one host; H5 completed three cycles. Source content digest:
+  `d4ed183a7900404ace0a4d299018df379f365f2173910a2f89a76c4d206c52f3`.
+  The final audit at base `8a4f3a6` passed 120 Rust bench tests, 36 B07 Python
+  tests, canonical bench clippy, Ruff, and formatting. After local commit
+  `cbf9764f08eb9f307f3ee5a51bad5e5dabeaf4a6`, H5 again completed three
+  cycles with one host and terminal drain; `verify --require-current-source`
+  reported `structural=PASS`. Its local receipt at
+  `/tmp/taskmesh-b07-postcommit-W6ct5W/h5/receipt.json` has SHA-256
+  `ff4ef298c9f90004436a4eb05b885b59faeeee9f0fd7bdaa80edce80dbefd6f6`.
+  The source digest was
+  `41b7f7d115e9cffa8460ad08bdf54609024ea6a2f01d98d59e332a6590e442e5`.
+  These are owner-local, dirty-checkout diagnostics, not clean CI or performance
+  qualification. The full source-specific history remains at Git `cbf9764` in
+  `docs/plans/sep-25-taskmesh-benchmark/tickets/B07-minimal-recovery-soak.md`.
+- Mode-specific repeated performance admission, automatic RSS slope gates and
+  performance recovery SLOs are deferred until a declared claim and frozen
+  consumer budgets require them. All-mode correctness/cancel/drain/resource-return
+  tests remain required. Finite drain, sampled maxima and B07 functional PASS do
+  not prove long-term memory stability or qualified performance.
+
+Current defects, file owners, DoD and proof boundaries are retained in
+[B04 remaining audit](../plans/sep-25-taskmesh-benchmark/tickets/B04-remaining-audit.md).
+No whole-engine completion or SOTA performance qualification follows from this audit.

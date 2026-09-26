@@ -27,6 +27,12 @@ if str(REPO) not in sys.path:
 
 from bench_process import BUILD_TIMEOUT_SECONDS, run_bench  # noqa: E402
 
+from tools.inspection import (  # noqa: E402
+    InspectionExecutionError,
+    metadata_output,
+    read_regular_bytes,
+    read_regular_text,
+)
 from tools.qualification import evidence as source_evidence  # noqa: E402
 
 SUMMARY_VERSION = 3
@@ -237,21 +243,21 @@ def decimal_nat(value: Any, name: str) -> int:
 
 
 def _git(*args: str) -> str:
-    result = subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True, check=True)
-    return result.stdout.strip()
+    return metadata_output(["git", *args], cwd=REPO).decode("utf-8").strip()
 
 
 def _command_output(*command: str) -> str:
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        return metadata_output(list(command), cwd=REPO).decode("utf-8").strip()
+    except InspectionExecutionError:
+        raise
     except OSError:
         return ""
-    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def _read_optional(path: Path) -> str:
     try:
-        return path.read_text(errors="replace").strip()
+        return read_regular_text(path, errors="replace").strip()
     except OSError:
         return ""
 
@@ -327,7 +333,7 @@ def source_identity() -> dict[str, Any]:
             source_evidence.head_worktree_mismatches(REPO)
         )
         digest = source_evidence.source_tree_digest(REPO, paths)
-        lock = sha256((REPO / "Cargo.lock").read_bytes())
+        lock = sha256(read_regular_bytes(REPO / "Cargo.lock"))
         if _git("rev-parse", "HEAD") != head or _git("rev-parse", "HEAD^{tree}") != tree:
             raise ReceiptError("source HEAD changed during custody inspection")
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
@@ -345,9 +351,7 @@ def local_identity(scenario: dict[str, Any], features: list[str]) -> dict[str, A
     topology = scenario.get("topology")
     if not isinstance(topology, dict):
         raise ReceiptError("scenario: topology missing")
-    rustc = subprocess.run(
-        ["rustc", "--version"], capture_output=True, text=True, check=True
-    ).stdout.strip()
+    rustc = metadata_output(["rustc", "--version"], cwd=REPO).decode("utf-8").strip()
     environment = host_environment()
     return {
         **source_identity(),
@@ -1070,14 +1074,14 @@ def main() -> int:
     parser.add_argument("--require-performance", action="store_true")
     args = parser.parse_args()
     try:
-        raw_bytes = args.raw.read_bytes()
-        scenario_bytes = args.scenario.read_bytes()
+        raw_bytes = read_regular_bytes(args.raw)
+        scenario_bytes = read_regular_bytes(args.scenario)
         scenario = parse_object(scenario_bytes, "scenario")
         identity = local_identity(scenario, args.feature)
-        provenance_bytes = args.provenance.read_bytes() if args.provenance else None
-        binary_bytes = args.binary.read_bytes() if args.binary else None
-        topology_bytes = args.topology.read_bytes() if args.topology else None
-        resource_bytes = args.resources.read_bytes() if args.resources else None
+        provenance_bytes = read_regular_bytes(args.provenance) if args.provenance else None
+        binary_bytes = read_regular_bytes(args.binary) if args.binary else None
+        topology_bytes = read_regular_bytes(args.topology) if args.topology else None
+        resource_bytes = read_regular_bytes(args.resources) if args.resources else None
         if args.binary and provenance_bytes is not None:
             provenance = parse_object(provenance_bytes, "execution provenance")
             if args.binary.name != provenance.get("binary_artifact"):
@@ -1095,7 +1099,7 @@ def main() -> int:
                 raise ReceiptError("refusing to overwrite summary")
             if args.calibration is None:
                 raise ReceiptError("create requires --calibration")
-            calibration = parse_object(args.calibration.read_bytes(), "calibration")
+            calibration = parse_object(read_regular_bytes(args.calibration), "calibration")
             summary = make_summary(
                 raw_bytes,
                 scenario_bytes,
@@ -1113,7 +1117,7 @@ def main() -> int:
             summary = verify_receipt(
                 raw_bytes,
                 scenario_bytes,
-                args.summary.read_bytes(),
+                read_regular_bytes(args.summary),
                 identity,
                 require_performance=args.require_performance,
                 provenance_bytes=provenance_bytes,

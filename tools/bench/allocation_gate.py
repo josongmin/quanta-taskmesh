@@ -23,12 +23,15 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+from tools.inspection import read_regular_text  # noqa: E402
+
 CONFIG = Path(__file__).resolve().parent / "perf-gate.json"
 
 # A complete, finite, non-negative decimal: digits, optionally one point and
@@ -43,7 +46,7 @@ class GateError(Exception):
 
 def load_config() -> dict:
     try:
-        data = json.loads(CONFIG.read_text(encoding="utf-8"))
+        data = json.loads(read_regular_text(CONFIG, encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise GateError(f"cannot read {CONFIG}: {exc}") from exc
     section = data.get("allocation_gate")
@@ -154,18 +157,14 @@ PRODUCER = [
 
 
 def run_producer() -> str:
-    proc = subprocess.run(
-        PRODUCER,
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=REPO,
-    )
+    from bench_process import BUILD_TIMEOUT_SECONDS, run_bench
+
+    proc = run_bench(PRODUCER, cwd=REPO, timeout_seconds=BUILD_TIMEOUT_SECONDS)
     if proc.returncode != 0:
         # Producer failures propagate with their own code; they are not parse
         # failures and are not turned into one.
         sys.stderr.write(proc.stderr)
-        raise SystemExit(proc.returncode)
+        raise SystemExit(proc.returncode if proc.returncode is not None else 1)
     sys.stderr.write(proc.stderr)
     return proc.stdout
 
@@ -180,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_config()
         threshold = parse_decimal("max_allocs_per_op", str(config["max_allocs_per_op"]))
-        output = args.input.read_text(encoding="utf-8") if args.input else run_producer()
+        output = read_regular_text(args.input, encoding="utf-8") if args.input else run_producer()
         metric = parse_metric_line(output, config)
     except GateError as exc:
         print(f"FAIL: allocation gate: {exc}", file=sys.stderr)

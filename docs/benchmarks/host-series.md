@@ -259,11 +259,16 @@ owner's deadline. Arbitrary SIGKILL or explicit session escape is outside this
 proof. Revalidation still uses private digest-checked bytes. Control costs must
 be measured again against the new source; earlier source receipts do not qualify.
 
-Prelaunch metadata inspection remains partly unbounded: Git/source enumeration,
-binary archive output and some tool/host identity subprocesses have not all been
-moved to owned bounded capture. The outer collector/arm timeout covers these
-only when they execute inside its command. Direct metadata calls and artifact
-reads before launch remain a separate audit/remediation item in B04.
+Prelaunch metadata inspection uses owned binary capture with a 30-second safety
+budget and 0.5-second termination grace. Git/source enumeration, archive bytes
+and tool/host identity reject incomplete execution without using partial output.
+Artifact/config/source reads and executable copies validate the opened regular
+descriptor; FIFO/device/directory inputs reject without waiting for a writer.
+Regular symlinks remain subject to each caller's existing confinement policy.
+Study ledger append rejects nonregular/symlink replacements. Supervisor stdin
+retains backpressured input across capture polls and closes EOF after delivery.
+These are normal local-filesystem/process checks, not capture-volume limits,
+deadlines for stalled kernel/network regular-file I/O or a hostile-writer sandbox.
 
 Finite-run validation checks settlement and residual ownership. There is no
 separate longitudinal recovery/soak admission contract or trend gate for resource

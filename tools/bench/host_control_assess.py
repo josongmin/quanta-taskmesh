@@ -20,6 +20,8 @@ import host_perf
 import host_sampler
 from host_run import write_new
 
+from tools.inspection import read_regular_bytes
+
 SCHEMA_VERSION = 2
 POLICY_KEYS = {
     "schema_version",
@@ -169,7 +171,7 @@ def recorder_response_effect(first: dict, second: dict) -> float:
 
 
 def read_bound_artifact(path: Path, expected_sha256: str, label: str) -> bytes:
-    data = path.read_bytes()
+    data = read_regular_bytes(path)
     if host_perf.sha256(data) != expected_sha256:
         raise host_perf.ReceiptError(f"{label} changed after control verification")
     return data
@@ -227,10 +229,10 @@ def assess(
     bundle_path: Path,
 ) -> dict[str, Any]:
     policy = parse_policy(policy_bytes)
-    scenario_bytes = scenario_path.read_bytes()
+    scenario_bytes = read_regular_bytes(scenario_path)
     if host_perf.sha256(scenario_bytes) != policy["scenario_sha256"]:
         raise host_perf.ReceiptError("control budget scenario differs")
-    bundle_bytes = bundle_path.read_bytes()
+    bundle_bytes = read_regular_bytes(bundle_path)
     bundle = host_controls.verify_bundle(
         bundle_bytes,
         scenario_path,
@@ -273,7 +275,7 @@ def assess(
         ),
         "recorder bundle",
     )
-    sampler_bytes = (sampler_directory / "sampler-bundle.json").read_bytes()
+    sampler_bytes = read_regular_bytes(sampler_directory / "sampler-bundle.json")
     sampler = host_sampler.verify_bundle(sampler_bytes, sampler_directory, scenario_bytes)
     if (
         sampler["identity"] != identity
@@ -444,7 +446,7 @@ def main() -> int:
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
     try:
-        policy_bytes = args.policy.read_bytes()
+        policy_bytes = read_regular_bytes(args.policy)
         report = assess(
             policy_bytes,
             args.scenario,

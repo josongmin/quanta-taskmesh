@@ -16,6 +16,8 @@ from typing import Any
 import host_perf
 from host_run import write_new
 
+from tools.inspection import read_regular_bytes
+
 SCHEMA_VERSION = 1
 MAX_SCENARIO_BYTES = 16 * 1024 * 1024
 
@@ -76,7 +78,7 @@ def main() -> int:
     args = parser.parse_args()
     manifest_path = args.output.with_name(args.output.name + ".manifest.json")
     try:
-        source_bytes = args.template.read_bytes()
+        source_bytes = read_regular_bytes(args.template)
         source = host_perf.parse_object(source_bytes, "rate template")
         derived = uniform_rate_point(source, args.rate_per_second)
         scenario_bytes = host_perf.canonical(derived) + b"\n"

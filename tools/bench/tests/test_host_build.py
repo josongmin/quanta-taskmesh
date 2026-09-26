@@ -511,9 +511,9 @@ def test_relative_path_hardlinked_rustup_binds_active_tools(
     def which(command, **kwargs):
         assert kwargs["cwd"] == source.resolve()
         assert Path(command[0]).name == "rustup"
-        return subprocess.CompletedProcess(command, 0, str(root / ("active-" + command[-1])), "")
+        return str(root / ("active-" + command[-1])).encode()
 
-    monkeypatch.setattr(iai_gate.subprocess, "run", which)
+    monkeypatch.setattr(iai_gate, "metadata_output", which)
     proof = {"cargo_tool_context": host_build.tool_context(root)}
     tools = proof["cargo_tool_context"]["tool_executables"]
     assert tools["build.rustc"]["path"] == str(root / "active-rustc")
@@ -545,9 +545,9 @@ def test_version_labels_use_frozen_source_cwd_and_effective_environment(
         assert kwargs["env"]["CARGO_INCREMENTAL"] == "0"
         assert kwargs["env"]["CARGO_TARGET_DIR"] == str(root.resolve() / "target")
         assert kwargs["env"]["RUSTUP_TOOLCHAIN"] == "1.92.0"
-        return subprocess.CompletedProcess(command, 0, (command[0] + " 1.92.0").encode(), b"")
+        return (command[0] + " 1.92.0").encode()
 
-    monkeypatch.setattr(host_build.subprocess, "run", version)
+    monkeypatch.setattr(host_build, "metadata_output", version)
     assert host_build.tool_version(root, "cargo") == "/frozen/tools/cargo 1.92.0"
     assert host_build.tool_version(root, "rustc") == "/frozen/tools/rustc-custom 1.92.0"
     assert calls == ["/frozen/tools/cargo", "/frozen/tools/rustc-custom"]

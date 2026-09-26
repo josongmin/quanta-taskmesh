@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
-import shutil
 import stat
 import subprocess
 import sys
@@ -19,6 +18,8 @@ from bench_process import run_bench
 from host_build import run_process
 from process_resource import sample_subprocess
 
+from tools.inspection import copy_regular_file, metadata_output, read_regular_bytes
+
 VALIDATOR_TIMEOUT_SECONDS = 120
 
 RUNNERS = {
@@ -30,12 +31,10 @@ RUNNERS = {
 
 def source_content_sha256() -> str:
     """Bind even a dirty diagnostic to the files present in this checkout."""
-    names = subprocess.run(
+    names = metadata_output(
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         cwd=host_perf.REPO,
-        capture_output=True,
-        check=True,
-    ).stdout.split(b"\0")
+    ).split(b"\0")
     digest = hashlib.sha256()
     for name in sorted(set(names) - {b""}):
         path = host_perf.REPO / name.decode("utf-8", "surrogateescape")
@@ -49,7 +48,7 @@ def source_content_sha256() -> str:
         if path.is_symlink():
             content = path.readlink().as_posix().encode("utf-8", "surrogateescape")
         elif path.is_file():
-            content = path.read_bytes()
+            content = read_regular_bytes(path)
         else:
             content = b"<missing>"
         digest.update(hashlib.sha256(content).digest())
@@ -57,7 +56,9 @@ def source_content_sha256() -> str:
 
 
 def verify_receipt(directory: Path, *, require_current_source: bool = False) -> dict:
-    receipt = host_perf.parse_object((directory / "receipt.json").read_bytes(), "special receipt")
+    receipt = host_perf.parse_object(
+        read_regular_bytes(directory / "receipt.json"), "special receipt"
+    )
     expected = {
         "schema_version",
         "status",
@@ -138,7 +139,7 @@ def verify_receipt(directory: Path, *, require_current_source: bool = False) -> 
         raise host_perf.ReceiptError("special runner or validator exit is not zero")
     artifacts = {}
     for name in ("scenario", "raw", "topology", "runner", "validator", "resources"):
-        artifacts[name] = (directory / name).read_bytes()
+        artifacts[name] = read_regular_bytes(directory / name)
         actual = host_perf.sha256(artifacts[name])
         if actual != receipt[f"{name}_sha256"]:
             raise host_perf.ReceiptError(f"special {name} digest differs")
@@ -184,7 +185,7 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
         raise host_perf.ReceiptError(f"refusing to overwrite {directory}")
     if directory.resolve().is_relative_to(host_perf.REPO):
         raise host_perf.ReceiptError("special output directory must be outside the source checkout")
-    scenario_bytes = scenario_path.read_bytes()
+    scenario_bytes = read_regular_bytes(scenario_path)
     scenario = host_perf.parse_object(scenario_bytes, "special scenario")
     if not isinstance(scenario.get("topology"), dict):
         raise host_perf.ReceiptError("special scenario lacks topology")
@@ -207,8 +208,8 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
     with tempfile.TemporaryDirectory(prefix="taskmesh-special-binary-") as temporary:
         sealed_runner = Path(temporary) / "runner"
         sealed_validator = Path(temporary) / "validator"
-        shutil.copy2(runner, sealed_runner)
-        shutil.copy2(validator, sealed_validator)
+        copy_regular_file(runner, sealed_runner)
+        copy_regular_file(validator, sealed_validator)
         host_run.retain_executable(sealed_runner, directory / "runner")
         host_run.retain_executable(sealed_validator, directory / "validator")
         exit_code, pid, stderr, resources = sample_subprocess(
@@ -247,8 +248,8 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
         end = host_perf.local_identity(scenario, features)
         source_unchanged = source_content_sha256() == source_digest
         sealed_unchanged = all(
-            host_perf.sha256(sealed.read_bytes())
-            == host_perf.sha256((directory / name).read_bytes())
+            host_perf.sha256(read_regular_bytes(sealed))
+            == host_perf.sha256(read_regular_bytes(directory / name))
             for name, sealed in (("runner", sealed_runner), ("validator", sealed_validator))
         )
     reason = None
@@ -262,7 +263,7 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
         reason = f"special validator failed: {stderr[-1000:]}"
     else:
         try:
-            host_perf.validate_resource_artifact((directory / "resources").read_bytes(), pid)
+            host_perf.validate_resource_artifact(read_regular_bytes(directory / "resources"), pid)
         except host_perf.ReceiptError as error:
             reason = f"special process resources invalid: {error}"
     receipt = {
@@ -272,7 +273,7 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
         "performance_status": "UNQUALIFIED",
         "mode": mode,
         **{
-            f"{name}_sha256": host_perf.sha256((directory / name).read_bytes())
+            f"{name}_sha256": host_perf.sha256(read_regular_bytes(directory / name))
             if (directory / name).is_file()
             else None
             for name in ("scenario", "raw", "topology", "runner", "validator", "resources")

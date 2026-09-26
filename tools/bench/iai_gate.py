@@ -23,7 +23,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -35,6 +34,16 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 REPO = Path(__file__).resolve().parents[2]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+from tools.inspection import (  # noqa: E402
+    InspectionExecutionError,
+    inspect_process,
+    metadata_output,
+    read_regular_bytes,
+    read_regular_text,
+)
+
 CONFIG = REPO / "tools" / "bench" / "perf-gate.json"
 RUNNER = "iai-callgrind-runner"
 BASELINE_MANIFEST_VERSION = 4
@@ -57,7 +66,7 @@ _U64_MAX = (1 << 64) - 1
 
 
 def gate_config() -> dict:
-    return json.loads(CONFIG.read_text(encoding="utf-8"))["instruction_count_gate"]
+    return json.loads(read_regular_text(CONFIG, encoding="utf-8"))["instruction_count_gate"]
 
 
 def shell_config_fields() -> tuple[str, str, str, str]:
@@ -98,17 +107,19 @@ def detect_runner_version() -> tuple[str | None, str]:
     # The executable on PATH is what iai-callgrind actually executes. Cargo's
     # installation registry may describe a different, shadowed executable.
     try:
-        probe = subprocess.run([RUNNER], capture_output=True, text=True, check=False)
-        path_version = runner_version_from_self_report(probe.stdout + probe.stderr)
+        probe = inspect_process([RUNNER], cwd=REPO)
+        path_version = runner_version_from_self_report(
+            (probe.stdout + probe.stderr).decode(errors="replace")
+        )
         if path_version is None:
             return None, "the runner on PATH did not report its version"
     except OSError as error:
         return None, f"the runner on PATH could not be executed: {error}"
     try:
-        listing = subprocess.run(
-            ["cargo", "install", "--list"], capture_output=True, text=True, check=False
+        listing = inspect_process(["cargo", "install", "--list"], cwd=REPO)
+        installed_version = runner_version_from_install_list(
+            listing.stdout.decode(errors="replace")
         )
-        installed_version = runner_version_from_install_list(listing.stdout)
         if installed_version and installed_version != path_version:
             return (
                 None,
@@ -118,6 +129,8 @@ def detect_runner_version() -> tuple[str | None, str]:
             tried.append(f"cargo install agrees ({installed_version})")
         else:
             tried.append("runner is not listed by cargo install")
+    except InspectionExecutionError as error:
+        return None, f"cargo installation inspection incomplete: {error}"
     except OSError as error:
         tried.append(f"`cargo install --list` failed: {error}")
     return path_version, "; ".join(tried)
@@ -194,8 +207,15 @@ def cargo_tool_context(
     for directory in ordered_directories:
         # Cargo uses the extensionless file when both names exist.
         candidates = [directory / "config", directory / "config.toml"]
-        for path in next(([candidate] for candidate in candidates if candidate.is_file()), []):
-            data = path.read_bytes()
+        for path in next(
+            (
+                [candidate]
+                for candidate in candidates
+                if candidate.exists() or candidate.is_symlink()
+            ),
+            [],
+        ):
+            data = read_regular_bytes(path)
             configs[str(path.resolve())] = hashlib.sha256(data).hexdigest()
             document = tomllib.loads(data.decode("utf-8"))
             build = document.get("build", {})
@@ -334,7 +354,7 @@ def cargo_tool_context(
             if is_proxy:
                 tools[role + ".launcher"] = {
                     "path": str(launcher),
-                    "sha256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
+                    "sha256": hashlib.sha256(read_regular_bytes(launcher)).hexdigest(),
                 }
                 resolver = (
                     Path(rustup)
@@ -343,21 +363,16 @@ def cargo_tool_context(
                 )
                 tools[role + ".resolver"] = {
                     "path": str(resolver.absolute()),
-                    "sha256": hashlib.sha256(resolver.read_bytes()).hexdigest(),
+                    "sha256": hashlib.sha256(read_regular_bytes(resolver)).hexdigest(),
                 }
-                process = subprocess.run(
+                output = metadata_output(
                     [str(resolver), "which", role.removeprefix("build.")],
                     cwd=root,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=30,
                     env=ambient,
                 )
-                compiler = Path(process.stdout.strip())
+                compiler = Path(os.fsdecode(output).strip())
                 if (
-                    process.returncode != 0
-                    or not compiler.is_absolute()
+                    not compiler.is_absolute()
                     or not compiler.is_file()
                     or not os.access(compiler, os.X_OK)
                 ):
@@ -365,7 +380,7 @@ def cargo_tool_context(
                 executable = compiler
         tools[role] = {
             "path": str(executable.resolve()),
-            "sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
+            "sha256": hashlib.sha256(read_regular_bytes(executable)).hexdigest(),
         }
     return {
         "environment": environment,
@@ -380,7 +395,7 @@ def cargo_build_context(root: Path, runner_executable: Path | None = None) -> di
         located = shutil.which(RUNNER)
         runner_executable = Path(located) if located else None
     runner_sha256 = (
-        hashlib.sha256(runner_executable.read_bytes()).hexdigest()
+        hashlib.sha256(read_regular_bytes(runner_executable)).hexdigest()
         if runner_executable is not None and runner_executable.is_file()
         else None
     )
@@ -446,7 +461,7 @@ def fingerprint(
     digest = hashlib.sha256()
     for path in inputs:
         digest.update(f"{path.as_posix()}\n".encode())
-        digest.update(hashlib.sha256(path.read_bytes()).hexdigest().encode())
+        digest.update(hashlib.sha256(read_regular_bytes(path)).hexdigest().encode())
         digest.update(b"\n")
     digest.update(f"schema={schema}\n".encode())
     digest.update(f"runner={runner}\n".encode())
@@ -459,7 +474,7 @@ def fingerprint(
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(read_regular_bytes(path)).hexdigest()
 
 
 def _artifact(path: Path, root: Path) -> dict[str, object]:
@@ -519,7 +534,7 @@ def baseline_manifest_problems(
     if path.is_symlink() or not path.is_file():
         return ["baseline manifest is missing"]
     try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest = json.loads(read_regular_text(path, encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         return [f"baseline manifest is unreadable: {error}"]
     if not isinstance(manifest, dict):
@@ -668,7 +683,7 @@ def _u64(value: object) -> bool:
 def _raw_ir(path: Path) -> int | None:
     """Mirror iai-callgrind 0.14.2 SummaryParser's totals/summary precedence."""
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = read_regular_text(path, encoding="utf-8").splitlines()
     except (OSError, UnicodeError):
         return None
     events: list[str] | None = None
@@ -812,7 +827,7 @@ def inspect_summaries(root: Path, *, expected_comparison: bool = False) -> dict[
             invalid.append(relative)
             continue
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload = json.loads(read_regular_text(path, encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
             invalid.append(relative)
             continue
@@ -993,7 +1008,7 @@ def main(argv: list[str] | None = None) -> int:
                 config["measurement_schema"],
                 args.runner,
                 args.valgrind,
-                args.rustc_file.read_text(encoding="utf-8"),
+                read_regular_text(args.rustc_file, encoding="utf-8"),
                 build_context=context,
             )
         except (OSError, KeyError, TypeError, ValueError) as error:
@@ -1011,7 +1026,7 @@ def main(argv: list[str] | None = None) -> int:
             fingerprint_value=args.fingerprint,
             runner=args.runner,
             valgrind=args.valgrind,
-            rustc=args.rustc_file.read_text(encoding="utf-8"),
+            rustc=read_regular_text(args.rustc_file, encoding="utf-8"),
             build_context=context,
         )
         if problems:
@@ -1024,7 +1039,7 @@ def main(argv: list[str] | None = None) -> int:
             fingerprint_value=args.fingerprint,
             runner=args.runner,
             valgrind=args.valgrind,
-            rustc=args.rustc_file.read_text(encoding="utf-8"),
+            rustc=read_regular_text(args.rustc_file, encoding="utf-8"),
             build_context=context,
             expected_comparison=args.expected_comparison == "yes",
         )
@@ -1046,7 +1061,7 @@ def main(argv: list[str] | None = None) -> int:
                 config["measurement_schema"],
                 args.runner,
                 args.valgrind,
-                args.rustc_file.read_text(encoding="utf-8"),
+                read_regular_text(args.rustc_file, encoding="utf-8"),
                 build_context=cargo_build_context(args.root),
             )
         )

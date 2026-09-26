@@ -18,6 +18,8 @@ from typing import Any, Optional
 import host_perf
 from host_run import write_new
 
+from tools.inspection import read_regular_bytes
+
 SCHEMA_VERSION = 1
 RUN_KEYS = {"raw", "summary", "provenance", "binary", "topology", "resources"}
 COMMON_IDENTITY_KEYS = {
@@ -36,7 +38,7 @@ def artifact(root: Path, value: Any, label: str) -> bytes:
     path = (root / value).resolve()
     if not path.is_relative_to(root.resolve()) or not path.is_file():
         raise host_perf.ReceiptError(f"{label}: artifact missing or outside manifest directory")
-    return path.read_bytes()
+    return read_regular_bytes(path)
 
 
 def read_run(root: Path, files: Any, scenario: bytes, label: str) -> dict[str, Any]:
@@ -299,7 +301,7 @@ def main() -> int:
     args = parser.parse_args()
     manifest_bytes: Optional[bytes] = None
     try:
-        manifest_bytes = args.manifest.read_bytes()
+        manifest_bytes = read_regular_bytes(args.manifest)
         report = compare(manifest_bytes, args.manifest.resolve().parent)
         write_new(args.output, host_perf.canonical(report) + b"\n")
         print(f"DESCRIPTIVE_ONLY performance=UNQUALIFIED output={args.output}")

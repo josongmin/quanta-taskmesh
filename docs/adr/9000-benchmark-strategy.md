@@ -209,9 +209,15 @@ remain inputs to acquire; code presence is not a performance result.
   diagnostic builds/probes (sampler on/off), Cargo-backed typed validation and
   special acquisition validators. Inner/control/collector cancellation grace
   is ordered at 1/3/5 seconds. Timeout/interruption/orphaned work cannot pass.
-- Prelaunch metadata/source enumeration and binary archive capture are not all
-  covered by that adapter. Metadata/artifact ingress custody remains an open
-  implementation item; full standalone liveness is not yet qualified.
+- Prelaunch metadata/source enumeration, binary Git archive capture and tool
+  inspection use owned binary supervision with a 30-second safety budget.
+  Incomplete execution cannot become identity, including optional host queries.
+  Artifact reads/copies validate regular descriptors with nonblocking open;
+  FIFO/device/directory inputs reject before collection. Study ledger append
+  rejects nonregular/symlink replacements. Supervisor stdin survives delayed
+  readers and backpressure across capture polls. These checks do not bound
+  stalled regular-file kernel/network I/O or captured byte volume, and are not
+  universal filesystem isolation or standalone liveness qualification.
 - Dedicated repeated admission for other modes and longitudinal soak/recovery
   qualification remain separate implementation work. Finite-run settlement
   conservation and sampled resource maxima do not prove long-term stability.

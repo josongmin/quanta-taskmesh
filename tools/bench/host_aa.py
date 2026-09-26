@@ -12,6 +12,8 @@ import host_perf
 from bench_process import run_control
 from host_run import retain_control_bundle
 
+from tools.inspection import read_regular_bytes
+
 BUNDLE_VERSION = 1
 RUN_KEYS = {
     "index",
@@ -41,7 +43,7 @@ def paths(directory: Path, index: int) -> dict[str, Path]:
 
 
 def verified_run(directory: Path, index: int, scenario_bytes: bytes) -> tuple[dict, dict]:
-    artifacts = {name: path.read_bytes() for name, path in paths(directory, index).items()}
+    artifacts = {name: read_regular_bytes(path) for name, path in paths(directory, index).items()}
     summary = host_perf.verify_receipt(
         artifacts["raw"],
         scenario_bytes,
@@ -85,7 +87,7 @@ def validate_study_windows(directory: Path, runs: list[dict], label: str) -> Non
         artifact_paths = paths(directory, index)
         artifacts = {}
         for name in ("provenance", "resources"):
-            data = artifact_paths[name].read_bytes()
+            data = read_regular_bytes(artifact_paths[name])
             if host_perf.sha256(data) != run[f"{name}_sha256"]:
                 raise host_perf.ReceiptError(f"{label} {name} changed during verification")
             artifacts[name] = data
@@ -155,7 +157,7 @@ def acquire(
     if pairs < 1 or pairs > 50:
         raise host_perf.ReceiptError("A/A pairs must be 1..=50")
     directory.mkdir(parents=True, exist_ok=False)
-    scenario_bytes = scenario.read_bytes()
+    scenario_bytes = read_regular_bytes(scenario)
     host_perf.parse_object(scenario_bytes, "scenario")
     runs = []
     failures = []

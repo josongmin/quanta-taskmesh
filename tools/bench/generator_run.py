@@ -9,7 +9,6 @@ this exact artifact custody path with a different typed Rust raw validator.
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -19,6 +18,8 @@ import host_perf
 from host_run import build_runner, retain_executable, retain_rejection, write_new
 from process_resource import sample_subprocess
 from scenario_rate import doubled_generator_scenario
+
+from tools.inspection import copy_regular_file, read_regular_bytes
 
 
 def main(
@@ -63,7 +64,7 @@ def main(
         ):
             raise host_perf.ReceiptError("control artifact paths must be fresh")
         owns_artifacts = True
-        scenario_bytes = args.scenario.read_bytes()
+        scenario_bytes = read_regular_bytes(args.scenario)
         scenario = host_perf.parse_object(scenario_bytes, "scenario")
         if args.rate_factor == 2:
             scenario = doubled_generator_scenario(scenario)
@@ -78,9 +79,9 @@ def main(
         with tempfile.TemporaryDirectory(prefix="taskmesh-control-binary-") as binary_dir:
             sealed_binary = Path(binary_dir) / binary.name
             sealed_scenario = Path(binary_dir) / "scenario.json"
-            shutil.copy2(binary, sealed_binary)
+            copy_regular_file(binary, sealed_binary)
             sealed_scenario.write_bytes(scenario_bytes)
-            binary_digest = host_perf.sha256(sealed_binary.read_bytes())
+            binary_digest = host_perf.sha256(read_regular_bytes(sealed_binary))
             executable_bytes = retain_executable(sealed_binary, executable_path)
             if host_perf.sha256(executable_bytes) != binary_digest:
                 raise host_perf.ReceiptError("retained control differs from sealed executable")
@@ -107,14 +108,15 @@ def main(
             resource_bytes = host_perf.canonical(resources) + b"\n"
             write_new(resource_path, resource_bytes)
             end_identity = host_perf.local_identity(scenario, features)
-            binary_unchanged = host_perf.sha256(sealed_binary.read_bytes()) == binary_digest
-        raw_bytes = args.raw.read_bytes() if args.raw.exists() else None
-        topology_bytes = topology_path.read_bytes() if topology_path.exists() else None
+            binary_unchanged = host_perf.sha256(read_regular_bytes(sealed_binary)) == binary_digest
+        raw_bytes = read_regular_bytes(args.raw) if args.raw.exists() else None
+        topology_bytes = read_regular_bytes(topology_path) if topology_path.exists() else None
         reason = None
         if start_identity != end_identity:
             reason = "source, toolchain or host identity changed during run"
         elif (
-            not binary_unchanged or host_perf.sha256(executable_path.read_bytes()) != binary_digest
+            not binary_unchanged
+            or host_perf.sha256(read_regular_bytes(executable_path)) != binary_digest
         ):
             reason = "sealed or retained control changed during run"
         elif runner_exit_code != 0:

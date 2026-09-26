@@ -14,6 +14,8 @@ import host_perf
 from bench_process import run_control
 from host_run import retain_control_bundle
 
+from tools.inspection import read_regular_bytes
+
 BUNDLE_VERSION = 1
 OFF_REASON = "resource sampling intentionally disabled for paired control"
 
@@ -27,9 +29,11 @@ def verified_run(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     row, identity = host_aa.verified_run(directory, index, scenario_bytes)
     paths = host_aa.paths(directory, index)
-    provenance = host_perf.parse_object(paths["provenance"].read_bytes(), "sampler provenance")
+    provenance = host_perf.parse_object(
+        read_regular_bytes(paths["provenance"]), "sampler provenance"
+    )
     resources = host_perf.validate_resource_artifact(
-        paths["resources"].read_bytes(), provenance["runner_pid"]
+        read_regular_bytes(paths["resources"]), provenance["runner_pid"]
     )
     mode = mode_for(index)
     if mode == "on":
@@ -141,7 +145,7 @@ def acquire(
             "sampler pairs must be even in 2..=50 and span must be positive"
         )
     directory.mkdir(parents=True, exist_ok=False)
-    scenario_bytes = scenario.read_bytes()
+    scenario_bytes = read_regular_bytes(scenario)
     host_perf.parse_object(scenario_bytes, "sampler scenario")
     runs = []
     failures = []

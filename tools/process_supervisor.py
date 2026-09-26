@@ -7,6 +7,7 @@ boundary, so an escaped descendant cannot hold a gate open indefinitely.
 
 from __future__ import annotations
 
+import math
 import os
 import signal
 import subprocess
@@ -98,6 +99,16 @@ class SupervisedProcess:
 
 
 @dataclass(frozen=True)
+class SupervisedBinaryProcess:
+    returncode: int | None
+    stdout: bytes
+    stderr: bytes
+    timed_out: bool
+    interrupted_by_signal: int | None
+    aborted_early: bool = False
+
+
+@dataclass(frozen=True)
 class SupervisedCommand:
     argv: list[str]
     cwd: Path
@@ -120,8 +131,13 @@ def run_process_batch(commands: list[SupervisedCommand]) -> list[SupervisedBatch
     """
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError("supervised processes must be launched from the main thread")
-    if any(command.timeout_seconds <= 0 for command in commands):
-        raise ValueError("timeout_seconds must be positive")
+    if any(
+        type(command.timeout_seconds) not in (int, float)
+        or not math.isfinite(command.timeout_seconds)
+        or command.timeout_seconds <= 0
+        for command in commands
+    ):
+        raise ValueError("timeout_seconds must be finite and positive")
     if not commands:
         return []
 
@@ -290,18 +306,30 @@ def run_process(
     abort_when: Callable[[], bool] | None = None,
     on_started: Callable[[int], None] | None = None,
     input_text: str | None = None,
-) -> SupervisedProcess:
+    binary_output: bool = False,
+) -> SupervisedProcess | SupervisedBinaryProcess:
     """Capture complete output and reap the owned process group on every exit path."""
-    if timeout_seconds <= 0:
-        raise ValueError("timeout_seconds must be positive")
+    if (
+        type(timeout_seconds) not in (int, float)
+        or not math.isfinite(timeout_seconds)
+        or timeout_seconds <= 0
+    ):
+        raise ValueError("timeout_seconds must be finite and positive")
     if termination_grace_seconds is None:
         termination_grace_seconds = TERMINATION_GRACE_SECONDS
-    if termination_grace_seconds <= 0:
-        raise ValueError("termination_grace_seconds must be positive")
+    if (
+        type(termination_grace_seconds) not in (int, float)
+        or not math.isfinite(termination_grace_seconds)
+        or termination_grace_seconds <= 0
+    ):
+        raise ValueError("termination_grace_seconds must be finite and positive")
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError("supervised processes must be launched from the main thread")
 
     process: subprocess.Popen[str] | None = None
+    input_pipe = None
+    input_bytes = b""
+    input_offset = 0
     timed_out = False
     aborted_early = False
     interrupted_by_signal: int | None = None
@@ -326,7 +354,7 @@ def run_process(
         termination_deadline = time.monotonic() + termination_grace_seconds
 
     previous_handlers: dict[int, object] = {}
-    stdout = stderr = ""
+    stdout = stderr = b"" if binary_output else ""
     orphaned_group = False
     try:
         # Install the handler before Popen so cancellation cannot land in the
@@ -341,13 +369,20 @@ def run_process(
             stdin=subprocess.PIPE if input_text is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            text=not binary_output,
             start_new_session=True,
         )
         timeout_deadline = time.monotonic() + timeout_seconds
         if on_started is not None:
             on_started(process.pid)
-        pending_input = input_text
+        if process.stdin is not None:
+            # communicate() cannot resume backpressured input with input=None:
+            # CPython no longer registers stdin after the first timed poll.
+            # Own a nonblocking writer separately from captured pipe draining.
+            input_pipe = process.stdin
+            input_bytes = input_text.encode("utf-8" if binary_output else input_pipe.encoding)
+            os.set_blocking(input_pipe.fileno(), False)
+            process.stdin = None
         if interrupted_by_signal is not None:
             signal_group(signal.SIGTERM)
             if termination_deadline is None:
@@ -382,6 +417,27 @@ def run_process(
                 signal_group(signal.SIGTERM)
                 termination_deadline = now + termination_grace_seconds
 
+            if input_pipe is not None:
+                if timed_out or aborted_early or interrupted_by_signal is not None:
+                    input_pipe.close()
+                    input_pipe = None
+                else:
+                    while input_offset < len(input_bytes):
+                        try:
+                            count = os.write(
+                                input_pipe.fileno(),
+                                input_bytes[input_offset : input_offset + 65536],
+                            )
+                        except BlockingIOError:
+                            break
+                        except BrokenPipeError:
+                            input_offset = len(input_bytes)
+                            break
+                        input_offset += count
+                    if input_offset == len(input_bytes):
+                        input_pipe.close()
+                        input_pipe = None
+
             deadlines = (
                 [timeout_deadline]
                 if not timed_out and not aborted_early and interrupted_by_signal is None
@@ -394,23 +450,29 @@ def run_process(
                 if deadlines
                 else POLL_INTERVAL_SECONDS
             )
-            wait_seconds = min(POLL_INTERVAL_SECONDS, until_deadline)
+            wait_seconds = min(
+                0.001 if input_pipe is not None else POLL_INTERVAL_SECONDS, until_deadline
+            )
             try:
-                stdout, stderr = process.communicate(input=pending_input, timeout=wait_seconds)
+                stdout, stderr = process.communicate(timeout=wait_seconds)
                 break
             except subprocess.TimeoutExpired as exc:
-                pending_input = None
                 if hard_stop:
-                    stdout, stderr = _partial_text(exc.stdout), _partial_text(exc.stderr)
-                    stderr += OPEN_CAPTURE_DIAGNOSTIC
+                    if binary_output:
+                        stdout, stderr = exc.stdout or b"", exc.stderr or b""
+                        stderr += OPEN_CAPTURE_DIAGNOSTIC.encode()
+                    else:
+                        stdout, stderr = _partial_text(exc.stdout), _partial_text(exc.stderr)
+                        stderr += OPEN_CAPTURE_DIAGNOSTIC
                     _finish_leader_after_pipe_abort(process)
                     break
                 continue
         cleanup = _kill_remaining_group(process.pid)
         if cleanup != "absent":
-            stderr += (
+            diagnostic = (
                 ORPHANED_GROUP_DIAGNOSTIC if cleanup == "killed" else INACCESSIBLE_GROUP_DIAGNOSTIC
             )
+            stderr += diagnostic.encode() if binary_output else diagnostic
             orphaned_group = (
                 process.returncode == 0
                 and not timed_out
@@ -435,14 +497,17 @@ def run_process(
                 _kill_remaining_group(process.pid)
         raise
     finally:
+        if input_pipe is not None:
+            input_pipe.close()
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
 
     assert process is not None
-    return SupervisedProcess(
+    result_type = SupervisedBinaryProcess if binary_output else SupervisedProcess
+    return result_type(
         returncode=None if orphaned_group else process.returncode,
-        stdout=stdout or "",
-        stderr=stderr or "",
+        stdout=stdout,
+        stderr=stderr,
         timed_out=timed_out,
         interrupted_by_signal=interrupted_by_signal,
         aborted_early=aborted_early,

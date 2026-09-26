@@ -22,6 +22,8 @@ import host_perf
 from host_run import retain_executable, write_new
 from iai_gate import cargo_tool_context
 
+from tools.inspection import metadata_output, read_regular_bytes
+
 if str(host_perf.REPO) not in sys.path:
     sys.path.insert(0, str(host_perf.REPO))
 from tools.process_supervisor import run_process  # noqa: E402
@@ -64,7 +66,7 @@ KEYS = {
 
 
 def command_output(command: list[str], cwd: Path = host_perf.REPO) -> bytes:
-    return subprocess.run(command, cwd=cwd, check=True, capture_output=True).stdout
+    return metadata_output(command, cwd=cwd)
 
 
 def cargo_config_sha256(source: Path) -> dict[str, str]:
@@ -76,10 +78,10 @@ def cargo_config_sha256(source: Path) -> dict[str, str]:
     home = home.resolve()
     directories = {home, *(path / ".cargo" for path in (source, *source.parents))}
     return {
-        str(path): host_perf.sha256(path.read_bytes())
+        str(path): host_perf.sha256(read_regular_bytes(path))
         for directory in sorted(directories)
         for path in (directory / "config", directory / "config.toml")
-        if path.is_file()
+        if path.exists() or path.is_symlink()
     }
 
 
@@ -107,14 +109,11 @@ def tool_version(root: Path, tool: str, context: dict | None = None) -> str:
     environment.update(effective_build_environment(root))
     selected = tool_context(root) if context is None else context
     executable = selected["tool_executables"]["build." + tool]["path"]
-    return subprocess.run(
+    return metadata_output(
         [executable, "--version", "--verbose"],
         cwd=root.resolve() / "source",
         env=environment,
-        check=True,
-        capture_output=True,
-        timeout=30,
-    ).stdout.decode()
+    ).decode()
 
 
 def require_standard_codegen(root: Path, proof: dict) -> None:
@@ -144,7 +143,7 @@ def require_standard_codegen(root: Path, proof: dict) -> None:
     if configs != proof["cargo_config_sha256"]:
         raise host_perf.ReceiptError("frozen Cargo configuration changed")
     for name, digest in configs.items():
-        data = Path(name).read_bytes()
+        data = read_regular_bytes(Path(name))
         if host_perf.sha256(data) != digest:
             raise host_perf.ReceiptError("Cargo configuration changed during codegen check")
         config = tomllib.loads(data.decode())
@@ -198,7 +197,7 @@ def check_source(source: Path, members: dict) -> None:
         path = files[name]
         if (
             path.is_symlink()
-            or path.read_bytes() != data
+            or read_regular_bytes(path) != data
             or (path.stat().st_mode & 0o111) != (mode & 0o111)
         ):
             raise host_perf.ReceiptError(f"frozen source changed: {name}")
@@ -307,7 +306,7 @@ def verified_profile(root: Path, proof: dict) -> dict[str, Any]:
     profiles = []
     for index in range(2):
         name = f"build-{index}.stdout"
-        data = (root / name).read_bytes()
+        data = read_regular_bytes(root / name)
         if host_perf.sha256(data) != proof["logs_sha256"][name]:
             raise host_perf.ReceiptError("frozen profile log digest changed")
         profiles.append(cargo_profile(data, proof["example"]))
@@ -328,7 +327,7 @@ def require_matching_library_profiles(root: Path, proof: dict, profile: dict) ->
     fields = ("opt_level", "debug_assertions", "overflow_checks", "test")
     for index in range(2):
         name = f"build-{index}.stdout"
-        data = (root / name).read_bytes()
+        data = read_regular_bytes(root / name)
         if host_perf.sha256(data) != proof["logs_sha256"][name]:
             raise host_perf.ReceiptError("frozen library profile log digest changed")
         seen = set()
@@ -477,7 +476,7 @@ def acquire(root: Path, features: list[str], example: str) -> dict[str, Any]:
 
 def verify(root: Path, *, rebuild: bool = False) -> dict[str, Any]:
     root = root.resolve()
-    proof = host_perf.parse_object((root / "build-witness.json").read_bytes(), "build witness")
+    proof = host_perf.parse_object(read_regular_bytes(root / "build-witness.json"), "build witness")
     host_perf.exact_keys(proof, KEYS, "build witness")
     if type(proof["schema_version"]) is not int or proof["schema_version"] != VERSION:
         raise host_perf.ReceiptError("unsupported frozen build version")
@@ -485,7 +484,7 @@ def verify(root: Path, *, rebuild: bool = False) -> dict[str, Any]:
         raise host_perf.ReceiptError("frozen workspace moved; acquire a new witness")
     if proof["build_command"] != recipe(proof["features"], proof["example"]):
         raise host_perf.ReceiptError("frozen build command differs")
-    archive = (root / "source.tar").read_bytes()
+    archive = read_regular_bytes(root / "source.tar")
     if (
         host_perf.sha256(archive) != proof["archive_sha256"]
         or archive != command_output(["git", "archive", "--format=tar", proof["source_head"]])
@@ -501,10 +500,10 @@ def verify(root: Path, *, rebuild: bool = False) -> dict[str, Any]:
     if not isinstance(proof["logs_sha256"], dict) or proof["logs_sha256"].keys() != expected_logs:
         raise host_perf.ReceiptError("frozen build logs incomplete")
     for name, digest in proof["logs_sha256"].items():
-        if host_perf.sha256((root / name).read_bytes()) != digest:
+        if host_perf.sha256(read_regular_bytes(root / name)) != digest:
             raise host_perf.ReceiptError("frozen build log changed")
     for index in range(2):
-        if host_perf.sha256((root / f"runner-{index}").read_bytes()) != proof["binary_sha256"]:
+        if host_perf.sha256(read_regular_bytes(root / f"runner-{index}")) != proof["binary_sha256"]:
             raise host_perf.ReceiptError("frozen executable changed")
     if (
         proof["rustc"] != tool_version(root, "rustc")
@@ -519,7 +518,7 @@ def verify(root: Path, *, rebuild: bool = False) -> dict[str, Any]:
         binary, features, stdout, _ = cold_build(root, proof["features"], proof["example"])
         check_source(root / "source", members)
         if (
-            host_perf.sha256(binary.read_bytes()) != proof["binary_sha256"]
+            host_perf.sha256(read_regular_bytes(binary)) != proof["binary_sha256"]
             or features != proof["artifact_features"]
         ):
             raise host_perf.ReceiptError(

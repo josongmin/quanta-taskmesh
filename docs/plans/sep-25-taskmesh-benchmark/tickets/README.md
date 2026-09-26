@@ -1,6 +1,17 @@
 # Taskmesh benchmark qualification: source audit and work plan
 
-## Current checkpoint — follow-up code audit at base `6f16118`, 2026-09-27
+## Current checkpoint — metadata/ingress audit at base `494b159`, 2026-09-27
+
+Owned binary metadata inspection, descriptor-based regular artifact reads,
+executable copying and ledger reopening close the P1b code item. New large-stdin
+backpressure regression also exposed and repaired supervisor input loss after
+capture polls. **Code is still incomplete:** longitudinal recovery/soak admission
+and declared-scope other-mode repeated admission remain implementation work.
+Clean-source CI, optimized build/oracle E2E and real measurement inputs remain
+separate open requirements. The scope, limitations and verification are in
+[B04 current audit](B04-remaining-audit.md); earlier checkpoints are historical.
+
+## Previous checkpoint — follow-up code audit at base `6f16118`, 2026-09-27
 
 Standalone diagnostic builds, probes, typed validation and all four control-arm
 launchers now use owned bounded execution. Sampler PID/window identity is kept;

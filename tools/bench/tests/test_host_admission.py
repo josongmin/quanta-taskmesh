@@ -387,7 +387,7 @@ def test_changed_raw_read_cannot_supply_unvalidated_tail_values(
             return host_perf.canonical(changed)
         return original(current)
 
-    monkeypatch.setattr(Path, "read_bytes", replaced_read)
+    monkeypatch.setattr(admission, "read_regular_bytes", replaced_read)
     with pytest.raises(host_perf.ReceiptError, match="between typed validation and tail analysis"):
         admission.admit(*args[:6])
     assert True not in args[6]
@@ -502,7 +502,7 @@ def test_bundle_parsing_and_digest_check_use_the_same_bytes(
             return host_perf.canonical(changed) if len(reads) == 1 else original
         return original_read(current)
 
-    monkeypatch.setattr(Path, "read_bytes", swapped_read)
+    monkeypatch.setattr(admission, "read_regular_bytes", swapped_read)
     with pytest.raises(host_perf.ReceiptError, match="calibration executable/digest differs"):
         admission.admit(*args[:6])
     assert len(reads) == 1

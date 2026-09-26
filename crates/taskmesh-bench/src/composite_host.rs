@@ -33,6 +33,8 @@ pub struct CompositeScenario {
     pub id: String,
     pub warmup_ms: u64,
     pub settlement_ms: u64,
+    #[serde(default)]
+    pub parent_timeout_ms: Option<u64>,
     pub topology: HostTopology,
     pub classes: Vec<HostClass>,
     pub parent_class: String,
@@ -58,6 +60,12 @@ impl CompositeScenario {
                 .is_some_and(|key| !(1..=3).contains(&key))
         {
             return Err("invalid composite version, class split or failure key".into());
+        }
+        if self
+            .parent_timeout_ms
+            .is_some_and(|millis| millis == 0 || millis > self.settlement_ms)
+        {
+            return Err("parent timeout must fit settlement window".into());
         }
         self.host_shape().validate()
     }
@@ -612,8 +620,11 @@ pub async fn run_composite_with_topology(
             checksum,
         })
     });
-    let parent_result =
-        tokio::time::timeout(Duration::from_millis(scenario.settlement_ms), parent).await;
+    let parent_result = tokio::time::timeout(
+        Duration::from_millis(scenario.parent_timeout_ms.unwrap_or(scenario.settlement_ms)),
+        parent,
+    )
+    .await;
     let parent_response_ns = since(origin);
     let drain_ok = runtime
         .drain(Duration::from_millis(scenario.settlement_ms))

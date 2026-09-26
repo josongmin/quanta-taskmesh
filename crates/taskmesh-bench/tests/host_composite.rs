@@ -44,13 +44,20 @@ async fn composite_all_success_is_key_ordered() {
 async fn composite_timeout_retains_typed_invalid_raw_and_settlement_observation() {
     let mut scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");
     scenario.id = "h6-timeout-regression".into();
-    scenario.settlement_ms = 500;
-    scenario.io_delay_ms = 500;
-    scenario.blocking_delay_ms = 500;
+    // Keep delayed bodies beyond the parent deadline, but within the later
+    // drain deadline. Equal delays make the timeout/success result a race.
+    scenario.settlement_ms = 1_000;
+    scenario.parent_timeout_ms = Some(500);
+    scenario.io_delay_ms = 750;
+    scenario.blocking_delay_ms = 750;
     let failure = run_composite_with_topology(&scenario)
         .await
         .expect_err("parent must time out before delayed child bodies complete");
-    assert!(failure.reason.contains("exceeded settlement bound"));
+    assert!(
+        failure.reason.contains("exceeded settlement bound"),
+        "{}",
+        failure.reason
+    );
     let raw = failure.raw.expect("failure raw must be retained");
     raw.validate_against(&scenario)
         .expect("partial failure raw must remain typed");
@@ -76,4 +83,9 @@ fn composite_preflight_rejects_unsupported_failure_key_and_body_bound() {
     assert!(scenario
         .validate()
         .is_err_and(|error| error.contains("cpu work exceeds fixture bound")));
+    scenario.cpu_iterations = 1_000;
+    scenario.parent_timeout_ms = Some(scenario.settlement_ms + 1);
+    assert!(scenario
+        .validate()
+        .is_err_and(|error| error.contains("parent timeout must fit settlement window")));
 }

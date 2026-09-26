@@ -48,6 +48,28 @@ fn ticket(governor: &Governor, operation: &str) -> taskmesh_engine::Ticket {
     }
 }
 
+#[test]
+fn issued_handle_sequences_identify_successive_permits_and_waiters() {
+    let governor = governor();
+
+    let first_permit = permit(&governor, "first");
+    assert_eq!(first_permit.sequence(), 1);
+    assert_eq!(governor.release(first_permit), ReleaseOutcome::Released);
+
+    let second_permit = permit(&governor, "second");
+    assert_eq!(second_permit.sequence(), 2);
+
+    let first_ticket = ticket(&governor, "first-waiter");
+    let second_ticket = ticket(&governor, "second-waiter");
+    assert_eq!(first_ticket.sequence(), 3);
+    assert_eq!(second_ticket.sequence(), 4);
+    assert_ne!(first_ticket, second_ticket);
+
+    assert_eq!(governor.abandon(first_ticket), AbandonOutcome::Abandoned);
+    assert_eq!(governor.abandon(second_ticket), AbandonOutcome::Abandoned);
+    assert_eq!(governor.release(second_permit), ReleaseOutcome::Released);
+}
+
 #[derive(Default)]
 struct CountingWaker(AtomicUsize);
 

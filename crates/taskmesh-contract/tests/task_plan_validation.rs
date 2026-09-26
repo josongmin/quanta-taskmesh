@@ -13,6 +13,34 @@ fn assert_invalid(raw: TaskSpec, expected: TaskPlanError) {
 }
 
 #[test]
+fn class_policy_identifier_validation_matches_task_intake() {
+    for valid in ["worker", "cpu/priority-2"] {
+        assert_eq!(TaskClass::new(valid).validate(), Ok(()));
+    }
+
+    for (value, violation) in [
+        ("", IdentifierViolation::Empty),
+        (" worker", IdentifierViolation::SurroundingWhitespace),
+        (
+            "bad$class",
+            IdentifierViolation::InvalidCharacter {
+                byte_offset: 3,
+                character: '$',
+            },
+        ),
+    ] {
+        assert_eq!(
+            TaskClass::new(value).validate(),
+            Err(TaskPlanError::InvalidIdentifier {
+                field: TaskIdentifierField::Class,
+                violation,
+            }),
+            "class {value:?} must be rejected before policy construction"
+        );
+    }
+}
+
+#[test]
 fn valid_child_preserves_immediate_parent_identity() {
     let raw = TaskSpec::cpu(TaskClass::new("worker"))
         .awaited_child_of("root-1", "parent-2", TaskStage::new("fanout"))

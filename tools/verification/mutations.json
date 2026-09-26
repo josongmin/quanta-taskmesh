@@ -555,10 +555,10 @@
       "id": "iai-runner-self-report-ignored",
       "finding": "A3-P0-1",
       "runner": "pytest",
-      "rationale": "The runner has no --version; if its own error report is not read either, a runner not installed through cargo cannot be version-checked and the gate dies with no way to pass.",
+      "rationale": "The executable on PATH must identify itself even when it was not installed through cargo; a missing cargo installation entry cannot override a valid runner self-report.",
       "file": "tools/bench/iai_gate.py",
-      "find": "        version = runner_version_from_self_report(probe.stdout + probe.stderr)\n        if version:",
-      "replace": "        version = runner_version_from_self_report(probe.stdout + probe.stderr)\n        if version and False:",
+      "find": "        else:\n            tried.append(\"runner is not listed by cargo install\")",
+      "replace": "        else:\n            return None, \"runner is not listed by cargo install\"",
       "test_target": "tools/bench/tests/test_iai_gate.py::test_the_runner_version_is_accepted_from_its_own_error_report",
       "expect_failing_test": "test_the_runner_version_is_accepted_from_its_own_error_report",
       "expect_message": "cannot determine the iai-callgrind-runner version"

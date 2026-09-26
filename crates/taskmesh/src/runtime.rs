@@ -1342,10 +1342,34 @@ impl Drop for TicketGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::TicketGuard;
+    use super::{run_cancellable, TicketGuard};
     use std::sync::Arc;
     use taskmesh_contract::{ClassPolicy, OverflowPolicy, TaskClass, TaskSpec};
     use taskmesh_engine::{AdmissionDecision, ClaimOutcome, ReleaseOutcome};
+
+    #[tokio::test]
+    async fn run_deadline_is_observed_without_a_cancel_token() {
+        let outcome: Result<_, tokio::time::error::Elapsed> = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            run_cancellable::<(), ()>(
+                None,
+                Some(crate::executor::SubmissionDeadline::RunFor(
+                    std::time::Duration::from_millis(10),
+                )),
+                std::future::pending(),
+            ),
+        )
+        .await;
+        assert!(
+            matches!(
+                outcome,
+                Ok(Err(taskmesh_contract::RunError::Governor(
+                    taskmesh_contract::GovernorError::DeadlineExceeded
+                )))
+            ),
+            "run deadline must end a pending future before the outer watchdog: {outcome:?}"
+        );
+    }
 
     #[test]
     fn ticket_guard_disarm_transfers_ownership_without_abandoning() {

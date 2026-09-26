@@ -19,7 +19,11 @@ from typing import Any
 import host_perf
 from host_run import write_new
 
-VERSION = 1
+if str(host_perf.REPO) not in sys.path:
+    sys.path.insert(0, str(host_perf.REPO))
+from tools.process_supervisor import run_process  # noqa: E402
+
+VERSION = 2
 ARTIFACTS = {
     "raw": "raw",
     "summary": "summary",
@@ -56,6 +60,7 @@ def parse_plan(data: bytes) -> dict:
                 "calibration",
                 "calibration_sha256",
                 "features",
+                "timeout_seconds",
             },
             "attempt",
         )
@@ -73,6 +78,8 @@ def parse_plan(data: bytes) -> dict:
         ):
             raise host_perf.ReceiptError("invalid attempt rate/arm")
         host_perf.nat(attempt["pair_index"], "attempt pair index")
+        if host_perf.nat(attempt["timeout_seconds"], "attempt timeout_seconds") == 0:
+            raise host_perf.ReceiptError("attempt timeout_seconds must be positive")
         for key in ("scenario_sha256", "calibration_sha256"):
             if (
                 not isinstance(attempt[key], str)
@@ -82,6 +89,9 @@ def parse_plan(data: bytes) -> dict:
         for key in ("scenario", "calibration"):
             if not isinstance(attempt[key], str) or not attempt[key]:
                 raise host_perf.ReceiptError("attempt input path required")
+            path = Path(attempt[key])
+            if path.is_absolute() or ".." in path.parts:
+                raise host_perf.ReceiptError("attempt input must remain under the plan directory")
         features = attempt["features"]
         if (
             not isinstance(features, list)
@@ -134,6 +144,7 @@ def collect(plan_bytes: bytes, plan_root: Path, root: Path) -> dict:
     write_new(root / "plan.json", plan_bytes)
     write_new(root / "events.jsonl", b"")
     previous, sequence = host_perf.sha256(plan_bytes), 0
+    interrupted = None
     for attempt in plan["attempts"]:
         name = attempt["id"]
         directory = root / name
@@ -144,8 +155,15 @@ def collect(plan_bytes: bytes, plan_root: Path, root: Path) -> dict:
         sequence += 1
         result, reason, stdout, stderr = None, None, b"", b""
         try:
+            if interrupted is not None:
+                raise host_perf.ReceiptError(f"not launched after collector signal {interrupted}")
             for role in ("scenario", "calibration"):
-                data = (plan_root / attempt[role]).read_bytes()
+                path = (plan_root / attempt[role]).resolve()
+                if not path.is_relative_to(plan_root.resolve()):
+                    raise host_perf.ReceiptError("attempt input escapes the plan directory")
+                if not path.is_file():
+                    raise host_perf.ReceiptError("attempt input must be a regular file")
+                data = path.read_bytes()
                 if host_perf.sha256(data) != attempt[f"{role}_sha256"]:
                     raise host_perf.ReceiptError(f"{role} input differs from predeclared digest")
                 write_new(directory / role, data)
@@ -159,13 +177,26 @@ def collect(plan_bytes: bytes, plan_root: Path, root: Path) -> dict:
             ]
             for feature in attempt["features"]:
                 command.extend(["--feature", feature])
-            process = subprocess.run(command, cwd=host_perf.REPO, capture_output=True, check=False)
-            result, stdout, stderr = process.returncode, process.stdout, process.stderr
-            if result != 0:
+            process = run_process(
+                command,
+                cwd=host_perf.REPO,
+                env=os.environ.copy(),
+                timeout_seconds=attempt["timeout_seconds"],
+            )
+            result = process.returncode
+            stdout, stderr = process.stdout.encode(), process.stderr.encode()
+            interrupted = process.interrupted_by_signal
+            if interrupted is not None:
+                reason = f"collector interrupted by signal {interrupted}"
+            elif process.timed_out:
+                reason = f"runner timeout after {attempt['timeout_seconds']}s"
+            elif result is None:
+                reason = "runner exited without settled process group"
+            elif result != 0:
                 reason = f"runner exit {result}"
             elif any(not (directory / file).is_file() for file in ARTIFACTS.values()):
                 reason = "runner did not retain all artifacts"
-        except (OSError, host_perf.ReceiptError) as error:
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
             reason = str(error)
         write_new(directory / "stdout", stdout)
         write_new(directory / "stderr", stderr)
@@ -202,8 +233,21 @@ def collect(plan_bytes: bytes, plan_root: Path, root: Path) -> dict:
 
 
 def verify(root: Path) -> dict[str, Any]:
+    if root.is_symlink() or not root.is_dir():
+        raise host_perf.ReceiptError("attempt ledger requires an owned regular directory")
+    for name in ("plan.json", "events.jsonl", "ledger.json"):
+        path = root / name
+        if path.is_symlink() or not path.is_file():
+            raise host_perf.ReceiptError("attempt ledger metadata requires regular owned files")
     plan_bytes = (root / "plan.json").read_bytes()
     plan = parse_plan(plan_bytes)
+    if {path.name for path in root.iterdir()} != {
+        "plan.json",
+        "events.jsonl",
+        "ledger.json",
+        *(a["id"] for a in plan["attempts"]),
+    }:
+        raise host_perf.ReceiptError("unplanned or missing study-root artifacts")
     final = host_perf.parse_object((root / "ledger.json").read_bytes(), "attempt ledger")
     host_perf.exact_keys(
         final,
@@ -316,7 +360,7 @@ def main() -> int:
             report = collect(args.plan.read_bytes(), args.plan.parent, args.directory)
         else:
             report = verify(args.directory)
-    except (OSError, host_perf.ReceiptError) as error:
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"attempt ledger rejected: {error}", file=sys.stderr)
         return 1
     print(host_perf.canonical(report).decode())

@@ -1,9 +1,106 @@
 # Benchmark remaining audit — 2026-09-26
 
-Audited source: `c5b5282a919eaa77d02a71577b8d8b1cdd8b9812`. During the audit,
+Initial audited source: `c5b5282a919eaa77d02a71577b8d8b1cdd8b9812`. During that audit,
 HEAD moved to `52f7c008e7ad761e9efb67bedd357c50551aa628`; that commit changes only
 ingress test formatting. Benchmark source is unchanged. This audit does not
 qualify the engine or its performance.
+
+## Additional boundary audit — base `f41862d`
+
+The following reachable defects are repaired in this change set. These are
+acquisition/admission defects, not demonstrated product-engine defects.
+
+| Boundary | Reproduced failure / risk | Implementation and DoD |
+|---|---|---|
+| Attempt execution | An unbounded `subprocess.run` can prevent terminal accounting indefinitely; a successful parent can leave a probe executing. | `host_study.py` plan/ledger v2 requires positive integer `timeout_seconds`; reuse `tools/process_supervisor.py` for owned-group cleanup and bounded capture. Real subprocess regressions cover a hung parent/child and a successful parent with a surviving child. Partial output and failed attempts remain in the ledger. |
+| Interruption and input custody | Further planned attempts must not launch after interruption; absolute/traversal/symlink input paths contradict the documented plan-root boundary. | Retain explicit failed/not-launched terminal events after SIGINT/SIGTERM; reject escaping/nonregular inputs before execution; reject symlink metadata and unplanned study-root artifacts. Regression covers missing/invalid timeouts, interruption, absolute/traversal and symlink escape. |
+| Cold build and oracle execution | These independent proof producers were also unbounded. | Apply the same supervisor with 1,800-second limits. Preserve stdout/stderr and execution metadata after timeout, interruption or incomplete process custody. Do not publish witness/admission success. |
+| Cargo configuration custody | Only Cargo-home config was hashed; Cargo also discovers ancestor config outside the frozen archive. | Build witness v2 binds source/ancestor/home `config` and `config.toml`; changes reject. v1 witnesses need reacquisition. Capture Cargo build/target/profile environment and workspace wrapper/toolchain selectors. |
+| Effective build semantics | Cargo's example profile can claim optimization while rustflags override it, or governed libraries use different per-package profiles. Oracle environment flags alone do not prove its actual profile. | Measured admission rejects custom rustflags/compiler/wrappers/config `[env]` injection. Check four governed library profiles in both cold logs; check three governed libraries and four test targets in actual oracle Cargo JSON. Optimization/assertion/overflow semantics must match the measured probe. |
+| Validated byte custody | The admission rereads raw for tail analysis after typed validation, without comparing that read to the validated digest; validated artifacts also need a direct ledger link. | Bind every validated run artifact to its sealed ledger digest, then hash the exact raw bytes used for tail statistics. Regressions reject differing typed/ledger populations and an altered second read before any rebuild/oracle. |
+| Local validator / MSRV | Final CI at `71f0edb` reproduced `manual_checked_ops` and use of `Option::is_none_or` (stable since 1.82) under the declared 1.81 MSRV. | Use `checked_div(...).unwrap_or(0)` and `map_or(true, ...)`, preserving zero-cadence and invalid-timestamp semantics. Confirm through the benchmark Clippy gate and local validator tests. |
+| Statistical model | Exchangeability alone does not justify a binomial rank interval for correlated samples. | State **iid within-run success latencies, unverified** in output and workflow. The interval remains conditional; no empirical correlation/stationarity proof or universal precision claim is inferred. |
+
+Owner files: `tools/bench/{host_study,host_build,host_admission,host_perf}.py`,
+their existing test modules, `crates/taskmesh-bench/src/local_host.rs`, and
+`docs/benchmarks/host-series.md`. No public engine
+API or runtime inventory is changed. Tests of synthetic admission orchestration
+remain synthetic; real subprocess cleanup tests prove only process ownership.
+An initial `561a00e` cold build and CI attempt were intentionally interrupted
+for this final byte-custody repair; they provide no success proof. The
+authoritative CI receipt, if produced, must match the exact clean commit;
+the historical checkpoints below are not substitutes.
+
+Focused owner checks on the final working change: 78 Python tests passed across
+`test_host_study.py`, `test_host_build.py` and `test_host_admission.py`; Ruff and
+`git diff --check` passed. These are working-change correctness checks. The
+current clean-source CI result belongs to `target/verification/macos-gates.json`
+and must be validated against its exact HEAD; build/oracle artifacts are
+separate and never establish a measured performance result.
+
+CI at `71f0edb` failed Clippy on the two local-validator issues above; downstream
+gates were not run. Separate changes to `docs/bugbash/sep-21/` and `tools/pm/`
+also made the shared checkout dirty during that attempt. Preserve those other
+owner changes and run final qualification in an isolated clean checkout. The
+failed/interrupted attempts cannot supply final CI proof.
+
+### Final local verification disposition
+
+- Code checkpoint: `381311e1089d40e9c62a147513ebc45b4388e4bc`.
+- The repaired benchmark crate passed `cargo clippy --locked -p taskmesh-bench
+  --all-targets -- -D warnings`. `host_local` executed 5/5 and
+  `artifact_publish` 1/1 passing integration tests on the shared checkout.
+  A prior `--lib local_host` invocation selected zero tests and supplies no proof.
+- Isolated clean checkout: `/tmp/taskmesh-final-381311e`. Its CI receipt is
+  `target/verification/macos-gates.json` under that checkout. Seven gates passed:
+  fmt, inventory, Python lint, architecture, semgrep, deny and full Clippy.
+  The Rust `test` gate was intentionally interrupted after 602 seconds during
+  the contested-host attempt; it is `FAIL`/interrupted, not an asserted engine
+  failure. The eight remaining gates are `NOT_RUN`. **CI is NOT_QUALIFIED.**
+  The receipt reports no source-stability problems.
+- Optimized frozen-build attempts at `/tmp/taskmesh-build-561a00e` and
+  `/tmp/taskmesh-build-71f0edb` were interrupted for final repairs, retain failed
+  build logs and have no completed witness. **Current optimized cold-build /
+  actual oracle-profile end-to-end proof remains open.** Historical default
+  build/oracle results below cannot satisfy the new v2/profile boundaries.
+- Next verification requires a clean source checkout and available host resources:
+  complete the CI profile, acquire optimized v2 witnesses, execute the third
+  rebuild and actual Cargo-JSON oracle check, then exercise the collector with
+  those witnesses. This remains separate from B00/H7/peer measurement inputs.
+- All changes were committed locally. Other-owner dirty `AGENTS.md`,
+  `docs/bugbash/sep-21/` and `tools/pm/` edits were preserved. No push, mutation
+  campaign, release qualification or performance-series admission was performed.
+
+### Remaining completion requirements
+
+1. **B00 / measurement owner:** supply actual per-class SLOs, completion floor,
+   sampling precision/model, duration and pilot-selected absolute rate grid;
+   freeze scenario and control-budget digests before measured attempts.
+   DoD: validated frozen contract and complete repeated ledger; null/empty B00
+   values and a smoke fixture cannot be promoted to capacity evidence.
+2. **Host / measurement owner:** declare a quiet host and collect measured
+   controls, repeated rate/recovery/soak populations under one source/build/
+   boot/topology identity. DoD: artifact-backed admission with all denominators,
+   failures and scope intact. Shared-host smoke/build/CI does not meet this DoD.
+3. **H7 / consumer owner:** provide a privacy-safe trace or consumer profile with
+   path/class mix, work distributions, burst/cancel/deadline mix and topology.
+   DoD: source identity, transformation and trace digest; invented inputs remain
+   synthetic and cannot establish consumer representativeness.
+4. **Peer / comparison owner:** select a maintained peer and prove its semantic
+   intersection, then obtain matched measurements and an external rerun.
+   DoD: equivalent work/admission/queue/caller/worker-custody contract plus
+   independent receipts. Raw Tokio/semaphore/Tower controls do not establish
+   whole-engine superiority.
+5. **Additional mode owners:** repeated local/closed-loop/composite/Rayon
+   admission remains unimplemented. Activate it only with a declared claim and
+   a separate mode-specific estimand/contract; reuse collector/build custody,
+   preserve each raw validator and avoid closed-loop overload-p99 claims.
+   DoD: mode-specific repeated raw population and independently passing budgets;
+   structural receipts do not close this implementation/measurement gap.
+
+Items 1–4 require measurement or external input, rather than fabricated code
+defaults. Item 5 is an explicit scope-extension implementation gap. No industry
+SOTA performance claim is admitted by this change set.
 
 ## Implementation checkpoint — 2026-09-26
 

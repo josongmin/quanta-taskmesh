@@ -31,7 +31,9 @@ change set.
 Use a clean committed checkout and fresh artifact directories outside the
 checkout. Set `TASKMESH_BENCH_BUILD_WITNESSES` **before** acquiring build witnesses
 and retain the same setting through all acquisitions. This variable is part of
-execution identity. Each example has its own directory:
+execution identity. The witness records both caller settings and effective
+build settings, including its owned target directory and forced incremental-off
+override. Each example has its own directory:
 
 ```sh
 # Freeze these settings before acquiring witnesses or any measured controls.
@@ -47,6 +49,13 @@ Without an optimized actual Cargo artifact profile (level 2/3, debug assertions
 off, non-test executable), the witness is structural only and measured admission
 rejects it. The profile is derived from digest-bound Cargo logs and compared with
 the independent rebuild; an operator-supplied `optimized: true` flag is not used.
+The admission checks the four governed library profiles in both cold-build logs,
+then the three governed libraries and four actual oracle test binaries in Cargo
+JSON output. Optimization, assertion and overflow semantics must match the
+probe; setting oracle environment variables alone is insufficient.
+Custom rustflags, compiler/wrapper overrides, target rustflags and Cargo `[env]`
+injections are rejected by this admission lane because Cargo profile metadata
+does not describe their effective semantics. Structural custody remains available.
 The output exposes the actual profile and build environment. This is a named
 build configuration, not an assumption that every release/deployment build is
 equivalent.
@@ -58,7 +67,8 @@ checkout build. Special-mode runners additionally need witnesses for their named
 probe and `host_special_validate` if this environment variable is set.
 
 `host_build.py` retains a Git archive, read-only source files, Cargo.lock identity,
-verbose Rust/Cargo identities, build environment, global Cargo-config digests,
+verbose Rust/Cargo identities, build environment, Cargo-config digests from the
+source directory, every ancestor and Cargo home,
 Cargo logs and both executable copies. It performs two builds with a freshly
 removed owned target directory, at the same retained source path and with
 incremental compilation disabled. Byte differences reject. Verification with
@@ -70,7 +80,13 @@ rebuild at another location. This is local reproducibility evidence, not an
 external attestation, hermetic dependency build, or independent peer rerun.
 Compiler/build-system compromise and source tampering followed by restoration
 between endpoint checks are outside its proof. Use an isolated owner checkout
-for acquisition. Frozen-build failures preserve logs and never publish a witness.
+for acquisition. Build-witness schema v2 includes ancestor configuration custody;
+v1 witnesses
+must be reacquired. Every cold build and engine oracle has a 1,800-second limit
+plus the supervisor termination grace. Use a separately declared `CARGO_HOME`
+when the normal host configuration injects unsupported rustflags; set it before
+acquiring witnesses and keep it identical for collection and admission. Timeout, interruption, or orphaned-group
+failures preserve logs/execution diagnostics and never publish success proof.
 
 ## Freeze the measured population
 
@@ -93,9 +109,10 @@ before the measured attempts. `host_admission.CONTRACT_KEYS` is the exact schema
 | `max_p99_relative_interval_width` | Positive fraction; binomial order-statistic interval width divided by per-run p99 |
 | `max_span_ns` | Positive maximum span across all control and measurement processes |
 
-The binomial rank interval has nominal 95% coverage **conditional on exchangeable
-within-run success latencies**. It does not establish stationarity or independence
-for an arbitrary correlated workload. Run-level budgets must pass separately;
+The binomial rank interval has nominal 95% coverage **conditional on iid
+within-run success latencies**. This is an unverified model assumption;
+exchangeability alone is insufficient.
+It does not establish stationarity or independence for a correlated workload. Run-level budgets must pass separately;
 the result includes this assumption. A thin tail with an unbounded interval
 cannot pass. SLO fraction uses **all intended arrivals**, including rejection and
 late completion. Intentional cancel/drop/deadline fixtures are separate stress
@@ -118,14 +135,17 @@ regression; quiet-host calibration still needs real measured pairs.
 ## Attempt ledger
 
 `host_study.py collect --plan PLAN DIRECTORY` seals the exact plan before the
-first started event. The plan has `schema_version: 1`, `contract_sha256`, and an
-ordered `attempts` array. Each attempt requires:
+first started event. The plan has `schema_version: 2`, `contract_sha256`, and an
+ordered `attempts` array. Version 1 ledgers remain historical and reject here;
+recollect with a predeclared timeout rather than retroactively rewriting them.
+Each attempt requires:
 
 - `id`: unique safe directory name;
 - `rate_per_second`, `pair_index`, `arm`: one `baseline` and one `candidate` per
   contiguous pair, increasing zero-based indices within each rate;
 - `scenario`, `scenario_sha256`, `calibration`, `calibration_sha256`: input paths
   relative to the plan directory, bound by exact byte digests;
+- `timeout_seconds`: positive integer wall-clock limit fixed before collection;
 - `features`: sorted unique feature names; measured admission currently requires
   the default feature set.
 
@@ -135,11 +155,18 @@ roles**. They do not compare a changed implementation or an industry peer.
 promote selected successful pairs to this measured admission.
 
 The collector writes a started event before input validation/process launch and a
-terminal event after completion or failure. Stdout, stderr, partial artifacts and
+terminal event after completion or failure. Timeouts use the shared process
+supervisor to terminate the owned process group and bound inherited capture
+pipes. A successful leader with surviving group members fails. SIGINT/SIGTERM
+stops further launches; the remaining planned population is retained as failed
+with an explicit not-launched reason. Descendants that escape the process group
+are outside this cleanup guarantee. Stdout, stderr, partial artifacts and
 failure reasons are retained. Events form a digest chain rooted in the sealed
 plan, and final accounting binds the complete event bytes and every attempt's
 artifact inventory. Missing, duplicate, reordered, interrupted or altered
-attempts reject. Failures remain in the denominator and suppress admission.
+attempts reject. Metadata must be regular owned files and the study root must
+contain exactly its sealed metadata and declared attempt directories; unplanned
+artifacts reject. Failures remain in the denominator and suppress admission.
 This contract permits **zero exclusions**; arbitrary exclusion labels reject.
 It accounts for collector-owned attempts, not experiments run outside it.
 
@@ -166,7 +193,9 @@ the acquisition. Older identity/provenance receipts must be reacquired and do
 not migrate by adding a copied digest. Frozen build acquisition uses the same
 clean-source check before archiving the pinned commit.
 
-Admission rechecks the ledger and measured controls, and runs a third cold build. It then
+Admission binds every typed-validated artifact to the sealed ledger digest,
+hashes the exact bytes used for tail analysis, rechecks measured controls, and
+runs a third cold build. It then
 executes the four named Taskmesh engine/facade oracle suites from the frozen
 source, with test-profile optimization, debug assertions and overflow checking
 explicitly matched to the measured artifact. At least 45 passing tests across all four suite results, zero ignored,

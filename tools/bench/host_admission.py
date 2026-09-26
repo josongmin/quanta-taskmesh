@@ -21,9 +21,11 @@ import host_compare
 import host_control_assess
 import host_perf
 import host_study
+from host_build import run_process
 from host_run import write_new
 
 VERSION = 1
+ORACLE_TIMEOUT_SECONDS = 1800
 CONTRACT_KEYS = {
     "schema_version",
     "status",
@@ -57,6 +59,7 @@ ORACLE = [
     "cargo",
     "test",
     "--locked",
+    "--message-format=json",
     "-p",
     "taskmesh",
     "--test",
@@ -141,7 +144,7 @@ def contract(data: bytes) -> dict:
 def quantile_interval(values: list[int], p: float = 0.99) -> dict:
     """Exact binomial order-statistic ranks; dependence assumption is explicit.
 
-    Within-run samples need exchangeability for nominal coverage. The admission
+    Within-run samples need iid draws for nominal binomial coverage. The admission
     additionally requires every independent run to pass; no request-level pooling.
     """
     n = len(values)
@@ -173,7 +176,9 @@ def quantile_interval(values: list[int], p: float = 0.99) -> dict:
         "rank_interval": [lower, upper],
         "order_statistic_95_interval_ns": [lo, hi],
         "relative_interval_width": width,
-        "assumption": "exchangeable within-run success latencies; no pooled run samples",
+        "assumption": (
+            "iid within-run success latencies (unverified assumption); no pooled run samples"
+        ),
     }
 
 
@@ -216,10 +221,12 @@ def admit(
             "build witness source/target differs from frozen full-host claim"
         )
     profile = host_build.verified_profile(build_root, witness)
+    host_build.require_standard_codegen(build_root, witness)
     if profile["opt_level"] not in ("2", "3") or profile["debug_assertions"] or profile["test"]:
         raise host_perf.ReceiptError(
             "measured admission requires optimized non-test build without debug assertions"
         )
+    host_build.require_matching_library_profiles(build_root, witness, profile)
     runs, windows, identities, populations, assessments, resource_bounds = [], [], [], {}, {}, []
     control_inputs, control_identities, boots, cadences = {}, [], set(), set()
     for rate in frozen["rate_grid"]:
@@ -290,6 +297,11 @@ def admit(
             )
         files = dict(host_study.ARTIFACTS)
         run = host_compare.read_run(directory, files, scenario_bytes, attempt["id"])
+        if any(
+            run["artifact_sha256"][role] != attempt["artifact_sha256"].get(filename)
+            for role, filename in files.items()
+        ):
+            raise host_perf.ReceiptError("validated attempt artifacts differ from sealed ledger")
         identity = run["identity"]
         if (
             identity["source_head"] != frozen["source_head"]
@@ -310,7 +322,10 @@ def admit(
             raise host_perf.ReceiptError("series indexed process order is reversed or overlaps")
         last_series_end = run["window"][1]
         windows.append(run["window"])
-        raw = host_perf.parse_object((directory / "raw").read_bytes(), "series raw")
+        raw_bytes = (directory / "raw").read_bytes()
+        if host_perf.sha256(raw_bytes) != run["artifact_sha256"]["raw"]:
+            raise host_perf.ReceiptError("raw changed between typed validation and tail analysis")
+        raw = host_perf.parse_object(raw_bytes, "series raw")
         by_cohort = {}
         for row in raw["records"]:
             if row["disposition"].get("outcome", {}).get("kind") == "success":
@@ -408,19 +423,33 @@ def admit(
         "CARGO_PROFILE_TEST_OVERFLOW_CHECKS": str(profile["overflow_checks"]).lower(),
     }
     env.update(oracle_profile)
-    process = subprocess.run(
-        ORACLE, cwd=build_root / "source", env=env, capture_output=True, check=False
+    process = run_process(
+        ORACLE, cwd=build_root / "source", env=env, timeout_seconds=ORACLE_TIMEOUT_SECONDS
     )
-    write_new(output / "oracle.stdout", process.stdout)
-    write_new(output / "oracle.stderr", process.stderr)
-    if process.returncode:
+    stdout, stderr = process.stdout.encode(), process.stderr.encode()
+    write_new(output / "oracle.stdout", stdout)
+    write_new(output / "oracle.stderr", stderr)
+    write_new(
+        output / "oracle.execution.json",
+        host_perf.canonical(
+            {
+                "returncode": process.returncode,
+                "timed_out": process.timed_out,
+                "interrupted_by_signal": process.interrupted_by_signal,
+                "timeout_seconds": ORACLE_TIMEOUT_SECONDS,
+            }
+        )
+        + b"\n",
+    )
+    if process.returncode != 0 or process.timed_out or process.interrupted_by_signal is not None:
         raise host_perf.ReceiptError("exact frozen-source engine correctness oracle failed")
     oracle_results = re.findall(
         rb"test result: ok\. (\d+) passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
-        process.stdout,
+        stdout,
     )
     if len(oracle_results) != 4 or sum(int(count) for count in oracle_results) < 45:
         raise host_perf.ReceiptError("exact correctness oracle population incomplete")
+    host_build.require_oracle_profiles(stdout, profile)
     # Recheck mutable input custody after expensive rebuild/oracle execution.
     if (
         host_study.verify(study_root) != ledger
@@ -449,12 +478,14 @@ def admit(
         "build_witness_sha256": host_perf.sha256(witness_bytes),
         "build_profile": profile,
         "build_environment": witness["build_environment"],
+        "effective_build_environment": witness["effective_build_environment"],
         "controls": assessments,
         "oracle": {
             "command": ORACLE,
             "profile_overrides": oracle_profile,
-            "stdout_sha256": host_perf.sha256(process.stdout),
-            "stderr_sha256": host_perf.sha256(process.stderr),
+            "stdout_sha256": host_perf.sha256(stdout),
+            "stderr_sha256": host_perf.sha256(stderr),
+            "execution_sha256": host_perf.sha256((output / "oracle.execution.json").read_bytes()),
         },
         "highest_tested_passing_rate": max(passing) if passing else None,
         "knee_bracketed": bool(passing) and max(passing) < max(frozen["rate_grid"]),

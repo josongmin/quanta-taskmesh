@@ -1,6 +1,6 @@
 # Taskmesh benchmark qualification: source audit and work plan
 
-## Current checkpoint
+## Current checkpoint — additional audit at `f41862d`
 
 [B04 remaining audit](B04-remaining-audit.md) now separates repaired acquisition
 defects and implemented measurement infrastructure from still-missing measured
@@ -8,6 +8,16 @@ inputs. Frozen build witnesses, complete attempt collection and a scoped
 full-host measured-series admission path are implemented; see the
 [operational workflow](../../../benchmarks/host-series.md). No new qualifying
 performance series, H7 profile or peer comparison has been acquired.
+
+The additional audit repairs execution timeout/process-group custody, seals
+Cargo ancestor configuration in build-witness v2, and checks actual governed
+library/oracle profiles. Plan/ledger v2 requires predeclared attempt timeouts.
+Conditional p99 intervals explicitly require unverified iid samples;
+exchangeability alone is insufficient. Full details, DoD and remaining input
+owners are in B04. Current-source CI authority is the exact-HEAD receipt, not
+the historical numbers below.
+
+## Historical checkpoints and initial audit
 
 At clean detached `f7834d7`, structural `closed_loop`, `local` v2 and `composite`
 receipts were acquired under `/tmp` and copied byte-for-byte to ignored

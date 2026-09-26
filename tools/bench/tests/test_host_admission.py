@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -13,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import host_admission as admission  # noqa: E402
 import host_perf  # noqa: E402
 
+from tools.process_supervisor import SupervisedProcess  # noqa: E402
+
 
 def test_quantile_rank_interval_does_not_invent_a_thin_tail() -> None:
     thin = admission.quantile_interval([10] * 10)
@@ -21,6 +22,7 @@ def test_quantile_rank_interval_does_not_invent_a_thin_tail() -> None:
     thick = admission.quantile_interval([10] * 1000)
     assert thick["order_statistic_95_interval_ns"] == [10, 10]
     assert thick["relative_interval_width"] == 0
+    assert "iid" in thick["assumption"] and "unverified" in thick["assumption"]
     with pytest.raises(host_perf.ReceiptError, match="empty quantile"):
         admission.quantile_interval([])
 
@@ -43,6 +45,11 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
         "features": [],
     }
     witness["build_environment"] = {}
+    witness["effective_build_environment"] = {"CARGO_INCREMENTAL": "0"}
+    witness["cargo_config_sha256"] = {}
+    monkeypatch.setattr(admission.host_build, "require_matching_library_profiles", lambda *a: None)
+    monkeypatch.setattr(admission.host_build, "require_oracle_profiles", lambda *a: None)
+    monkeypatch.setattr(admission.host_build, "cargo_config_sha256", lambda _root: {})
     monkeypatch.setattr(
         admission.host_build,
         "verified_profile",
@@ -115,8 +122,22 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
                         }
                     )
                 )
+                digests = {
+                    role: host_perf.sha256(f"synthetic {role}".encode())
+                    for role in admission.host_study.ARTIFACTS
+                }
+                digests["raw"] = host_perf.sha256((directory / "raw").read_bytes())
                 attempts.append(
-                    {"id": name, "rate_per_second": rate, "pair_index": pair, "arm": arm}
+                    {
+                        "id": name,
+                        "rate_per_second": rate,
+                        "pair_index": pair,
+                        "arm": arm,
+                        "artifact_sha256": {
+                            filename: digests[role]
+                            for role, filename in admission.host_study.ARTIFACTS.items()
+                        },
+                    }
                 )
                 start = 100 + len(attempts) * 10
                 fake_runs[name] = {
@@ -125,7 +146,7 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
                     "boot_time_ns": 1,
                     "resource_cadence_ms": 250,
                     "window": (start, start + 5),
-                    "artifact_sha256": {"raw": name},
+                    "artifact_sha256": digests,
                     "resource_observation": {},
                     "metrics": {
                         "cohort_goodput": {
@@ -170,16 +191,17 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
         admission.host_compare, "read_run", lambda _root, _files, _scenario, label: fake_runs[label]
     )
     monkeypatch.setattr(
-        admission.subprocess,
-        "run",
-        lambda *a, **k: subprocess.CompletedProcess(
-            [],
+        admission,
+        "run_process",
+        lambda *a, **k: SupervisedProcess(
             0,
-            b"test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
-            b"test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
-            b"test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
-            b"test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
-            b"",
+            "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
+            "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
+            "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "",
+            False,
+            None,
         ),
     )
     return (
@@ -238,9 +260,9 @@ def test_admission_rejects_incomplete_or_incompatible_evidence(
     else:
         code = 1 if change == "oracle" else 0
         monkeypatch.setattr(
-            admission.subprocess,
-            "run",
-            lambda *a, **k: subprocess.CompletedProcess([], code, b"", b"failure"),
+            admission,
+            "run_process",
+            lambda *a, **k: SupervisedProcess(code, "", "failure", False, None),
         )
     with pytest.raises(host_perf.ReceiptError, match=error):
         admission.admit(*args[:6])
@@ -281,6 +303,69 @@ def test_debug_and_test_profiles_cannot_admit_measurements(
     monkeypatch.setattr(admission.host_build, "verified_profile", lambda *_args: profile)
     with pytest.raises(host_perf.ReceiptError, match="requires optimized non-test build"):
         admission.admit(*args[:6])
+
+
+@pytest.mark.parametrize("timed_out,signum", [(True, None), (False, 15)])
+def test_timeout_or_interrupted_oracle_never_publishes_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timed_out: bool, signum: object
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        admission,
+        "run_process",
+        lambda *a, **k: SupervisedProcess(0, "partial", "failed", timed_out, signum),
+    )
+    with pytest.raises(host_perf.ReceiptError, match="correctness oracle failed"):
+        admission.admit(*args[:6])
+    assert (args[5] / "oracle.stdout").read_text() == "partial"
+    execution = json.loads((args[5] / "oracle.execution.json").read_bytes())
+    assert execution["timed_out"] is timed_out
+    assert execution["interrupted_by_signal"] == signum
+    assert not (args[5] / "admission.json").exists()
+
+
+def test_effective_codegen_override_rejects_before_rebuild_or_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    witness = admission.host_build.verify(args[2])
+    witness["build_environment"]["RUSTFLAGS"] = "-C opt-level=0"
+    with pytest.raises(host_perf.ReceiptError, match="custom compiler flags"):
+        admission.admit(*args[:6])
+    assert True not in args[6]
+    assert not args[5].exists()
+
+
+def test_validated_population_cannot_differ_from_the_sealed_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    next(iter(args[9].values()))["artifact_sha256"]["summary"] = "f" * 64
+    with pytest.raises(host_perf.ReceiptError, match="differ from sealed ledger"):
+        admission.admit(*args[:6])
+    assert True not in args[6]
+    assert not args[5].exists()
+
+
+def test_changed_raw_read_cannot_supply_unvalidated_tail_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    path = args[1] / next(iter(args[9])) / "raw"
+    original = Path.read_bytes
+    changed = json.loads(original(path))
+    changed["records"][0]["caller_response_ns"] = 999
+
+    def replaced_read(current: Path) -> bytes:
+        if current == path:
+            return host_perf.canonical(changed)
+        return original(current)
+
+    monkeypatch.setattr(Path, "read_bytes", replaced_read)
+    with pytest.raises(host_perf.ReceiptError, match="between typed validation and tail analysis"):
+        admission.admit(*args[:6])
+    assert True not in args[6]
+    assert not args[5].exists()
     assert not args[5].exists()
 
 

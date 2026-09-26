@@ -44,6 +44,33 @@ also made the shared checkout dirty during that attempt. Preserve those other
 owner changes and run final qualification in an isolated clean checkout. The
 failed/interrupted attempts cannot supply final CI proof.
 
+### Final local verification disposition
+
+- Code checkpoint: `381311e1089d40e9c62a147513ebc45b4388e4bc`.
+- The repaired benchmark crate passed `cargo clippy --locked -p taskmesh-bench
+  --all-targets -- -D warnings`. `host_local` executed 5/5 and
+  `artifact_publish` 1/1 passing integration tests on the shared checkout.
+  A prior `--lib local_host` invocation selected zero tests and supplies no proof.
+- Isolated clean checkout: `/tmp/taskmesh-final-381311e`. Its CI receipt is
+  `target/verification/macos-gates.json` under that checkout. Seven gates passed:
+  fmt, inventory, Python lint, architecture, semgrep, deny and full Clippy.
+  The Rust `test` gate was intentionally interrupted after 602 seconds during
+  the contested-host attempt; it is `FAIL`/interrupted, not an asserted engine
+  failure. The eight remaining gates are `NOT_RUN`. **CI is NOT_QUALIFIED.**
+  The receipt reports no source-stability problems.
+- Optimized frozen-build attempts at `/tmp/taskmesh-build-561a00e` and
+  `/tmp/taskmesh-build-71f0edb` were interrupted for final repairs, retain failed
+  build logs and have no completed witness. **Current optimized cold-build /
+  actual oracle-profile end-to-end proof remains open.** Historical default
+  build/oracle results below cannot satisfy the new v2/profile boundaries.
+- Next verification requires a clean source checkout and available host resources:
+  complete the CI profile, acquire optimized v2 witnesses, execute the third
+  rebuild and actual Cargo-JSON oracle check, then exercise the collector with
+  those witnesses. This remains separate from B00/H7/peer measurement inputs.
+- All changes were committed locally. Other-owner dirty `AGENTS.md`,
+  `docs/bugbash/sep-21/` and `tools/pm/` edits were preserved. No push, mutation
+  campaign, release qualification or performance-series admission was performed.
+
 ### Remaining completion requirements
 
 1. **B00 / measurement owner:** supply actual per-class SLOs, completion floor,

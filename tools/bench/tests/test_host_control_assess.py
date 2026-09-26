@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
@@ -45,6 +46,7 @@ def setup_assessment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[d
     identity = {"source_dirty": False, "source_head": "a" * 40}
     bundle = {
         "identity": identity,
+        "scenario_sha256": host_perf.sha256(scenario.read_bytes()),
         "host_binary_sha256": "one-binary",
         "observed_span_ns": 250,
         "boot_time_ns": 1,
@@ -53,13 +55,30 @@ def setup_assessment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[d
         "host_not_submitted": 0,
         "generator_max_lag_ns": 5,
         "host_max_lag_ns": 5,
+        "artifact_sha256": {"target": {}, "generator": {}},
     }
-    monkeypatch.setattr(host_control_assess.host_controls, "verify_bundle", lambda *_args: bundle)
+
+    def verified_bundle(*_args: object) -> dict:
+        for label, directory in (
+            ("aa_bundle", aa),
+            ("snapshot_bundle", snapshot),
+            ("recorder_bundle", recorder),
+        ):
+            bundle["artifact_sha256"][label] = host_perf.sha256(
+                (directory / f"{directory.name}-bundle.json").read_bytes()
+            )
+        return bundle
+
+    monkeypatch.setattr(host_control_assess.host_controls, "verify_bundle", verified_bundle)
     for path, start in ((raw, 10), (generator, 30)):
-        host_control_assess.host_controls.sidecars(path)["resources"].write_bytes(
-            encoded({"sampling_started_epoch_ns": start, "sampling_ended_epoch_ns": start + 10})
-        )
-    aa_runs = [study_run("A1", 2.0), study_run("A2", 2.1)] * 2
+        data = encoded({"sampling_started_epoch_ns": start, "sampling_ended_epoch_ns": start + 10})
+        host_control_assess.host_controls.sidecars(path)["resources"].write_bytes(data)
+        key = "target" if path == raw else "generator"
+        bundle["artifact_sha256"][key]["resources"] = host_perf.sha256(data)
+    aa_runs = [
+        study_run("A1" if index % 2 == 0 else "A2", 2.0 if index % 2 == 0 else 2.1)
+        for index in range(4)
+    ]
     snapshot_runs = [
         study_run("on", 2.1),
         study_run("off", 2.0),
@@ -77,12 +96,14 @@ def setup_assessment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[d
         (snapshot, snapshot_runs, 130),
         (recorder, recorder_runs, 210),
     ):
-        (directory / f"{directory.name}-bundle.json").write_bytes(encoded({"runs": runs}))
-        for index in range(len(runs)):
+        for index, run in enumerate(runs):
             start = first_start + index * 20
-            host_control_assess.host_aa.paths(directory, index)["resources"].write_bytes(
-                encoded({"sampling_started_epoch_ns": start, "sampling_ended_epoch_ns": start + 10})
+            data = encoded(
+                {"sampling_started_epoch_ns": start, "sampling_ended_epoch_ns": start + 10}
             )
+            host_control_assess.host_aa.paths(directory, index)["resources"].write_bytes(data)
+            run["resources_sha256"] = host_perf.sha256(data)
+        (directory / f"{directory.name}-bundle.json").write_bytes(encoded({"runs": runs}))
     sampler_runs = []
     for index, mode in enumerate(("on", "off", "off", "on")):
         row = study_run(mode, 2.1 if mode == "on" else 2.0)
@@ -199,3 +220,32 @@ def test_control_assessment_enforces_each_observer_p99_budget(
     report = host_control_assess.assess(encoded(policy), *paths)
     assert report["status"] == "BUDGET_FAIL"
     assert report["violations"] == [violation]
+
+
+def test_control_assessment_rejects_artifacts_changed_after_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    policy, paths = setup_assessment(tmp_path, monkeypatch)
+    verified = copy.deepcopy(host_control_assess.host_controls.verify_bundle())
+    monkeypatch.setattr(host_control_assess.host_controls, "verify_bundle", lambda *_args: verified)
+    aa_path = paths[4] / "aa-bundle.json"
+    original = aa_path.read_bytes()
+    aa_path.write_bytes(original + b" ")
+    with pytest.raises(host_perf.ReceiptError, match="A/A bundle changed"):
+        host_control_assess.assess(encoded(policy), *paths)
+
+    aa_path.write_bytes(original)
+    resource_path = host_control_assess.host_controls.sidecars(paths[1])["resources"]
+    resource_path.write_bytes(resource_path.read_bytes() + b" ")
+    with pytest.raises(host_perf.ReceiptError, match="control resources changed"):
+        host_control_assess.assess(encoded(policy), *paths)
+
+
+def test_control_assessment_rejects_control_scenario_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    policy, paths = setup_assessment(tmp_path, monkeypatch)
+    verified = host_control_assess.host_controls.verify_bundle()
+    verified["scenario_sha256"] = "b" * 64
+    with pytest.raises(host_perf.ReceiptError, match="scenario differs"):
+        host_control_assess.assess(encoded(policy), *paths)

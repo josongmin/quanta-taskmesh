@@ -154,6 +154,13 @@ def recorder_response_effect(first: dict, second: dict) -> float:
     return abs(first_counts["responded"] - second_counts["responded"]) / intended
 
 
+def read_bound_artifact(path: Path, expected_sha256: str, label: str) -> bytes:
+    data = path.read_bytes()
+    if host_perf.sha256(data) != expected_sha256:
+        raise host_perf.ReceiptError(f"{label} changed after control verification")
+    return data
+
+
 def assess(
     policy_bytes: bytes,
     scenario_path: Path,
@@ -182,16 +189,32 @@ def assess(
         recorder_directory,
     )
     identity = bundle["identity"]
+    if bundle["scenario_sha256"] != policy["scenario_sha256"]:
+        raise host_perf.ReceiptError("control bundle scenario differs from budget policy")
     if identity["source_dirty"] or identity["source_head"] != policy["source_head"]:
         raise host_perf.ReceiptError("control budget requires its declared clean source")
     if bundle["observed_span_ns"] > policy["max_span_ns"]:
         raise host_perf.ReceiptError("control budget acquisition span exceeded")
-    aa = host_perf.parse_object((aa_directory / "aa-bundle.json").read_bytes(), "A/A bundle")
+    digests = bundle["artifact_sha256"]
+    aa = host_perf.parse_object(
+        read_bound_artifact(aa_directory / "aa-bundle.json", digests["aa_bundle"], "A/A bundle"),
+        "A/A bundle",
+    )
     snapshot = host_perf.parse_object(
-        (snapshot_directory / "snapshot-bundle.json").read_bytes(), "Snapshot bundle"
+        read_bound_artifact(
+            snapshot_directory / "snapshot-bundle.json",
+            digests["snapshot_bundle"],
+            "Snapshot bundle",
+        ),
+        "Snapshot bundle",
     )
     recorder = host_perf.parse_object(
-        (recorder_directory / "recorder-bundle.json").read_bytes(), "recorder bundle"
+        read_bound_artifact(
+            recorder_directory / "recorder-bundle.json",
+            digests["recorder_bundle"],
+            "recorder bundle",
+        ),
+        "recorder bundle",
     )
     sampler_bytes = (sampler_directory / "sampler-bundle.json").read_bytes()
     sampler = host_sampler.verify_bundle(sampler_bytes, sampler_directory, scenario_bytes)
@@ -203,21 +226,24 @@ def assess(
         or sampler["runs"][0]["resource_cadence_ms"] != bundle["resource_cadence_ms"]
     ):
         raise host_perf.ReceiptError("sampler source, binary, boot or cadence differs")
-    resource_paths = [
-        host_controls.sidecars(host_raw)["resources"],
-        host_controls.sidecars(generator_raw)["resources"],
+    resource_artifacts = [
+        (host_controls.sidecars(host_raw)["resources"], digests["target"]["resources"]),
+        (host_controls.sidecars(generator_raw)["resources"], digests["generator"]["resources"]),
     ]
     for directory, runs in (
         (aa_directory, aa["runs"]),
         (snapshot_directory, snapshot["runs"]),
         (recorder_directory, recorder["runs"]),
     ):
-        resource_paths.extend(
-            host_aa.paths(directory, index)["resources"] for index in range(len(runs))
+        resource_artifacts.extend(
+            (host_aa.paths(directory, index)["resources"], run["resources_sha256"])
+            for index, run in enumerate(runs)
         )
     windows = []
-    for path in resource_paths:
-        resource = host_perf.parse_object(path.read_bytes(), "control resources")
+    for path, digest in resource_artifacts:
+        resource = host_perf.parse_object(
+            read_bound_artifact(path, digest, "control resources"), "control resources"
+        )
         windows.append((resource["sampling_started_epoch_ns"], resource["sampling_ended_epoch_ns"]))
     windows.extend(tuple(run["window_epoch_ns"]) for run in sampler["runs"])
     windows.sort()

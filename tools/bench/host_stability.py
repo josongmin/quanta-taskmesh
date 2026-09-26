@@ -78,30 +78,42 @@ def population(directory: Path, count: int) -> set[str]:
     return BASE_ARTIFACTS | names
 
 
-def typed_validate(directory: Path, artifacts: dict[str, str]) -> None:
-    # Read each regular descriptor once, hash those bytes, then execute and
-    # validate private copies. Original paths are never executed after hashing.
+def typed_validate(directory: Path, artifacts: dict[str, str], validator_bytes: bytes) -> None:
+    # Read each regular descriptor once and validate private copies with the
+    # trusted binary captured before acquisition. Receipt bytes are data only.
     with tempfile.TemporaryDirectory(prefix="taskmesh-stability-validate-") as temporary:
-        sealed = Path(temporary)
+        sealed = Path(temporary) / "bundle"
+        sealed.mkdir()
         (sealed / "cycles").mkdir()
         for name, digest in artifacts.items():
             data = read_regular_bytes(directory / name)
             if host_perf.sha256(data) != digest:
                 raise host_perf.ReceiptError(f"stability artifact digest differs: {name}")
             host_run.write_new(sealed / name, data)
-        _validate_private_bundle(sealed)
+        _validate_private_bundle(sealed, validator_bytes)
 
 
-def _validate_private_bundle(directory: Path) -> None:
-    """Replay only a private bundle whose bytes were checked during copying."""
-    (directory / "runner").chmod(0o700)
+def _validate_private_bundle(directory: Path, validator_bytes: bytes) -> None:
+    """Replay checked data with a separate, locally supplied validator."""
+    validator = directory.parent / "validator"
+    host_run.write_new(validator, validator_bytes)
+    validator.chmod(0o700)
     result = run_bench(
-        [str(directory / "runner"), "validate", str(directory / "manifest.json"), str(directory)],
+        [str(validator), "validate", str(directory / "manifest.json"), str(directory)],
         cwd=host_perf.REPO,
         timeout_seconds=120,
     )
     if result.returncode != 0:
         raise host_perf.ReceiptError("typed stability validation failed: " + result.stderr[-2000:])
+
+
+def _current_validator_bytes() -> bytes:
+    before = source_content_sha256()
+    binary, features, _ = host_run.build_runner([], "host_stability_probe")
+    data = read_regular_bytes(binary)
+    if features != ["default"] or source_content_sha256() != before:
+        raise host_perf.ReceiptError("stability validator source or features changed")
+    return data
 
 
 def _verify_sealed(directory: Path, *, require_current_source: bool = False) -> dict:
@@ -179,7 +191,15 @@ def _verify_sealed(directory: Path, *, require_current_source: bool = False) -> 
         or host_perf.local_identity(scenario, []) != receipt["start_identity"]
     ):
         raise host_perf.ReceiptError("current stability source or host differs")
-    _validate_private_bundle(directory)
+    validator_bytes = _current_validator_bytes()
+    if require_current_source and host_perf.sha256(validator_bytes) != artifacts["runner"]:
+        raise host_perf.ReceiptError("retained runner differs from current build")
+    _validate_private_bundle(directory, validator_bytes)
+    if require_current_source and (
+        source_content_sha256() != source
+        or host_perf.local_identity(scenario, []) != receipt["start_identity"]
+    ):
+        raise host_perf.ReceiptError("current stability source or host changed during replay")
     return receipt
 
 
@@ -193,7 +213,8 @@ def verify_receipt(directory: Path, *, require_current_source: bool = False) -> 
     if not isinstance(artifacts, dict) or set(artifacts) != names:
         raise host_perf.ReceiptError("stability artifact inventory differs")
     with tempfile.TemporaryDirectory(prefix="taskmesh-stability-bundle-") as temporary:
-        sealed = Path(temporary)
+        sealed = Path(temporary) / "bundle"
+        sealed.mkdir()
         (sealed / "cycles").mkdir()
         host_run.write_new(sealed / "receipt.json", receipt_data)
         for name in sorted(names):
@@ -306,7 +327,7 @@ def _acquire_owned(
             host_perf.validate_resource_artifact(
                 read_regular_bytes(directory / "resources.json"), pid
             )
-            typed_validate(directory, artifacts)
+            typed_validate(directory, artifacts, binary_data)
         except (OSError, ValueError, host_perf.ReceiptError) as error:
             reason = str(error)
     receipt = {
@@ -356,9 +377,10 @@ def main() -> int:
             receipt = verify_receipt(
                 args.directory, require_current_source=args.require_current_source
             )
+        scope = "functional" if args.command == "run" else "structural"
         print(
             host_perf.canonical(
-                {"functional": "PASS", "performance": receipt["performance_status"]}
+                {scope: "PASS", "performance": receipt["performance_status"]}
             ).decode()
         )
         return 0

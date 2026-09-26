@@ -1,6 +1,6 @@
 # B07 — 필요한 recovery / soak 안정성 검증
 
-- 상태: **IMPLEMENTED — 이전 snapshot owner-local CLOSED; 최종 감사 보완의 owner 회귀는 pending**
+- 상태: **CLOSED — 최종 감사 delta owner-local 회귀·H5 smoke 완료; clean CI / performance qualification 별도**
 - 기준 소스: `61d4e47b0dc6009bb511704292e2a830c29c4287` + owner working delta (2026-09-27)
 - 우선순위: 안정성 coverage 보완. 현재 확인된 엔진 결함이나 release blocker로 분류하지 않는다.
 - 선행: [B04](B04-remaining-audit.md)의 실행·metadata·artifact 경계 보완은 구현됨.
@@ -290,7 +290,7 @@ uv run python tools/bench/host_stability.py verify \
 ### 남은 범위
 
 - **이전 B07 snapshot의 코드 / 회귀 / 실제 diagnostic stress:** 위 증거로 완료.
-  아래 최종 감사 delta의 owner 회귀는 별도 pending이며 이전 실행으로 대체하지 않는다.
+  당시 아래 최종 감사 delta의 owner 회귀는 별도 pending이었고, 후속 섹션에서 해결했다.
 - **Clean-source CI 및 optimized frozen build/oracle E2E:** 미실행 / 별도 open.
 - **B00 estimand·consumer budget, H7 profile, quiet-host series, peer 비교:** 기존 입력/측정
   공백 유지. B07 실행이 이를 채우지 않는다.
@@ -319,12 +319,49 @@ Ruff check/format, Cargo fmt, `git diff --check`. clippy의 all-targets compile�
 이번에는 test suite·새 10분 stress를 실행하거나 테스트를 추가하지 않았다.
 위 118/616/13 PASS와 실제 study는 **이전 source snapshot**의 증거다.
 
-### 현재 delta의 남은 owner 증거
+### 이 시점에 열려 있던 owner 증거
 
 - `tools/bench/tests/test_host_stability.py`: CLI existing-output 거부 후 전체 inventory
   불변, owned output의 build/check 실패 retention, retention 실패 시 원래 오류 보존.
 - `crates/taskmesh-bench/src/host_stability.rs` / integration owner: writer/window error 시
   admission close·bounded drain, drain 실패 시 원래 오류와 cleanup 실패 동시 보고.
   기존 writer failure 회귀는 success summary 부재만 확인하므로 drain 증거로 세지 않는다.
-- 기존 scoped owner 회귀와 새 current-source smoke를 실행한 뒤 이 delta를 owner-local
-  CLOSED로 변경한다. clean CI / optimized oracle / performance admission은 별도 유지한다.
+- 다음 최종 감사에서 이 항목들을 확인했다. clean CI / optimized oracle /
+  performance admission은 별도 유지한다.
+
+## Final adversarial audit — 2026-09-27, base `8a4f3a6`
+
+- `verify_receipt`가 digest만 self-declared인 bundle의 `runner`를 실행할 수 있었다.
+  검증기는 현재 checkout에서 빌드한 별도 binary를 private copy로 실행한다.
+  측정 runner는 계속 digest 검사 대상이고 실행 대상이 아니다. `verify` CLI 출력은
+  `structural=PASS`로 한정한다. `--require-current-source`에서는 현재 source/host의
+  양 끝점과 현재 빌드의 runner byte 일치까지 요구한다. 외부 bundle의 자기 선언
+  digest는 provenance 인증이 아니다.
+- 고정 canary class/path dedup을 `Vec::contains` 반복에서 순서를 보존하는
+  `BTreeSet` lookup으로 변경했다. 새 executor나 engine pool은 없다.
+- runtime 소유 helper로 writer 실패 후 admission close/exact-zero, live worker가
+  남았을 때 bounded drain 실패와 원래 오류의 동시 보고를 각각 검증했다.
+  첫 held-worker 회귀는 동기 callback 대기 때문에 시작되지 않았고, 다음 시도는
+  `operation` 미지정으로 `MalformedTask`였다. 실제 barrier를 callback 밖으로
+  옮기고 유효한 task를 사용한 최종 실행만 PASS로 센다.
+- CLI existing-output 재사용 거부의 파일 이름/digest 불변, owned build 실패의
+  rejection retention, retention 실패 시 원래 오류 보존, self-hashed 외부 runner
+  미실행과 current-source byte 불일치를 Python 회귀로 확인했다.
+
+Owner-local 실행: `just dev-rust-tests taskmesh-bench` **120 PASS / 0 FAIL**;
+`uv run pytest -q tools/bench/tests/test_host_stability.py --tb=short`
+**36 PASS / 0 FAIL**; canonical bench clippy, Ruff check/format, Cargo fmt,
+`git diff --check` PASS. 최초 held-worker 회귀의 두 실패 실행과 test selector의
+0-case 실행은 합격 분모에 포함하지 않는다. 실제 H5 새 acquisition은
+`/tmp/taskmesh-b07-trusted-verify-922wX2/h5`에서 3 cycle, host build 1회,
+terminal drain PASS를 기록했다. 실행 직후 `verify --require-current-source`는
+`structural=PASS`, `performance=UNQUALIFIED`였다. Receipt SHA-256:
+`202ebd7c96c7bff145b18381092f723650581d12602513db3b6343bd7c39afbc`.
+이 study의 source digest는
+`f0cab98deb24658edc7c529f7a685d3be12af0b2439eec3a1e060e6e408f8385`이며,
+후속 test/doc 편집 이전 snapshot이다. 이전 H5 retained bundle도 새 검증기에서
+`structural=PASS`였다. 현재 checkout에는 다른 owner의 dirty 파일이 있어
+이 결과는 clean exact-HEAD CI나 release/performance qualification이 아니다.
+
+남은 증거: clean-source CI와 optimized frozen build/oracle E2E, B00/quiet-host/H7/peer
+입력, 조건부 성능 자격. Mutation/nightly/release, 배포, 원격 push는 실행하지 않았다.

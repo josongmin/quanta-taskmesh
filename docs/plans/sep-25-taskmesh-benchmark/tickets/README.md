@@ -5,7 +5,7 @@
 Metadata/nonregular ingress and stdin backpressure remediation is committed in
 `5be7e09`; its scoped owner proof is in [B04](B04-remaining-audit.md).
 
-**Implemented scope; audit-delta owner regressions pending:** [B07 — minimal recovery/soak](B07-minimal-recovery-soak.md).
+**Closed owner-local scope:** [B07 — minimal recovery/soak](B07-minimal-recovery-soak.md).
 Reuse one host across bounded overload/settlement cycles, require exact resource
 return and a successful normal-work canary after each recovery. Existing raw and
 custody oracles remain the correctness owners. Short smoke joins existing tests;
@@ -22,9 +22,11 @@ Retained diagnostics remain `UNQUALIFIED`; exact commands/source digests are in 
 and real measurement inputs retain their separate open statuses. Historical
 checkpoints below do not override this scope decision.
 
-Final audit at base `a3241e3` fixes existing-output corruption, early-error drain
-and redundant replay copies. Compile/lint and historical H5 replay pass; the new
-delta's owner regressions/current-source smoke remain pending in B07.
+Final audit at base `8a4f3a6` closed the follow-up owner regressions: Rust 120,
+Python B07 36, and a new H5 same-host smoke. Verification executes a validator
+built from the current checkout, never the self-hashed retained runner. Plain
+historical replay reports structural consistency; current-source replay also
+requires retained binary equality. Exact source and limits are recorded in B07.
 
 ## Previous checkpoint — follow-up code audit at base `6f16118`, 2026-09-27
 

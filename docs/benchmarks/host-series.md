@@ -270,12 +270,11 @@ retains backpressured input across capture polls and closes EOF after delivery.
 These are normal local-filesystem/process checks, not capture-volume limits,
 deadlines for stalled kernel/network regular-file I/O or a hostile-writer sandbox.
 
-Finite-run validation checks settlement and residual ownership. The active
-[B07 plan](../plans/sep-25-taskmesh-benchmark/tickets/B07-minimal-recovery-soak.md)
+Finite-run validation checks settlement and residual ownership. The completed
+[B07 owner-local diagnostic](../plans/sep-25-taskmesh-benchmark/tickets/B07-minimal-recovery-soak.md)
 adds same-host repeated cycles, exact capacity-return checkpoints and successful
 normal-work canaries after recovery. It reuses existing validators and custody;
-short smoke belongs in ordinary tests, longer stress is initially local opt-in.
-Implementation and execution are pending; there is no stability command to run yet.
+short smoke belongs in ordinary tests, longer stress remains local opt-in.
 
 Separate mode-specific performance admission, RSS slope gates and recovery SLOs
 are deferred until required by a declared performance claim and consumer budget.
@@ -317,9 +316,13 @@ uv run python tools/bench/host_stability.py run \
 uv run python tools/bench/host_stability.py verify /tmp/taskmesh-h2-stability-stress
 ```
 
-Use a new directory outside the checkout each time. `verify --require-current-source`
-also compares live source/host identity; plain verify replays the retained historical
-bundle. Diagnostic runner build uses the existing build-witness selector when
+Use a new directory outside the checkout each time. Plain `verify` checks the
+retained historical artifact population with a validator built from the current
+checkout and reports `structural=PASS`; it never executes the retained runner.
+The receipt's own digests do not authenticate an externally supplied bundle.
+`verify --require-current-source` additionally checks live source/host identity
+and requires the current build to match the retained runner bytes. Diagnostic
+runner build uses the existing build-witness selector when
 `TASKMESH_BENCH_BUILD_WITNESSES` is configured. A default debug acquisition is
 owner-local evidence; it is not an independently rebuilt optimized performance run.
 

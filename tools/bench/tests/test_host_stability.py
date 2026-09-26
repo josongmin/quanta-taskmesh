@@ -62,6 +62,60 @@ def test_real_smoke_and_private_typed_replay(bundle):
     assert len([p for p in (bundle / "cycles").iterdir()]) == 3
 
 
+def test_run_rejects_existing_bundle_without_mutation(bundle, setup, monkeypatch):
+    path, _, _ = setup
+    before = {
+        str(item.relative_to(bundle)): host_perf.sha256(item.read_bytes())
+        for item in bundle.rglob("*")
+        if item.is_file()
+    }
+    monkeypatch.setattr(sys, "argv", ["host_stability.py", "run", str(path), str(bundle)])
+    assert host_stability.main() == 1
+    after = {
+        str(item.relative_to(bundle)): host_perf.sha256(item.read_bytes())
+        for item in bundle.rglob("*")
+        if item.is_file()
+    }
+    assert after == before
+    assert host_stability.verify_receipt(bundle)["status"] == "complete"
+
+
+def test_owned_build_failure_retains_rejection(setup, monkeypatch):
+    path, directory, _ = setup
+
+    def failed_build(*_args):
+        raise host_perf.ReceiptError("build unavailable")
+
+    monkeypatch.setattr(host_run, "build_runner", failed_build)
+    with pytest.raises(host_perf.ReceiptError, match="build unavailable"):
+        host_stability.acquire(path, directory)
+    rejection = json.loads((directory / "rejection.json").read_bytes())
+    assert rejection["status"] == "rejected"
+    assert rejection["phase"] == "stability acquisition"
+    assert "build unavailable" in rejection["reason"]
+    assert not (directory / "receipt.json").exists()
+
+
+def test_rejection_write_failure_preserves_primary_error(setup, monkeypatch, capsys):
+    path, directory, _ = setup
+
+    def failed_build(*_args):
+        raise host_perf.ReceiptError("primary build failure")
+
+    original_write = host_run.write_new
+
+    def failed_retention(destination, data):
+        if destination.name == "rejection.json":
+            raise OSError("retention failed")
+        original_write(destination, data)
+
+    monkeypatch.setattr(host_run, "build_runner", failed_build)
+    monkeypatch.setattr(host_run, "write_new", failed_retention)
+    with pytest.raises(host_perf.ReceiptError, match="primary build failure"):
+        host_stability.acquire(path, directory)
+    assert "retention failed" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     "mutation", ["missing", "extra", "reorder", "canary", "counter", "admission", "raw", "drain"]
 )
@@ -161,6 +215,22 @@ def test_sealed_runner_execution_survives_original_replacement(bundle, monkeypat
 
     monkeypatch.setattr(host_stability, "run_bench", run)
     assert host_stability.verify_receipt(bundle)["status"] == "complete"
+
+
+def test_replay_never_executes_self_hashed_bundle_runner(bundle, tmp_path):
+    marker = tmp_path / "untrusted-runner-executed"
+    runner = bundle / "runner"
+    runner.write_bytes(f"#!/bin/sh\ntouch '{marker}'\n".encode())
+    receipt = json.loads((bundle / "receipt.json").read_bytes())
+    receipt["artifacts"]["runner"] = host_perf.sha256(runner.read_bytes())
+    (bundle / "receipt.json").write_bytes(host_perf.canonical(receipt))
+
+    # Historical replay checks structure; the self-declared hash is not an
+    # authority for executing or authenticating this retained executable.
+    assert host_stability.verify_receipt(bundle)["status"] == "complete"
+    assert not marker.exists()
+    with pytest.raises(host_perf.ReceiptError, match="retained runner differs"):
+        host_stability.verify_receipt(bundle, require_current_source=True)
 
 
 def test_nonregular_cycle_rejects_without_read_wait(bundle):

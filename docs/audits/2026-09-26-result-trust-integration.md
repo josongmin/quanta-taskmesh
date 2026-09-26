@@ -3,9 +3,10 @@
 ## Source boundary
 
 - Remote base: `7253fab2002f15a65a31a2070641f0c18498912f`.
-- Latest local main integrated: `f41862d7f1ab2ac299db6e0c56eabd91682e6c70`.
-- Inherited population: 91 commits and 119 changed files (the original 84 commits plus seven concurrent main commits).
+- Latest local main integrated: `f00c03939ba840d2e287712bbb98b9d5c10a0e1e`.
+- Inherited population: 95 commits and 119 changed files (the original 84 commits plus eleven concurrent main commits).
 - Result-trust changes were integrated at `e355d93ab19f45663a387d2113d12c7dff88812e` before this additional review.
+- The four later benchmark commits were integrated at `e4c261a`: sealed artifact/tail inputs, declared attempt populations, bounded build supervision, effective Cargo profiles, and Rust 1.81 compatibility were retained.
 - The review concerns reachable lint, CI, ratchet, source custody and raw-evidence failures. It is not performance calibration, mutation qualification, or release approval.
 
 ## Integration defects and structural repairs
@@ -13,7 +14,9 @@
 | Boundary | Confirmed defect | Repair |
 |---|---|---|
 | Host source identity | Git index hints hid edits; changing dirty source A to dirty B preserved identity | Common byte/mode check against HEAD plus source-content digest across build, launch, completion and admission; old provenance rejects |
+| Frozen host build tools | Version strings and config/environment hashes missed same-path compiler/linker replacement, relative Cargo home settings, and changes during rebuild/oracle execution | Resolve relative Cargo home from the actual build directory and share executable resolution with IAI; build witness schema v3 binds the effective frozen-source tool context before and after each build, verification and oracle |
 | IAI build tools | Replacing compiler/wrapper/linker bytes at the same path preserved compatibility context | Executable identities in context, unresolvable controls reject, versioned evidence/cache invalidation |
+| Frozen tool descriptions and oracle environment | Version descriptions used the original repository toolchain and the oracle inherited ambient incremental compilation | Resolve version descriptions from the attested compiler/Cargo in frozen source; oracle inherits the frozen effective environment before its explicit, verified test-profile overrides |
 | Complete raw run | `drain_ok=false` disabled conservation/retained-ownership checks | Complete evidence requires settled conservation and no held capacity |
 | Raw capability inventory | Arbitrary zero-valued capability names could replace the actual runtime catalog | Bind raw final and sampled capability catalogs to freshly resolved runtime topology |
 | Integrated local validator | Latest main used `Option::is_none_or` beyond declared Rust 1.81 MSRV and a manual checked division rejected by Clippy | Preserve validation semantics with MSRV-compatible `map_or` and `checked_div` |

@@ -231,6 +231,29 @@ def test_admission_reexecutes_rebuild_oracle_and_reports_only_highest_tested_rat
     assert (args[5] / "admission.json").is_file()
 
 
+def test_oracle_uses_frozen_effective_environment_over_ambient_incremental(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    monkeypatch.setenv("CARGO_INCREMENTAL", "1")
+    original = admission.run_process
+    observed = {}
+
+    def oracle(*a, **kwargs):
+        observed.update(kwargs["env"])
+        return original(*a, **kwargs)
+
+    monkeypatch.setattr(admission, "run_process", oracle)
+    report = admission.admit(*args[:6])
+    recorded = report["oracle"]["effective_build_environment"]
+    assert observed["CARGO_INCREMENTAL"] == recorded["CARGO_INCREMENTAL"] == "0"
+    assert observed["CARGO_TARGET_DIR"] == recorded["CARGO_TARGET_DIR"] == str(
+        args[2].resolve() / "target"
+    )
+    assert all(observed[key] == value for key, value in recorded.items())
+    assert recorded["CARGO_PROFILE_TEST_OPT_LEVEL"] == report["build_profile"]["opt_level"]
+
+
 @pytest.mark.parametrize(
     "change,error",
     [

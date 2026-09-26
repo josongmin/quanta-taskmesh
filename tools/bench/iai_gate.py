@@ -140,13 +140,16 @@ def linker_from_flags(flags: object, role: str) -> str | None:
     return linker
 
 
-def cargo_build_context(root: Path, runner_executable: Path | None = None) -> dict[str, object]:
+def cargo_tool_context(
+    root: Path, environment_source: dict[str, str] | None = None
+) -> dict[str, object]:
     """Bind Cargo configuration and selected tool executable bytes.
 
     Rustup proxies are resolved to the active Cargo/compiler as well as retaining
     launcher bytes. This boundary does not recursively attest script interpreters,
     dynamically loaded libraries, remote compiler services or wrapper payloads.
     """
+    ambient = dict(os.environ if environment_source is None else environment_source)
     names = {
         "RUSTFLAGS",
         "CARGO_ENCODED_RUSTFLAGS",
@@ -171,12 +174,15 @@ def cargo_build_context(root: Path, runner_executable: Path | None = None) -> di
     }
     environment = {
         key: value
-        for key, value in sorted(os.environ.items())
+        for key, value in sorted(ambient.items())
         if key in names
-        or key.startswith(("CARGO_PROFILE_BENCH_", "CARGO_PROFILE_RELEASE_"))
+        or key.startswith("CARGO_PROFILE_")
         or (key.startswith("CARGO_TARGET_") and key.endswith(("_RUSTFLAGS", "_LINKER", "_RUNNER")))
     }
-    cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+    cargo_home = Path(ambient.get("CARGO_HOME", Path.home() / ".cargo"))
+    if not cargo_home.is_absolute():
+        cargo_home = root.resolve() / cargo_home
+    cargo_home = cargo_home.resolve()
     directories = [cargo_home]
     directories.extend(parent / ".cargo" for parent in (root.resolve(), *root.resolve().parents))
     configs: dict[str, str] = {}
@@ -235,26 +241,18 @@ def cargo_build_context(root: Path, runner_executable: Path | None = None) -> di
                             values[key],
                             directory.parent,
                         )
-    if runner_executable is None:
-        located = shutil.which(RUNNER)
-        runner_executable = Path(located) if located else None
-    runner_sha256 = (
-        hashlib.sha256(runner_executable.read_bytes()).hexdigest()
-        if runner_executable is not None and runner_executable.is_file()
-        else None
-    )
     controls: dict[str, tuple[object, Path]] = dict(configuration_tools)
     for key in ("rustc", "rustc-wrapper", "rustc-workspace-wrapper"):
         ordinary = key.upper().replace("-", "_")
         cargo_name = "CARGO_BUILD_" + ordinary
         role = f"build.{key}"
-        if ordinary in os.environ:
-            controls[role] = (os.environ[ordinary], root)
-        elif cargo_name in os.environ:
-            controls[role] = (os.environ[cargo_name], root)
+        if ordinary in ambient:
+            controls[role] = (ambient[ordinary], root)
+        elif cargo_name in ambient:
+            controls[role] = (ambient[cargo_name], root)
     controls.setdefault("build.rustc", ("rustc", root))
     controls["build.cargo"] = ("cargo", root)
-    selected_target = os.environ.get("CARGO_BUILD_TARGET", configured_target)
+    selected_target = ambient.get("CARGO_BUILD_TARGET", configured_target)
     if selected_target is None:
         supported_default = sys.platform in ("linux", "darwin")
     else:
@@ -264,15 +262,15 @@ def cargo_build_context(root: Path, runner_executable: Path | None = None) -> di
     if not supported_default:
         raise ValueError("cannot attest default linker for an unsupported build target")
     controls["build.default-linker"] = ("cc", root)
-    if "CARGO_ENCODED_RUSTFLAGS" in os.environ:
+    if "CARGO_ENCODED_RUSTFLAGS" in ambient:
         configuration_flags = {
-            "CARGO_ENCODED_RUSTFLAGS": (os.environ["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"), root)
+            "CARGO_ENCODED_RUSTFLAGS": (ambient["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"), root)
         }
-    elif "RUSTFLAGS" in os.environ:
-        configuration_flags = {"RUSTFLAGS": (os.environ["RUSTFLAGS"], root)}
+    elif "RUSTFLAGS" in ambient:
+        configuration_flags = {"RUSTFLAGS": (ambient["RUSTFLAGS"], root)}
     else:
-        if "CARGO_BUILD_RUSTFLAGS" in os.environ:
-            configuration_flags["build.rustflags"] = (os.environ["CARGO_BUILD_RUSTFLAGS"], root)
+        if "CARGO_BUILD_RUSTFLAGS" in ambient:
+            configuration_flags["build.rustflags"] = (ambient["CARGO_BUILD_RUSTFLAGS"], root)
         for name, value in environment.items():
             if name.startswith("CARGO_TARGET_") and name.endswith("_RUSTFLAGS"):
                 configuration_flags[name] = (value, root)
@@ -296,6 +294,10 @@ def cargo_build_context(root: Path, runner_executable: Path | None = None) -> di
     for key in ("CC", "CXX", "AR", "RANLIB"):
         if key in environment:
             controls[key] = (environment[key], root)
+    search_path = os.pathsep.join(
+        str(Path(entry) if Path(entry).is_absolute() else root / entry)
+        for entry in ambient.get("PATH", os.defpath).split(os.pathsep)
+    )
     tools = {}
     for role, (command, base) in sorted(controls.items()):
         if command == "" and role in ("build.rustc-wrapper", "build.rustc-workspace-wrapper"):
@@ -317,10 +319,6 @@ def cargo_build_context(root: Path, runner_executable: Path | None = None) -> di
             if not executable.is_absolute():
                 executable = base / executable
         else:
-            search_path = os.pathsep.join(
-                str(Path(entry) if Path(entry).is_absolute() else root / entry)
-                for entry in os.environ.get("PATH", os.defpath).split(os.pathsep)
-            )
             located = shutil.which(command, path=search_path)
             if located is None:
                 raise ValueError(f"cannot resolve executable control {role}: {command}")
@@ -329,7 +327,7 @@ def cargo_build_context(root: Path, runner_executable: Path | None = None) -> di
             raise ValueError(f"executable control is missing or not executable: {role}")
         launcher = executable.resolve()
         if role in ("build.rustc", "build.cargo"):
-            rustup = shutil.which("rustup")
+            rustup = shutil.which("rustup", path=search_path)
             is_proxy = launcher.name == "rustup" or (
                 rustup is not None and os.path.samefile(executable, rustup)
             )
@@ -338,13 +336,23 @@ def cargo_build_context(root: Path, runner_executable: Path | None = None) -> di
                     "path": str(launcher),
                     "sha256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
                 }
+                resolver = (
+                    Path(rustup)
+                    if rustup is not None and os.path.samefile(executable, rustup)
+                    else launcher
+                )
+                tools[role + ".resolver"] = {
+                    "path": str(resolver.absolute()),
+                    "sha256": hashlib.sha256(resolver.read_bytes()).hexdigest(),
+                }
                 process = subprocess.run(
-                    [str(launcher), "which", role.removeprefix("build.")],
+                    [str(resolver), "which", role.removeprefix("build.")],
                     cwd=root,
                     capture_output=True,
                     text=True,
                     check=False,
                     timeout=30,
+                    env=ambient,
                 )
                 compiler = Path(process.stdout.strip())
                 if (
@@ -362,9 +370,21 @@ def cargo_build_context(root: Path, runner_executable: Path | None = None) -> di
     return {
         "environment": environment,
         "cargo_configs": dict(sorted(configs.items())),
-        "runner_sha256": runner_sha256,
         "tool_executables": tools,
     }
+
+
+def cargo_build_context(root: Path, runner_executable: Path | None = None) -> dict[str, object]:
+    context = cargo_tool_context(root)
+    if runner_executable is None:
+        located = shutil.which(RUNNER)
+        runner_executable = Path(located) if located else None
+    runner_sha256 = (
+        hashlib.sha256(runner_executable.read_bytes()).hexdigest()
+        if runner_executable is not None and runner_executable.is_file()
+        else None
+    )
+    return {**context, "runner_sha256": runner_sha256}
 
 
 def build_context_valid(value: object) -> bool:

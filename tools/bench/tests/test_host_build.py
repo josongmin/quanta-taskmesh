@@ -28,8 +28,15 @@ def test_frozen_build_rejects_index_hidden_source_before_build(
     for args in (
         ["init", "-q"],
         ["add", "Cargo.lock"],
-        ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
-         "commit", "-qm", "fixture"],
+        [
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
         ["update-index", index_hint, "Cargo.lock"],
     ):
         subprocess.run(["git", *args], cwd=source, check=True, capture_output=True)
@@ -97,12 +104,17 @@ def setup_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         return (args[0] + " version").encode()
 
     monkeypatch.setattr(host_build, "command_output", command)
-    monkeypatch.setattr(host_perf, "source_identity", lambda: {
-        "source_dirty": False,
-        "source_head": "a" * 40,
-        "source_tree": "b" * 40,
-        "source_content_sha256": "c" * 64,
-    })
+    monkeypatch.setattr(host_build, "tool_version", lambda _root, tool: tool + " version")
+    monkeypatch.setattr(
+        host_perf,
+        "source_identity",
+        lambda: {
+            "source_dirty": False,
+            "source_head": "a" * 40,
+            "source_tree": "b" * 40,
+            "source_content_sha256": "c" * 64,
+        },
+    )
     monkeypatch.setattr(host_perf, "build_environment", lambda: {})
 
     def build(root: Path, _features: list, _example: str) -> tuple:
@@ -341,3 +353,201 @@ def test_library_and_actual_oracle_profiles_are_bound_to_measured_semantics(
             host_build.require_matching_library_profiles(tmp_path, proof, profile)
         with pytest.raises(host_perf.ReceiptError, match="profile"):
             host_build.require_oracle_profiles(oracle, profile)
+
+
+@pytest.mark.parametrize("control", ["RUSTC", "CC", "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER"])
+def test_frozen_tool_context_rejects_same_path_executable_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, control: str
+) -> None:
+    import os
+
+    root = tmp_path / "witness"
+    (root / "source").mkdir(parents=True)
+    executable = tmp_path / "tool"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    monkeypatch.setenv(control, str(executable))
+    proof = {"cargo_tool_context": host_build.tool_context(root)}
+    host_build.require_tool_context(root, proof)
+    executable.write_text("#!/bin/sh\nexit 1\n")
+    with pytest.raises(host_perf.ReceiptError, match="executable context changed"):
+        host_build.require_tool_context(root, proof)
+    assert proof["cargo_tool_context"]["environment"][control] == os.environ[control]
+
+
+def test_runner_free_context_does_not_require_iai_runner(tmp_path: Path, monkeypatch) -> None:
+    import iai_gate
+
+    original = iai_gate.shutil.which
+    monkeypatch.setattr(
+        iai_gate.shutil,
+        "which",
+        lambda name, *a, **kw: None if name == iai_gate.RUNNER else original(name, *a, **kw),
+    )
+    (tmp_path / "source").mkdir()
+    context = host_build.tool_context(tmp_path)
+    assert "runner_sha256" not in context
+    assert {"build.rustc", "build.cargo", "build.default-linker"}.issubset(
+        context["tool_executables"]
+    )
+
+
+def test_old_host_build_schema_cannot_admit_unbound_tools(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    root = setup_build(tmp_path, monkeypatch)
+    path = root / "build-witness.json"
+    proof = json.loads(path.read_bytes())
+    proof["schema_version"] = 2
+    path.write_bytes(host_perf.canonical(proof))
+    with pytest.raises(host_perf.ReceiptError, match="unsupported frozen build version"):
+        host_build.verify(root)
+    del proof["cargo_tool_context"]
+    path.write_bytes(host_perf.canonical(proof))
+    with pytest.raises(host_perf.ReceiptError, match="missing/unknown fields"):
+        host_build.verify(root)
+
+
+def test_rebuild_rejects_tool_drift_after_matching_binary(tmp_path: Path, monkeypatch) -> None:
+    root = setup_build(tmp_path, monkeypatch)
+    original = host_build.tool_context
+    before = original(root)
+    changed = {**before, "tool_executables": {}}
+    monkeypatch.setattr(host_build, "tool_context", lambda _root: before)
+
+    def rebuild(directory, _features, _example):
+        monkeypatch.setattr(host_build, "tool_context", lambda _root: changed)
+        binary = root / "fake-target"
+        return binary, ["default"], b"stdout", b"stderr"
+
+    monkeypatch.setattr(host_build, "cold_build", rebuild)
+    with pytest.raises(host_perf.ReceiptError, match="executable context changed"):
+        host_build.verify(root, rebuild=True)
+
+
+def test_configured_linker_bytes_bind_frozen_source_context(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("CARGO_HOME", str(home))
+    root = tmp_path / "witness"
+    config = root / "source/.cargo"
+    config.mkdir(parents=True)
+    executable = tmp_path / "linker"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    (config / "config.toml").write_text(
+        f'[target.x86_64-unknown-linux-gnu]\nlinker = "{executable}"\n'
+    )
+    proof = {"cargo_tool_context": host_build.tool_context(root)}
+    host_build.require_tool_context(root, proof)
+    executable.write_text("#!/bin/sh\nexit 1\n")
+    with pytest.raises(host_perf.ReceiptError, match="executable context changed"):
+        host_build.require_tool_context(root, proof)
+
+
+def test_relative_cargo_home_binds_source_cwd_configs_and_tool_bytes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "witness"
+    source = root / "source"
+    source.mkdir(parents=True)
+    home = root / "home"
+    home.mkdir()
+    compiler = root / "compiler"
+    compiler.write_text("#!/bin/sh\nexit 0\n")
+    compiler.chmod(0o755)
+    config = home / "config.toml"
+    config.write_text(f'[build]\nrustc = "{compiler}"\n')
+    monkeypatch.setenv("CARGO_HOME", "../home")
+    configs = host_build.cargo_config_sha256(source)
+    assert str(config.resolve()) in configs
+    with pytest.raises(host_perf.ReceiptError, match="custom compiler flags"):
+        host_build.require_standard_codegen(
+            root, {"build_environment": {}, "cargo_config_sha256": configs}
+        )
+    proof = {"cargo_tool_context": host_build.tool_context(root)}
+    assert proof["cargo_tool_context"]["tool_executables"]["build.rustc"]["path"] == str(
+        compiler.resolve()
+    )
+    compiler.write_text("#!/bin/sh\nexit 1\n")
+    with pytest.raises(host_perf.ReceiptError, match="executable context changed"):
+        host_build.require_tool_context(root, proof)
+    proof = {"cargo_tool_context": host_build.tool_context(root)}
+    config.write_text("[build]\njobs = 2\n")
+    assert host_build.cargo_config_sha256(source) != configs
+    with pytest.raises(host_perf.ReceiptError, match="executable context changed"):
+        host_build.require_tool_context(root, proof)
+
+
+@pytest.mark.parametrize("relative_path", [False, True])
+def test_relative_path_hardlinked_rustup_binds_active_tools(
+    tmp_path: Path, monkeypatch, relative_path: bool
+) -> None:
+    import os
+
+    import iai_gate
+
+    root = tmp_path / "witness"
+    source = root / "source"
+    source.mkdir(parents=True)
+    binary_dir = root / "bin"
+    binary_dir.mkdir()
+    rustup = binary_dir / "rustup"
+    rustup.write_text("#!/bin/sh\nexit 0\n")
+    rustup.chmod(0o755)
+    for name in ("cargo", "rustc"):
+        os.link(rustup, binary_dir / name)
+        executable = root / ("active-" + name)
+        executable.write_text("#!/bin/sh\nexit 0\n")
+        executable.chmod(0o755)
+    cc = binary_dir / "cc"
+    cc.write_text("#!/bin/sh\nexit 0\n")
+    cc.chmod(0o755)
+    monkeypatch.setenv("PATH", "../bin" if relative_path else str(binary_dir))
+    monkeypatch.setenv("CARGO_HOME", str(root / "home"))
+    monkeypatch.delenv("RUSTC", raising=False)
+    monkeypatch.delenv("CARGO_BUILD_RUSTC", raising=False)
+
+    def which(command, **kwargs):
+        assert kwargs["cwd"] == source.resolve()
+        assert Path(command[0]).name == "rustup"
+        return subprocess.CompletedProcess(command, 0, str(root / ("active-" + command[-1])), "")
+
+    monkeypatch.setattr(iai_gate.subprocess, "run", which)
+    proof = {"cargo_tool_context": host_build.tool_context(root)}
+    tools = proof["cargo_tool_context"]["tool_executables"]
+    assert tools["build.rustc"]["path"] == str(root / "active-rustc")
+    assert "build.rustc.launcher" in tools
+    (root / "active-rustc").write_text("#!/bin/sh\nexit 1\n")
+    with pytest.raises(host_perf.ReceiptError, match="executable context changed"):
+        host_build.require_tool_context(root, proof)
+
+
+def test_version_labels_use_frozen_source_cwd_and_effective_environment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "witness"
+    (root / "source").mkdir(parents=True)
+    monkeypatch.setenv("CARGO_INCREMENTAL", "1")
+    monkeypatch.setenv("RUSTUP_TOOLCHAIN", "1.92.0")
+    calls = []
+    context = {
+        "tool_executables": {
+            "build.cargo": {"path": "/frozen/tools/cargo"},
+            "build.rustc": {"path": "/frozen/tools/rustc-custom"},
+        }
+    }
+    monkeypatch.setattr(host_build, "tool_context", lambda _root: context)
+
+    def version(command, **kwargs):
+        calls.append(command[0])
+        assert kwargs["cwd"] == root.resolve() / "source"
+        assert kwargs["env"]["CARGO_INCREMENTAL"] == "0"
+        assert kwargs["env"]["CARGO_TARGET_DIR"] == str(root.resolve() / "target")
+        assert kwargs["env"]["RUSTUP_TOOLCHAIN"] == "1.92.0"
+        return subprocess.CompletedProcess(command, 0, (command[0] + " 1.92.0").encode(), b"")
+
+    monkeypatch.setattr(host_build.subprocess, "run", version)
+    assert host_build.tool_version(root, "cargo") == "/frozen/tools/cargo 1.92.0"
+    assert host_build.tool_version(root, "rustc") == "/frozen/tools/rustc-custom 1.92.0"
+    assert calls == ["/frozen/tools/cargo", "/frozen/tools/rustc-custom"]

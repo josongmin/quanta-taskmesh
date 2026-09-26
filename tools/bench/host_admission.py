@@ -416,7 +416,8 @@ def admit(
     output.mkdir(parents=True, exist_ok=False)
     host_build.verify(build_root, rebuild=True)
     env = dict(os.environ)
-    env["CARGO_TARGET_DIR"] = str(build_root.resolve() / "target")
+    effective_environment = host_build.effective_build_environment(build_root)
+    env.update(effective_environment)
     oracle_profile = {
         "CARGO_PROFILE_TEST_OPT_LEVEL": profile["opt_level"],
         "CARGO_PROFILE_TEST_DEBUG_ASSERTIONS": str(profile["debug_assertions"]).lower(),
@@ -483,6 +484,7 @@ def admit(
         "oracle": {
             "command": ORACLE,
             "profile_overrides": oracle_profile,
+            "effective_build_environment": {**effective_environment, **oracle_profile},
             "stdout_sha256": host_perf.sha256(stdout),
             "stderr_sha256": host_perf.sha256(stderr),
             "execution_sha256": host_perf.sha256((output / "oracle.execution.json").read_bytes()),

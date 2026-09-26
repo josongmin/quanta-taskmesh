@@ -20,6 +20,7 @@ from typing import Any
 
 import host_perf
 from host_run import retain_executable, write_new
+from iai_gate import cargo_tool_context
 
 if str(host_perf.REPO) not in sys.path:
     sys.path.insert(0, str(host_perf.REPO))
@@ -30,7 +31,7 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
-VERSION = 2
+VERSION = 3
 BUILD_TIMEOUT_SECONDS = 1800
 EXAMPLES = {
     "host_load_probe",
@@ -50,6 +51,7 @@ KEYS = {
     "cargo",
     "build_environment",
     "effective_build_environment",
+    "cargo_tool_context",
     "features",
     "example",
     "binary_sha256",
@@ -68,7 +70,10 @@ def command_output(command: list[str], cwd: Path = host_perf.REPO) -> bytes:
 def cargo_config_sha256(source: Path) -> dict[str, str]:
     # Cargo searches the invocation directory and every ancestor, including
     # outside the archived source. Retain both names even when one is shadowed.
-    home = Path(os.environ.get("CARGO_HOME", str(Path.home() / ".cargo"))).resolve()
+    home = Path(os.environ.get("CARGO_HOME", str(Path.home() / ".cargo")))
+    if not home.is_absolute():
+        home = source.resolve() / home
+    home = home.resolve()
     directories = {home, *(path / ".cargo" for path in (source, *source.parents))}
     return {
         str(path): host_perf.sha256(path.read_bytes())
@@ -84,6 +89,32 @@ def effective_build_environment(root: Path) -> dict[str, str]:
         "CARGO_TARGET_DIR": str(root.resolve() / "target"),
         "CARGO_INCREMENTAL": "0",
     }
+
+
+def tool_context(root: Path) -> dict[str, object]:
+    environment = os.environ.copy()
+    environment.update(effective_build_environment(root))
+    return cargo_tool_context(root.resolve() / "source", environment)
+
+
+def require_tool_context(root: Path, proof: dict) -> None:
+    if proof.get("cargo_tool_context") != tool_context(root):
+        raise host_perf.ReceiptError("frozen Cargo tool executable context changed")
+
+
+def tool_version(root: Path, tool: str, context: dict | None = None) -> str:
+    environment = os.environ.copy()
+    environment.update(effective_build_environment(root))
+    selected = tool_context(root) if context is None else context
+    executable = selected["tool_executables"]["build." + tool]["path"]
+    return subprocess.run(
+        [executable, "--version", "--verbose"],
+        cwd=root.resolve() / "source",
+        env=environment,
+        check=True,
+        capture_output=True,
+        timeout=30,
+    ).stdout.decode()
 
 
 def require_standard_codegen(root: Path, proof: dict) -> None:
@@ -389,13 +420,16 @@ def acquire(root: Path, features: list[str], example: str) -> dict[str, Any]:
         path.parent.mkdir(parents=True, exist_ok=True)
         write_new(path, data)
         path.chmod(mode & 0o555)  # read-only source; no Cargo target in source.
-    rustc = command_output(["rustc", "--version", "--verbose"]).decode()
-    cargo = command_output(["cargo", "--version", "--verbose"]).decode()
+    rustc = tool_version(root, "rustc")
+    cargo = tool_version(root, "cargo")
     environment = host_perf.build_environment()
     configs = cargo_config_sha256(source)
+    tools = tool_context(root)
     digests, artifact_features, logs = [], None, {}
     for index in range(2):
         check_source(source, members)
+        if tools != tool_context(root):
+            raise host_perf.ReceiptError("Cargo tool context changed before cold build")
         binary, active_features, stdout, stderr = cold_build(root, features, example)
         digests.append(host_perf.sha256(retain_executable(binary, root / f"runner-{index}")))
         if artifact_features is not None and artifact_features != active_features:
@@ -405,12 +439,16 @@ def acquire(root: Path, features: list[str], example: str) -> dict[str, Any]:
             write_new(root / name, data)
             logs[name] = host_perf.sha256(data)
         check_source(source, members)
+        if tools != tool_context(root):
+            raise host_perf.ReceiptError("Cargo tool context changed during cold build")
     if digests[0] != digests[1]:
         raise host_perf.ReceiptError("cold rebuilds are not byte reproducible")
     if (
         environment != host_perf.build_environment()
         or configs != cargo_config_sha256(source)
-        or rustc != command_output(["rustc", "--version", "--verbose"]).decode()
+        or tools != tool_context(root)
+        or cargo != tool_version(root, "cargo")
+        or rustc != tool_version(root, "rustc")
     ):
         raise host_perf.ReceiptError("build environment changed")
     proof = {
@@ -423,6 +461,7 @@ def acquire(root: Path, features: list[str], example: str) -> dict[str, Any]:
         "cargo": cargo,
         "build_environment": environment,
         "effective_build_environment": effective_build_environment(root),
+        "cargo_tool_context": tools,
         "features": features,
         "example": example,
         "binary_sha256": digests[0],
@@ -468,13 +507,14 @@ def verify(root: Path, *, rebuild: bool = False) -> dict[str, Any]:
         if host_perf.sha256((root / f"runner-{index}").read_bytes()) != proof["binary_sha256"]:
             raise host_perf.ReceiptError("frozen executable changed")
     if (
-        proof["rustc"] != command_output(["rustc", "--version", "--verbose"]).decode()
-        or proof["cargo"] != command_output(["cargo", "--version", "--verbose"]).decode()
+        proof["rustc"] != tool_version(root, "rustc")
+        or proof["cargo"] != tool_version(root, "cargo")
         or proof["build_environment"] != host_perf.build_environment()
         or proof["effective_build_environment"] != effective_build_environment(root)
         or proof["cargo_config_sha256"] != cargo_config_sha256(root / "source")
     ):
         raise host_perf.ReceiptError("frozen toolchain/build environment differs")
+    require_tool_context(root, proof)
     if rebuild:
         binary, features, stdout, _ = cold_build(root, proof["features"], proof["example"])
         check_source(root / "source", members)
@@ -485,6 +525,9 @@ def verify(root: Path, *, rebuild: bool = False) -> dict[str, Any]:
             raise host_perf.ReceiptError(
                 "independent cold rebuild differs from retained executable"
             )
+        require_tool_context(root, proof)
+        if proof["cargo_config_sha256"] != cargo_config_sha256(root / "source"):
+            raise host_perf.ReceiptError("Cargo configuration changed during rebuild")
         if cargo_profile(stdout, proof["example"]) != verified_profile(root, proof):
             raise host_perf.ReceiptError("independent cold rebuild profile differs")
     return proof

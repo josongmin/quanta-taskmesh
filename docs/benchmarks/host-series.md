@@ -191,14 +191,21 @@ schema v5 and structural receipt schema v3 bind a source-content digest as well
 as HEAD/tree/dirty state; changing one dirty checkout into another invalidates
 the acquisition. Older identity/provenance receipts must be reacquired and do
 not migrate by adding a copied digest. Frozen build acquisition uses the same
-clean-source check before archiving the pinned commit.
+clean-source check before archiving the pinned commit. Build witness schema v3
+also binds the resolved Cargo, rustc, launcher, configured wrappers/linkers, and
+native tool executable bytes from the actual frozen build directory. This
+context is rechecked before and after cold builds and correctness oracles;
+older build witnesses must be reacquired. Interpreter dependencies and shared
+libraries are outside this executable-file custody contract.
 
 Admission binds every typed-validated artifact to the sealed ledger digest,
 hashes the exact bytes used for tail analysis, rechecks measured controls, and
 runs a third cold build. It then
 executes the four named Taskmesh engine/facade oracle suites from the frozen
 source, with test-profile optimization, debug assertions and overflow checking
-explicitly matched to the measured artifact. At least 45 passing tests across all four suite results, zero ignored,
+explicitly matched to the measured artifact. The oracle inherits the frozen
+effective build environment, including disabled incremental compilation, before
+applying the recorded test-profile overrides. At least 45 passing tests across all four suite results, zero ignored,
 failed or filtered tests are required. Oracle stdout/stderr are retained; copied
 PASS receipts or zero-test runs do not satisfy this step. Mutable input custody
 and source identity are rechecked before publishing `admission.json`.

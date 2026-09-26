@@ -18,6 +18,25 @@ use taskmesh_bench::host_scenarios::HostScenario;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn burst_recovery_and_custody_fixtures_preserve_bounded_raw_ledgers() {
+    for fixture in [
+        include_bytes!("../../../tools/bench/scenarios/h2-burst-recovery-smoke.json").as_slice(),
+        include_bytes!("../../../tools/bench/scenarios/h5-custody-smoke.json").as_slice(),
+    ] {
+        let scenario = HostScenario::from_json(fixture).expect("bounded diagnostic fixture");
+        let raw = run_host_scenario(&scenario)
+            .await
+            .expect("diagnostic host run");
+        raw.validate_against(&scenario).expect("typed raw parity");
+        assert_eq!(raw.records.len(), scenario.offers.len());
+        assert_eq!(raw.snapshots.len(), 10);
+        assert_eq!(raw.settlement.unanswered_at_settlement, 0);
+        assert!(raw.final_capabilities.values().all(|in_use| *in_use == 0));
+        assert!(raw.drain_ok && raw.conservation_ok);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn weighted_two_class_fixture_preserves_rows_without_timing_verdict() {
     let scenario = HostScenario::from_json(include_bytes!(
         "../../../tools/bench/scenarios/h3-weighted-smoke.json"

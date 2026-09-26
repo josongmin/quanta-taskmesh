@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "h2-burst-recovery-smoke-v1",
+  "load": {
+    "warmup_ms": 5,
+    "injection_ms": 100,
+    "interval_ms": 10,
+    "snapshot_ms": 10,
+    "settlement_ms": 500,
+    "max_outstanding": 32,
+    "max_records": 32
+  },
+  "topology": {
+    "cpu_workers": 1,
+    "blocking_threads": 1,
+    "shared_blocking_limit": 1,
+    "cpu_units": 1,
+    "memory_units": 8
+  },
+  "classes": [
+    {
+      "name": "burst",
+      "slo_ms": 100,
+      "max_inflight": 1,
+      "max_queue_depth": 4,
+      "cpu_units": 1,
+      "memory_units": 1,
+      "overflow": "queue_within_depth"
+    }
+  ],
+  "offers": [
+    { "send_time_ns": 0, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 10000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 20000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 30000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 31000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 32000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 33000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 34000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 35000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 36000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 37000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 60000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 70000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 80000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } },
+    { "send_time_ns": 90000000, "class": "burst", "path": "blocking", "body": { "kind": "blocking_sleep", "millis": 5 } }
+  ]
+}

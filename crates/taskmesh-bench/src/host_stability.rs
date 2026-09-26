@@ -1,5 +1,5 @@
 //! Same-host recovery diagnostics. Intermediate checkpoints do not close admission.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -52,6 +52,7 @@ impl StabilityManifest {
 
 fn canary_paths(scenario: &HostScenario) -> Result<Vec<(String, HostPath)>, String> {
     let mut paths = Vec::new();
+    let mut seen = BTreeSet::new();
     for offer in &scenario.offers {
         if !matches!(
             offer.path,
@@ -59,9 +60,8 @@ fn canary_paths(scenario: &HostScenario) -> Result<Vec<(String, HostPath)>, Stri
         ) {
             return Err("stability diagnostic supports IO/blocking/CPU only".into());
         }
-        let pair = (offer.class.clone(), offer.path);
-        if !paths.contains(&pair) {
-            paths.push(pair);
+        if seen.insert((offer.class.as_str(), offer.path)) {
+            paths.push((offer.class.clone(), offer.path));
         }
     }
     Ok(paths)
@@ -326,7 +326,15 @@ pub async fn run_stability(
 ) -> Result<StabilitySummary, String> {
     manifest.validate()?;
     let runtime = manifest.scenario.build_runtime()?;
-    let result = run_stability_on_runtime(manifest, &runtime, &mut emit).await;
+    run_stability_on_runtime(manifest, &runtime, &mut emit).await
+}
+
+async fn run_stability_on_runtime(
+    manifest: &StabilityManifest,
+    runtime: &TokioRuntime,
+    emit: &mut impl FnMut(&StabilityCycle) -> Result<(), String>,
+) -> Result<StabilitySummary, String> {
+    let result = run_stability_loop(manifest, runtime, emit).await;
     if let Err(error) = result {
         // Writer, warmup and window errors must still close admission and settle
         // owned work. Preserve the original failure if bounded cleanup succeeds.
@@ -343,7 +351,7 @@ pub async fn run_stability(
     result
 }
 
-async fn run_stability_on_runtime(
+async fn run_stability_loop(
     manifest: &StabilityManifest,
     runtime: &TokioRuntime,
     emit: &mut impl FnMut(&StabilityCycle) -> Result<(), String>,
@@ -433,6 +441,38 @@ async fn run_stability_on_runtime(
 mod tests {
     use super::*;
     use crate::host_load::{CallerDisposition, HostHarnessTestGate};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn failed_cycle_writer_closes_admission_and_settles_owned_work() {
+        let scenario = HostScenario::from_json(include_bytes!(
+            "../../../tools/bench/scenarios/h2-burst-recovery-smoke.json"
+        ))
+        .unwrap();
+        let manifest = StabilityManifest {
+            schema_version: 1,
+            scenario,
+            cycles: 3,
+            min_duration_ms: 0,
+            max_total_records: 100,
+        };
+        let runtime = manifest.scenario.build_runtime().unwrap();
+        let mut writes = 0;
+        let error = run_stability_on_runtime(&manifest, &runtime, &mut |_| {
+            writes += 1;
+            Err("writer failed".into())
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error, "writer failed");
+        assert_eq!(writes, 1);
+        assert!(runtime.is_draining());
+        zero_owned(&runtime.snapshot(), &manifest.scenario).unwrap();
+        assert!(
+            run_host_window(&manifest.scenario, &runtime, None, None, false)
+                .await
+                .is_err()
+        );
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn intermediate_checkpoint_cannot_release_a_held_worker_after_caller_drop() {

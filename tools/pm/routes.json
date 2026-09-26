@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "routes": [
+    {
+      "id": "architecture",
+      "when": "Crate or dependency boundary changes",
+      "targets": [
+        {
+          "ref": "architecture",
+          "section": null
+        }
+      ],
+      "surfaces": [
+        "AGENTS.md",
+        ".cursor/rules/runtime-governance.mdc"
+      ]
+    },
+    {
+      "id": "api",
+      "when": "Public API changes",
+      "targets": [
+        {
+          "ref": "public-api",
+          "section": null
+        }
+      ],
+      "surfaces": [
+        "AGENTS.md",
+        ".cursor/rules/runtime-governance.mdc"
+      ]
+    },
+    {
+      "id": "execution",
+      "when": "Stages, wire or external behavior changes",
+      "targets": [
+        {
+          "ref": "execution",
+          "section": null
+        }
+      ],
+      "surfaces": [
+        "AGENTS.md",
+        ".cursor/rules/runtime-governance.mdc"
+      ]
+    },
+    {
+      "id": "ingress",
+      "when": "Untrusted ingress or plan identity changes",
+      "targets": [
+        {
+          "ref": "ingress",
+          "section": "Decision"
+        }
+      ],
+      "surfaces": [
+        "AGENTS.md",
+        ".cursor/rules/runtime-governance.mdc"
+      ]
+    },
+    {
+      "id": "custody",
+      "when": "Executor, cancellation, deadline or drain changes",
+      "targets": [
+        {
+          "ref": "custody",
+          "section": "Decision"
+        }
+      ],
+      "surfaces": [
+        "AGENTS.md",
+        ".cursor/rules/runtime-governance.mdc"
+      ]
+    },
+    {
+      "id": "gates",
+      "when": "Gate wiring changes",
+      "targets": [
+        {
+          "ref": "gate-inventory",
+          "section": null
+        },
+        {
+          "ref": "required-gates",
+          "section": null
+        }
+      ],
+      "surfaces": [
+        "AGENTS.md",
+        ".cursor/rules/verification-and-release.mdc"
+      ]
+    },
+    {
+      "id": "proof",
+      "when": "Evidence producer or receipt changes",
+      "targets": [
+        {
+          "ref": "proof",
+          "section": "Decision"
+        }
+      ],
+      "surfaces": [
+        "AGENTS.md",
+        ".cursor/rules/verification-and-release.mdc"
+      ]
+    },
+    {
+      "id": "release",
+      "when": "Release decisions",
+      "targets": [
+        {
+          "ref": "release",
+          "section": null
+        }
+      ],
+      "surfaces": [
+        "AGENTS.md",
+        ".cursor/rules/verification-and-release.mdc"
+      ]
+    },
+    {
+      "id": "benchmark",
+      "when": "Benchmark or measurement changes",
+      "targets": [
+        {
+          "ref": "benchmark",
+          "section": null
+        }
+      ],
+      "surfaces": [
+        "AGENTS.md",
+        ".cursor/rules/verification-and-release.mdc"
+      ]
+    },
+    {
+      "id": "verification",
+      "when": "Selecting checks for changed owner paths",
+      "targets": [
+        {
+          "ref": "verification",
+          "section": null
+        }
+      ],
+      "surfaces": [
+        "AGENTS.md",
+        ".cursor/rules/runtime-governance.mdc",
+        ".cursor/rules/verification-and-release.mdc"
+      ]
+    }
+  ]
+}

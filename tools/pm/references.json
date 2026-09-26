@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "references": [
+    {
+      "id": "architecture",
+      "path": "docs/adr/0001-hexagonal-feature-sliced-architecture.md",
+      "role": "Crate ownership and dependency direction",
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "public-api",
+      "path": "docs/taskmesh-library-spec.md",
+      "role": "Public library contract",
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "execution",
+      "path": "docs/taskmesh-external-interface.md",
+      "role": "External behavior, stages and custody",
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "ingress",
+      "path": "docs/adr/0004-sep-25-ingress-plan-identity-and-wire.md",
+      "role": "Strict ingress, plan identity and wire evolution",
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "custody",
+      "path": "docs/adr/0005-sep-25-execution-response-and-custody.md",
+      "role": "Executor authority and response versus custody",
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "proof",
+      "path": "docs/adr/0006-source-bound-verification-authority.md",
+      "role": "Source-bound proof authority",
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "gate-inventory",
+      "path": "tools/gates/inventory.json",
+      "role": "Registered gates",
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "required-gates",
+      "path": "tools/gates/required.json",
+      "role": "Required gate sets",
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "release",
+      "path": "docs/release-checklist.md",
+      "role": "Release decision and qualification requirements",
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "benchmark",
+      "path": "docs/adr/9000-benchmark-strategy.md",
+      "role": "Measurement validity and performance claims",
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "verification",
+      "path": "Justfile",
+      "role": "Canonical owner feedback and verification commands",
+      "status": "active",
+      "superseded_by": null
+    }
+  ]
+}

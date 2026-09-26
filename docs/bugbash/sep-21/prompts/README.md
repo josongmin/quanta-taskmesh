@@ -4,6 +4,11 @@
 12개 티켓을 12명에게 동시에 배포하지 않는다. 같은 파일과 authority를 공유하는 티켓은 한
 owner가 끝까지 직렬 통합한다.
 
+이 pack은 `tickets/plan.json`에 기록된 SEP-21 source snapshot의 실행 계획이다. 현재 checkout에서
+다시 dispatch하려면 coordinator가 strict baseline validator를 통과하는 새 실행 기준을 먼저
+확정해야 한다. `--structure-only` PASS로 stale baseline을 우회하거나 이미 닫힌 구현을 다시
+수행하지 않는다.
+
 ## 실행 packet
 
 | packet | 포함 티켓 | 시작 gate | 내부 순서 |
@@ -51,6 +56,9 @@ README/CHANGELOG/ADR을 여러 agent가 동시에 수정하면 안 된다.
    그대로 기록한다.
 10. 완료 보고에는 base/final HEAD·tree, 변경 파일, acceptance별 증거, 명령·exit code·test count,
     negative fixture, 잔여 risk, 다음 dependency signal을 포함한다.
+11. mutation campaign과 이를 포함하는 release qualification은 현재 사용자 요청이 명시적으로
+    허용한 경우에만 실행한다. 이 pack을 읽거나 runner를 수정하는 것만으로는 실행 권한이
+    생기지 않는다. 권한이 없으면 focused owner checks까지만 수행하고 campaign은 `NOT_RUN`이다.
 
 ## dependency signal 이름
 
@@ -59,8 +67,13 @@ README/CHANGELOG/ADR을 여러 agent가 동시에 수정하면 안 된다.
 - `V01_SCHEMA_READY`
 - `V02_PRODUCER_READY`
 - `V03_PRODUCER_READY`
-- `PRODUCT_LANES_CLOSED`
-- `PROOF_LANES_CLOSED`
+- `HOST_LANE_CLOSED`
+- `PROOF_ENVELOPE_CLOSED`
 
 signal은 문장형 주장만 보내지 않는다. commit/diff identity, public symbols, changed paths, 실행한
 검증과 미실행 항목을 같이 보낸다.
+
+`uv run python docs/bugbash/sep-21/tickets/validate_plan.py --structure-only`는 packet의 acceptance
+범위를 담당 ticket과 대조하고, 위 signal 목록과 producer handoff, shell block의 직접적인
+`just <recipe>` 호출을 검사한다. write-scope 의미, 명령 실행 결과, source identity나 qualification
+판정은 검증하지 않는다.

@@ -183,3 +183,37 @@ def test_control_bundle_rejects_same_rate_or_altered_generator_schedule(
     generator_scenario.write_bytes(encoded(altered))
     with pytest.raises(host_perf.ReceiptError, match="exact 2x replay"):
         host_controls.make_bundle(*paths, max_span_ns=200)
+
+
+def test_control_bundle_accepts_sampled_target_with_off_recorder_arm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = setup_control_set(tmp_path, monkeypatch)
+    scenario = json.loads(paths[0].read_bytes())
+    scenario["load"]["snapshot_ms"] = 10
+    paths[0].write_bytes(encoded(scenario))
+    generator_scenario = paths[3].with_name(paths[3].name + ".scenario.json")
+    generator_scenario.write_bytes(encoded(doubled_generator_scenario(scenario)))
+    aa_path = paths[4] / "aa-bundle.json"
+    aa = json.loads(aa_path.read_bytes())
+    aa["scenario_sha256"] = host_perf.sha256(paths[0].read_bytes())
+    aa_path.write_bytes(encoded(aa))
+    off, on = host_controls.host_observer.scenario_pair(paths[0].read_bytes(), 10)
+    snapshot_path = paths[5] / "snapshot-bundle.json"
+    snapshot = json.loads(snapshot_path.read_bytes())
+    snapshot["off_scenario_sha256"] = host_perf.sha256(off)
+    snapshot["on_scenario_sha256"] = host_perf.sha256(on)
+    snapshot_path.write_bytes(encoded(snapshot))
+    recorder_path = paths[6] / "recorder-bundle.json"
+    recorder = json.loads(recorder_path.read_bytes())
+    recorder["scenario_sha256"] = host_perf.sha256(off)
+    recorder_path.write_bytes(encoded(recorder))
+    bundle = host_controls.make_bundle(*paths, max_span_ns=200)
+    assert bundle["target_snapshot_ms"] == 10
+    assert bundle["recorder_scenario_sha256"] == host_perf.sha256(off)
+    host_controls.verify_bundle(encoded(bundle), *paths)
+    scenario["load"]["snapshot_ms"] = 5
+    paths[0].write_bytes(encoded(scenario))
+    generator_scenario.write_bytes(encoded(doubled_generator_scenario(scenario)))
+    with pytest.raises(host_perf.ReceiptError, match="target Snapshot cadence differs"):
+        host_controls.make_bundle(*paths, max_span_ns=200)

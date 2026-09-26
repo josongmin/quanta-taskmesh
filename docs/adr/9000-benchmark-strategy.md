@@ -101,6 +101,10 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   default/Rayon 영수증의 build feature 신원을 분리한다. 실측 calibration,
   external resource sampler의 왜곡 검증,
   repeated comparison, closed-loop, caller-affine local, Rayon 비교 측정과 대표 H7은 남아 있다.
+  구조 bundle v3는 target Snapshot-off 또는 control과 같은 cadence의 Snapshot-on을
+  허용한다. Snapshot-on target을 쓸 때 A/A는 on workload, recorder full/minimal은
+  같은 workload의 off 파생 시나리오를 사용하고 그 digest를 묶는다. On target의
+  여덟 프로세스 진단 smoke는 통과했지만 관측 비용 예산을 입증하지 않는다.
   상세 목적·파일·DoD는 위 티켓이 소유한다.
 - `just bench-gate`는 allocation, `just bench-smoke`는 bench 실행 smoke,
   `just bench-iai`는 Linux의 지정된 instruction 사례다. 어느 것도 host 성능

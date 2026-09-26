@@ -20,7 +20,7 @@ import host_recorder
 from host_run import write_new
 from scenario_rate import doubled_generator_scenario
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def sidecars(raw: Path, *, summary: Optional[Path] = None) -> dict[str, Path]:
@@ -87,8 +87,9 @@ def make_bundle(
         raise host_perf.ReceiptError("control max_span_ns must be positive")
     scenario_bytes = scenario_path.read_bytes()
     scenario = host_perf.parse_object(scenario_bytes, "control scenario")
-    if not isinstance(scenario.get("load"), dict) or scenario["load"].get("snapshot_ms") != 0:
-        raise host_perf.ReceiptError("control scenario requires Snapshot sampling off")
+    if not isinstance(scenario.get("load"), dict):
+        raise host_perf.ReceiptError("control scenario requires a load envelope")
+    target_snapshot_ms = host_perf.nat(scenario["load"].get("snapshot_ms"), "target.snapshot_ms")
     host = read_artifacts(sidecars(host_raw_path, summary=host_summary_path))
     host_summary = host_perf.verify_receipt(
         host["raw"],
@@ -142,15 +143,20 @@ def make_bundle(
         "on_scenario_sha256"
     ] != host_perf.sha256(expected_on):
         raise host_perf.ReceiptError("Snapshot study differs from control workload")
+    if target_snapshot_ms not in (0, snapshot["snapshot_ms"]):
+        raise host_perf.ReceiptError("target Snapshot cadence differs from control arms")
+    recorder_scenario_bytes = scenario_bytes if target_snapshot_ms == 0 else expected_off
     recorder_bytes = (recorder_directory / "recorder-bundle.json").read_bytes()
-    recorder = host_recorder.verify_bundle(recorder_bytes, recorder_directory, scenario_bytes)
+    recorder = host_recorder.verify_bundle(
+        recorder_bytes, recorder_directory, recorder_scenario_bytes
+    )
     host_binary_sha256 = host_perf.sha256(host["binary"])
     for label, control in (("A/A", aa), ("Snapshot", snapshot), ("recorder", recorder)):
         if control["identity"] != identity or control["binary_sha256"] != host_binary_sha256:
             raise host_perf.ReceiptError(f"{label} source, host or binary differs from target")
     if aa["scenario_sha256"] != host_perf.sha256(scenario_bytes) or recorder[
         "scenario_sha256"
-    ] != host_perf.sha256(scenario_bytes):
+    ] != host_perf.sha256(recorder_scenario_bytes):
         raise host_perf.ReceiptError("A/A or recorder workload differs from target")
     resource_artifacts = [
         ("target", host["provenance"], host["resources"]),
@@ -208,6 +214,8 @@ def make_bundle(
         "generator_binary_sha256": host_perf.sha256(generator["binary"]),
         "generator_rate_factor": 2,
         "generator_scenario_sha256": host_perf.sha256(generator_scenario_bytes),
+        "target_snapshot_ms": target_snapshot_ms,
+        "recorder_scenario_sha256": host_perf.sha256(recorder_scenario_bytes),
         "max_span_ns": max_span_ns,
         "observed_span_ns": observed_span_ns,
         "resource_cadence_ms": cadences.pop(),
@@ -242,6 +250,8 @@ def verify_bundle(bundle_bytes: bytes, *args: Any) -> dict[str, Any]:
             "generator_binary_sha256",
             "generator_rate_factor",
             "generator_scenario_sha256",
+            "target_snapshot_ms",
+            "recorder_scenario_sha256",
             "max_span_ns",
             "observed_span_ns",
             "resource_cadence_ms",

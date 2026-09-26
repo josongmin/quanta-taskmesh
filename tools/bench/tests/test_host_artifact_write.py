@@ -6,7 +6,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import BinaryIO
 
 import pytest
 
@@ -47,12 +46,28 @@ def test_executable_copy_failure_keeps_other_writer_and_removes_only_private_par
     source.write_bytes(b"runner")
     destination = tmp_path / "artifact"
 
-    def failing_copy(_input: BinaryIO, output: BinaryIO) -> None:
-        output.write(b"partial")
-        destination.write_bytes(b"other writer")
-        raise OSError("injected copy failure")
+    original_fdopen = os.fdopen
 
-    monkeypatch.setattr(host_run.shutil, "copyfileobj", failing_copy)
+    class FailingOutput:
+        def __init__(self, stream) -> None:
+            self.stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            self.stream.close()
+
+        def write(self, data: bytes) -> None:
+            self.stream.write(data[:3])
+            destination.write_bytes(b"other writer")
+            raise OSError("injected copy failure")
+
+    def failing_fdopen(descriptor: int, mode: str):
+        stream = original_fdopen(descriptor, mode)
+        return FailingOutput(stream) if mode == "wb" else stream
+
+    monkeypatch.setattr(host_run.os, "fdopen", failing_fdopen)
     with pytest.raises(OSError, match="copy failure"):
         host_run.retain_executable(source, destination)
     assert destination.read_bytes() == b"other writer"

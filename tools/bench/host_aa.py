@@ -13,6 +13,8 @@ import host_perf
 from acquisition_process import deadline, run_acquisition
 from host_run import retain_control_bundle, write_new
 
+from tools.inspection import read_regular_bytes
+
 BUNDLE_VERSION = 2
 RUN_KEYS = {
     "index",
@@ -116,7 +118,7 @@ def validate_executions(bundle: dict, directory: Path, runs: list) -> None:
         paths = execution_paths(directory, index)
         if any(path.is_symlink() or not path.is_file() for path in paths.values()):
             raise host_perf.ReceiptError("control execution evidence requires regular owned files")
-        data = paths["execution.json"].read_bytes()
+        data = read_regular_bytes(paths["execution.json"])
         row = host_perf.parse_object(data, "control execution")
         host_perf.exact_keys(
             row,
@@ -166,7 +168,7 @@ def validate_executions(bundle: dict, directory: Path, runs: list) -> None:
         ):
             raise host_perf.ReceiptError("control execution command differs from indexed arm")
         for name in ("stdout", "stderr"):
-            if host_perf.sha256(paths[name].read_bytes()) != row[f"{name}_sha256"]:
+            if host_perf.sha256(read_regular_bytes(paths[name])) != row[f"{name}_sha256"]:
                 raise host_perf.ReceiptError("control execution capture changed")
 
 
@@ -198,7 +200,7 @@ def paths(directory: Path, index: int) -> dict[str, Path]:
 
 
 def verified_run(directory: Path, index: int, scenario_bytes: bytes) -> tuple[dict, dict]:
-    artifacts = {name: path.read_bytes() for name, path in paths(directory, index).items()}
+    artifacts = {name: read_regular_bytes(path) for name, path in paths(directory, index).items()}
     summary = host_perf.verify_receipt(
         artifacts["raw"],
         scenario_bytes,
@@ -242,7 +244,7 @@ def validate_study_windows(directory: Path, runs: list[dict], label: str) -> Non
         artifact_paths = paths(directory, index)
         artifacts = {}
         for name in ("provenance", "resources"):
-            data = artifact_paths[name].read_bytes()
+            data = read_regular_bytes(artifact_paths[name])
             if host_perf.sha256(data) != run[f"{name}_sha256"]:
                 raise host_perf.ReceiptError(f"{label} {name} changed during verification")
             artifacts[name] = data
@@ -323,7 +325,7 @@ def acquire(
     if pairs < 1 or pairs > 50:
         raise host_perf.ReceiptError("A/A pairs must be 1..=50")
     directory.mkdir(parents=True, exist_ok=False)
-    scenario_bytes = scenario.read_bytes()
+    scenario_bytes = read_regular_bytes(scenario)
     host_perf.parse_object(scenario_bytes, "scenario")
     runs = []
     executions = []

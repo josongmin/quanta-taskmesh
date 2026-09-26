@@ -13,6 +13,8 @@ import host_observer
 import host_perf
 from host_run import retain_control_bundle
 
+from tools.inspection import read_regular_bytes
+
 BUNDLE_VERSION = 3
 
 
@@ -28,7 +30,9 @@ def verified_run(
         row, identity = host_aa.verified_run(directory, index, scenario_bytes)
     elif mode == "minimal":
         artifacts = {
-            name: path.read_bytes() for name, path in artifact_paths.items() if name != "summary"
+            name: read_regular_bytes(path)
+            for name, path in artifact_paths.items()
+            if name != "summary"
         }
         provenance = host_perf.parse_object(artifacts["provenance"], "minimal provenance")
         identity = provenance.get("end_identity")
@@ -76,9 +80,11 @@ def verified_run(
     else:
         raise host_perf.ReceiptError("unknown recorder mode")
     row["mode"] = mode
-    provenance = host_perf.parse_object(artifact_paths["provenance"].read_bytes(), "provenance")
+    provenance = host_perf.parse_object(
+        read_regular_bytes(artifact_paths["provenance"]), "provenance"
+    )
     resources = host_perf.validate_resource_artifact(
-        artifact_paths["resources"].read_bytes(), provenance["runner_pid"]
+        read_regular_bytes(artifact_paths["resources"]), provenance["runner_pid"]
     )
     row["resource_cadence_ms"] = resources["cadence_ms"]
     row["probe_process_duration_ns"] = (
@@ -164,7 +170,7 @@ def acquire(
     host_aa.validate_timeout(timeout_seconds)
     if pairs < 1 or pairs > 50:
         raise host_perf.ReceiptError("recorder pairs must be 1..=50")
-    scenario_bytes = scenario.read_bytes()
+    scenario_bytes = read_regular_bytes(scenario)
     parsed = host_perf.parse_object(scenario_bytes, "recorder scenario")
     load = parsed.get("load")
     if not isinstance(load, dict) or load.get("snapshot_ms") != 0:

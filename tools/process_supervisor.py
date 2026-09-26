@@ -101,6 +101,16 @@ class SupervisedProcess:
 
 
 @dataclass(frozen=True)
+class SupervisedBinaryProcess:
+    returncode: int | None
+    stdout: bytes
+    stderr: bytes
+    timed_out: bool
+    interrupted_by_signal: int | None
+    aborted_early: bool = False
+
+
+@dataclass(frozen=True)
 class SupervisedCommand:
     argv: list[str]
     cwd: Path
@@ -299,7 +309,8 @@ def run_process(
     on_started: Callable[[subprocess.Popen[str]], None] | None = None,
     max_capture_bytes: int | None = None,
     stdin_data: bytes | None = None,
-) -> SupervisedProcess:
+    binary_output: bool = False,
+) -> SupervisedProcess | SupervisedBinaryProcess:
     """Capture complete output and reap the owned process group on every exit path."""
     if (
         type(timeout_seconds) not in (int, float)
@@ -356,7 +367,7 @@ def run_process(
         termination_deadline = time.monotonic() + termination_grace_seconds
 
     previous_handlers: dict[int, object] = {}
-    stdout = stderr = ""
+    stdout = stderr = b"" if binary_output else ""
     orphaned_group = False
     try:
         # Install the handler before Popen so cancellation cannot land in the
@@ -371,7 +382,7 @@ def run_process(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=input_file,
-            text=True,
+            text=not binary_output,
             start_new_session=True,
         )
         if capture_selector is not None:
@@ -452,22 +463,34 @@ def run_process(
                 break
             except subprocess.TimeoutExpired as exc:
                 if hard_stop:
-                    stdout, stderr = _partial_text(exc.stdout), _partial_text(exc.stderr)
-                    stderr += OPEN_CAPTURE_DIAGNOSTIC
+                    if binary_output:
+                        stdout, stderr = exc.stdout or b"", exc.stderr or b""
+                    else:
+                        stdout, stderr = _partial_text(exc.stdout), _partial_text(exc.stderr)
+                    stderr += (
+                        OPEN_CAPTURE_DIAGNOSTIC.encode()
+                        if binary_output
+                        else OPEN_CAPTURE_DIAGNOSTIC
+                    )
                     _finish_leader_after_pipe_abort(process)
                     break
                 continue
         if capture_selector is not None:
-            stdout = bytes(captured["stdout"]).decode(errors="replace")
-            stderr = bytes(captured["stderr"]).decode(errors="replace")
+            stdout = bytes(captured["stdout"])
+            stderr = bytes(captured["stderr"])
+            if not binary_output:
+                stdout = stdout.decode(errors="replace")
+                stderr = stderr.decode(errors="replace")
             if capture_overflow:
-                stderr += "\nSUPERVISOR: capture byte limit exceeded\n"
+                diagnostic = "\nSUPERVISOR: capture byte limit exceeded\n"
+                stderr += diagnostic.encode() if binary_output else diagnostic
                 aborted_early = True
         cleanup = _kill_remaining_group(process.pid)
         if cleanup != "absent":
-            stderr += (
+            diagnostic = (
                 ORPHANED_GROUP_DIAGNOSTIC if cleanup == "killed" else INACCESSIBLE_GROUP_DIAGNOSTIC
             )
+            stderr += diagnostic.encode() if binary_output else diagnostic
             orphaned_group = (
                 process.returncode == 0
                 and not timed_out
@@ -502,10 +525,12 @@ def run_process(
             signal.signal(signum, handler)
 
     assert process is not None
-    return SupervisedProcess(
+    result_type = SupervisedBinaryProcess if binary_output else SupervisedProcess
+    empty = b"" if binary_output else ""
+    return result_type(
         returncode=None if orphaned_group else process.returncode,
-        stdout=stdout or "",
-        stderr=stderr or "",
+        stdout=stdout or empty,
+        stderr=stderr or empty,
         timed_out=timed_out,
         interrupted_by_signal=interrupted_by_signal,
         aborted_early=aborted_early,

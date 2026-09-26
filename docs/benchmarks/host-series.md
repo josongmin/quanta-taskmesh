@@ -214,6 +214,16 @@ execution deadlines bound collection work; they are not performance SLOs or
 longitudinal RSS/recovery admission thresholds. See
 [acquisition ownership audit](../audits/2026-09-27-acquisition-ownership.md).
 
+Metadata commands use a separate 30-second deadline, 0.5-second termination
+grace, and 64 MiB combined binary capture limit. Incomplete or oversized metadata
+cannot become source/build identity. Artifact and Cargo-config ingress requires
+a regular descriptor opened without blocking on FIFOs; existing path confinement
+and symlink rules still apply. Executable copies retain bytes and mode from the
+same descriptor. Cross-rate capacity admission requires the same workload shape,
+class mix, and IO/blocking/CPU scope across the grid. Special validation executes
+private copies of the exact retained validator, raw, and topology bytes.
+See [ingress and custody audit](../audits/2026-09-27-benchmark-ingress-custody.md).
+
 Admission binds every typed-validated artifact to the sealed ledger digest,
 hashes the exact bytes used for tail analysis, rechecks measured controls, and
 runs a third cold build. It then

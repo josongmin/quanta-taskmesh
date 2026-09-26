@@ -7,7 +7,6 @@ import argparse
 import json
 import math
 import os
-import shutil
 import sys
 import tempfile
 from collections.abc import Callable
@@ -17,6 +16,8 @@ from typing import Any
 import host_perf
 from acquisition_process import run_acquisition
 from process_resource import sample_subprocess
+
+from tools.inspection import copy_regular_file, read_regular_bytes, read_regular_file
 
 
 def build_runner(
@@ -177,16 +178,15 @@ def write_new(path: Path, data: bytes) -> None:
 def retain_executable(source: Path, destination: Path) -> bytes:
     if destination.exists():
         raise host_perf.ReceiptError(f"refusing to overwrite {destination}")
+    data, mode = read_regular_file(source)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f"{destination.name}.tmp-", dir=destination.parent
     )
     temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "wb") as output_stream:
-            with source.open("rb") as input_stream:
-                shutil.copyfileobj(input_stream, output_stream)
-        temporary.chmod(source.stat().st_mode & 0o777)
-        data = temporary.read_bytes()
+            output_stream.write(data)
+            os.fchmod(output_stream.fileno(), mode)
         try:
             os.link(temporary, destination)
         except FileExistsError as error:
@@ -277,9 +277,9 @@ def main() -> int:
                 "raw, summary, provenance, runner, topology and resource paths must be fresh"
             )
         owns_artifacts = True
-        scenario_bytes = args.scenario.read_bytes()
+        scenario_bytes = read_regular_bytes(args.scenario)
         scenario = host_perf.parse_object(scenario_bytes, "scenario")
-        calibration = host_perf.parse_object(args.calibration.read_bytes(), "calibration")
+        calibration = host_perf.parse_object(read_regular_bytes(args.calibration), "calibration")
         features = sorted(set(args.feature))
         build_start_identity = host_perf.local_identity(scenario, features)
         phase = "build"
@@ -293,9 +293,9 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="taskmesh-host-binary-") as binary_dir:
             sealed_binary = Path(binary_dir) / binary.name
             sealed_scenario = Path(binary_dir) / "scenario.json"
-            shutil.copy2(binary, sealed_binary)
+            copy_regular_file(binary, sealed_binary)
             sealed_scenario.write_bytes(scenario_bytes)
-            binary_digest = host_perf.sha256(sealed_binary.read_bytes())
+            binary_digest = host_perf.sha256(read_regular_bytes(sealed_binary))
             executable_bytes = retain_executable(sealed_binary, executable_path)
             if host_perf.sha256(executable_bytes) != binary_digest:
                 raise host_perf.ReceiptError("retained runner differs from sealed executable")
@@ -322,9 +322,9 @@ def main() -> int:
             write_new(probe_stderr_path, runner_stderr.encode())
             write_new(resource_path, resource_bytes)
             end_identity = host_perf.local_identity(scenario, features)
-            binary_unchanged = host_perf.sha256(sealed_binary.read_bytes()) == binary_digest
-        raw_bytes = args.raw.read_bytes() if args.raw.exists() else None
-        topology_bytes = topology_path.read_bytes() if topology_path.exists() else None
+            binary_unchanged = host_perf.sha256(read_regular_bytes(sealed_binary)) == binary_digest
+        raw_bytes = read_regular_bytes(args.raw) if args.raw.exists() else None
+        topology_bytes = read_regular_bytes(topology_path) if topology_path.exists() else None
         raw_valid = False
         raw_problem = None
         if raw_bytes is not None:
@@ -337,7 +337,8 @@ def main() -> int:
         if start_identity != end_identity:
             reason = "source, toolchain or host identity changed during run"
         elif (
-            not binary_unchanged or host_perf.sha256(executable_path.read_bytes()) != binary_digest
+            not binary_unchanged
+            or host_perf.sha256(read_regular_bytes(executable_path)) != binary_digest
         ):
             reason = "sealed or retained executable changed during run"
         elif runner_exit_code != 0 or probe_failed(resources):

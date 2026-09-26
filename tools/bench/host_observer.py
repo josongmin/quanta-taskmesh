@@ -13,6 +13,8 @@ import host_aa
 import host_perf
 from host_run import retain_control_bundle, write_new
 
+from tools.inspection import read_regular_bytes
+
 BUNDLE_VERSION = 2
 
 
@@ -67,8 +69,8 @@ def verify_bundle(bundle_bytes: bytes, directory: Path) -> dict[str, Any]:
     cadence = host_perf.nat(bundle["snapshot_ms"], "snapshot_ms")
     if cadence == 0:
         raise host_perf.ReceiptError("Snapshot study cadence is zero")
-    off_bytes = (directory / "scenario-off.json").read_bytes()
-    on_bytes = (directory / "scenario-on.json").read_bytes()
+    off_bytes = read_regular_bytes(directory / "scenario-off.json")
+    on_bytes = read_regular_bytes(directory / "scenario-on.json")
     if (
         host_perf.sha256(off_bytes) != bundle["off_scenario_sha256"]
         or host_perf.sha256(on_bytes) != bundle["on_scenario_sha256"]
@@ -113,7 +115,7 @@ def acquire(
     host_aa.validate_timeout(timeout_seconds)
     if pairs < 1 or pairs > 50:
         raise host_perf.ReceiptError("Snapshot pairs must be 1..=50")
-    off_bytes, on_bytes = scenario_pair(scenario.read_bytes(), cadence_ms)
+    off_bytes, on_bytes = scenario_pair(read_regular_bytes(scenario), cadence_ms)
     directory.mkdir(parents=True, exist_ok=False)
     off_path = directory / "scenario-off.json"
     on_path = directory / "scenario-on.json"

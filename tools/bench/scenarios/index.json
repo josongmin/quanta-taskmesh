@@ -13,7 +13,7 @@
       "correctness_oracles": ["crates/taskmesh-bench/tests/host_load_integration.rs", "crates/taskmesh/tests/hardening_drain.rs"],
       "current_artifacts": ["crates/taskmesh-bench/benches/cold_host_lifecycle.rs", "crates/taskmesh-bench/benches/governance_tax.rs"],
       "support": "partial",
-      "missing": "One-versus-ten matched completed batches exist for IO only; no fixed-host measured distribution."
+      "missing": "One-versus-ten matched completed batches exist for IO and blocking; no fixed-host measured distribution."
     },
     {
       "id": "H1",

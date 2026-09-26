@@ -256,6 +256,10 @@ Use a small declared matrix, not the Cartesian product of all policies and execu
 
 ### B01 — Repair and extend engine microbenchmarks
 
+Code update: `cold_host_lifecycle` now has separately labeled completed 1/10-call
+batches for IO and blocking on the same warmed runtime. This adds a fixture,
+not a measured fixed-host distribution.
+
 - **Purpose:** Make each existing result's population and unit explicit; measure Taskmesh queue scaling and small-batch facade cost before interpreting host load results.
 - **Files:** `docs/adr/9000-benchmark-strategy.md`, `crates/taskmesh-bench/benches/{retrieval_saturation,overload_stability,governance_tax,host_edge_paths}.rs`, new `crates/taskmesh-bench/benches/{queue_scaling,cold_host_lifecycle}.rs` and `crates/taskmesh-bench/Cargo.toml` if needed, this plan; `tools/bench/perf-gate.json` only if an approved measurement definition actually changes.
 - **DoD:** ADR names current `8 alloc/op` config, manual/disabled bench workflow, raw started-request simulator samples, and no current host performance gate. `*_sim` output/documentation says simulator execution cost. Governance comparison states what timed setup differs; add a prebuilt-spec matched variant without deleting full API cost. Measure a fixed 1-vs-10 completed-call batch on the same path/runtime/body, queue promotion over declared class-count/depth points with setup outside the timed region, and H8 cold construction/first-use/settled teardown as separate named cases. Publish per-operation denominators; assert every operation reached the intended admitted/queued/terminal path. No old `< X%` becomes a gate by inference.

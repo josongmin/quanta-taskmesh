@@ -78,7 +78,7 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   좁은 mechanism control이다. `queue_scaling`은 class 수 1/8/32와 class당
   queue 깊이 1/16에서 fixture 구성·queue 적재를 제외하고 holder release 한 번과
   promotion 한 건을 잰다. `cold_host_lifecycle`은 구성, 첫 IO 호출, warm IO 호출,
-  빈 host drain, 동일 경로·body의 완료된 1/10건 batch를 별도 측정한다.
+  빈 host drain, IO와 blocking 각각 동일 경로·body의 완료된 1/10건 batch를 별도 측정한다.
   Criterion batch 지연의 분모는 batch 하나이며, 건당 값은 그 지연을 1 또는 10으로
   나누어 계산한다. 이 사례의 smoke는 상태·실행 가능성 증거이지 고정 host 성능
   영수증이 아니다. `*_sim`의 Criterion 시간은 simulator 계산 시간이다.

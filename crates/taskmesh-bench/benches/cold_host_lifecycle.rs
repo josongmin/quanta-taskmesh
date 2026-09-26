@@ -31,11 +31,22 @@ fn spec() -> TaskSpec {
     TaskSpec::io(TaskClass::new("bench")).operation("io-noop")
 }
 
+fn blocking_spec() -> TaskSpec {
+    TaskSpec::blocking(TaskClass::new("bench")).operation("blocking-noop")
+}
+
 async fn one_io(runtime: &TokioRuntime) {
     runtime
         .run_io(spec(), async { Ok::<(), Infallible>(()) })
         .await
         .expect("one IO call must complete");
+}
+
+async fn one_blocking(runtime: &TokioRuntime) {
+    runtime
+        .run_blocking(blocking_spec(), || Ok::<(), Infallible>(()))
+        .await
+        .expect("one blocking call must complete");
 }
 
 fn cold_host_lifecycle(c: &mut Criterion) {
@@ -100,6 +111,28 @@ fn cold_host_lifecycle(c: &mut Criterion) {
         });
     }
     batch_group.finish();
+
+    tokio.block_on(one_blocking(&steady_runtime));
+    let mut blocking_batch_group = c.benchmark_group("warmed_host_blocking_noop_completed_batch");
+    for batch in [1_u64, 10] {
+        blocking_batch_group.throughput(Throughput::Elements(batch));
+        blocking_batch_group.bench_with_input(
+            BenchmarkId::from_parameter(batch),
+            &batch,
+            |b, &count| {
+                b.to_async(&tokio).iter_batched(
+                    || steady_runtime.clone(),
+                    |runtime| async move {
+                        for _ in 0..count {
+                            one_blocking(&runtime).await;
+                        }
+                    },
+                    BatchSize::PerIteration,
+                );
+            },
+        );
+    }
+    blocking_batch_group.finish();
 }
 
 criterion_group!(benches, cold_host_lifecycle);

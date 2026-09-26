@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import argparse
 import copy
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 import host_aa
 import host_perf
+from bench_process import run_control
 from host_run import retain_control_bundle, write_new
 
 BUNDLE_VERSION = 1
@@ -118,7 +118,7 @@ def acquire(
         source_path = on_path if mode == "on" else off_path
         source_bytes = on_bytes if mode == "on" else off_bytes
         artifact = host_aa.paths(directory, index)
-        result = subprocess.run(
+        result = run_control(
             [
                 sys.executable,
                 str(Path(__file__).with_name("host_run.py")),
@@ -129,9 +129,6 @@ def acquire(
                 *(part for feature in features for part in ("--feature", feature)),
             ],
             cwd=host_perf.REPO,
-            capture_output=True,
-            text=True,
-            check=False,
         )
         if result.returncode != 0:
             failures.append({"index": index, "reason": result.stderr[-1000:]})

@@ -25,6 +25,8 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from bench_process import BUILD_TIMEOUT_SECONDS, run_bench  # noqa: E402
+
 from tools.qualification import evidence as source_evidence  # noqa: E402
 
 SUMMARY_VERSION = 3
@@ -199,17 +201,16 @@ def validate_with_rust(
             if topology_bytes is not None:
                 topology_path.write_bytes(topology_bytes)
                 command.extend(["--topology", str(topology_path)])
-            result = subprocess.run(
+            result = run_bench(
                 command,
                 cwd=REPO,
-                input=scenario_bytes,
-                capture_output=True,
-                check=False,
+                input_text=scenario_bytes.decode("utf-8"),
+                timeout_seconds=BUILD_TIMEOUT_SECONDS,
             )
-    except OSError as error:
+    except (OSError, UnicodeError) as error:
         raise ReceiptError(f"Rust scenario preflight unavailable: {error}") from error
-    if result.returncode != 0 or not result.stdout.startswith(b"SCENARIO_VALID id="):
-        detail = result.stderr.decode("utf-8", errors="replace").strip()
+    if result.returncode != 0 or not result.stdout.startswith("SCENARIO_VALID id="):
+        detail = result.stderr.strip()
         raise ReceiptError(f"Rust scenario preflight failed: {detail[:1000]}")
 
 

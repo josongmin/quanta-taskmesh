@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
@@ -15,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import host_perf
+from bench_process import BUILD_TIMEOUT_SECONDS, run_bench
 from process_resource import sample_subprocess
 
 
@@ -50,9 +50,7 @@ def build_runner(
     ]
     if features:
         command.extend(["--features", ",".join(features)])
-    result = subprocess.run(
-        command, cwd=host_perf.REPO, capture_output=True, text=True, check=False
-    )
+    result = run_bench(command, cwd=host_perf.REPO, timeout_seconds=BUILD_TIMEOUT_SECONDS)
     if result.returncode != 0:
         raise host_perf.ReceiptError(f"host runner build failed: {result.stderr[-2000:]}")
     artifacts: list[dict[str, Any]] = []

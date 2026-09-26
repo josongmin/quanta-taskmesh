@@ -15,6 +15,7 @@ from pathlib import Path
 
 import host_perf
 import host_run
+from bench_process import run_bench
 from host_build import run_process
 from process_resource import sample_subprocess
 
@@ -229,7 +230,7 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
             and (directory / "raw").is_file()
             and (directory / "topology").is_file()
         ):
-            checked = subprocess.run(
+            checked = run_bench(
                 [
                     str(sealed_validator),
                     validator_mode,
@@ -237,11 +238,10 @@ def acquire(mode: str, scenario_path: Path, directory: Path, features: list[str]
                     str(directory / "raw"),
                     str(directory / "topology"),
                 ],
-                capture_output=True,
-                text=True,
-                check=False,
+                cwd=host_perf.REPO,
+                timeout_seconds=VALIDATOR_TIMEOUT_SECONDS,
             )
-            validator_exit = checked.returncode
+            validator_exit = checked.returncode if checked.returncode is not None else -1
             if validator_exit:
                 stderr += checked.stderr[-1000:]
         end = host_perf.local_identity(scenario, features)

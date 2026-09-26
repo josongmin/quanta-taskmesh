@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 import host_perf
+from bench_process import run_control
 from host_run import retain_control_bundle
 
 BUNDLE_VERSION = 1
@@ -163,7 +163,7 @@ def acquire(
     common_binary = None
     for index in range(pairs * 2):
         artifact = paths(directory, index)
-        result = subprocess.run(
+        result = run_control(
             [
                 sys.executable,
                 str(Path(__file__).with_name("host_run.py")),
@@ -174,9 +174,6 @@ def acquire(
                 *(part for feature in features for part in ("--feature", feature)),
             ],
             cwd=host_perf.REPO,
-            capture_output=True,
-            text=True,
-            check=False,
         )
         if result.returncode != 0:
             failures.append({"index": index, "reason": result.stderr[-1000:]})

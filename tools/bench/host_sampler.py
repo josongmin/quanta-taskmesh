@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,6 +11,7 @@ from typing import Any
 import host_aa
 import host_observer
 import host_perf
+from bench_process import run_control
 from host_run import retain_control_bundle
 
 BUNDLE_VERSION = 1
@@ -150,7 +150,7 @@ def acquire(
     for index in range(pairs * 2):
         mode = mode_for(index)
         paths = host_aa.paths(directory, index)
-        result = subprocess.run(
+        result = run_control(
             [
                 sys.executable,
                 str(Path(__file__).with_name("host_run.py")),
@@ -162,9 +162,6 @@ def acquire(
                 *(["--no-resource-sampling"] if mode == "off" else []),
             ],
             cwd=host_perf.REPO,
-            capture_output=True,
-            text=True,
-            check=False,
         )
         if result.returncode != 0:
             failures.append({"index": index, "reason": result.stderr[-1000:]})

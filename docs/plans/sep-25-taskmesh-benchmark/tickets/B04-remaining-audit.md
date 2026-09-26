@@ -5,6 +5,88 @@ HEAD moved to `52f7c008e7ad761e9efb67bedd357c50551aa628`; that commit changes on
 ingress test formatting. Benchmark source is unchanged. This audit does not
 qualify the engine or its performance.
 
+## Follow-up code audit — 2026-09-27, base `6f16118`
+
+**Disposition: standalone build/probe/control execution is repaired; overall code
+work remains incomplete.** Runtime/public API code is unchanged. Other-owner
+source remains dirty and excluded from edits. The earlier audit below is history.
+
+### Execution fixes in this pass
+
+- `tools/bench/bench_process.py` is the shared execution adapter. Safety limits
+  are 1,800 seconds for diagnostic builds/probes/typed validation and 3,600
+  seconds per control arm. These constants are safety limits, not SLOs or
+  measured capacity budgets. Timeout, interruption, aborted execution or a
+  surviving process group cannot return a successful status, even when the
+  leader exit code is zero.
+- `process_resource.py` uses the shared supervisor and attaches its sampler to
+  the actual launched probe PID through a start callback. Sampling-disabled
+  controls use the same execution custody. Failed execution marks resources
+  unavailable and preserves stderr; sampled maxima remain lower bounds.
+- `host_run.py` bounds non-witness builds; `host_perf.py` bounds Cargo-backed
+  typed validation and passes scenario input once across capture polls.
+  `host_special_run.py` also bounds the acquisition validator.
+- A/A, Snapshot, recorder and sampler control acquisition reuse the same
+  supervised arm execution. Launch/capture errors retain an incomplete bundle;
+  timeout/interruption never advances to the next arm.
+- `tools/process_supervisor.py` adds optional PID notification and text stdin;
+  existing gate/batch contracts stay unchanged. Inner execution uses a one-second
+  termination grace; control arms use three seconds and the collector uses its
+  existing five seconds. Normal timeout/SIGINT/SIGTERM cascades settle inner
+  groups before outer cleanup. Arbitrary forced SIGKILL or children deliberately
+  leaving their session are outside this cooperative nested-cancellation proof.
+
+Verification covers real hung probes, closed-pipe descendants surviving a zero
+leader exit, sampling on/off, nested timeout with a SIGTERM-ignoring probe,
+callback failure cleanup, stdin across polling intervals and all four control
+modes' failure/next-arm accounting. These are process/correctness checks,
+not performance qualification.
+
+Owner verification on the final working changes:
+- Dedicated execution regressions: **25/25 PASS**.
+- Earlier focused collector/admission/resource/supervisor checks: **105/105 PASS**.
+- Complete selected benchmark Python plus batch-supervisor invocation:
+  **304 PASS / 0 FAIL / 71 deselected**, 218.59 seconds.
+  Command: `uv run pytest -q tools/bench/tests tools/gates/tests/test_batch_supervisor.py
+  -m 'not slow and not qualification' --tb=short`.
+  Log: `/tmp/taskmesh-bench-audit-6f16118-suite.log`.
+  HEAD remained `6f1611821db79d9003e05ad9190b08757f9c4f36`; source edits stopped
+  during the broad run. Ruff and whitespace checks passed. This is working-source
+  owner verification with other-owner dirty files preserved, not clean CI or a
+  qualifying measured series. Mutation, whole CI, optimized cold-build/oracle
+  qualification, remote push and release qualification were not run.
+
+### Remaining implementation, ordered
+
+1. **P1b — pre-execution metadata and artifact custody.** The execution adapter
+   does not cover every operation before a command launches. Unbounded metadata
+   subprocesses remain in `host_perf.py` (`_git`, `_command_output`, rustc
+   identity), `host_special_run.py` (source file listing),
+   `host_build.py` (`command_output`, including binary Git archive), and shared
+   `tools/qualification/evidence.py` Git inspection. Some tool-context/version
+   queries have a 30-second `subprocess.run` timeout but lack the shared owned
+   capture/descendant contract. Separate these from the repaired execution
+   commands; do not mark all standalone entrypoints bounded.
+   Purpose: bound source/tool inspection before collection without corrupting
+   binary/NUL-delimited Git output or losing exact source attribution.
+   DoD: owned binary-safe bounded capture, terminal errors before launch,
+   regression with hung metadata and inherited capture pipes; preserve source
+   identity/index-hint tests and frozen-tool/configuration checks. Audit regular
+   file reads at artifact ingress so a nonregular input cannot block before the
+   execution deadline. Limits are declared inspection budgets, not workload SLOs.
+2. **P2 — recovery/soak admission.** Finite-run settlement and resource snapshots
+   exist; longitudinal recovery deadline/resource-growth admission remains
+   unimplemented. Keep phase/estimand/limit ownership and DoD from the previous
+   section; extending a timeout is not a soak qualification gate.
+3. **P2 / declared scope — other modes.** Local, closed-loop, composite,
+   requested-stack and Rayon repeated admission remains unimplemented. Their
+   typed diagnostic probes already exist; no engine rewrite is inferred.
+
+Clean exact-source CI, optimized v3 build/oracle end-to-end proof, frozen B00
+values, quiet-host measured controls/series, H7 provenance and matched peer /
+external rerun remain separate open requirements. Every new source needs fresh
+measurement custody; no old control or build receipt qualifies this change.
+
 ## Current code audit — 2026-09-27, initial base `f00c039`, integration base `031d7b9`
 
 **Disposition: code work is not fully complete.** This pass covers benchmark

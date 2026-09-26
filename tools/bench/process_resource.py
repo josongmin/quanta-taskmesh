@@ -7,13 +7,13 @@ observations, not exact RSS or thread high-water marks.
 
 from __future__ import annotations
 
-import subprocess
 import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
 
 import psutil
+from bench_process import PROBE_TIMEOUT_SECONDS, run_bench
 
 
 class ProcessResourceSampler:
@@ -92,33 +92,40 @@ class ProcessResourceSampler:
 
 
 def sample_subprocess(
-    command: list[str], cwd: Path, cadence_ms: int = 250, *, sample_resources: bool = True
+    command: list[str],
+    cwd: Path,
+    cadence_ms: int = 250,
+    *,
+    sample_resources: bool = True,
+    timeout_seconds: float = PROBE_TIMEOUT_SECONDS,
 ) -> tuple[int, int, str, dict[str, Any]]:
-    """Run one child, optionally omitting the observer for a paired control."""
+    """Bound execution/capture and retain the measured probe PID and sample window."""
+    if type(cadence_ms) is not int or cadence_ms <= 0:
+        raise ValueError("cadence_ms must be a positive integer")
     started_ns = time.monotonic_ns()
     started_epoch_ns = time.time_ns()
     boot_time_ns = round(psutil.boot_time() * 1_000_000_000)
-    child = subprocess.Popen(
-        command,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if sample_resources:
-        sampler = ProcessResourceSampler(child.pid, cadence_ms=cadence_ms)
-        sampler.start()
-        try:
-            _, stderr = child.communicate()
-        finally:
-            resources = sampler.stop()
-    else:
-        _, stderr = child.communicate()
+    sampler = None
+    pid = None
+
+    def started(child_pid: int) -> None:
+        nonlocal sampler, pid
+        pid = child_pid
+        if sample_resources:
+            sampler = ProcessResourceSampler(pid, cadence_ms=cadence_ms)
+            sampler.start()
+
+    try:
+        result = run_bench(command, cwd=cwd, timeout_seconds=timeout_seconds, on_started=started)
+    finally:
+        resources = sampler.stop() if sampler is not None else None
+    assert pid is not None
+    if resources is None:
         resources = {
             "schema_version": 2,
             "status": "unavailable",
             "reason": "resource sampling intentionally disabled for paired control",
-            "pid": child.pid,
+            "pid": pid,
             "process_create_time_ns": None,
             "boot_time_ns": boot_time_ns,
             "cadence_ms": cadence_ms,
@@ -128,4 +135,7 @@ def sample_subprocess(
             "sampling_ended_epoch_ns": time.time_ns(),
             "samples": [],
         }
-    return child.returncode, child.pid, stderr, resources
+    if result.returncode is None or result.returncode != 0:
+        resources["status"] = "unavailable"
+        resources["reason"] = "probe execution failed: " + result.stderr[-1000:]
+    return result.returncode if result.returncode is not None else -1, pid, result.stderr, resources

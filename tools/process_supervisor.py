@@ -288,6 +288,8 @@ def run_process(
     timeout_seconds: float,
     termination_grace_seconds: float | None = None,
     abort_when: Callable[[], bool] | None = None,
+    on_started: Callable[[int], None] | None = None,
+    input_text: str | None = None,
 ) -> SupervisedProcess:
     """Capture complete output and reap the owned process group on every exit path."""
     if timeout_seconds <= 0:
@@ -336,12 +338,16 @@ def run_process(
             argv,
             cwd=cwd,
             env=env,
+            stdin=subprocess.PIPE if input_text is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             start_new_session=True,
         )
         timeout_deadline = time.monotonic() + timeout_seconds
+        if on_started is not None:
+            on_started(process.pid)
+        pending_input = input_text
         if interrupted_by_signal is not None:
             signal_group(signal.SIGTERM)
             if termination_deadline is None:
@@ -390,9 +396,10 @@ def run_process(
             )
             wait_seconds = min(POLL_INTERVAL_SECONDS, until_deadline)
             try:
-                stdout, stderr = process.communicate(timeout=wait_seconds)
+                stdout, stderr = process.communicate(input=pending_input, timeout=wait_seconds)
                 break
             except subprocess.TimeoutExpired as exc:
+                pending_input = None
                 if hard_stop:
                     stdout, stderr = _partial_text(exc.stdout), _partial_text(exc.stderr)
                     stderr += OPEN_CAPTURE_DIAGNOSTIC

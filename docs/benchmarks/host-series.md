@@ -241,16 +241,29 @@ qualification are separate rails; this command does not run mutation testing.
 - Separate repeated admission contracts for local, closed-loop, composite and
   nondefault feature comparisons if those claims are requested.
 
-## Open execution and longitudinal boundaries
+## Execution safety and remaining longitudinal boundaries
 
-The study collector, cold builds and admission oracle have owned supervised
-execution. Standalone A/A, Snapshot, recorder and sampler acquisition wrappers,
-non-witness diagnostic builds and directly launched probes still use unbounded
-subprocess waits. They can hang before publishing terminal accounting; do not
-interpret collector supervision as coverage of those independent commands.
-Special-mode receipt revalidation is now bounded at 120 seconds plus supervisor
-termination grace and uses a private copy of digest-checked inputs/executable.
-Its separate acquisition path still belongs to the execution hardening gap.
+The study collector, cold builds and admission oracle retain supervised
+execution. Standalone A/A, Snapshot, recorder and sampler arms now use the same
+owned execution adapter, with a 3,600-second arm limit. Non-witness Cargo builds,
+probe execution (including sampler-off controls), and Cargo-backed typed raw
+validation have 1,800-second limits. Special acquisition/receipt validators use
+120 seconds. These source-declared safety limits are not performance budgets.
+A timeout, interrupt, failed capture/launch or surviving process group cannot
+pass; controls retain failure accounting and stop later arms.
+
+Sampler creation uses the launched probe PID. Inner execution has a one-second
+termination grace, control arms three seconds and collector execution five
+seconds. Cooperative timeout/SIGINT/SIGTERM cleans inner groups before the outer
+owner's deadline. Arbitrary SIGKILL or explicit session escape is outside this
+proof. Revalidation still uses private digest-checked bytes. Control costs must
+be measured again against the new source; earlier source receipts do not qualify.
+
+Prelaunch metadata inspection remains partly unbounded: Git/source enumeration,
+binary archive output and some tool/host identity subprocesses have not all been
+moved to owned bounded capture. The outer collector/arm timeout covers these
+only when they execute inside its command. Direct metadata calls and artifact
+reads before launch remain a separate audit/remediation item in B04.
 
 Finite-run validation checks settlement and residual ownership. There is no
 separate longitudinal recovery/soak admission contract or trend gate for resource

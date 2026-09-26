@@ -1,6 +1,17 @@
 # Taskmesh benchmark qualification: source audit and work plan
 
-## Current checkpoint — code audit at integration base `031d7b9`, 2026-09-27
+## Current checkpoint — follow-up code audit at base `6f16118`, 2026-09-27
+
+Standalone diagnostic builds, probes, typed validation and all four control-arm
+launchers now use owned bounded execution. Sampler PID/window identity is kept;
+failed/interrupt/orphan execution cannot publish a successful arm. Shared
+supervisor start notification/stdin support has focused process regressions.
+**Code is still incomplete:** prelaunch metadata/binary artifact custody,
+longitudinal recovery/soak admission and declared-scope other-mode admission
+remain implementation work. CI/build-oracle proof and real measurement inputs
+remain separately open. See [B04 follow-up audit](B04-remaining-audit.md).
+
+## Previous checkpoint — code audit at integration base `031d7b9`, 2026-09-27
 
 Code is **not fully complete**. The latest pass repairs cross-rate workload
 consistency, explicit measured-path scope, control bundle byte custody and

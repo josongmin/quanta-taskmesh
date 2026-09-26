@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,6 +11,7 @@ from typing import Any
 import host_aa
 import host_observer
 import host_perf
+from bench_process import run_control
 from host_run import retain_control_bundle
 
 BUNDLE_VERSION = 2
@@ -185,9 +185,7 @@ def acquire(
                 str(artifact["raw"]),
                 *(part for feature in features for part in ("--feature", feature)),
             ]
-        result = subprocess.run(
-            command, cwd=host_perf.REPO, capture_output=True, text=True, check=False
-        )
+        result = run_control(command, cwd=host_perf.REPO)
         if result.returncode != 0:
             failures.append({"index": index, "reason": result.stderr[-1000:]})
             break

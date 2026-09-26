@@ -205,9 +205,13 @@ remain inputs to acquire; code presence is not a performance result.
 - Admission parses and hashes the same control-bundle bytes. Special-mode
   revalidation executes private copies of digest-checked inputs and validator,
   with a 120-second supervised deadline; timeout/interruption cannot pass.
-- Standalone control acquisition and direct diagnostic build/probe subprocesses
-  still contain unbounded waits. Collector timeouts cover collected attempts,
-  not every independent control acquisition. This is an open implementation gap.
+- Follow-up audit adds owned bounded execution for standalone control arms,
+  diagnostic builds/probes (sampler on/off), Cargo-backed typed validation and
+  special acquisition validators. Inner/control/collector cancellation grace
+  is ordered at 1/3/5 seconds. Timeout/interruption/orphaned work cannot pass.
+- Prelaunch metadata/source enumeration and binary archive capture are not all
+  covered by that adapter. Metadata/artifact ingress custody remains an open
+  implementation item; full standalone liveness is not yet qualified.
 - Dedicated repeated admission for other modes and longitudinal soak/recovery
   qualification remain separate implementation work. Finite-run settlement
   conservation and sampled resource maxima do not prove long-term stability.

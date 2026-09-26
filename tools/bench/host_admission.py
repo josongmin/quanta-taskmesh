@@ -24,6 +24,8 @@ import host_study
 from host_build import run_process
 from host_run import write_new
 
+from tools.inspection import read_regular_bytes
+
 VERSION = 1
 ORACLE_TIMEOUT_SECONDS = 1800
 CONTRACT_KEYS = {
@@ -203,7 +205,7 @@ def admit(
         or ledger["excluded"]
     ):
         raise host_perf.ReceiptError("study contract mismatch or failed/excluded attempts")
-    witness_bytes = (build_root / "build-witness.json").read_bytes()
+    witness_bytes = read_regular_bytes(build_root / "build-witness.json")
     if host_perf.sha256(witness_bytes) != frozen["build_witness_sha256"]:
         raise host_perf.ReceiptError("frozen build witness digest differs")
     controls = host_perf.parse_object(controls_bytes, "series controls")
@@ -242,7 +244,7 @@ def admit(
                 raise host_perf.ReceiptError("control path escapes manifest root")
             paths[role] = path
         policy_path = paths.pop("policy")
-        policy = policy_path.read_bytes()
+        policy = read_regular_bytes(policy_path)
         if host_perf.sha256(policy) != frozen["control_policy_sha256_by_rate"][str(rate)]:
             raise host_perf.ReceiptError("control budget changed after preregistration")
         assessment = host_control_assess.assess(policy, **paths)
@@ -253,9 +255,10 @@ def admit(
             or assessment["scenario_sha256"] != frozen["scenario_sha256_by_rate"][str(rate)]
         ):
             raise host_perf.ReceiptError("measured calibration source/scenario differs")
-        bundle = host_perf.parse_object(paths["bundle_path"].read_bytes(), "bound controls")
+        bundle_bytes = read_regular_bytes(paths["bundle_path"])
+        bundle = host_perf.parse_object(bundle_bytes, "bound controls")
         if (
-            host_perf.sha256(paths["bundle_path"].read_bytes()) != assessment["bundle_sha256"]
+            host_perf.sha256(bundle_bytes) != assessment["bundle_sha256"]
             or bundle["host_binary_sha256"] != witness["binary_sha256"]
         ):
             raise host_perf.ReceiptError(
@@ -269,13 +272,14 @@ def admit(
         windows.extend(tuple(window) for window in assessment["process_windows_epoch_ns"])
     orders = {rate: [] for rate in frozen["rate_grid"]}
     last_series_end = 0
+    workload_reference = None
     for attempt in ledger["attempts"]:
         rate, arm = attempt["rate_per_second"], attempt["arm"]
         if rate not in orders:
             raise host_perf.ReceiptError("unplanned rate outside frozen grid")
         orders[rate].append(arm)
         directory = study_root / attempt["id"]
-        scenario_bytes = (directory / "scenario").read_bytes()
+        scenario_bytes = read_regular_bytes(directory / "scenario")
         if host_perf.sha256(scenario_bytes) != frozen["scenario_sha256_by_rate"][str(rate)]:
             raise host_perf.ReceiptError("attempt scenario differs from frozen rate")
         scenario = host_perf.parse_object(scenario_bytes, "series scenario")
@@ -287,6 +291,13 @@ def admit(
             raise host_perf.ReceiptError("scenario window or arrival rate differs")
         if {c["name"]: c["slo_ms"] for c in scenario["classes"]} != frozen["slo_ms_by_class"]:
             raise host_perf.ReceiptError("scenario class SLO catalog differs")
+        current_workload = host_compare.workload_signature(scenario, attempt["id"])
+        if workload_reference is None:
+            workload_reference = current_workload
+        else:
+            host_compare.require_same_workload(workload_reference, current_workload, attempt["id"])
+        if any(o.get("path") not in {"io", "blocking", "cpu"} for o in scenario["offers"]):
+            raise host_perf.ReceiptError("measured admission supports only io/blocking/cpu paths")
         if any(
             o.get(k) is not None
             for o in scenario["offers"]
@@ -322,7 +333,7 @@ def admit(
             raise host_perf.ReceiptError("series indexed process order is reversed or overlaps")
         last_series_end = run["window"][1]
         windows.append(run["window"])
-        raw_bytes = (directory / "raw").read_bytes()
+        raw_bytes = read_regular_bytes(directory / "raw")
         if host_perf.sha256(raw_bytes) != run["artifact_sha256"]["raw"]:
             raise host_perf.ReceiptError("raw changed between typed validation and tail analysis")
         raw = host_perf.parse_object(raw_bytes, "series raw")
@@ -454,12 +465,12 @@ def admit(
     # Recheck mutable input custody after expensive rebuild/oracle execution.
     if (
         host_study.verify(study_root) != ledger
-        or (build_root / "build-witness.json").read_bytes() != witness_bytes
+        or read_regular_bytes(build_root / "build-witness.json") != witness_bytes
     ):
         raise host_perf.ReceiptError("study/build proof changed during admission")
     host_build.verify(build_root)
     for rate, (policy, paths, policy_path) in control_inputs.items():
-        if policy_path.read_bytes() != policy:
+        if read_regular_bytes(policy_path) != policy:
             raise host_perf.ReceiptError("control budget artifact changed during admission")
         if host_control_assess.assess(policy, **paths) != assessments[rate]:
             raise host_perf.ReceiptError("measured controls changed during admission")
@@ -487,7 +498,9 @@ def admit(
             "effective_build_environment": {**effective_environment, **oracle_profile},
             "stdout_sha256": host_perf.sha256(stdout),
             "stderr_sha256": host_perf.sha256(stderr),
-            "execution_sha256": host_perf.sha256((output / "oracle.execution.json").read_bytes()),
+            "execution_sha256": host_perf.sha256(
+                read_regular_bytes(output / "oracle.execution.json")
+            ),
         },
         "highest_tested_passing_rate": max(passing) if passing else None,
         "knee_bracketed": bool(passing) and max(passing) < max(frozen["rate_grid"]),
@@ -513,10 +526,10 @@ def main() -> int:
     args = parser.parse_args()
     try:
         report = admit(
-            args.contract.read_bytes(),
+            read_regular_bytes(args.contract),
             args.study,
             args.build,
-            args.controls.read_bytes(),
+            read_regular_bytes(args.controls),
             args.controls.parent,
             args.output,
         )

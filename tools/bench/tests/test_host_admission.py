@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -247,8 +248,10 @@ def test_oracle_uses_frozen_effective_environment_over_ambient_incremental(
     report = admission.admit(*args[:6])
     recorded = report["oracle"]["effective_build_environment"]
     assert observed["CARGO_INCREMENTAL"] == recorded["CARGO_INCREMENTAL"] == "0"
-    assert observed["CARGO_TARGET_DIR"] == recorded["CARGO_TARGET_DIR"] == str(
-        args[2].resolve() / "target"
+    assert (
+        observed["CARGO_TARGET_DIR"]
+        == recorded["CARGO_TARGET_DIR"]
+        == str(args[2].resolve() / "target")
     )
     assert all(observed[key] == value for key, value in recorded.items())
     assert recorded["CARGO_PROFILE_TEST_OPT_LEVEL"] == report["build_profile"]["opt_level"]
@@ -384,7 +387,7 @@ def test_changed_raw_read_cannot_supply_unvalidated_tail_values(
             return host_perf.canonical(changed)
         return original(current)
 
-    monkeypatch.setattr(Path, "read_bytes", replaced_read)
+    monkeypatch.setattr(admission, "read_regular_bytes", replaced_read)
     with pytest.raises(host_perf.ReceiptError, match="between typed validation and tail analysis"):
         admission.admit(*args[:6])
     assert True not in args[6]
@@ -421,3 +424,87 @@ def test_admission_rejects_content_drift_after_oracle(
         admission.admit(*args[:6])
     assert (args[5] / "oracle.stdout").exists()
     assert not (args[5] / "admission.json").exists()
+
+
+def replace_preregistered_scenarios(args: tuple, transform: Callable[[dict, int], None]) -> tuple:
+    """Keep synthetic custody valid so semantic rejection is the tested boundary."""
+    contract = json.loads(args[0])
+    for rate in contract["rate_grid"]:
+        matching = [a for a in args[7]["attempts"] if a["rate_per_second"] == rate]
+        scenario = json.loads((args[1] / matching[0]["id"] / "scenario").read_bytes())
+        transform(scenario, rate)
+        data = host_perf.canonical(scenario)
+        contract["scenario_sha256_by_rate"][str(rate)] = host_perf.sha256(data)
+        args[8][str(rate)]["scenario_sha256"] = host_perf.sha256(data)
+        for attempt in matching:
+            (args[1] / attempt["id"] / "scenario").write_bytes(data)
+    data = host_perf.canonical(contract)
+    args[7]["contract_sha256"] = host_perf.sha256(data)
+    return (data, *args[1:])
+
+
+@pytest.mark.parametrize("change", ["body", "mix", "class_policy", "topology", "load"])
+def test_preregistered_digests_do_not_allow_different_workloads_across_rates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+
+    def transform(scenario: dict, rate: int) -> None:
+        if change == "mix":
+            split = rate // (2 if rate == 1000 else 4)
+            scenario["offers"] = [{"path": "io", "body": {"kind": "noop"}}] * split + [
+                {"path": "io", "body": {"kind": "async_sleep", "millis": 1}}
+            ] * (rate - split)
+        elif rate == 2000:
+            if change == "body":
+                scenario["offers"] = [{"path": "io", "body": {"kind": "noop"}}] * rate
+            elif change == "class_policy":
+                scenario["classes"][0]["max_queue_depth"] = 100
+            elif change == "topology":
+                scenario["topology"] = {"cpu_workers": 2}
+            else:
+                scenario["load"]["settlement_ms"] = 100
+
+    args = replace_preregistered_scenarios(args, transform)
+    with pytest.raises(host_perf.ReceiptError, match="workload .*changed across rates"):
+        admission.admit(*args[:6])
+    assert True not in args[6]
+    assert not args[5].exists()
+
+
+@pytest.mark.parametrize("path", ["requested_stack_async", "requested_stack_blocking", "local"])
+def test_other_public_paths_require_separate_admission_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    args = replace_preregistered_scenarios(
+        fixture(tmp_path, monkeypatch),
+        lambda scenario, rate: scenario.update(offers=[{"path": path}] * rate),
+    )
+    with pytest.raises(host_perf.ReceiptError, match="supports only io/blocking/cpu"):
+        admission.admit(*args[:6])
+    assert True not in args[6]
+    assert not args[5].exists()
+
+
+def test_bundle_parsing_and_digest_check_use_the_same_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    path = args[4] / "1000" / "bundle_path"
+    original_read = Path.read_bytes
+    original = original_read(path)
+    changed = json.loads(original)
+    changed["identity"]["host"] = "unvalidated"
+    reads = []
+
+    def swapped_read(current: Path) -> bytes:
+        if current == path:
+            reads.append(current)
+            return host_perf.canonical(changed) if len(reads) == 1 else original
+        return original_read(current)
+
+    monkeypatch.setattr(admission, "read_regular_bytes", swapped_read)
+    with pytest.raises(host_perf.ReceiptError, match="calibration executable/digest differs"):
+        admission.admit(*args[:6])
+    assert len(reads) == 1
+    assert True not in args[6]

@@ -8,11 +8,12 @@ import json
 import os
 import re
 import stat
-import subprocess
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from tools.inspection import metadata_output, read_regular_bytes
 
 SCHEMA_VERSION = 1
 KIND = "taskmesh-evidence-envelope"
@@ -37,7 +38,7 @@ def canonical_digest(value: object) -> str:
 
 
 def file_identity(path: Path, *, relative_to: Path) -> dict[str, object]:
-    data = path.read_bytes()
+    data = read_regular_bytes(path)
     return {
         "path": path.relative_to(relative_to).as_posix(),
         "sha256": hashlib.sha256(data).hexdigest(),
@@ -57,16 +58,11 @@ def tool_identity_digest(tool: dict[str, object]) -> str:
 
 def git_source_paths(root: Path) -> list[str]:
     """Return tracked and non-ignored untracked source paths in stable order."""
-    process = subprocess.run(
+    output = metadata_output(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=root,
-        capture_output=True,
-        check=False,
     )
-    if process.returncode != 0:
-        detail = process.stderr.decode(errors="replace").strip()
-        raise RuntimeError(f"git ls-files failed: {detail}")
-    return sorted(path.decode("utf-8") for path in process.stdout.split(b"\0") if path)
+    return sorted(os.fsdecode(path) for path in output.split(b"\0") if path)
 
 
 def head_worktree_mismatches(root: Path) -> list[str]:
@@ -76,16 +72,12 @@ def head_worktree_mismatches(root: Path) -> list[str]:
     receipt for the pushed HEAD must not trust either bit when deciding whether
     the files that the gates executed are the files in that commit.
     """
-    object_format = subprocess.run(
-        ["git", "rev-parse", "--show-object-format"],
-        cwd=root, capture_output=True, check=True, text=True,
-    ).stdout.strip()
+    object_format = (
+        metadata_output(["git", "rev-parse", "--show-object-format"], cwd=root).decode().strip()
+    )
     if object_format not in {"sha1", "sha256"}:
         raise ValueError(f"unsupported Git object format: {object_format!r}")
-    tree = subprocess.run(
-        ["git", "ls-tree", "-r", "-z", "--full-tree", "HEAD"],
-        cwd=root, capture_output=True, check=True,
-    ).stdout
+    tree = metadata_output(["git", "ls-tree", "-r", "-z", "--full-tree", "HEAD"], cwd=root)
     mismatches: list[str] = []
     for entry in tree.split(b"\0"):
         if not entry:
@@ -110,7 +102,7 @@ def head_worktree_mismatches(root: Path) -> list[str]:
             if executable != (mode == b"100755"):
                 mismatches.append(relative)
                 continue
-            data = path.read_bytes()
+            data = read_regular_bytes(path)
         else:
             mismatches.append(relative)
             continue
@@ -139,7 +131,7 @@ def source_tree_digest(root: Path, paths: Iterable[str]) -> str:
             digest.update(b"F")
             mode = stat.S_IMODE(path.stat().st_mode)
             digest.update(mode.to_bytes(2, "big"))
-            frame(path.read_bytes())
+            frame(read_regular_bytes(path))
         else:
             digest.update(b"M")
     return digest.hexdigest()
@@ -171,7 +163,7 @@ def runtime_action(
             "context": "github-actions",
             "workflow": workflow_path,
             "workflow_ref": values["GITHUB_WORKFLOW_REF"],
-            "workflow_sha256": hashlib.sha256(workflow.read_bytes()).hexdigest(),
+            "workflow_sha256": hashlib.sha256(read_regular_bytes(workflow)).hexdigest(),
             "source_sha": values["GITHUB_SHA"],
             "job": values["GITHUB_JOB"],
             "event": values["GITHUB_EVENT_NAME"],
@@ -188,7 +180,7 @@ def runtime_action(
         "context": "local",
         "workflow": workflow.as_posix(),
         "workflow_ref": f"local:{workflow.as_posix()}",
-        "workflow_sha256": hashlib.sha256(disk.read_bytes()).hexdigest(),
+        "workflow_sha256": hashlib.sha256(read_regular_bytes(disk)).hexdigest(),
         "source_sha": source_head,
         "job": local_job,
         "event": "local",
@@ -242,7 +234,7 @@ def _verify_file_identity(
     *, root: Path, path: str, expected_sha256: object, name: str, problems: list[str]
 ) -> None:
     disk = _confined_regular_file(root=root, path=path, name=name, problems=problems)
-    if disk is not None and hashlib.sha256(disk.read_bytes()).hexdigest() != expected_sha256:
+    if disk is not None and hashlib.sha256(read_regular_bytes(disk)).hexdigest() != expected_sha256:
         problems.append(f"{name} {path!r} digest mismatch")
 
 
@@ -484,7 +476,7 @@ def envelope_problems(
                     root=artifact_root, path=path, name="artifact", problems=problems
                 )
                 if disk is not None:
-                    data = disk.read_bytes()
+                    data = read_regular_bytes(disk)
                     if len(data) != item.get("size"):
                         problems.append(f"artifact {path!r} size mismatch")
                     if hashlib.sha256(data).hexdigest() != item.get("sha256"):

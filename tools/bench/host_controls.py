@@ -20,6 +20,8 @@ import host_recorder
 from host_run import write_new
 from scenario_rate import doubled_generator_scenario
 
+from tools.inspection import read_regular_bytes
+
 SCHEMA_VERSION = 3
 
 
@@ -37,7 +39,7 @@ def sidecars(raw: Path, *, summary: Optional[Path] = None) -> dict[str, Path]:
 
 
 def read_artifacts(paths: dict[str, Path]) -> dict[str, bytes]:
-    return {name: path.read_bytes() for name, path in paths.items()}
+    return {name: read_regular_bytes(path) for name, path in paths.items()}
 
 
 def digest_map(artifacts: dict[str, bytes]) -> dict[str, str]:
@@ -66,8 +68,8 @@ def constituent_resource_windows(
         result.append(
             (
                 f"{label}/{index}",
-                paths["provenance"].read_bytes(),
-                paths["resources"].read_bytes(),
+                read_regular_bytes(paths["provenance"]),
+                read_regular_bytes(paths["resources"]),
             )
         )
     return result
@@ -85,7 +87,7 @@ def make_bundle(
 ) -> dict[str, Any]:
     if type(max_span_ns) is not int or max_span_ns <= 0:
         raise host_perf.ReceiptError("control max_span_ns must be positive")
-    scenario_bytes = scenario_path.read_bytes()
+    scenario_bytes = read_regular_bytes(scenario_path)
     scenario = host_perf.parse_object(scenario_bytes, "control scenario")
     if not isinstance(scenario.get("load"), dict):
         raise host_perf.ReceiptError("control scenario requires a load envelope")
@@ -108,7 +110,7 @@ def make_bundle(
     generator_scenario_path = generator_raw_path.with_name(
         generator_raw_path.name + ".scenario.json"
     )
-    generator_scenario_bytes = generator_scenario_path.read_bytes()
+    generator_scenario_bytes = read_regular_bytes(generator_scenario_path)
     expected_generator = doubled_generator_scenario(scenario)
     generator_scenario = host_perf.parse_object(generator_scenario_bytes, "generator scenario")
     if generator_scenario != expected_generator:
@@ -134,9 +136,9 @@ def make_bundle(
     if generator["topology"] != host["topology"]:
         raise host_perf.ReceiptError("generator and host resolved topologies differ")
     generator_raw = host_perf.parse_object(generator["raw"], "generator raw")
-    aa_bytes = (aa_directory / "aa-bundle.json").read_bytes()
+    aa_bytes = read_regular_bytes(aa_directory / "aa-bundle.json")
     aa = host_aa.verify_bundle(aa_bytes, aa_directory, scenario_bytes)
-    snapshot_bytes = (snapshot_directory / "snapshot-bundle.json").read_bytes()
+    snapshot_bytes = read_regular_bytes(snapshot_directory / "snapshot-bundle.json")
     snapshot = host_observer.verify_bundle(snapshot_bytes, snapshot_directory)
     expected_off, expected_on = host_observer.scenario_pair(scenario_bytes, snapshot["snapshot_ms"])
     if snapshot["off_scenario_sha256"] != host_perf.sha256(expected_off) or snapshot[
@@ -146,7 +148,7 @@ def make_bundle(
     if target_snapshot_ms not in (0, snapshot["snapshot_ms"]):
         raise host_perf.ReceiptError("target Snapshot cadence differs from control arms")
     recorder_scenario_bytes = scenario_bytes if target_snapshot_ms == 0 else expected_off
-    recorder_bytes = (recorder_directory / "recorder-bundle.json").read_bytes()
+    recorder_bytes = read_regular_bytes(recorder_directory / "recorder-bundle.json")
     recorder = host_recorder.verify_bundle(
         recorder_bytes, recorder_directory, recorder_scenario_bytes
     )

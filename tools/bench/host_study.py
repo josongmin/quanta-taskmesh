@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import stat
 import subprocess
 import sys
 from collections import Counter
@@ -18,6 +19,8 @@ from typing import Any
 
 import host_perf
 from host_run import write_new
+
+from tools.inspection import read_regular_bytes
 
 if str(host_perf.REPO) not in sys.path:
     sys.path.insert(0, str(host_perf.REPO))
@@ -131,10 +134,18 @@ def event(previous: str, sequence: int, kind: str, attempt: str, payload: dict) 
 
 def append(path: Path, row: dict) -> str:
     body = host_perf.canonical(row) + b"\n"
-    with path.open("ab") as stream:
-        stream.write(body)
-        stream.flush()
-        os.fsync(stream.fileno())
+    descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK | os.O_NOFOLLOW)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError(f"regular ledger file required: {path}")
+        with os.fdopen(descriptor, "ab") as stream:
+            descriptor = -1
+            stream.write(body)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
     return host_perf.sha256(body)
 
 
@@ -163,7 +174,7 @@ def collect(plan_bytes: bytes, plan_root: Path, root: Path) -> dict:
                     raise host_perf.ReceiptError("attempt input escapes the plan directory")
                 if not path.is_file():
                     raise host_perf.ReceiptError("attempt input must be a regular file")
-                data = path.read_bytes()
+                data = read_regular_bytes(path)
                 if host_perf.sha256(data) != attempt[f"{role}_sha256"]:
                     raise host_perf.ReceiptError(f"{role} input differs from predeclared digest")
                 write_new(directory / role, data)
@@ -201,7 +212,7 @@ def collect(plan_bytes: bytes, plan_root: Path, root: Path) -> dict:
         write_new(directory / "stdout", stdout)
         write_new(directory / "stderr", stderr)
         files = {
-            path.name: host_perf.sha256(path.read_bytes())
+            path.name: host_perf.sha256(read_regular_bytes(path))
             for path in directory.iterdir()
             if path.is_file()
         }
@@ -224,7 +235,7 @@ def collect(plan_bytes: bytes, plan_root: Path, root: Path) -> dict:
     final = {
         "schema_version": VERSION,
         "plan_sha256": host_perf.sha256(plan_bytes),
-        "events_sha256": host_perf.sha256((root / "events.jsonl").read_bytes()),
+        "events_sha256": host_perf.sha256(read_regular_bytes(root / "events.jsonl")),
         "last_event_sha256": previous,
         "event_count": sequence,
     }
@@ -239,7 +250,7 @@ def verify(root: Path) -> dict[str, Any]:
         path = root / name
         if path.is_symlink() or not path.is_file():
             raise host_perf.ReceiptError("attempt ledger metadata requires regular owned files")
-    plan_bytes = (root / "plan.json").read_bytes()
+    plan_bytes = read_regular_bytes(root / "plan.json")
     plan = parse_plan(plan_bytes)
     if {path.name for path in root.iterdir()} != {
         "plan.json",
@@ -248,13 +259,13 @@ def verify(root: Path) -> dict[str, Any]:
         *(a["id"] for a in plan["attempts"]),
     }:
         raise host_perf.ReceiptError("unplanned or missing study-root artifacts")
-    final = host_perf.parse_object((root / "ledger.json").read_bytes(), "attempt ledger")
+    final = host_perf.parse_object(read_regular_bytes(root / "ledger.json"), "attempt ledger")
     host_perf.exact_keys(
         final,
         {"schema_version", "plan_sha256", "events_sha256", "last_event_sha256", "event_count"},
         "attempt ledger",
     )
-    events_bytes = (root / "events.jsonl").read_bytes()
+    events_bytes = read_regular_bytes(root / "events.jsonl")
     if (
         type(final["schema_version"]) is not int
         or final["schema_version"] != VERSION
@@ -319,7 +330,7 @@ def verify(root: Path) -> dict[str, Any]:
         for path in directory.iterdir():
             if path.is_symlink() or not path.is_file():
                 raise host_perf.ReceiptError("attempt artifacts require regular owned files")
-            actual[path.name] = host_perf.sha256(path.read_bytes())
+            actual[path.name] = host_perf.sha256(read_regular_bytes(path))
         if actual != files or not {"stdout", "stderr"}.issubset(files):
             raise host_perf.ReceiptError("attempt artifact inventory or digest changed")
         if payload["status"] == "completed":
@@ -357,7 +368,7 @@ def main() -> int:
         if args.mode == "collect":
             if args.plan is None:
                 raise host_perf.ReceiptError("collection requires --plan")
-            report = collect(args.plan.read_bytes(), args.plan.parent, args.directory)
+            report = collect(read_regular_bytes(args.plan), args.plan.parent, args.directory)
         else:
             report = verify(args.directory)
     except (OSError, ValueError, subprocess.SubprocessError) as error:

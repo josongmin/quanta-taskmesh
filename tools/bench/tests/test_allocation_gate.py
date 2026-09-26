@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -45,7 +46,12 @@ def run_gate(
 ) -> subprocess.CompletedProcess[str]:
     captured = tmp_path / "producer.txt"
     captured.write_text(output, encoding="utf-8")
-    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path)}
+    uv = shutil.which("uv")
+    assert uv is not None, "allocation entrypoint requires the declared uv runtime"
+    env = {
+        "PATH": str(Path(uv).parent) + os.pathsep + "/usr/bin:/bin:/usr/local/bin",
+        "HOME": str(tmp_path),
+    }
     if threshold is not None:
         env["MAX_ALLOCS_PER_OP"] = threshold
     return subprocess.run(

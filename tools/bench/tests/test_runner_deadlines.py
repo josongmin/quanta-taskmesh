@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -11,6 +13,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import acquisition_process  # noqa: E402
 import generator_run  # noqa: E402
 import host_perf  # noqa: E402
 import host_run  # noqa: E402
@@ -21,9 +24,51 @@ from tools.bench.tests.test_host_special import receipt_directory  # noqa: E402
 
 
 def hanging_program(path: Path) -> Path:
-    path.write_text("#!/bin/sh\nprintf 'retained partial stdout\\n'\nexec /bin/sleep 60\n")
+    ready = path.with_name(path.name + ".ready")
+    path.write_text(
+        "#!/bin/sh\n# fixture-ready: "
+        + json.dumps(str(ready))
+        + "\nprintf 'retained partial stdout\\n'\n"
+        + f"printf 'ready' > {shlex.quote(str(ready))}\nexec /bin/sleep 60\n"
+    )
     path.chmod(0o755)
     return path
+
+
+@pytest.fixture(autouse=True)
+def fixture_output_ready_before_execution_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    run_process = acquisition_process.run_process
+
+    def after_partial_output(command, **kwargs):
+        environment = kwargs.get("env", os.environ)
+        program = shutil.which(command[0], path=environment.get("PATH"))
+        try:
+            with Path(program or command[0]).open("rb") as stream:
+                header = stream.read(4096)
+        except OSError:
+            return run_process(command, **kwargs)
+        prefix = b"# fixture-ready: "
+        markers = [line[len(prefix) :] for line in header.splitlines() if line.startswith(prefix)]
+        if not markers:
+            return run_process(command, **kwargs)
+        ready = Path(json.loads(markers[0]))
+        ready.unlink(missing_ok=True)
+        original_started = kwargs.get("on_started")
+
+        def started(process):
+            if original_started is not None:
+                original_started(process)
+            # Establish emitted bytes before testing their retention. Production
+            # may legitimately time out a child before it emits any output.
+            startup_deadline = time.monotonic() + 5
+            while not ready.exists() and time.monotonic() < startup_deadline:
+                time.sleep(0.01)
+            assert ready.exists(), "fixture did not reach its partial-output stage"
+
+        kwargs["on_started"] = started
+        return run_process(command, **kwargs)
+
+    monkeypatch.setattr(acquisition_process, "run_process", after_partial_output)
 
 
 def test_standalone_build_hang_has_a_terminal_record(

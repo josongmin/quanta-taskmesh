@@ -467,11 +467,9 @@ def test_rustup_proxy_binds_active_compiler_and_cargo_bytes(tmp_path: Path, monk
     monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
 
     def which(command, **kwargs):
-        return subprocess.CompletedProcess(
-            command, 0, str(tmp_path / ("active-" + command[-1])), ""
-        )
+        return str(tmp_path / ("active-" + command[-1])).encode()
 
-    monkeypatch.setattr(iai_gate.subprocess, "run", which)
+    monkeypatch.setattr(iai_gate, "metadata_output", which)
     before = iai_gate.cargo_build_context(tmp_path)
     assert before["tool_executables"]["build.rustc"]["path"] == str(tmp_path / "active-rustc")
     assert before["tool_executables"]["build.cargo"]["path"] == str(tmp_path / "active-cargo")
@@ -580,6 +578,8 @@ class Harness:
         (self.root / "tools" / "bench").mkdir(parents=True)
         shutil.copy(SCRIPT, self.root / "tools" / "bench-iai.sh")
         shutil.copy(HELPER, self.root / "tools" / "bench" / "iai_gate.py")
+        for dependency in ("inspection.py", "process_supervisor.py"):
+            shutil.copy(REPO / "tools" / dependency, self.root / "tools" / dependency)
         shutil.copy(REPO / "tools" / "bench" / "perf-gate.json", self.root / "tools" / "bench")
         for rel in iai_gate.gate_config()["fingerprint_inputs"]:
             target = self.root / rel

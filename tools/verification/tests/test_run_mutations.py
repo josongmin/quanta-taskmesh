@@ -10,7 +10,6 @@ import signal
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,7 +39,9 @@ def test_timeout_exit_race_preserves_process_truth(tmp_path: Path, monkeypatch) 
             return "finished", ""
 
     process = ExitingProcess()
-    monkeypatch.setattr(campaign_module.subprocess, "Popen", lambda *_a, **_kw: process)
+    import tools.process_supervisor as supervisor
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", lambda *_a, **_kw: process)
 
     clock_calls = 0
 
@@ -513,9 +514,45 @@ def test_two_campaigns_have_disjoint_source_and_target_and_preserve_original(
 ) -> None:
     init_repo(tmp_path)
     before = (tmp_path / "src.rs").read_bytes()
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        campaigns = list(pool.map(lambda _index: rm.create_isolated_campaign(tmp_path), range(2)))
+    from tools.process_supervisor import SupervisedCommand, run_process_batch
+
+    # Actual parallel producers own Python signal handlers in their main thread.
+    # Exercise two processes, retaining the original simultaneous isolation proof.
+    script = (
+        "import json, sys\n"
+        f"sys.path.insert(0, {str(REPO)!r})\n"
+        "from dataclasses import asdict\n"
+        "from pathlib import Path\n"
+        "from tools.verification.campaign import create_isolated_campaign\n"
+        "print(json.dumps(asdict(create_isolated_campaign(Path(sys.argv[1]))), default=str))\n"
+    )
+    results = run_process_batch(
+        [
+            SupervisedCommand(
+                argv=[sys.executable, "-c", script, str(tmp_path)],
+                cwd=REPO,
+                env=os.environ.copy(),
+                timeout_seconds=10,
+            )
+            for _index in range(2)
+        ]
+    )
+    campaigns = []
+    for result in results:
+        process = result.process
+        if process.returncode == 0:
+            values = json.loads(process.stdout)
+            for field in ("root", "source", "target"):
+                values[field] = Path(values[field])
+            campaigns.append(campaign_module.IsolatedCampaign(**values))
     try:
+        assert len(campaigns) == 2, [result.process.stderr for result in results]
+        assert all(
+            not result.process.timed_out
+            and result.process.interrupted_by_signal is None
+            and not result.process.aborted_early
+            for result in results
+        )
         assert campaigns[0].source != campaigns[1].source
         assert campaigns[0].target != campaigns[1].target
         for campaign in campaigns:

@@ -166,7 +166,7 @@
         "any"
       ],
       "prerequisites": [
-        "python3"
+        "uv (psutil)"
       ],
       "workflow": "ci.yml"
     },

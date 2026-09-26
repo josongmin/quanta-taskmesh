@@ -41,7 +41,8 @@ jobs:
 
       # The baseline cache key is the SAME fingerprint tools/bench-iai.sh
       # compares the cached stamp against: bench definition, dependency graph,
-      # gate config, toolchain, valgrind, runner. Computed by the script itself
+      # gate config, Cargo build environment/config, toolchain, valgrind,
+      # runner. Computed by the script itself
       # (after the tools it hashes are installed) so the key and the stamp can
       # never disagree — a key built from a subset of the inputs is how a
       # toolchain bump turned every later run into BASELINE_CREATED forever
@@ -63,7 +64,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: target/iai
-          key: iai-v3-${{ runner.os }}-${{ steps.fingerprint.outputs.value }}
+          key: iai-v4-${{ runner.os }}-${{ steps.fingerprint.outputs.value }}
 
       - name: Instruction-count benchmark (thresholds from tools/bench/perf-gate.json)
         id: iai

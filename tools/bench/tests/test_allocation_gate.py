@@ -30,6 +30,7 @@ def metric_line(**overrides: object) -> str:
         "schema": CONFIG["producer_schema"],
         "attempted": 200000,
         "completed": 200000,
+        "total_allocations": 600000,
         "allocs_per_op": "3.000",
         "final_inflight": 0,
         "counter_check": "1000/1000",
@@ -61,20 +62,40 @@ def run_gate(
 
 
 def test_below_limit_passes(tmp_path: Path) -> None:
-    proc = run_gate(metric_line(allocs_per_op="3.000"), tmp_path, threshold="4")
+    proc = run_gate(metric_line(allocs_per_op="3.000"), tmp_path)
     assert proc.returncode == 0, proc.stderr
     assert "allocation gate passed" in proc.stdout
 
 
 def test_equal_to_limit_passes(tmp_path: Path) -> None:
-    proc = run_gate(metric_line(allocs_per_op="4.000"), tmp_path, threshold="4")
+    proc = run_gate(
+        metric_line(allocs_per_op="8.000", total_allocations=1600000), tmp_path
+    )
     assert proc.returncode == 0, proc.stderr
 
 
 def test_above_limit_fails_with_the_numbers(tmp_path: Path) -> None:
-    proc = run_gate(metric_line(allocs_per_op="5.000"), tmp_path, threshold="4")
+    proc = run_gate(
+        metric_line(allocs_per_op="9.000", total_allocations=1800000), tmp_path
+    )
     assert proc.returncode == 1
-    assert "5.0 allocs/op exceeds baseline 4.0" in proc.stderr
+    assert "exceeds baseline 8" in proc.stderr
+
+
+def test_one_allocation_above_baseline_fails_despite_rounded_average(tmp_path: Path) -> None:
+    proc = run_gate(
+        metric_line(allocs_per_op="8.000", total_allocations=1600001), tmp_path
+    )
+    assert proc.returncode == 1
+    assert "1600001 allocations" in proc.stderr
+
+
+def test_total_and_reported_average_must_agree(tmp_path: Path) -> None:
+    proc = run_gate(
+        metric_line(allocs_per_op="3.000", total_allocations=1600000), tmp_path
+    )
+    assert proc.returncode == 1
+    assert "disagrees with total_allocations" in proc.stderr
 
 
 # ---- the rows that used to be false green ------------------------------------
@@ -85,33 +106,37 @@ def test_above_limit_fails_with_the_numbers(tmp_path: Path) -> None:
     ["...", "3.0.0", "3.", ".5", "3.0junk", "-1", "NaN", "inf", "Infinity", "1e3", "+3", "0x3"],
 )
 def test_malformed_metric_values_are_rejected(malformed: str, tmp_path: Path) -> None:
-    proc = run_gate(metric_line(allocs_per_op=malformed), tmp_path, threshold="4")
+    proc = run_gate(metric_line(allocs_per_op=malformed), tmp_path)
     assert proc.returncode == 1, f"{malformed!r} must not pass: {proc.stdout}"
     assert "allocation gate" in proc.stderr
 
 
-@pytest.mark.parametrize("threshold", ["...", "3.0.0", "NaN", "inf", "-1", "4junk", ""])
-def test_malformed_thresholds_are_rejected_even_with_a_valid_metric(
+@pytest.mark.parametrize("threshold", ["9", "", "NaN"])
+def test_environment_cannot_change_the_reviewed_threshold(
     threshold: str, tmp_path: Path
 ) -> None:
-    proc = run_gate(metric_line(allocs_per_op="3.000"), tmp_path, threshold=threshold)
-    assert proc.returncode == 1, f"threshold {threshold!r} must not pass: {proc.stdout}"
+    proc = run_gate(
+        metric_line(allocs_per_op="9.000", total_allocations=1800000),
+        tmp_path, threshold=threshold,
+    )
+    assert proc.returncode == 2
+    assert "cannot override" in proc.stderr
 
 
 def test_missing_marker_fails(tmp_path: Path) -> None:
-    proc = run_gate("admit+release allocations/op = 3.000\n", tmp_path, threshold="4")
+    proc = run_gate("admit+release allocations/op = 3.000\n", tmp_path)
     assert proc.returncode == 1
     assert "expected exactly one" in proc.stderr
 
 
 def test_duplicate_marker_fails(tmp_path: Path) -> None:
-    proc = run_gate(metric_line() + metric_line(allocs_per_op="1.000"), tmp_path, threshold="4")
+    proc = run_gate(metric_line() + metric_line(allocs_per_op="1.000"), tmp_path)
     assert proc.returncode == 1
     assert "found 2" in proc.stderr
 
 
 def test_trailing_junk_on_the_line_fails(tmp_path: Path) -> None:
-    proc = run_gate(metric_line().rstrip("\n") + " extra=1\n", tmp_path, threshold="4")
+    proc = run_gate(metric_line().rstrip("\n") + " extra=1\n", tmp_path)
     assert proc.returncode == 1
     assert "unknown fields" in proc.stderr
 
@@ -120,25 +145,25 @@ def test_trailing_junk_on_the_line_fails(tmp_path: Path) -> None:
 
 
 def test_incomplete_producer_run_is_not_a_measurement(tmp_path: Path) -> None:
-    proc = run_gate(metric_line(completed=199999), tmp_path, threshold="4")
+    proc = run_gate(metric_line(completed=199999), tmp_path)
     assert proc.returncode == 1
     assert "completed 199999 of 200000" in proc.stderr
 
 
 def test_undrained_ledger_is_not_a_measurement(tmp_path: Path) -> None:
-    proc = run_gate(metric_line(final_inflight=1), tmp_path, threshold="4")
+    proc = run_gate(metric_line(final_inflight=1), tmp_path)
     assert proc.returncode == 1
     assert "did not drain" in proc.stderr
 
 
 def test_zero_attempts_is_not_a_measurement(tmp_path: Path) -> None:
-    proc = run_gate(metric_line(attempted=0, completed=0), tmp_path, threshold="4")
+    proc = run_gate(metric_line(attempted=0, completed=0), tmp_path)
     assert proc.returncode == 1
     assert "zero operations" in proc.stderr
 
 
 def test_a_schema_change_breaks_baseline_compatibility(tmp_path: Path) -> None:
-    proc = run_gate(metric_line(schema=CONFIG["producer_schema"] + 1), tmp_path, threshold="4")
+    proc = run_gate(metric_line(schema=CONFIG["producer_schema"] + 1), tmp_path)
     assert proc.returncode == 1
     assert "measurement definition changed" in proc.stderr
 
@@ -172,7 +197,7 @@ def test_a_counter_that_cannot_see_known_allocations_is_not_a_measurement(tmp_pa
         proc = run_gate(metric_line(counter_check=bad), tmp_path)
         assert proc.returncode == 1, (bad, proc.stdout, proc.stderr)
         assert "FAIL: allocation gate" in proc.stderr, bad
-    proc = run_gate(metric_line(allocs_per_op="0.000"), tmp_path)
+    proc = run_gate(metric_line(allocs_per_op="0.000", total_allocations=0), tmp_path)
     assert proc.returncode == 0, "0.000 with a passing self-check is a real (excellent) measurement"
 
 

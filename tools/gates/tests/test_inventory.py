@@ -62,6 +62,17 @@ def test_the_committed_inventory_is_valid() -> None:
     assert problems_with() == []
 
 
+def test_missing_clippy_restriction_config_cannot_expand_to_empty_flags(tmp_path: Path) -> None:
+    justfile = tmp_path / "Justfile"
+    justfile.write_bytes((REPO / "Justfile").read_bytes())
+    result = subprocess.run(
+        ["just", "--justfile", str(justfile), "--evaluate", "clippy_restrict"],
+        cwd=tmp_path, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode != 0
+    assert "clippy-restrict.txt" in result.stderr
+
+
 def test_deleting_a_required_gate_from_the_inventory_is_reported() -> None:
     inventory, *_ = real_inputs()
     inventory = copy.deepcopy(inventory)
@@ -337,9 +348,17 @@ def test_pr_ci_rejects_echoed_gate_commands_and_unbound_head(tmp_path: Path) -> 
         for step in invalid["jobs"]["required"]["steps"]
         if "tools/gates/run.py --profile ci" in step.get("run", "")
     )
-    gate["env"]["EXPECTED_SHA"] = "${{ github.sha }}"
+    gate["env"]["EXPECTED_SHA"] = "${{ github.event.pull_request.head.sha || github.sha }}"
     assert any(
         "EXPECTED_SHA" in problem
+        for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
+    )
+
+    invalid = copy.deepcopy(document)
+    checkout = invalid["jobs"]["required"]["steps"][0]
+    checkout["with"]["ref"] = "${{ github.event.pull_request.head.sha || github.sha }}"
+    assert any(
+        "merge SHA" in problem
         for problem in vi.pr_ci_contract_problems(path, invalid, vi.load(vi.REQUIRED))
     )
 
@@ -1120,6 +1139,58 @@ def test_runner_profile_selects_only_its_required_gates(
     assert receipt["required_not_run"] == []
 
 
+def test_all_selector_cannot_qualify_with_optional_gate_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    source = {"head": "a" * 40, "tree": "b" * 40, "paths_digest": "c" * 64, "dirty": False}
+    monkeypatch.setattr(module, "source_identity", lambda: dict(source))
+
+    def fake_run(selected, _here, _deadline, _keep_going, *, preflight_blocker):
+        assert preflight_blocker is None
+        return [
+            {
+                "id": gate["id"],
+                "status": "FAIL" if gate["id"] == "semver-release" else "PASS",
+                "exit_code": 1 if gate["id"] == "semver-release" else 0,
+            }
+            for gate in selected
+        ]
+
+    monkeypatch.setattr(module, "run_selected_gates", fake_run)
+    path = tmp_path / "all.json"
+    assert module.main(["--all", "--keep-going", "--receipt", str(path)]) == 1
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["qualified"] is False
+    assert saved["selection"]["mode"] == "all"
+    problems = module.local_receipt_problems(
+        saved, source, set(real_inputs()[1]["required"]), {}, module.host_platform()
+    )
+    assert any("--all selection" in problem for problem in problems)
+
+
+def test_all_selector_cannot_qualify_when_an_optional_result_is_missing(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
+    assert run and run.loader
+    module = importlib.util.module_from_spec(run)
+    run.loader.exec_module(module)
+    source = {"head": "a" * 40, "tree": "b" * 40, "paths_digest": "c" * 64, "dirty": False}
+    monkeypatch.setattr(module, "source_identity", lambda: dict(source))
+    monkeypatch.setattr(
+        module, "run_selected_gates",
+        lambda selected, *_args, **_kwargs: [
+            {"id": gate["id"], "status": "PASS", "exit_code": 0}
+            for gate in selected if gate["id"] != "semver-release"
+        ],
+    )
+    assert module.main(["--all", "--keep-going"]) == 1
+
+
 @pytest.mark.parametrize("profile,expected_code", [("ci", 0), ("release", 0), ("nightly", 1)])
 def test_push_receipt_requires_ci_or_release_profile(
     profile: str, expected_code: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1210,7 +1281,12 @@ def test_local_receipt_is_exact_source_bound() -> None:
         "dirty": False,
     }
     receipt = {
-        "schema_version": 2,
+        "schema_version": 3,
+        "selection": {
+            "mode": "profile",
+            "selected_gate_ids": ["bench-iai", "fmt-check"],
+            "skipped_gate_ids": [],
+        },
         "platform": "macos",
         "source": dict(source),
         "source_after": dict(source),
@@ -1283,7 +1359,11 @@ def test_saved_local_receipt_rejects_a_conflicting_pass_status_line(
         "status_line": "taskmesh-iai-gate status=QUALIFIED fingerprint=abc",
     }
     value = {
-        "schema_version": 2,
+        "schema_version": 3,
+        "selection": {
+            "mode": "profile", "selected_gate_ids": ["bench-iai"],
+            "skipped_gate_ids": [],
+        },
         "platform": "linux",
         "source": source,
         "source_after": source,
@@ -1313,7 +1393,11 @@ def test_local_receipt_rejects_tool_prerequisite_as_platform_exclusion() -> None
         "dirty": False,
     }
     receipt = {
-        "schema_version": 2,
+        "schema_version": 3,
+        "selection": {
+            "mode": "profile", "selected_gate_ids": ["consumer-msrv"],
+            "skipped_gate_ids": [],
+        },
         "platform": "macos",
         "source": dict(source),
         "source_after": dict(source),

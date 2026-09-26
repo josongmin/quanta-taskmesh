@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -107,7 +108,39 @@ def detect_runner_version() -> tuple[str | None, str]:
     return None, "; ".join(tried)
 
 
-def fingerprint(inputs: list[Path], schema: object, runner: str, valgrind: str, rustc: str) -> str:
+def cargo_build_context(root: Path) -> dict[str, object]:
+    """Capture build inputs that can change codegen without changing rustc -Vv."""
+    names = {
+        "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "RUSTC", "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER", "RUSTC_BOOTSTRAP", "CARGO_INCREMENTAL",
+        "CARGO_HOME", "CARGO_BUILD_RUSTFLAGS", "CARGO_BUILD_TARGET",
+        "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER", "CC", "CXX",
+        "CFLAGS", "CXXFLAGS", "AR", "RANLIB",
+    }
+    environment = {
+        key: value for key, value in sorted(os.environ.items())
+        if key in names
+        or key.startswith(("CARGO_PROFILE_BENCH_", "CARGO_PROFILE_RELEASE_"))
+        or (key.startswith("CARGO_TARGET_") and key.endswith(
+            ("_RUSTFLAGS", "_LINKER", "_RUNNER")
+        ))
+    }
+    cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+    directories = [cargo_home]
+    directories.extend(parent / ".cargo" for parent in (root.resolve(), *root.resolve().parents))
+    configs: dict[str, str] = {}
+    for directory in directories:
+        for name in ("config", "config.toml"):
+            path = directory / name
+            if path.is_file():
+                configs[str(path.resolve())] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return {"environment": environment, "cargo_configs": dict(sorted(configs.items()))}
+
+
+def fingerprint(
+    inputs: list[Path], schema: object, runner: str, valgrind: str, rustc: str,
+    *, build_context: dict[str, object],
+) -> str:
     """Hash of everything that defines whether two baselines are comparable:
     the measured definition and its dependency graph (the input files), the
     measurement schema, the runner, valgrind, and the compiler."""
@@ -124,6 +157,8 @@ def fingerprint(inputs: list[Path], schema: object, runner: str, valgrind: str, 
     digest.update(f"runner={runner}\n".encode())
     digest.update(f"valgrind={valgrind.strip()}\n".encode())
     digest.update(rustc.strip().encode())
+    digest.update(b"\n")
+    digest.update(json.dumps(build_context, sort_keys=True, separators=(",", ":")).encode())
     digest.update(b"\n")
     return digest.hexdigest()
 
@@ -536,6 +571,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.runner,
                 args.valgrind,
                 args.rustc_file.read_text(encoding="utf-8"),
+                build_context=cargo_build_context(args.root),
             )
         )
     except ValueError as error:

@@ -86,7 +86,7 @@ def reconcile(
             passed.append(nodeid)
             by_module[details["module"]] += 1
         elif any(report["outcome"] == "skipped" or report["xfail"] for report in reports):
-            excluded.append({"case": nodeid, "reason": "skipped_or_xfail"})
+            raise ValueError(f"pytest case was skipped or xfailed: {nodeid}")
         else:
             raise ValueError(f"pytest case has no terminal result: {nodeid}")
     empty = sorted(module for module in expected_modules if by_module[module] == 0)

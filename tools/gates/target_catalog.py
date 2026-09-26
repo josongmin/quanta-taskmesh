@@ -8,6 +8,11 @@ import json
 import subprocess
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.9/3.10 tooling floor
+    import tomli as tomllib
+
 REPO = Path(__file__).resolve().parents[2]
 MODEL_FEATURES = {
     "loom_governance": ("loom",),
@@ -99,6 +104,51 @@ def model_test_targets(source: str) -> set[str]:
     return names
 
 
+def filesystem_target_problems(packages: list[dict], root: Path) -> list[str]:
+    """Catch Cargo targets hidden by auto-discovery or bench=false settings."""
+    problems: list[str] = []
+    for package in packages:
+        manifest = Path(package["manifest_path"])
+        try:
+            manifest.relative_to(root)
+            document = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+            problems.append(f"{package['name']}: cannot inspect target manifest: {exc}")
+            continue
+        package_root = manifest.parent
+        for directory, kind in (
+            ("tests", "test"), ("benches", "bench"),
+            ("examples", "example"), ("src/bin", "bin"),
+        ):
+            discovered = {
+                path.absolute()
+                for path in (package_root / directory).glob("*.rs")
+                if path.is_file()
+            }
+            discovered.update(
+                path.absolute()
+                for path in (package_root / directory).glob("*/main.rs")
+                if path.is_file()
+            )
+            metadata_paths = {
+                Path(target["src_path"]).absolute()
+                for target in package.get("targets", [])
+                if target.get("kind") == [kind]
+            }
+            for missing in sorted(discovered - metadata_paths):
+                problems.append(
+                    f"{package['name']}: {kind} source {missing.relative_to(root)} "
+                    "is absent from Cargo metadata"
+                )
+        for bench in document.get("bench", []):
+            if isinstance(bench, dict) and bench.get("bench") is False:
+                problems.append(
+                    f"{package['name']}: bench {bench.get('name', '<unnamed>')} "
+                    "disables cargo bench execution"
+                )
+    return problems
+
+
 def catalog(
     root_metadata: dict,
     fuzz_metadata: dict,
@@ -130,6 +180,7 @@ def catalog(
         packages = workspace_packages(root_metadata)
     except (KeyError, TypeError, ValueError) as exc:
         return [], [*problems, str(exc)]
+    problems.extend(filesystem_target_problems(packages, root))
     for package in packages:
         package_name = package["name"]
         for target in package.get("targets", []):

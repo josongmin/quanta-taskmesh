@@ -61,6 +61,7 @@ from tools.process_supervisor import run_process  # noqa: E402
 from tools.qualification.evidence import (  # noqa: E402
     canonical_digest,  # noqa: F401 - compatibility re-export for callers
     git_source_paths,
+    head_worktree_mismatches,
     runtime_action,
     source_tree_digest,
 )
@@ -75,7 +76,7 @@ from tools.qualification.producer_evidence import (  # noqa: E402
 REQUIRED = REPO / "tools" / "gates" / "required.json"
 INVENTORY = REPO / "tools" / "gates" / "inventory.json"
 SCHEMA_VERSION = 4
-GATE_SCHEMA_VERSION = 2
+GATE_SCHEMA_VERSION = 3
 MUTATION_GATE_ID = "mutants-critical"
 RUNNER_FINALIZATION_GRACE_SECONDS = 120
 ATTESTATION_CHECK_NAMES = {
@@ -130,7 +131,8 @@ def source_identity(root: Path | None = None) -> dict:
     head = _git("rev-parse", "HEAD", root=root)
     tree = _git("rev-parse", "HEAD^{tree}", root=root)
     status = _git("status", "--porcelain=v1", "--untracked-files=all", root=root)
-    dirty = bool(status.strip())
+    head_mismatches = head_worktree_mismatches(root)
+    dirty = bool(status.strip()) or bool(head_mismatches)
 
     # This is exactly the V02 campaign source set. Git already excludes ignored
     # build outputs, while tracked historic receipts remain source inputs.
@@ -142,7 +144,7 @@ def source_identity(root: Path | None = None) -> dict:
         "isolated_checkout": False,
         "paths_digest": source_tree_digest(root, paths),
         "paths_counted": len(paths),
-        "status": status.splitlines(),
+        "status": status.splitlines() + [f"HEAD_MISMATCH {path}" for path in head_mismatches],
     }
 
 

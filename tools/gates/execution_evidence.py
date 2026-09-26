@@ -161,7 +161,7 @@ def report_problems(
         ):
             return [*problems, "py-test: excluded case list is malformed"]
         excluded_names = [item["case"] for item in excluded]
-        if sorted(passed + excluded_names) != selected or not passed:
+        if excluded_names or passed != selected or not passed:
             problems.append("py-test: execution/exclusion differs from selected cases")
         execution_digest = digest({"passed": passed, "excluded": excluded})
         if (

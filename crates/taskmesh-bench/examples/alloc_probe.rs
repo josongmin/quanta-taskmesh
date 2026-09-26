@@ -18,7 +18,7 @@
 //! One machine-readable line, consumed by `tools/bench-gate.sh`:
 //!
 //! ```text
-//! taskmesh-alloc-probe schema=2 attempted=<n> completed=<n> allocs_per_op=<f> final_inflight=<n> counter_check=<n>/<n>
+//! taskmesh-alloc-probe schema=3 attempted=<n> completed=<n> total_allocations=<n> allocs_per_op=<f> final_inflight=<n> counter_check=<n>/<n>
 //! ```
 //!
 //! `counter_check` is the instrument's own self-test: before measuring, the
@@ -42,7 +42,7 @@ use taskmesh_engine::{AdmissionDecision, ReleaseOutcome};
 
 /// Bumped when the measurement definition changes. A baseline recorded under a
 /// different schema is not comparable to this output.
-pub const MEASUREMENT_SCHEMA: u32 = 2;
+pub const MEASUREMENT_SCHEMA: u32 = 3;
 
 /// Allocations the self-check performs; the counter must see exactly this many.
 const COUNTER_CHECK_ALLOCS: u64 = 1_000;
@@ -137,9 +137,10 @@ fn main() {
         std::process::exit(2);
     }
 
-    let per_op = (after - before) as f64 / completed as f64;
+    let total_allocations = after - before;
+    let per_op = total_allocations as f64 / completed as f64;
     println!(
-        "taskmesh-alloc-probe schema={MEASUREMENT_SCHEMA} attempted={attempted} completed={completed} allocs_per_op={per_op:.3} final_inflight={final_inflight} counter_check={counted}/{COUNTER_CHECK_ALLOCS}"
+        "taskmesh-alloc-probe schema={MEASUREMENT_SCHEMA} attempted={attempted} completed={completed} total_allocations={total_allocations} allocs_per_op={per_op:.3} final_inflight={final_inflight} counter_check={counted}/{COUNTER_CHECK_ALLOCS}"
     );
     eprintln!(
         "(baseline characterization; 0-alloc is a separate storage-model goal — ADR 9000 / P2)"

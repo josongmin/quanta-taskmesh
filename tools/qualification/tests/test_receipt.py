@@ -1655,6 +1655,22 @@ def test_a_content_change_to_a_tracked_file_changes_the_digest(repo: Path) -> No
     assert receipt.source_identity(repo)["paths_digest"] != before
 
 
+@pytest.mark.parametrize("index_flag", ["--assume-unchanged", "--skip-worktree"])
+def test_hidden_tracked_change_cannot_qualify_as_head(repo: Path, index_flag: str) -> None:
+    source = repo / "src" / "lib.rs"
+    source.write_text("compile_error!(\"different worktree\");\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "update-index", index_flag, "src/lib.rs"], cwd=repo, check=True
+    )
+    assert subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo, check=True,
+        capture_output=True, text=True,
+    ).stdout == ""
+    identity = receipt.source_identity(repo)
+    assert identity["dirty"] is True
+    assert "HEAD_MISMATCH src/lib.rs" in identity["status"]
+
+
 def test_a_permission_mode_change_to_a_tracked_file_changes_the_digest(repo: Path) -> None:
     source = repo / "src" / "lib.rs"
     source.chmod(0o644)

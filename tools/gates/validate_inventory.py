@@ -517,7 +517,7 @@ PR_CI_GATE_SCRIPT = (
     "  --validate-receipt target/verification/pr-ci-gates.json \\\n"
     '  --expected-head "$EXPECTED_SHA"\n'
 )
-PR_CI_EVENT_SHA = "${{ github.event.pull_request.head.sha || github.sha }}"
+PR_CI_EVENT_SHA = "${{ github.sha }}"
 
 
 def pr_ci_contract_problems(path: Path, document: object, required: dict) -> list[str]:
@@ -558,7 +558,7 @@ def pr_ci_contract_problems(path: Path, document: object, required: dict) -> lis
         if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/checkout@")
     ]
     if len(checkouts) != 1 or checkouts[0].get("with", {}).get("ref") != PR_CI_EVENT_SHA:
-        problems.append("pr-ci.yml: checkout must pin the event head SHA")
+        problems.append("pr-ci.yml: checkout must pin the event merge SHA")
     runs = [str(step.get("run", "")) for step in steps if isinstance(step, dict)]
     gate_steps = [
         step
@@ -581,7 +581,7 @@ def pr_ci_contract_problems(path: Path, document: object, required: dict) -> lis
         if gate_run != PR_CI_GATE_SCRIPT or gate_step.get("shell") is not None:
             problems.append("pr-ci.yml: gate command must be the exact fail-fast CI recipe")
         if gate_step.get("env") != {"EXPECTED_SHA": PR_CI_EVENT_SHA}:
-            problems.append("pr-ci.yml: EXPECTED_SHA must bind the checked-out event head")
+            problems.append("pr-ci.yml: EXPECTED_SHA must bind the checked-out event merge SHA")
     if any("--profile nightly" in run or "--required" in run or "--all" in run for run in runs):
         problems.append("pr-ci.yml: deep or unbounded gate selector is forbidden")
     artifacts = [

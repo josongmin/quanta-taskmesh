@@ -194,8 +194,8 @@ def local_receipt_problems(
     if not isinstance(value, dict):
         return ["local receipt is not an object"]
     problems: list[str] = []
-    if value.get("schema_version") != 2:
-        problems.append("local receipt schema_version is not 2")
+    if value.get("schema_version") != 3:
+        problems.append("local receipt schema_version is not 3")
     if value.get("platform") != here:
         problems.append("local receipt platform differs from this host")
     source = value.get("source")
@@ -229,6 +229,36 @@ def local_receipt_problems(
     ids = [result["id"] for result in valid_results]
     if len(valid_results) != len(results) or len(ids) != len(set(ids)):
         problems.append("local receipt result ids are malformed or duplicated")
+    selection = value.get("selection")
+    if not isinstance(selection, dict):
+        selection = {}
+        problems.append("local receipt selection is missing")
+    mode = selection.get("mode")
+    selected_ids = selection.get("selected_gate_ids")
+    skipped_ids = selection.get("skipped_gate_ids")
+    if mode not in {"all", "required", "profile", "tier", "id"}:
+        problems.append("local receipt selection mode is invalid")
+    if selected_ids != sorted(ids):
+        problems.append("local receipt selected gate ids differ from results")
+    if not isinstance(skipped_ids, list) or skipped_ids != sorted(set(skipped_ids)):
+        problems.append("local receipt skipped gate ids are malformed")
+        skipped_ids = []
+    all_complete = True
+    all_scope_complete = True
+    if mode == "all":
+        inventory_ids = {
+            gate["id"] for gate in json.loads(INVENTORY.read_text(encoding="utf-8"))["gates"]
+        }
+        inventory_complete = set(ids) == inventory_ids and not skipped_ids
+        all_complete = inventory_complete and all(
+            result.get("status") == "PASS" for result in valid_results
+        )
+        all_scope_complete = inventory_complete and all(
+            result.get("status") == "PASS"
+            for result in valid_results if result["id"] not in required
+        )
+        if not all_scope_complete:
+            problems.append("local receipt --all selection is incomplete or nonpassing")
     problems.extend(result_record_problems(valid_results))
     problems.extend(pass_status_line_problems(valid_results, INVENTORY))
     for result in valid_results:
@@ -248,12 +278,15 @@ def local_receipt_problems(
         and source_after == expected_after
         and value.get("source_problems") == []
         and all(result.get("interrupted_by_signal") is None for result in valid_results)
+        and all_complete
     )
     if value.get("qualified") is not expected_qualified:
         problems.append("local receipt qualified differs from its results and source")
     recomputed, excluded = platform_scope_qualification(
         required, valid_results, platform_conditional, here
     )
+    if mode == "all" and not all_scope_complete:
+        recomputed = False
     scope = value.get("platform_scope")
     if not isinstance(scope, dict):
         scope = {}
@@ -854,6 +887,10 @@ def main(argv: list[str] | None = None) -> int:
     if unknown_skips:
         raise SystemExit(f"unknown gate id(s) in --skip: {unknown_skips}")
     selected = [g for g in selected if g["id"] not in set(args.skip)]
+    selection_mode = (
+        "all" if args.all else "required" if args.required else "profile"
+        if args.profile else "tier" if args.tier else "id"
+    )
 
     here = host_platform()
     deadline = (
@@ -880,6 +917,13 @@ def main(argv: list[str] | None = None) -> int:
         args.keep_going,
         preflight_blocker=preflight_blocker,
     )
+    selected_ids = {gate["id"] for gate in selected}
+    result_ids = [result.get("id") for result in results]
+    selection_complete = (
+        len(result_ids) == len(selected_ids)
+        and set(result_ids) == selected_ids
+        and len(result_ids) == len(set(result_ids))
+    )
     interrupted = next(
         (
             result["interrupted_by_signal"]
@@ -896,15 +940,35 @@ def main(argv: list[str] | None = None) -> int:
         and not not_passed_required
         and not source_problems
         and interrupted is None
+        and selection_complete
+        and (
+            selection_mode != "all"
+            or (not args.skip and all(result.get("status") == "PASS" for result in results))
+        )
     )
     platform_conditional = required_document.get("platform_conditional", {})
     gates_scoped_qualified, excluded_platform_gates = platform_scope_qualification(
         required, results, platform_conditional, here
     )
-    scoped_qualified = gates_scoped_qualified and not source_problems and interrupted is None
+    all_optional_passed = selection_mode != "all" or (
+        not args.skip
+        and all(
+            result.get("status") == "PASS"
+            for result in results if result["id"] not in required
+        )
+    )
+    scoped_qualified = (
+        gates_scoped_qualified and not source_problems and selection_complete
+        and interrupted is None and all_optional_passed
+    )
 
     receipt = {
-        "schema_version": 2,
+        "schema_version": 3,
+        "selection": {
+            "mode": selection_mode,
+            "selected_gate_ids": sorted(gate["id"] for gate in selected),
+            "skipped_gate_ids": sorted(set(args.skip)),
+        },
         "profile": profile,
         "platform": here,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -930,7 +994,8 @@ def main(argv: list[str] | None = None) -> int:
     print()
     if qualified:
         label = "QUALIFIED" if profile == "release" else f"{profile.upper()}_QUALIFIED"
-        print(f"gates: {label} — every {profile} required gate ran here and passed")
+        scope = "selected" if selection_mode == "all" else f"{profile} required"
+        print(f"gates: {label} — every {scope} gate ran here and passed")
         return 0
     if args.allow_platform_skips and scoped_qualified:
         label = (
@@ -950,6 +1015,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  required gates not run in this invocation: {missing_required}", file=sys.stderr)
     if not_passed_required:
         print(f"  required gates not passed: {not_passed_required}", file=sys.stderr)
+    if selection_mode == "all":
+        failed_selected = [result["id"] for result in results if result.get("status") != "PASS"]
+        if failed_selected or args.skip:
+            print(
+                f"  --all gates not passed: {failed_selected}; skipped: {sorted(set(args.skip))}",
+                file=sys.stderr,
+            )
+    if not selection_complete:
+        print("  selected gate results are missing or duplicated", file=sys.stderr)
     for problem in source_problems:
         print(f"  {problem}", file=sys.stderr)
     return 1

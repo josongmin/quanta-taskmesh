@@ -80,6 +80,9 @@ def main() -> int:
                 "--config",
                 str(RULES),
                 "--error",
+                "--strict",
+                "--jobs=4",
+                "--timeout=30",
                 "--json",
                 "--verbose",
                 "crates",
@@ -105,6 +108,19 @@ def main() -> int:
     if not isinstance(results, list):
         problems.append("semgrep JSON field 'results' is not a list")
         results = []
+    errors = payload.get("errors")
+    if not isinstance(errors, list):
+        problems.append("semgrep JSON field 'errors' is not a list")
+    elif errors:
+        problems.append(f"semgrep reported {len(errors)} scan error(s)")
+        for error in errors[:20]:
+            if not isinstance(error, dict):
+                problems.append("semgrep JSON contains a non-object scan error")
+                continue
+            problems.append(
+                f"scan error {error.get('type', 'unknown')}: "
+                f"{error.get('message', '<no message>')}"
+            )
     paths = payload.get("paths")
     if not isinstance(paths, dict):
         problems.append("semgrep JSON field 'paths' is not an object")

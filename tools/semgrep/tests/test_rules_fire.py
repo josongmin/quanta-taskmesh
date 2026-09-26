@@ -38,6 +38,31 @@ def test_gate_accepts_the_reviewed_semgrep_parser() -> None:
     assert semgrep_check.semgrep_identity_problems(current) == []
 
 
+def test_scan_timeout_is_a_failure_even_when_semgrep_exits_zero(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scanned = [
+        path.relative_to(REPO).as_posix()
+        for path in (REPO / "crates").rglob("*.rs") if path.is_file()
+    ]
+    responses = iter([
+        subprocess.CompletedProcess(
+            ["semgrep", "--version"], 0,
+            f"{semgrep_check.REQUIRED_SEMGREP_VERSION}\n", "",
+        ),
+        subprocess.CompletedProcess(
+            ["semgrep"], 0,
+            json.dumps({
+                "results": [], "paths": {"scanned": scanned},
+                "errors": [{"type": "Timeout", "message": "rule timed out"}],
+            }), "",
+        ),
+    ])
+    monkeypatch.setattr(semgrep_check.subprocess, "run", lambda *args, **kwargs: next(responses))
+    assert semgrep_check.main() == 1
+    assert "Timeout" in capsys.readouterr().err
+
+
 def test_manual_ci_installs_the_same_pinned_semgrep() -> None:
     workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     install = 'uv tool install "semgrep==$(cat tools/semgrep/version.txt)"'

@@ -654,7 +654,10 @@ mod tests {
             (Shape::Task, "a bounded task JSON value"),
             (Shape::CpuMode, "a bounded cpu mode JSON value"),
             (Shape::ClassPolicy, "a bounded class policy JSON value"),
-            (Shape::CapabilityLimits, "a bounded capability_limits JSON value"),
+            (
+                Shape::CapabilityLimits,
+                "a bounded capability_limits JSON value",
+            ),
         ] {
             let visitor = ScanVisitor(ScanSeed {
                 state: &state,
@@ -662,7 +665,10 @@ mod tests {
                 depth: 0,
             });
             let error = serde::de::value::Error::invalid_type(Unexpected::Seq, &visitor);
-            assert_eq!(error.to_string(), format!("invalid type: sequence, expected {expected}"));
+            assert_eq!(
+                error.to_string(),
+                format!("invalid type: sequence, expected {expected}")
+            );
         }
     }
 }

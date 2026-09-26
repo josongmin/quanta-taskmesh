@@ -24,7 +24,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # On pull_request, github.sha is GitHub's synthetic merge commit.
+          # Test the proposed result against the current base, not only the PR head.
+          ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-21
         with:
           components: rustfmt, clippy
@@ -40,7 +42,7 @@ jobs:
           rustup toolchain install 1.81.0 --profile minimal
       - name: Run the complete bounded CI profile
         env:
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           uv run python tools/gates/run.py --profile ci --require-clean-source \

@@ -75,7 +75,8 @@ def test_fingerprint_changes_with_every_compatibility_input(tmp_path: Path) -> N
     bench = tmp_path / "bench.rs"
     bench.write_text("fn main() {}\n")
     base = dict(
-        inputs=[bench], schema=2, runner="0.14.2", valgrind="valgrind-3.22", rustc="rustc 1.95.0"
+        inputs=[bench], schema=2, runner="0.14.2", valgrind="valgrind-3.22", rustc="rustc 1.95.0",
+        build_context={"environment": {}, "cargo_configs": {}},
     )
     reference = iai_gate.fingerprint(**base)
     assert reference == iai_gate.fingerprint(**base), "deterministic"
@@ -84,6 +85,7 @@ def test_fingerprint_changes_with_every_compatibility_input(tmp_path: Path) -> N
         ("runner", "0.14.3"),
         ("valgrind", "valgrind-3.23"),
         ("rustc", "rustc 1.96.0"),
+        ("build_context", {"environment": {"RUSTFLAGS": "-C opt-level=0"}}),
     ]:
         assert iai_gate.fingerprint(**{**base, key: value}) != reference, key
     bench.write_text("fn main() { let _ = 1; }\n")
@@ -650,6 +652,28 @@ def test_an_incompatible_baseline_is_discarded_not_compared(harness: Harness) ->
     assert "status=BASELINE_CREATED" in proc.stdout
     assert "cached baseline is incomplete, corrupt, or incompatible" in proc.stderr
     assert harness.fingerprint != old
+
+
+def test_codegen_environment_change_cannot_reuse_an_iai_baseline(harness: Harness) -> None:
+    first = harness.run(env={"RUSTFLAGS": "-C opt-level=0"})
+    assert first.returncode == 0, first.stderr
+    assert "status=BASELINE_CREATED" in first.stdout
+    old = harness.fingerprint
+
+    second = harness.run(env={"RUSTFLAGS": "-C opt-level=3"})
+    assert second.returncode == 0, second.stderr
+    assert "status=BASELINE_CREATED" in second.stdout
+    assert harness.fingerprint != old
+
+
+def test_workspace_bench_profile_changes_iai_fingerprint(harness: Harness) -> None:
+    first = harness.run("fingerprint")
+    assert first.returncode == 0, first.stderr
+    cargo_manifest = harness.root / "Cargo.toml"
+    cargo_manifest.write_text(cargo_manifest.read_text() + "\n[profile.bench]\nopt-level = 0\n")
+    second = harness.run("fingerprint")
+    assert second.returncode == 0, second.stderr
+    assert second.stdout != first.stdout
 
 
 def test_a_failed_benchmark_leaves_no_manifest_behind(harness: Harness) -> None:

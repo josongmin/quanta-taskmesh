@@ -4,8 +4,8 @@ set shell := ["bash", "-c"]
 
 root := justfile_directory()
 
-clippy_allows := `grep -v '^#' config/clippy-allows.txt | grep -v '^$' | tr '\n' ' '`
-clippy_restrict := `grep -v '^#' config/clippy-restrict.txt | grep -v '^$' | tr '\n' ' '`
+clippy_allows := `set -o pipefail; grep -v '^#' config/clippy-allows.txt | grep -v '^$' | tr '\n' ' '`
+clippy_restrict := `set -o pipefail; grep -v '^#' config/clippy-restrict.txt | grep -v '^$' | tr '\n' ' '`
 clippy_strict := "-D warnings -D clippy::pedantic -D clippy::nursery"
 
 default:
@@ -65,7 +65,7 @@ test-architecture:
     uv run python docs/plans/bugbash-sep-25-general/tickets/validate_scenario_evidence.py
 
 py-lint:
-    uv run ruff check tools
+    uv run ruff check --no-respect-gitignore tools
 
 py-test:
     uv run python tools/gates/execute_py_tests.py

@@ -77,6 +77,15 @@ Run the registered recipes through `just`:
       Saved local and final receipts recheck a directly executed PASS row against
       that retained line. Hosted producer-import rows use their registered
       envelope and raw-artifact validation instead of a local status line.
+      Semgrep JSON scan errors (including rule timeouts) are failures even if
+      its process exits 0. Python skip/xfail cases do not count as a passing
+      `py-test` denominator. The Rust target census checks source files against
+      Cargo metadata so disabled auto-discovery cannot hide tests or benches.
+- [ ] Remote `main` protection requires the single `required 16-gate verdict`
+      check with an up-to-date branch. A PR run must inspect GitHub's synthetic
+      merge SHA (`github.sha`), while the main push run inspects its commit SHA.
+      Local YAML validation and an older successful Actions run do not activate
+      or prove this remote rule.
 - [ ] Finding proof: each row in `tools/release/finding-proof-spec.json` runs
       its named focused Cargo or pytest witness through
       `tools/release/finding_proof.py`. Its `required_gate` names an additional
@@ -122,7 +131,8 @@ Run the registered recipes through `just`:
 - [ ] `just consumer-msrv` — PASS on the declared `rust-version` (NOT_RUN is
       not a pass)
 - [ ] `just bench-iai` on Linux — `status=QUALIFIED`. The first run for a given
-      fingerprint (bench definition, deps, toolchain, valgrind, runner) records a
+      fingerprint (bench definition, deps, workspace bench profile, Cargo build
+      configuration/environment, toolchain, valgrind, runner) records a
       baseline and reports `BASELINE_CREATED`; the *next* run with the same
       fingerprint qualifies. A deliberately dispatched hosted reproduction may
       reuse its cache keyed by `tools/bench-iai.sh fingerprint`; ordinary local
@@ -142,6 +152,9 @@ Run the registered recipes through `just`:
       the one `collect` produced on that checkout — never a file handed over
       for `validate` alone. `mutants-critical` and `mutants-generated` are separate
       required denominators. A curated PASS never implies a generated score.
+      Local clean-source checks compare tracked worktree bytes and executable
+      modes with the HEAD tree, independent of Git index hints such as
+      `assume-unchanged`; a clean `git status` alone is insufficient.
       Receipt schema 4 records the gate-runner process exit and its raw required
       summary separately from the enriched gate rows: local qualification requires
       exit 0, while hosted producer import may account only for its exact skipped
@@ -317,7 +330,9 @@ Run the registered recipes through `just`:
   allocation regression for the added governance state, not a performance
   improvement. Borrowed validation and the exact-operation permit index reduced
   an intermediate 16 to 8 without changing the measurement definition. The
-  no-regression gate now uses exactly 8 with no cushion; Linux IAI comparison
+  no-regression gate now uses the exact total allocation count against the
+  200,000-operation denominator and threshold 8, without rounding or an
+  environment override; Linux IAI comparison
   remains separate release evidence. A 0-allocation path needs a storage-model
   redesign (root-id interning), not a threshold adjustment.
 - `run_blocking` + `RunFor` bounds the caller's wait only; a started blocking

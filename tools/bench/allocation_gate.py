@@ -25,6 +25,7 @@ import json
 import re
 import subprocess
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -51,13 +52,10 @@ def load_config() -> dict:
     return section
 
 
-def parse_decimal(field: str, raw: str) -> float:
+def parse_decimal(field: str, raw: str) -> Decimal:
     if not DECIMAL.fullmatch(raw):
         raise GateError(f"{field}={raw!r} is not a complete non-negative decimal")
-    value = float(raw)
-    if value != value or value in (float("inf"), float("-inf")):
-        raise GateError(f"{field}={raw!r} is not finite")
-    return value
+    return Decimal(raw)
 
 
 def parse_counter_check(raw: str) -> tuple[int, int]:
@@ -107,6 +105,7 @@ def parse_metric_line(output: str, config: dict) -> dict:
         )
     attempted = parse_integer("attempted", fields["attempted"])
     completed = parse_integer("completed", fields["completed"])
+    total_allocations = parse_integer("total_allocations", fields["total_allocations"])
     final_inflight = parse_integer("final_inflight", fields["final_inflight"])
     allocs_per_op = parse_decimal("allocs_per_op", fields["allocs_per_op"])
     counted, expected = parse_counter_check(fields["counter_check"])
@@ -123,6 +122,9 @@ def parse_metric_line(output: str, config: dict) -> dict:
             f"producer completed {completed} of {attempted} operations; "
             "a partial run is not a measurement"
         )
+    exact_per_op = Decimal(total_allocations) / completed
+    if abs(allocs_per_op - exact_per_op) > Decimal("0.0005"):
+        raise GateError("reported allocs_per_op disagrees with total_allocations")
     if final_inflight != 0:
         raise GateError(
             f"producer left {final_inflight} permits inflight; the ledger did not drain"
@@ -131,6 +133,7 @@ def parse_metric_line(output: str, config: dict) -> dict:
         "schema": schema,
         "attempted": attempted,
         "completed": completed,
+        "total_allocations": total_allocations,
         "allocs_per_op": allocs_per_op,
         "final_inflight": final_inflight,
         "counter_check": (counted, expected),
@@ -172,21 +175,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--input", type=Path, help="parse this captured producer output instead of running it"
     )
-    parser.add_argument(
-        "--max-allocs-per-op", help="override the configured threshold (validated the same way)"
-    )
     args = parser.parse_args(argv)
 
     try:
         config = load_config()
-        # `is None`, not falsy: an explicitly empty override is a malformed
-        # threshold and must be rejected, not replaced by the default.
-        threshold_raw = (
-            config["max_allocs_per_op"]
-            if args.max_allocs_per_op is None
-            else args.max_allocs_per_op
-        )
-        threshold = parse_decimal("max_allocs_per_op", str(threshold_raw))
+        threshold = parse_decimal("max_allocs_per_op", str(config["max_allocs_per_op"]))
         output = args.input.read_text(encoding="utf-8") if args.input else run_producer()
         metric = parse_metric_line(output, config)
     except GateError as exc:
@@ -200,13 +193,18 @@ def main(argv: list[str] | None = None) -> int:
         f"== allocation gate: admit+release allocs/op must be <= {threshold} "
         f"(schema {metric['schema']}, {metric['completed']} ops) =="
     )
-    if metric["allocs_per_op"] > threshold:
+    exact_per_op = Decimal(metric["total_allocations"]) / metric["completed"]
+    if Decimal(metric["total_allocations"]) > threshold * metric["completed"]:
         print(
-            f"FAIL: {metric['allocs_per_op']} allocs/op exceeds baseline {threshold}",
+            f"FAIL: {metric['total_allocations']} allocations / {metric['completed']} ops "
+            f"= {exact_per_op} exceeds baseline {threshold}",
             file=sys.stderr,
         )
         return 1
-    print(f"ok: {metric['allocs_per_op']} allocs/op (<= baseline {threshold})")
+    print(
+        f"ok: {metric['total_allocations']} allocations / {metric['completed']} ops "
+        f"= {exact_per_op} (<= baseline {threshold})"
+    )
     print("bench-gate: allocation gate passed")
     return 0
 

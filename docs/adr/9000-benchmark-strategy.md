@@ -96,7 +96,7 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   `host_perf.py --require-performance`는 fail closed다.
   동일 window의 2배 generator replay와 H0–H8 지원 현황 인덱스는 진단 범위로
   구현됐다. 실측 calibration, external resource sampler의 왜곡 검증,
-  repeated comparison, closed-loop, caller-affine local/feature-pinned Rayon과 대표 H7은 남아 있다.
+  repeated comparison, closed-loop, caller-affine local, Rayon 비교 측정과 대표 H7은 남아 있다.
   상세 목적·파일·DoD는 위 티켓이 소유한다.
 - `just bench-gate`는 allocation, `just bench-smoke`는 bench 실행 smoke,
   `just bench-iai`는 Linux의 지정된 instruction 사례다. 어느 것도 host 성능

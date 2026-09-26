@@ -10,11 +10,36 @@ use taskmesh::{
     TaskClass, TaskSpec,
 };
 use taskmesh_bench::host_load::{
-    classify_response, run_host_scenario, run_host_scenario_with_test_gate, CallerCounts,
-    CallerDisposition, HostHarnessTestGate, ResponseOutcome,
+    classify_response, run_host_scenario, run_host_scenario_with_test_gate,
+    run_host_scenario_with_topology, CallerCounts, CallerDisposition, HostHarnessTestGate,
+    ResponseOutcome,
 };
 use taskmesh_bench::host_scenarios::HostScenario;
 use tokio_util::sync::CancellationToken;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cpu_blocking_fixture_binds_the_selected_feature_topology() {
+    let scenario = HostScenario::from_json(include_bytes!(
+        "../../../tools/bench/scenarios/h4-cpu-blocking-smoke.json"
+    ))
+    .expect("CPU/blocking fixture");
+    let (raw, topology) = run_host_scenario_with_topology(&scenario, None)
+        .await
+        .expect("CPU/blocking host run");
+    raw.validate_against(&scenario).expect("typed raw parity");
+    assert_eq!(raw.settlement.responded, 2);
+    assert!(raw.final_capabilities.values().all(|in_use| *in_use == 0));
+    #[cfg(feature = "rayon")]
+    assert_eq!(
+        topology.cpu_executor.physical_domain.as_deref(),
+        Some("physical.cpu")
+    );
+    #[cfg(not(feature = "rayon"))]
+    assert_eq!(
+        topology.cpu_executor.physical_domain.as_deref(),
+        Some("physical.shared_blocking")
+    );
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn requested_stack_blocking_and_async_paths_reconcile_public_host_rows() {

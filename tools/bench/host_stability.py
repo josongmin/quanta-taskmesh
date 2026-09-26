@@ -89,16 +89,19 @@ def typed_validate(directory: Path, artifacts: dict[str, str]) -> None:
             if host_perf.sha256(data) != digest:
                 raise host_perf.ReceiptError(f"stability artifact digest differs: {name}")
             host_run.write_new(sealed / name, data)
-        (sealed / "runner").chmod(0o700)
-        result = run_bench(
-            [str(sealed / "runner"), "validate", str(sealed / "manifest.json"), str(sealed)],
-            cwd=host_perf.REPO,
-            timeout_seconds=120,
-        )
-        if result.returncode != 0:
-            raise host_perf.ReceiptError(
-                "typed stability validation failed: " + result.stderr[-2000:]
-            )
+        _validate_private_bundle(sealed)
+
+
+def _validate_private_bundle(directory: Path) -> None:
+    """Replay only a private bundle whose bytes were checked during copying."""
+    (directory / "runner").chmod(0o700)
+    result = run_bench(
+        [str(directory / "runner"), "validate", str(directory / "manifest.json"), str(directory)],
+        cwd=host_perf.REPO,
+        timeout_seconds=120,
+    )
+    if result.returncode != 0:
+        raise host_perf.ReceiptError("typed stability validation failed: " + result.stderr[-2000:])
 
 
 def _verify_sealed(directory: Path, *, require_current_source: bool = False) -> dict:
@@ -154,13 +157,7 @@ def _verify_sealed(directory: Path, *, require_current_source: bool = False) -> 
     artifacts = receipt["artifacts"]
     if not isinstance(artifacts, dict) or set(artifacts) != names:
         raise host_perf.ReceiptError("stability artifact inventory differs")
-    for name in names:
-        digest = artifacts[name]
-        if (
-            not isinstance(digest, str)
-            or host_perf.sha256(read_regular_bytes(directory / name)) != digest
-        ):
-            raise host_perf.ReceiptError(f"stability artifact digest differs: {name}")
+    # verify_receipt checked every digest while creating this private bundle.
     scenario = manifest["scenario"]
     if receipt["start_identity"]["topology_fingerprint"] != host_perf.sha256(
         host_perf.canonical(scenario["topology"])
@@ -182,7 +179,7 @@ def _verify_sealed(directory: Path, *, require_current_source: bool = False) -> 
         or host_perf.local_identity(scenario, []) != receipt["start_identity"]
     ):
         raise host_perf.ReceiptError("current stability source or host differs")
-    typed_validate(directory, artifacts)
+    _validate_private_bundle(directory)
     return receipt
 
 
@@ -226,8 +223,22 @@ def acquire(
         raise host_perf.ReceiptError("new output directory outside checkout required")
     data = read_regular_bytes(manifest_path)
     manifest = manifest_object(data)
-    scenario = manifest["scenario"]
     directory.mkdir(parents=True)
+    # Only a successful exclusive mkdir grants ownership of failure artifacts.
+    # In particular, a rejected attempt must not mutate an existing bundle.
+    try:
+        return _acquire_owned(
+            data, manifest, directory, cadence_ms=cadence_ms, timeout_seconds=timeout_seconds
+        )
+    except (OSError, ValueError, KeyError, host_perf.ReceiptError) as error:
+        host_run.retain_rejection(directory / "rejection.json", "stability acquisition", error)
+        raise
+
+
+def _acquire_owned(
+    data: bytes, manifest: dict, directory: Path, *, cadence_ms: int, timeout_seconds: float
+) -> dict:
+    scenario = manifest["scenario"]
     host_run.write_new(directory / "manifest.json", data)
     start = host_perf.local_identity(scenario, [])
     source = source_content_sha256()
@@ -352,15 +363,6 @@ def main() -> int:
         )
         return 0
     except (OSError, ValueError, KeyError, host_perf.ReceiptError) as error:
-        if (
-            args.command == "run"
-            and args.directory.is_dir()
-            and not (args.directory / "rejection.json").exists()
-        ):
-            host_run.write_new(
-                args.directory / "rejection.json",
-                host_perf.canonical({"status": "REJECTED", "reason": str(error)}),
-            )
         print(f"stability rejected: {error}")
         return 1
 

@@ -10,7 +10,7 @@ qualify the engine or its performance.
 사용자 결정: 필요한 안정성 검증만 추가한다. 이전의 모든 모드 반복 성능 admission과
 통계적 longitudinal admission을 전체 엔진 완료의 필수 조건으로 잡은 범위를 축소한다.
 
-- **Closed owner-local scope:** [B07 minimal recovery/soak](B07-minimal-recovery-soak.md).
+- **Implemented scope; final-audit delta owner regressions pending:** [B07 minimal recovery/soak](B07-minimal-recovery-soak.md).
   같은 host의 반복 과부하 → exact capacity 반환 → 정상 canary 성공을 검증한다.
   기존 typed raw/custody oracle, bounded execution과 artifact 경계를 재사용한다.
 - **Deferred:** local/closed-loop/composite/requested-stack/Rayon 성능 admission,
@@ -81,10 +81,13 @@ cleanup proof. This pass does not claim universal standalone I/O liveness.
 [B07](B07-minimal-recovery-soak.md) replaces the earlier broad recovery/soak and
 other-mode implementation list. It records current coverage, the same-host gap,
 execution sequence, changed files, DoD, cost and stop conditions. B07 implementation now adds same-host windows, canaries and complete-population
-replay. B07 is owner-local CLOSED with 118 Rust / 616 Python / 13 Rayon passes
+replay. B07's previous source snapshot is owner-local CLOSED with 118 Rust / 616 Python / 13 Rayon passes
 and an actual 600.003-second, 1,000-cycle H2 diagnostic plus H5 smoke.
 Its exact source/commands and retained UNQUALIFIED bundles are in B07; this paragraph does not
 turn historical B04 checks into current-source proof.
+The final-audit delta at base `a3241e3` repairs existing-output corruption and
+early-error cleanup, and removes duplicate replay copying. Compile/lint and
+historical replay pass; current-delta owner regressions/smoke remain pending.
 
 Clean exact-source CI and optimized v3 build/oracle E2E remain separate open
 proof. B00 values/rate grid, quiet-host measured controls/series, H7 provenance,

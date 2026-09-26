@@ -326,28 +326,51 @@ pub async fn run_stability(
 ) -> Result<StabilitySummary, String> {
     manifest.validate()?;
     let runtime = manifest.scenario.build_runtime()?;
-    warmup_runtime(&manifest.scenario, &runtime).await?;
+    let result = run_stability_on_runtime(manifest, &runtime, &mut emit).await;
+    if let Err(error) = result {
+        // Writer, warmup and window errors must still close admission and settle
+        // owned work. Preserve the original failure if bounded cleanup succeeds.
+        return match runtime
+            .drain(Duration::from_millis(manifest.scenario.load.settlement_ms))
+            .await
+        {
+            Ok(_) => Err(error),
+            Err(cleanup) => Err(format!(
+                "{error}; stability cleanup drain failed: {cleanup:?}"
+            )),
+        };
+    }
+    result
+}
+
+async fn run_stability_on_runtime(
+    manifest: &StabilityManifest,
+    runtime: &TokioRuntime,
+    emit: &mut impl FnMut(&StabilityCycle) -> Result<(), String>,
+) -> Result<StabilitySummary, String> {
+    warmup_runtime(&manifest.scenario, runtime).await?;
     let baseline = runtime.snapshot();
     zero_owned(&baseline, &manifest.scenario)?;
-    let topology = ResolvedHostTopology::from_runtime(&runtime);
+    let topology = ResolvedHostTopology::from_runtime(runtime);
+    let paths = canary_paths(&manifest.scenario)?;
     let mut previous = baseline.clone();
     let mut reason = None;
     let mut completed = 0;
     let origin = Instant::now();
     for index in 0..manifest.cycles {
-        let (window, _) = run_host_window(&manifest.scenario, &runtime, None, None, false).await?;
+        let (window, _) = run_host_window(&manifest.scenario, runtime, None, None, false).await?;
         let after_window = runtime.snapshot();
         let mut canaries = Vec::new();
         if window
             .validate_window_with_topology(&manifest.scenario, &topology)
             .is_ok()
         {
-            for (class, path) in canary_paths(&manifest.scenario)? {
+            for (class, path) in &paths {
                 canaries.push(
                     canary(
-                        &runtime,
-                        class,
-                        path,
+                        runtime,
+                        class.clone(),
+                        *path,
                         Duration::from_millis(manifest.scenario.load.settlement_ms),
                     )
                     .await,

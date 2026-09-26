@@ -1,6 +1,6 @@
 # B07 — 필요한 recovery / soak 안정성 검증
 
-- 상태: **CLOSED — owner-local 구현·회귀·actual stress 완료; clean CI / performance qualification 별도**
+- 상태: **IMPLEMENTED — 이전 snapshot owner-local CLOSED; 최종 감사 보완의 owner 회귀는 pending**
 - 기준 소스: `61d4e47b0dc6009bb511704292e2a830c29c4287` + owner working delta (2026-09-27)
 - 우선순위: 안정성 coverage 보완. 현재 확인된 엔진 결함이나 release blocker로 분류하지 않는다.
 - 선행: [B04](B04-remaining-audit.md)의 실행·metadata·artifact 경계 보완은 구현됨.
@@ -289,9 +289,42 @@ uv run python tools/bench/host_stability.py verify \
 
 ### 남은 범위
 
-- **B07 owner-local 코드 / 회귀 / 실제 diagnostic stress:** 이 티켓에서 남은 항목 없음.
+- **이전 B07 snapshot의 코드 / 회귀 / 실제 diagnostic stress:** 위 증거로 완료.
+  아래 최종 감사 delta의 owner 회귀는 별도 pending이며 이전 실행으로 대체하지 않는다.
 - **Clean-source CI 및 optimized frozen build/oracle E2E:** 미실행 / 별도 open.
 - **B00 estimand·consumer budget, H7 profile, quiet-host series, peer 비교:** 기존 입력/측정
   공백 유지. B07 실행이 이를 채우지 않는다.
 - **Conditional all-mode performance admission / RSS slope / recovery SLO:** 보류 유지.
 - mutation, nightly/release, 배포, remote push: 이번 owner-local 범위에 포함하지 않았다.
+
+## Final implementation audit — 2026-09-27, base `a3241e3`
+
+감사 범위는 B07 acquisition/replay/같은 host loop다. product runtime 전체 재감사나
+clean-source qualification으로 확대하지 않는다. 다음 결함과 구현 낭비를 보완했다.
+
+| 항목 | 원인 / 변경 | 이번 증거 |
+|---|---|---|
+| 기존 bundle 훼손 | CLI가 실패 시 존재하는 output에 무조건 `rejection.json`을 기록했다. 거부 기록을 exclusive `mkdir` 성공 이후 acquisition owner에게 이동하고 기존 best-effort retention을 사용한다. | 보존 H5 bundle의 임시 복사본에 동일 `run` 실행: 수정 전 exit 1 + 파일 추가, 수정 후 exit 1 + 모든 파일 이름/digest 보존. 수정 후 historical replay exit 0 |
+| early-error drain 누락 | warmup/window/writer의 `Err`가 최종 drain 이전에 반환됐다. runtime owner wrapper가 오류 반환 전에 settlement budget 안에서 drain을 시도한다. 원래 오류를 보존하고 drain 실패도 함께 보고한다. 정상 실행은 기존 최종 drain 1회만 유지한다. | 현재 소스 compile/clippy PASS; 실패 시 owned-work drain 행동 증거는 pending |
+| 중복 bundle 복사/hash | `verify_receipt`가 descriptor bytes를 hash/copy한 뒤 sealed bundle을 다시 hash/copy해서 replay했다. 같은 private bundle에서 Python 검증과 Rust replay를 수행한다. original 경로를 실행하지 않는 custody는 유지한다. | retained H5 bundle replay PASS. runner는 이전 snapshot binary이며 새 Rust 실행 증거가 아님 |
+| 매 cycle canary 경로 재생성 | 실행 loop의 고정 경로를 최초 한 번 도출해 재사용한다. cycle validator의 독립 검증은 유지한다. | 현재 소스 compile/clippy PASS |
+
+이번 변경 파일: `tools/bench/host_stability.py`,
+`crates/taskmesh-bench/src/host_stability.rs`, B07/B04/README 상태 문서.
+
+현재 소스 확인: `cargo clippy --locked -p taskmesh-bench --all-targets -- -D warnings`,
+Ruff check/format, Cargo fmt, `git diff --check`. clippy의 all-targets compile은
+테스트 실행이 아니다. 최초 compile은 drain의 성공 반환형을 `()`로 잘못 매칭해
+실패했고 `DrainReport`를 수용하도록 수정한 뒤 재실행이 통과했다.
+이번에는 test suite·새 10분 stress를 실행하거나 테스트를 추가하지 않았다.
+위 118/616/13 PASS와 실제 study는 **이전 source snapshot**의 증거다.
+
+### 현재 delta의 남은 owner 증거
+
+- `tools/bench/tests/test_host_stability.py`: CLI existing-output 거부 후 전체 inventory
+  불변, owned output의 build/check 실패 retention, retention 실패 시 원래 오류 보존.
+- `crates/taskmesh-bench/src/host_stability.rs` / integration owner: writer/window error 시
+  admission close·bounded drain, drain 실패 시 원래 오류와 cleanup 실패 동시 보고.
+  기존 writer failure 회귀는 success summary 부재만 확인하므로 drain 증거로 세지 않는다.
+- 기존 scoped owner 회귀와 새 current-source smoke를 실행한 뒤 이 delta를 owner-local
+  CLOSED로 변경한다. clean CI / optimized oracle / performance admission은 별도 유지한다.

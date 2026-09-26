@@ -2,6 +2,11 @@
 
 ## Current checkpoint
 
+Remaining audit at benchmark source `c5b5282` (unchanged at `52f7c00`):
+[B04 remaining audit](B04-remaining-audit.md) records two reproduced acquisition
+defects, recorder measurement limits, missing measured admission/build custody,
+and the distinct fixture and performance-evidence gaps. They remain open.
+
 At clean detached `f7834d7`, structural `closed_loop`, `local` v2 and `composite`
 receipts were acquired under `/tmp` and copied byte-for-byte to ignored
 `bench-results/receipts/clean-f7834d7/`. They are not Git-tracked and all

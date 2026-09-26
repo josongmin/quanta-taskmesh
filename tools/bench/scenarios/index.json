@@ -50,9 +50,9 @@
       "topology_scope": "two registered classes with one resolved physical topology",
       "oracle_cells": ["E3"],
       "correctness_oracles": ["crates/taskmesh-engine/tests/hardening_fairness_reference.rs", "crates/taskmesh-engine/tests/hardening_multi_pool_fairness.rs"],
-      "current_artifacts": ["crates/taskmesh-bench/benches/multiclass_fairness.rs"],
+      "current_artifacts": ["crates/taskmesh-bench/benches/multiclass_fairness.rs", "tools/bench/scenarios/h3-weighted-smoke.json", "crates/taskmesh-bench/tests/host_load_integration.rs"],
       "support": "partial",
-      "missing": "Policy-model cost exists; no two-class weighted host workload or eligible-demand/service-window receipt."
+      "missing": "A 4:1 weighted two-class host smoke exists; no repeated eligible-demand/service-window receipt, equal-cost versus skewed-cost rate sweep or host fairness conclusion."
     },
     {
       "id": "H4",

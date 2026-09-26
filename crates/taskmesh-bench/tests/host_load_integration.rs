@@ -18,6 +18,23 @@ use taskmesh_bench::host_scenarios::HostScenario;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn weighted_two_class_fixture_preserves_rows_without_timing_verdict() {
+    let scenario = HostScenario::from_json(include_bytes!(
+        "../../../tools/bench/scenarios/h3-weighted-smoke.json"
+    ))
+    .expect("weighted H3 fixture");
+    let raw = run_host_scenario(&scenario)
+        .await
+        .expect("weighted host run");
+    raw.validate_against(&scenario).expect("typed raw parity");
+    assert_eq!(raw.records.len(), 13);
+    assert!(raw.records.iter().any(|row| row.class == "interactive"));
+    assert!(raw.records.iter().any(|row| row.class == "batch"));
+    assert_eq!(raw.settlement.unanswered_at_settlement, 0);
+    assert!(raw.final_capabilities.values().all(|in_use| *in_use == 0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cpu_blocking_fixture_binds_the_selected_feature_topology() {
     let scenario = HostScenario::from_json(include_bytes!(
         "../../../tools/bench/scenarios/h4-cpu-blocking-smoke.json"

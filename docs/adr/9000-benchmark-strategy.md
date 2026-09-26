@@ -87,6 +87,8 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   raw v2에 intended, submitted, caller terminal/drop, body start/finish, cut/settlement,
   sampled Snapshot과 실패 시 `invalid` 원시 행을 기록한다. Rust typed
   scenario/raw/Builder 검증과 Python 구조 검증이 연결돼 있다.
+  Bench-owned class 선언은 FIFO 또는 양의 WFQ weight를 명시할 수 있다.
+  H3의 4:1 fixture 실행은 정책 전달·raw 정산 smoke이며 host 공정성 판정은 아니다.
 - `just bench-host`는 진단 raw/summary, 보관 실행 파일, 같은 실행의 resolved
   topology와 실행 출처 sidecar를 만든다. 실행 전후 소스·호스트·전원 상태,
   빌드 명령/환경/feature, 보관 파일과 fixture/raw/topology digest가 기록된다.

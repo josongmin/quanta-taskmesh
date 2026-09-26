@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use taskmesh::{
-    Builder, CancellationPolicy, ClassPolicy, OverflowPolicy, PhysicalDomainMode, ResourceBudget,
-    TaskClass, TokioRuntime, TopologyConfig,
+    Builder, CancellationPolicy, ClassPolicy, FairnessPolicy, OverflowPolicy, PhysicalDomainMode,
+    ResourceBudget, TaskClass, TokioRuntime, TopologyConfig,
 };
 
 use crate::workload::{Arrival, ValidatedArrivals};
@@ -60,6 +60,18 @@ pub struct HostClass {
     pub cpu_units: u32,
     pub memory_units: u32,
     pub overflow: HostOverflow,
+    #[serde(default)]
+    pub fairness: HostFairness,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HostFairness {
+    #[default]
+    Fifo,
+    WeightedFair {
+        weight: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -185,6 +197,12 @@ impl HostScenario {
                     class.name
                 ));
             }
+            if matches!(class.fairness, HostFairness::WeightedFair { weight: 0 }) {
+                return Err(format!(
+                    "class {:?}: WFQ weight must be positive",
+                    class.name
+                ));
+            }
         }
         let last_allowed = load
             .injection_ms
@@ -301,6 +319,12 @@ impl HostScenario {
                 HostOverflow::Reject => OverflowPolicy::Reject,
                 HostOverflow::QueueWithinDepth => OverflowPolicy::QueueWithinDepth,
             };
+            let fairness = match class.fairness {
+                HostFairness::Fifo => FairnessPolicy::Fifo,
+                HostFairness::WeightedFair { weight } => {
+                    FairnessPolicy::WeightedFairQueue { weight, burst: 0 }
+                }
+            };
             builder = builder.class_policy(
                 TaskClass::new(class.name.clone()),
                 ClassPolicy::new()
@@ -309,6 +333,7 @@ impl HostScenario {
                     .cpu_units(class.cpu_units)
                     .memory_units(class.memory_units)
                     .overflow_policy(overflow)
+                    .fairness(fairness)
                     .cancellation_policy(CancellationPolicy::CooperativeWithDeadline),
             );
         }

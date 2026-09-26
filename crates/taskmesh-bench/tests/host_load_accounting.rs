@@ -41,6 +41,11 @@ fn scenario_schema_fails_before_timing_on_invalid_boundary() {
             v["offers"][0]["class"] = json!("ghost");
             v
         }),
+        ("zero WFQ weight", {
+            let mut v = valid.clone();
+            v["classes"][0]["fairness"] = json!({"kind": "weighted_fair", "weight": 0});
+            v
+        }),
         ("path/body mismatch", {
             let mut v = valid.clone();
             v["offers"][0]["body"] = json!({"kind": "cpu_spin", "iterations": 10});

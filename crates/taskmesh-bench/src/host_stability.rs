@@ -467,11 +467,71 @@ mod tests {
         assert_eq!(writes, 1);
         assert!(runtime.is_draining());
         zero_owned(&runtime.snapshot(), &manifest.scenario).unwrap();
-        assert!(
+        assert_eq!(
             run_host_window(&manifest.scenario, &runtime, None, None, false)
                 .await
-                .is_err()
+                .unwrap_err(),
+            "window runtime is already draining"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn early_error_reports_bounded_cleanup_failure_with_live_worker() {
+        let mut scenario = HostScenario::from_json(include_bytes!(
+            "../../../tools/bench/scenarios/h2-burst-recovery-smoke.json"
+        ))
+        .unwrap();
+        scenario.load.warmup_ms = 0;
+        let manifest = StabilityManifest {
+            schema_version: 1,
+            scenario,
+            cycles: 3,
+            min_duration_ms: 0,
+            max_total_records: 100,
+        };
+        let runtime = manifest.scenario.build_runtime().unwrap();
+        let release = Arc::new(AtomicBool::new(false));
+        let release_worker = release.clone();
+        let owned = runtime.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let held = tokio::spawn(async move {
+            owned
+                .run_blocking(
+                    TaskSpec::blocking(TaskClass::new("burst")).operation("held-cleanup"),
+                    move || {
+                        let _ = started_tx.send(());
+                        while !release_worker.load(Ordering::SeqCst) {
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        Ok::<(), ()>(())
+                    },
+                )
+                .await
+        });
+        if tokio::time::timeout(Duration::from_secs(2), started_rx)
+            .await
+            .unwrap()
+            .is_err()
+        {
+            panic!("held submission failed: {:?}", held.await);
+        }
+        let error = run_stability_on_runtime(&manifest, &runtime, &mut |_| {
+            panic!("baseline error must precede the writer")
+        })
+        .await
+        .unwrap_err();
+        assert!(error.contains("checkpoint has invalid catalog"));
+        assert!(error.contains("stability cleanup drain failed"));
+        assert!(runtime.is_draining());
+        assert!(runtime
+            .snapshot()
+            .classes
+            .values()
+            .any(|class| class.inflight > 0));
+        release.store(true, Ordering::SeqCst);
+        held.await.unwrap().unwrap();
+        runtime.drain(Duration::from_secs(2)).await.unwrap();
+        zero_owned(&runtime.snapshot(), &manifest.scenario).unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

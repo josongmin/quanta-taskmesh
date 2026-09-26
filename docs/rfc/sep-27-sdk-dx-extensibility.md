@@ -7,6 +7,7 @@
 - 문서 작성 시 재확인: `8a4f3a6e58403c8aede2355a658a8884831a0745`; 두 HEAD 사이 관련 runtime/contract/engine/Rayon 소스 변경 없음
 - 작업 환경: 다른 작업의 dirty 변경이 있는 shared checkout. 이 문서는 소스 정적 검토이며 clean-source qualification을 주장하지 않는다.
 - 대체 문서: [RFC 0002](../rfcs/0002-sdk-dsl-contract.md)
+- 구현·소비자 매핑: [SEP-27 use case / engine integration](sep-27-sdk-usecase-engine-integration.md)
 
 ## 1. 제안 결정
 
@@ -34,7 +35,7 @@ submission builder, direct admission 명명, 선택적 관측성이다. generic 
 | 외부 입력 | strict JSON ingress에 byte/depth/stage 제한 존재; 기본 stage 상한 64 | 일반 in-process `TaskSpec` validator에도 같은 상한이 있다고 주장하지 않음 |
 | 오류 DX | `PlanSource::new`, `TaskSpec::validate`가 반환하는 `TaskPlanError` 등이 facade에 재노출되지 않음 | facade만 의존하는 소비자가 타입과 variant를 이름으로 사용할 수 있게 보완 |
 | 실행 DX | `TaskSpec::cpu`와 `run_cpu_with` 양쪽에서 substrate를 지정 | 단일 선택 submission builder 추가 |
-| 시간 제약 | `with_deadline(Duration)`은 worker 시작부터의 예산; 기본 class policy는 deadline을 거부 | 명시적 이름과 정책 설정 예제 제공 |
+| 시간 제약 | `with_deadline(Duration)`은 worker 시작부터의 예산; 기본 class policy는 deadline을 거부. CPU/blocking/dedicated sync는 정책을 바꿔도 `CompleteBy` 거부 | dispatch별 지원표와 명시적 이름 제공 |
 | 공개 구조체 | `TaskSpec`, `SubmitOptions`, 여러 설정 타입이 all-public fields | 기존 layout 계약 보존; 새 builder는 private fields |
 | clone 비용 | `TokioRuntime`의 derived Clone이 owned `RuntimeConfig`의 map/vector도 복제 | 불변 설정을 Arc로 공유; 실제 allocation/latency 효과는 측정 필요 |
 | generic Runtime | bare async trait가 반환 future의 Send를 약속하지 않으며 options 메서드가 없음 | 실제 generic 소비자 요구가 있을 때 좁은 trait 설계 |
@@ -89,11 +90,17 @@ let class = TaskClass::try_new("retrieval")?;
 let result = runtime
     .cpu(class, "rank:42")
     .acquire_timeout(Duration::from_millis(50))
-    .complete_by(request_deadline)
+    .run_for(Duration::from_secs(2))
     .cancel(cancel.child_token())
     .run(move || rank(input))
     .await?;
 ```
+
+이 CPU 예제는 admission과 worker 실행의 두 상대 예산을 사용한다. 요청 전체의
+absolute deadline을 보장하지 않는다. **초기 SEP-27 초안의 CPU `.complete_by(...)`
+예제는 현재 host 구현과 맞지 않아 수정했다.** `CompleteBy`는 아래 지원표에 따른다.
+`"rank:42"`는 한 호출의 식별자 예시다. 같은 label의 동시 root 호출은 소비자가 발급한
+서로 다른 operation identity를 사용해야 한다.
 
 - `cpu`, `blocking`, `io`, `local`은 각 실행 종류에 맞는 submission builder를 반환한다.
 - `CpuSubmission` 등의 private 필드가 spec와 options를 보관한다. operation은 시작 인자로 요구한다.
@@ -103,6 +110,9 @@ let result = runtime
 - `RunError<E>`를 보존한다. 작업 오류와 governor 오류를 합쳐 문자열로 반환하지 않는다.
 - caller drop, queued cancellation, worker 시작 이후 timeout과 drain은 기존 custody 계약을 따른다.
 - raw `TaskSpec` 경로는 복잡한 lineage 및 직접 embedding 용도로 유지한다.
+- 기존 planner의 spec를 통째로 전달하는 `cpu_spec`/`blocking_spec` 등의 bridge를 제공한다.
+  bridge는 source/reason/scope/stages/stack을 보존하고 mismatch를 기존 preflight에서 거부한다.
+  자세한 메서드 배치와 도입 순서는 구현·소비자 매핑 문서를 따른다.
 
 새 builder는 입력 편의 계층이다. builder에서만 유효하고 raw/JSON 경로에서는 우회되는
 검증 규칙을 만들지 않는다. hot path의 allocation 증가 여부는 기존 호출과 비교한다.
@@ -120,9 +130,23 @@ let result = runtime
 deadline을 추가하지 않는다. fluent setter를 연달아 사용하면 기존 options처럼 마지막
 deadline 설정이 앞의 설정을 대체한다는 규칙을 문서화한다.
 
+| 실제 dispatch | `RunFor` | `CompleteBy` | 필요한 조건 |
+|---|---|---|---|
+| IO / local caller future | 지원 | 지원 | class가 `CooperativeWithDeadline`; local은 기존 context/lifetime 조건 |
+| requested-stack async runtime | 지원 | 지원 | 동일 class 정책, 유효한 stack, worker에서 future factory 실행 |
+| CPU / pooled blocking / requested-stack sync thread | 지원; caller 대기만 종료 가능 | 현재 거부 | RunFor에도 동일 class 정책 필요; worker custody는 종료까지 유지 |
+
+새 typed CPU/blocking builder에는 `complete_by`를 노출하지 않는다. 기존 raw options
+경로의 unsupported 조합은 계속 거부한다. 소비자가 blocking 작업에 절대 응답 deadline을
+원하면 별도 `response_by` 계약을 검토한다. 이는 새 host 기능이며 `CompleteBy`의
+동작을 조용히 넓히는 alias가 아니다. 구현 설계와 실제 소비자 충돌은 companion 문서에 기록한다.
+
 자식 submission에는 전체 요청의 동일한 absolute deadline을 전달한다. 각 단계에서
 새 duration으로 예산을 재시작하지 않는다. `Instant`는 프로세스 내부 제어값이며 wire에
 직렬화하는 공통 시간값으로 취급하지 않는다.
+
+위 전달 규칙은 해당 dispatch가 그 deadline 모드를 지원할 때 적용한다. synchronous
+경로에서 `RunFor`로 변환하여 전체 요청 deadline이 보존됐다고 주장하지 않는다.
 
 deadline이 지원되지 않는 class는 기존처럼 typed error를 반환한다. production 예제는
 class policy 설정까지 포함한다. 이미 시작한 blocking worker는 caller timeout으로
@@ -279,3 +303,14 @@ SEP-24 RFC 0002의 duplicate replacement와 direct drain gap 설명은 과거 ba
 
 구현 진행 시 각 단계에 실제 commit과 검증 범위를 기록한다. 문서가 Proposed라는 사실과
 기존 기능의 구현 상태, release/consumer activation 상태를 혼합하지 않는다.
+
+## 12. Use case와 구현 통합 상세
+
+[구현·소비자 매핑 문서](sep-27-sdk-usecase-engine-integration.md)는 이 RFC의 실행 설계다.
+기존 use case별 이전 경로, Semantica의 실제 adapter 호출, identity/provenance 보존,
+dispatch별 role/physical capacity, 소스 파일별 owner, ticket/lease 상태 전이, 새 기능의
+backend 변경 범위, 통합 순서와 acceptance oracle을 명시한다.
+
+특히 Semantica의 blocking absolute-deadline wrapper와 현재 Taskmesh 지원 범위의
+충돌은 SDK 문법 변경만으로 해결되지 않는다. consumer 정책과 host deadline 계약을
+함께 조정해야 한다. 현재 관찰은 소스 비교이며 해당 consumer 테스트를 실행한 결과가 아니다.

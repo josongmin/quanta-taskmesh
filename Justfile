@@ -245,6 +245,19 @@ bench-host-sampler scenario calibration directory max_span_seconds *ARGS:
 bench-host-compare manifest output:
     uv run python tools/bench/host_compare.py {{manifest}} {{output}}
 
+# Frozen Git source and byte-reproducible cold host builds; local evidence only.
+bench-build mode directory *ARGS:
+    uv run python tools/bench/host_build.py {{mode}} {{directory}} {{ARGS}}
+
+# Every predeclared full-host attempt is recorded, including failures.
+bench-study mode directory *ARGS:
+    uv run python tools/bench/host_study.py {{mode}} {{directory}} {{ARGS}}
+
+# Rebuild, exact-source correctness oracle and complete measured series admission.
+# Does not run mutation testing or establish industry peer superiority.
+bench-host-admit contract study build controls output:
+    uv run python tools/bench/host_admission.py {{contract}} {{study}} {{build}} {{controls}} {{output}}
+
 # Deterministic allocation gate (ADR 9000 / P2). Runs anywhere — no valgrind.
 bench-gate:
     bash tools/bench-gate.sh

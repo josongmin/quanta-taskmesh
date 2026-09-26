@@ -144,6 +144,14 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   evaluator는 검증한 control bundle의 scenario·bundle·resource digest를 다시
   대조해 재열람 사이의 artifact 교체를 거부한다. B00 계약과 반복 고정 host 결과를
   대체하지 않는다.
+  target 및 모든 control arm의 미제출·settlement 미응답·producer lag·늦은
+  Snapshot을 검사하고 문제 arm을 별도로 보고한다. Minimal recorder는 typed raw가
+  Snapshot을 금지하며 latency를 만들지 않는다. Snapshot·recorder·sampler의
+  비교 예산에는 양방향 실행 순서가 같은 수의 쌍만 입력할 수 있다.
+  control bundle은 최종 검증 후 게시한다. 최종 검증 실패도 raw를 유지한
+  `incomplete` bundle로 남긴다. Python acquisition 산출물과 보관 실행파일은
+  같은 디렉터리의 private 임시 파일을 hard link로 게시해 기존 파일을 원자적으로
+  덮어쓰지 않는다. 이 계약은 crash durability 영수증을 뜻하지 않는다.
   구조 bundle v3는 target Snapshot-off 또는 control과 같은 cadence의 Snapshot-on을
   허용한다. Snapshot-on target을 쓸 때 A/A는 on workload, recorder full/minimal은
   같은 workload의 off 파생 시나리오를 사용하고 그 digest를 묶는다. On target의
@@ -166,3 +174,23 @@ P8=회귀 인프라, P9=mechanism control을 뜻한다. 번호는 출처 추적�
 고정 호스트 성능 자격은 별도 결과로 보관한다. 원시 행·fixture·실행 출처가
 누락되거나 correctness oracle이 실패한 rate point는 결과에서 조용히 제거하지
 않고 실패 사유와 함께 보존한다.
+
+## 2026-09-26 acquisition and series admission update
+
+- Build-to-launch identity is compared explicitly in full/generator/minimal
+  acquisition; failures retain a separate rejection artifact. Every indexed
+  control study must follow its actual chronological process windows.
+- All Rust probe writers use one create-only atomic artifact publisher.
+- Local v3 adds cancel/deadline/drop and Snapshot diagnostics; active IO
+  release-to-settled drain is a separate Criterion population.
+- Recorder/control-budget schema v2 adds whole-probe duration distortion.
+  Minimal mode still has no request p99.
+- Frozen-source cold rebuilds, complete attempt accounting and a separate
+  measured full-host admission path are implemented. Single-run structural
+  booleans, selected successful pairs and copied control PASS reports cannot
+  promote a measured series.
+
+The executable workflow and proof limits are in
+[host-series acquisition and admission](../benchmarks/host-series.md). Actual
+B00 values, quiet-host repeated measurements, consumer H7 and matched peers
+remain inputs to acquire; code presence is not a performance result.

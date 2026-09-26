@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Evaluate measured host-control budgets without granting performance status.
 
-The policy is an explicit, source- and scenario-bound input. This tool does not
-freeze B00, measure the resource sampler's effect, or qualify a rate series.
+The policy is an explicit, source- and scenario-bound input. This tool evaluates
+retained control measurements; it does not acquire them, freeze B00, or qualify
+a rate series.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import host_perf
 import host_sampler
 from host_run import write_new
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 POLICY_KEYS = {
     "schema_version",
     "scenario_sha256",
@@ -34,6 +35,7 @@ POLICY_KEYS = {
     "max_snapshot_relative_delta",
     "max_snapshot_p99_relative_delta",
     "max_recorder_response_fraction_delta",
+    "max_recorder_process_duration_relative_delta",
     "max_sampler_relative_delta",
     "max_sampler_p99_relative_delta",
 }
@@ -78,6 +80,7 @@ def parse_policy(data: bytes) -> dict[str, Any]:
         "max_snapshot_relative_delta",
         "max_snapshot_p99_relative_delta",
         "max_recorder_response_fraction_delta",
+        "max_recorder_process_duration_relative_delta",
         "max_sampler_relative_delta",
         "max_sampler_p99_relative_delta",
     ):
@@ -89,6 +92,17 @@ def pair_runs(runs: Any, minimum: int, label: str) -> list[tuple[dict, dict]]:
     if not isinstance(runs, list) or len(runs) % 2 or len(runs) < minimum * 2:
         raise host_perf.ReceiptError(f"{label} lacks the declared independent pairs")
     return [(runs[index], runs[index + 1]) for index in range(0, len(runs), 2)]
+
+
+def balanced_pairs(runs: Any, minimum: int, label: str, modes: tuple[str, str]) -> list:
+    pairs = pair_runs(runs, minimum, label)
+    orders = [(first["mode"], second["mode"]) for first, second in pairs]
+    forward, reverse = modes, tuple(reversed(modes))
+    if any(order not in (forward, reverse) for order in orders):
+        raise host_perf.ReceiptError(f"{label} pair does not contain both control arms")
+    if orders.count(forward) != orders.count(reverse):
+        raise host_perf.ReceiptError(f"{label} pair order is unbalanced")
+    return pairs
 
 
 def cohort_rates(run: dict, label: str) -> dict[str, float]:
@@ -161,6 +175,45 @@ def read_bound_artifact(path: Path, expected_sha256: str, label: str) -> bytes:
     return data
 
 
+def run_health(metrics: dict, label: str, index: int) -> dict:
+    counts = metrics["counts"]
+    return {
+        "study": label,
+        "index": index,
+        "not_submitted": host_perf.nat(counts["not_submitted"], f"{label}.not_submitted"),
+        "unanswered_at_settlement": host_perf.nat(
+            counts["unanswered_at_settlement"], f"{label}.unanswered_at_settlement"
+        ),
+        "max_producer_lag_ns": host_perf.nat(
+            metrics["max_producer_lag_ns"], f"{label}.max_producer_lag_ns"
+        ),
+        "late_snapshot_samples": host_perf.nat(
+            metrics["late_snapshot_samples"], f"{label}.late_snapshot_samples"
+        ),
+    }
+
+
+def study_health(directory: Path, runs: list, label: str) -> list[dict]:
+    observations = []
+    for index, run in enumerate(runs):
+        # Minimal mode deliberately has no summary or Snapshot observation.
+        # Its typed raw verifier rejects Snapshot sampling and unresolved callers.
+        if run["summary_sha256"] is None:
+            metrics = {**run["metrics"], "late_snapshot_samples": 0}
+        else:
+            summary = host_perf.parse_object(
+                read_bound_artifact(
+                    host_aa.paths(directory, index)["summary"],
+                    run["summary_sha256"],
+                    f"{label} summary {index}",
+                ),
+                f"{label} summary {index}",
+            )
+            metrics = summary["metrics"]
+        observations.append(run_health(metrics, label, index))
+    return observations
+
+
 def assess(
     policy_bytes: bytes,
     scenario_path: Path,
@@ -196,6 +249,10 @@ def assess(
     if bundle["observed_span_ns"] > policy["max_span_ns"]:
         raise host_perf.ReceiptError("control budget acquisition span exceeded")
     digests = bundle["artifact_sha256"]
+    target = host_perf.parse_object(
+        read_bound_artifact(host_summary, digests["target"]["summary"], "target summary"),
+        "target summary",
+    )
     aa = host_perf.parse_object(
         read_bound_artifact(aa_directory / "aa-bundle.json", digests["aa_bundle"], "A/A bundle"),
         "A/A bundle",
@@ -250,6 +307,14 @@ def assess(
     if any(previous[1] > current[0] for previous, current in zip(windows, windows[1:])):
         raise host_perf.ReceiptError("sampler and control process windows overlap")
     combined_span_ns = windows[-1][1] - windows[0][0]
+    health = [run_health(target["metrics"], "target", 0)]
+    for directory, study, label in (
+        (aa_directory, aa, "A/A"),
+        (snapshot_directory, snapshot, "Snapshot"),
+        (recorder_directory, recorder, "recorder"),
+        (sampler_directory, sampler, "sampler"),
+    ):
+        health.extend(study_health(directory, study["runs"], label))
     aa_effects = [
         rate_effects(first, second, f"A/A pair {index}")
         for index, (first, second) in enumerate(pair_runs(aa["runs"], policy["min_pairs"], "A/A"))
@@ -261,7 +326,7 @@ def assess(
     snapshot_effects = []
     snapshot_p99_effects = []
     for index, (first, second) in enumerate(
-        pair_runs(snapshot["runs"], policy["min_pairs"], "Snapshot")
+        balanced_pairs(snapshot["runs"], policy["min_pairs"], "Snapshot", ("on", "off"))
     ):
         off, on = (first, second) if first["mode"] == "off" else (second, first)
         snapshot_effects.append(rate_effects(off, on, f"Snapshot pair {index}"))
@@ -269,16 +334,26 @@ def assess(
             p99_effects(off, on, policy["min_success_samples_per_cohort"], f"Snapshot pair {index}")
         )
     recorder_effects = []
-    for first, second in pair_runs(recorder["runs"], policy["min_pairs"], "recorder"):
+    recorder_duration_effects = []
+    for first, second in balanced_pairs(
+        recorder["runs"], policy["min_pairs"], "recorder", ("full", "minimal")
+    ):
         full, minimal = (first, second) if first["mode"] == "full" else (second, first)
         recorder_effects.append(recorder_response_effect(full, minimal))
+        recorder_duration_effects.append(
+            relative_delta(
+                full["probe_process_duration_ns"],
+                minimal["probe_process_duration_ns"],
+                "recorder probe process duration",
+            )
+        )
     max_aa = max(value for pair in aa_effects for value in pair.values())
     max_snapshot = max(value for pair in snapshot_effects for value in pair.values())
     max_recorder = max(recorder_effects)
     sampler_effects = []
     sampler_p99_effects = []
     for index, (first, second) in enumerate(
-        pair_runs(sampler["runs"], policy["min_pairs"], "sampler")
+        balanced_pairs(sampler["runs"], policy["min_pairs"], "sampler", ("on", "off"))
     ):
         off, on = (first, second) if first["mode"] == "off" else (second, first)
         sampler_effects.append(rate_effects(off, on, f"sampler pair {index}"))
@@ -299,6 +374,7 @@ def assess(
         "max_snapshot_relative_delta": max_snapshot,
         "max_snapshot_p99_relative_delta": max_snapshot_p99,
         "max_recorder_response_fraction_delta": max_recorder,
+        "max_recorder_process_duration_relative_delta": max(recorder_duration_effects),
         "max_sampler_relative_delta": max_sampler,
         "max_sampler_p99_relative_delta": max_sampler_p99,
         "aa_pairs": len(aa_effects),
@@ -306,8 +382,15 @@ def assess(
         "recorder_pairs": len(recorder_effects),
         "sampler_pairs": len(sampler_effects),
         "combined_span_ns": combined_span_ns,
+        "run_health": health,
     }
     violations = []
+    for run in health:
+        for key in ("not_submitted", "unanswered_at_settlement", "late_snapshot_samples"):
+            if run[key] != 0:
+                violations.append(f"{run['study']}/{run['index']}/{key}")
+        if run["max_producer_lag_ns"] > policy["max_host_lag_ns"]:
+            violations.append(f"{run['study']}/{run['index']}/max_producer_lag_ns")
     for key in ("generator_not_submitted", "host_not_submitted"):
         if observations[key] != 0:
             violations.append(key)
@@ -321,6 +404,10 @@ def assess(
         ("max_snapshot_relative_delta", "max_snapshot_relative_delta"),
         ("max_snapshot_p99_relative_delta", "max_snapshot_p99_relative_delta"),
         ("max_recorder_response_fraction_delta", "max_recorder_response_fraction_delta"),
+        (
+            "max_recorder_process_duration_relative_delta",
+            "max_recorder_process_duration_relative_delta",
+        ),
         ("max_sampler_relative_delta", "max_sampler_relative_delta"),
         ("max_sampler_p99_relative_delta", "max_sampler_p99_relative_delta"),
     ):
@@ -336,6 +423,7 @@ def assess(
         "sampler_bundle_sha256": host_perf.sha256(sampler_bytes),
         "scenario_sha256": policy["scenario_sha256"],
         "source_head": policy["source_head"],
+        "process_windows_epoch_ns": windows,
         "observations": observations,
         "violations": violations,
     }

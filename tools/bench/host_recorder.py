@@ -12,9 +12,9 @@ from typing import Any
 import host_aa
 import host_observer
 import host_perf
-from host_run import write_new
+from host_run import retain_control_bundle
 
-BUNDLE_VERSION = 1
+BUNDLE_VERSION = 2
 
 
 def mode_for(index: int) -> str:
@@ -77,8 +77,16 @@ def verified_run(
     else:
         raise host_perf.ReceiptError("unknown recorder mode")
     row["mode"] = mode
-    resources = host_perf.parse_object(artifact_paths["resources"].read_bytes(), "resources")
+    provenance = host_perf.parse_object(artifact_paths["provenance"].read_bytes(), "provenance")
+    resources = host_perf.validate_resource_artifact(
+        artifact_paths["resources"].read_bytes(), provenance["runner_pid"]
+    )
     row["resource_cadence_ms"] = resources["cadence_ms"]
+    row["probe_process_duration_ns"] = (
+        resources["sampling_ended_monotonic_ns"] - resources["sampling_started_monotonic_ns"]
+    )
+    if row["probe_process_duration_ns"] <= 0:
+        raise host_perf.ReceiptError("recorder probe duration must be positive")
     return row, identity
 
 
@@ -117,7 +125,9 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
         if not isinstance(recorded, dict):
             raise host_perf.ReceiptError("recorder run must be an object")
         host_perf.exact_keys(
-            recorded, host_aa.RUN_KEYS | {"mode", "resource_cadence_ms"}, f"recorder run {index}"
+            recorded,
+            host_aa.RUN_KEYS | {"mode", "resource_cadence_ms", "probe_process_duration_ns"},
+            f"recorder run {index}",
         )
         mode = mode_for(index)
         if recorded["mode"] != mode:
@@ -131,6 +141,7 @@ def verify_bundle(bundle_bytes: bytes, directory: Path, scenario_bytes: bytes) -
             expected_cadence = actual["resource_cadence_ms"]
         elif actual["resource_cadence_ms"] != expected_cadence:
             raise host_perf.ReceiptError("recorder resource sampling cadence changed")
+    host_aa.validate_study_windows(directory, runs, "recorder")
     return bundle
 
 
@@ -202,11 +213,12 @@ def acquire(
         "runs": runs,
         "failures": failures,
     }
-    bundle_bytes = host_perf.canonical(bundle) + b"\n"
-    write_new(directory / "recorder-bundle.json", bundle_bytes)
-    if failures:
-        raise host_perf.ReceiptError(f"recorder acquisition incomplete: {failures[0]}")
-    verify_bundle(bundle_bytes, directory, scenario_bytes)
+    retain_control_bundle(
+        directory / "recorder-bundle.json",
+        bundle,
+        lambda data: verify_bundle(data, directory, scenario_bytes),
+        "recorder",
+    )
     return bundle
 
 

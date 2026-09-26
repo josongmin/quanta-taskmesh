@@ -805,3 +805,17 @@ def test_sparse_snapshot_peaks_are_labeled_lower_bounds() -> None:
     raw["snapshots"][0]["classes"]["c"]["cpu_units_held"] = "01"
     with pytest.raises(host_perf.ReceiptError, match="canonical decimal"):
         host_perf.make_summary(encoded(raw), scenario_bytes, identity, calibration, 2)
+
+
+@pytest.mark.parametrize("name", ["tenant/io", "tenant/team/interactive", "팀/cpu"])
+def test_cohort_slo_preserves_slashes_in_class_identity(name: str) -> None:
+    raw, scenario, _identity, _calibration = fixture()
+    scenario["classes"][0]["name"] = name
+    for offer in scenario["offers"]:
+        offer["class"] = name
+    for row in raw["records"]:
+        row["class"] = name
+    raw["class_counters"][name] = raw["class_counters"].pop("c")
+    metrics = host_perf.analyze_raw(raw, scenario)
+    assert metrics["cohort_goodput"][f"{name}/io"]["slo_ns"] == 5_000_000
+    assert metrics["cohort_goodput"][f"{name}/io"]["slo_fraction"] == 1.0

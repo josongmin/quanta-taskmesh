@@ -12,7 +12,7 @@ from typing import Any
 
 import host_aa
 import host_perf
-from host_run import write_new
+from host_run import retain_control_bundle, write_new
 
 BUNDLE_VERSION = 1
 
@@ -89,6 +89,7 @@ def verify_bundle(bundle_bytes: bytes, directory: Path) -> dict[str, Any]:
             raise host_perf.ReceiptError(f"Snapshot run {index} artifact or metric differs")
         if identity != bundle["identity"] or actual["binary_sha256"] != bundle["binary_sha256"]:
             raise host_perf.ReceiptError("Snapshot source, host or binary changed")
+    host_aa.validate_study_windows(directory, runs, "Snapshot")
     return bundle
 
 
@@ -160,11 +161,12 @@ def acquire(
         "runs": runs,
         "failures": failures,
     }
-    bundle_bytes = host_perf.canonical(bundle) + b"\n"
-    write_new(directory / "snapshot-bundle.json", bundle_bytes)
-    if failures:
-        raise host_perf.ReceiptError(f"Snapshot acquisition incomplete: {failures[0]}")
-    verify_bundle(bundle_bytes, directory)
+    retain_control_bundle(
+        directory / "snapshot-bundle.json",
+        bundle,
+        lambda data: verify_bundle(data, directory),
+        "Snapshot",
+    )
     return bundle
 
 

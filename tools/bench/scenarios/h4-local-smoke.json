@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "id": "h4-caller-affine-local-smoke-v1",
+  "schema_version": 2,
+  "id": "h4-caller-affine-local-smoke-v2",
   "load": {
     "warmup_ms": 2,
     "injection_ms": 100,

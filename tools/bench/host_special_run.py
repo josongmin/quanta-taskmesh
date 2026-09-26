@@ -76,7 +76,9 @@ def verify_receipt(directory: Path, *, require_current_source: bool = False) -> 
         "source_content_sha256",
     }
     host_perf.exact_keys(receipt, expected, "special receipt")
-    if receipt["schema_version"] != 1 or receipt["mode"] not in RUNNERS:
+    if type(receipt["schema_version"]) is not int or receipt["schema_version"] != 1:
+        raise host_perf.ReceiptError("special receipt version differs")
+    if not isinstance(receipt["mode"], str) or receipt["mode"] not in RUNNERS:
         raise host_perf.ReceiptError("special receipt version or mode differs")
     if receipt["status"] != "complete" or receipt["reason"] is not None:
         raise host_perf.ReceiptError(f"special receipt invalid: {receipt['reason']}")
@@ -87,8 +89,29 @@ def verify_receipt(directory: Path, *, require_current_source: bool = False) -> 
     host_perf.validate_identity(receipt["start_identity"])
     if receipt["features"] != receipt["start_identity"]["features"]:
         raise host_perf.ReceiptError("special feature identity differs")
-    if receipt["runner_exit_code"] != 0 or receipt["validator_exit_code"] != 0:
-        raise host_perf.ReceiptError("special runner or validator failed")
+    built_features = receipt["build_artifact_features"]
+    if (
+        not isinstance(built_features, list)
+        or not all(isinstance(feature, str) and feature for feature in built_features)
+        or built_features != sorted(set(built_features))
+        or "default" not in built_features
+        or not set(receipt["features"]).issubset(built_features)
+    ):
+        raise host_perf.ReceiptError("special build artifact features differ")
+    source_digest = receipt["source_content_sha256"]
+    if (
+        not isinstance(source_digest, str)
+        or len(source_digest) != 64
+        or any(character not in "0123456789abcdef" for character in source_digest)
+    ):
+        raise host_perf.ReceiptError("special source content digest is invalid")
+    if (
+        type(receipt["runner_exit_code"]) is not int
+        or type(receipt["validator_exit_code"]) is not int
+        or receipt["runner_exit_code"] != 0
+        or receipt["validator_exit_code"] != 0
+    ):
+        raise host_perf.ReceiptError("special runner or validator exit is not zero")
     for name in ("scenario", "raw", "topology", "runner", "validator", "resources"):
         actual = host_perf.sha256((directory / name).read_bytes())
         if actual != receipt[f"{name}_sha256"]:

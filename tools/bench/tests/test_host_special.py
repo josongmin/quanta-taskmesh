@@ -41,7 +41,7 @@ def receipt_directory(tmp_path: Path) -> Path:
         "build_artifact_features": ["default"],
         "start_identity": identity,
         "end_identity": identity,
-        "source_content_sha256": "source",
+        "source_content_sha256": "a" * 64,
     }
     (tmp_path / "receipt.json").write_text(json.dumps(receipt))
     return tmp_path
@@ -79,4 +79,35 @@ def test_special_receipt_checks_digest_then_retained_typed_validator(
         ),
     )
     with pytest.raises(host_perf.ReceiptError, match="typed special raw/topology rejected"):
+        host_special_run.verify_receipt(directory)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("schema_version", True, "version"),
+        ("source_content_sha256", None, "source content digest"),
+        ("build_artifact_features", "default", "build artifact features"),
+        ("runner_exit_code", False, "runner or validator exit"),
+    ],
+)
+def test_special_receipt_rejects_malformed_identity_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    field: str,
+    value: object,
+    error: str,
+) -> None:
+    directory = receipt_directory(tmp_path)
+    receipt = json.loads((directory / "receipt.json").read_text())
+    receipt[field] = value
+    (directory / "receipt.json").write_text(json.dumps(receipt))
+    monkeypatch.setattr(host_perf, "validate_identity", lambda _identity: None)
+    monkeypatch.setattr(host_perf, "validate_resource_artifact", lambda _data, _pid: None)
+    monkeypatch.setattr(
+        host_special_run.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, "valid", ""),
+    )
+    with pytest.raises(host_perf.ReceiptError, match=error):
         host_special_run.verify_receipt(directory)

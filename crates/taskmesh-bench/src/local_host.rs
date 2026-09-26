@@ -18,7 +18,7 @@ use crate::host_scenarios::{
     HostBody, HostClass, HostLoadEnvelope, HostOffer, HostPath, HostScenario, HostTopology,
 };
 
-pub const LOCAL_HOST_VERSION: u32 = 1;
+pub const LOCAL_HOST_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -96,6 +96,7 @@ pub struct LocalRecord {
     pub id: usize,
     pub class: String,
     pub intended_ns: u64,
+    pub pacer_observed_ns: u64,
     pub scheduled_lag_ns: u64,
     pub submitted_ns: Option<u64>,
     pub body_started_ns: Option<u64>,
@@ -138,6 +139,11 @@ impl LocalHostRun {
             if row.id != id || row.class != offer.class || row.intended_ns != offer.send_time_ns {
                 return Err(format!("local row {id}: offer identity differs"));
             }
+            if row.pacer_observed_ns < row.intended_ns
+                || row.scheduled_lag_ns != row.pacer_observed_ns - row.intended_ns
+            {
+                return Err(format!("local row {id}: invalid pacer observation or lag"));
+            }
             match row.submitted_ns {
                 None => {
                     if row.body_started_ns.is_some()
@@ -149,10 +155,7 @@ impl LocalHostRun {
                     }
                 }
                 Some(submit) => {
-                    if submit < row.intended_ns
-                        || submit >= self.injection_window_ns
-                        || row.scheduled_lag_ns != submit - row.intended_ns
-                    {
+                    if submit != row.pacer_observed_ns || submit >= self.injection_window_ns {
                         return Err(format!("local row {id}: invalid submit or lag"));
                     }
                     let response = row
@@ -267,6 +270,7 @@ async fn run_inner(
                     id,
                     class: offer.class.clone(),
                     intended_ns: offer.send_time_ns,
+                    pacer_observed_ns: 0,
                     scheduled_lag_ns: 0,
                     submitted_ns: None,
                     body_started_ns: None,
@@ -287,7 +291,11 @@ async fn run_inner(
         ))
         .await;
         let observed_ns = since(origin);
-        rows[id].borrow_mut().scheduled_lag_ns = observed_ns.saturating_sub(offer.send_time_ns);
+        {
+            let mut row = rows[id].borrow_mut();
+            row.pacer_observed_ns = observed_ns;
+            row.scheduled_lag_ns = observed_ns.saturating_sub(offer.send_time_ns);
+        }
         if observed_ns >= cut_ns || active.get() >= scenario.load.max_outstanding {
             continue;
         }

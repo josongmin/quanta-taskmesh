@@ -104,7 +104,9 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   `local_host.rs`는 current-thread LocalSet에서 `!Send` payload를 실행하고,
   같은 caller thread의 finite pacer 지연/미제출을 별도 raw에 남긴다. Snapshot,
   deadline, cancel/drop은 이 진단 schema에서 지원하지 않으며 IO 경로로 대체하지
-  않는다. 비교 측정은 없다.
+  않는다. local schema v2는 미제출 offer도 pacer 관측 시각을 보관하고 lag와
+  재계산해 대조한다. v1 raw는 이 검사를 제공하지 않으므로 v2 증거로 승격할 수 없다.
+  비교 측정은 없다.
   `composite_host.rs`는 H6에서 부모의 reduce 선언과 별도 공개 호출로 제출한
   IO/blocking/CPU 자식 세 건을 진단한다. 한 자식의 작업 오류에도 caller가
   성공 키를 정렬해 합치며, 자식별 시각·결과, class 정산, root attribution 소멸을

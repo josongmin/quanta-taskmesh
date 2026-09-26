@@ -156,11 +156,17 @@ def test_fingerprint_changes_with_every_compatibility_input(tmp_path: Path) -> N
         iai_gate.fingerprint(**{**base, "inputs": []})
 
 
-def test_every_configured_fingerprint_input_changes_the_fingerprint(tmp_path: Path) -> None:
+def test_every_configured_fingerprint_input_changes_the_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The CI cache key and the stamp both come from `fingerprint` over the
     configured input list. Each configured file must move it: a dependency
     bump (`Cargo.lock`) or a threshold change (`perf-gate.json`) that left the
     fingerprint alone would compare a new measurement against an old baseline."""
+    runner_bin = tmp_path / "bin"
+    runner_bin.mkdir()
+    _shim(runner_bin, "iai-callgrind-runner", "echo 'Detected version 0.14.2' >&2\nexit 1\n")
+    monkeypatch.setenv("PATH", f"{runner_bin}{os.pathsep}{os.environ.get('PATH', '')}")
     config = iai_gate.gate_config()
     root = tmp_path / "root"
     for rel in config["fingerprint_inputs"]:

@@ -327,13 +327,22 @@ async fn complete_raw_rejects_failed_settlement_and_retained_ownership() {
             _ => unreachable!(),
         }
         assert_eq!(raw.status, HostRunStatus::Complete);
-        assert!(raw.validate().is_err(), "{case}");
-        assert!(raw.validate_against(&scenario).is_err(), "{case}");
+        let expected = "complete host run did not settle owned engine capacity";
+        assert_eq!(raw.validate().unwrap_err(), expected, "{case}");
+        assert_eq!(
+            raw.validate_against(&scenario).unwrap_err(),
+            expected,
+            "{case}"
+        );
         // Failed evidence stays serializable for diagnosis, including callers
         // that retain it before invoking the validation boundary.
         let bytes = serde_json::to_vec(&raw).expect("failed raw is retainable");
         let restored: RawHostRun = serde_json::from_slice(&bytes).unwrap();
-        assert!(restored.validate_against(&scenario).is_err(), "{case}");
+        assert_eq!(
+            restored.validate_against(&scenario).unwrap_err(),
+            expected,
+            "{case}"
+        );
     }
     let mut forged = good.clone();
     forged.final_capabilities = BTreeMap::from([("unregistered".into(), 0)]);

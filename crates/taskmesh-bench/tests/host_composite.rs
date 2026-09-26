@@ -88,7 +88,10 @@ async fn composite_timeout_retains_typed_invalid_raw_and_settlement_observation(
         serde_json::to_vec(&wrong_capabilities).expect("invalid diagnostic is retainable");
     let restored: taskmesh_bench::composite_host::CompositeFailureRaw =
         serde_json::from_slice(&retained).unwrap();
-    assert!(restored.validate_against(&scenario).is_err());
+    assert!(restored
+        .validate_against(&scenario)
+        .unwrap_err()
+        .contains("capability catalog differs from resolved runtime"));
     assert_eq!(
         *failure.topology.expect("failure topology must be retained"),
         scenario.resolved_topology().expect("scenario topology")

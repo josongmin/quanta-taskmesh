@@ -32,7 +32,7 @@ Fails closed on:
     makes every run NOT_RUN.
 - an action ref that is not a full commit SHA, a workflow default token that
   is not read-only, or a write-capable job reachable outside trusted main.
-- any automatic hosted trigger outside the bounded `pr-ci.yml` 16-gate profile;
+- any automatic GitHub Actions trigger; CircleCI owns bounded PR/main CI and
   full qualification and deep producers remain manual-only.
 - a Cargo/pytest/fuzz test target with no declared gate executor, or a drifted
   feature-only model/IAI target, fuzz producer target, or Justfile selector.
@@ -60,10 +60,12 @@ REPO = Path(__file__).resolve().parents[2]
 INVENTORY = Path(__file__).resolve().parent / "inventory.json"
 REQUIRED = Path(__file__).resolve().parent / "required.json"
 WORKFLOWS = REPO / ".github" / "workflows"
+CIRCLECI_CONFIG = REPO / ".circleci" / "config.yml"
 JUSTFILE = REPO / "Justfile"
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from tools.ci.check_circleci import circleci_contract_problems  # noqa: E402
 from tools.gates.parallel_policy import PARALLEL_GROUP_MEMBERS  # noqa: E402
 from tools.gates.target_catalog import (  # noqa: E402
     RECIPE_FRAGMENTS,
@@ -474,7 +476,7 @@ def all_workflow_trust_problems(workflows_dir: Path) -> list[str]:
 
 
 def workflow_trigger_problems(path: Path, document: object) -> list[str]:
-    """Keep full workflows manual and admit only the bounded PR CI workflow.
+    """Keep every GitHub Actions workflow manual after the CircleCI cutover.
 
     PyYAML follows YAML 1.1 and may decode the plain key ``on`` as boolean
     ``True``. Read both spellings so the guard validates the actual workflow
@@ -489,17 +491,12 @@ def workflow_trigger_problems(path: Path, document: object) -> list[str]:
         names = {str(name) for name in triggers}
     else:
         names = set()
-    expected = {"pull_request", "push"} if path.name == "pr-ci.yml" else {"workflow_dispatch"}
+    expected = {"workflow_dispatch"}
     if names != expected:
         return [
             f"{path.name}: hosted triggers must be exactly {sorted(expected)!r}; "
             f"found {sorted(names)!r}"
         ]
-    if path.name == "pr-ci.yml":
-        pull = triggers.get("pull_request")
-        push = triggers.get("push")
-        if pull not in (None, {}) or push != {"branches": ["main"]}:
-            return [f"{path.name}: PR must have no filters and push must select only main"]
     return []
 
 
@@ -884,6 +881,9 @@ def main() -> int:
         nightly_leaves = expand_recipe("nightly")
         inventory_recipes = {g.get("recipe") for g in inventory.get("gates", []) if g.get("recipe")}
         enforcement = [
+            *circleci_contract_problems(
+                yaml.safe_load(CIRCLECI_CONFIG.read_text(encoding="utf-8")), required
+            ),
             *workflow_enforcement_problems(WORKFLOWS, inventory_recipes),
             *all_workflow_trust_problems(WORKFLOWS),
             *all_workflow_trigger_problems(WORKFLOWS),

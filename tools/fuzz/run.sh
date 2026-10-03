@@ -31,17 +31,18 @@ not_run() {
   exit 2
 }
 
-if ! rustup run nightly rustc -V >/dev/null 2>&1; then
-  not_run "nightly toolchain not installed (rustup toolchain install nightly)" no-nightly
+fuzz_toolchain="${TASKMESH_FUZZ_TOOLCHAIN:-nightly}"
+if ! rustup run "${fuzz_toolchain}" rustc -V >/dev/null 2>&1; then
+  not_run "${fuzz_toolchain} toolchain not installed" no-nightly
 fi
-if ! cargo +nightly fuzz --version >/dev/null 2>&1; then
+if ! cargo +"${fuzz_toolchain}" fuzz --version >/dev/null 2>&1; then
   not_run "cargo-fuzz not installed (cargo install cargo-fuzz)" no-cargo-fuzz
 fi
 
 # A prebuilt cargo-fuzz binary may target musl while the compiler hosts GNU.
 # cargo-fuzz otherwise derives the target from its own executable, which makes
 # sanitizer builds fail before any fuzz input is executed on that CI setup.
-host_target="$(rustc +nightly -vV | sed -n 's/^host: //p')"
+host_target="$(rustc +"${fuzz_toolchain}" -vV | sed -n 's/^host: //p')"
 if [ -z "${host_target}" ]; then
   echo "fuzz: nightly rustc did not report a host target" >&2
   exit 1
@@ -58,7 +59,7 @@ fi
 
 cd fuzz
 # One target name per line; macOS ships bash 3.2, so no `mapfile`.
-targets="$(cargo +nightly fuzz list)"
+targets="$(cargo +"${fuzz_toolchain}" fuzz list)"
 if [ -z "${targets}" ]; then
   echo "fuzz: no fuzz targets found — the harness is broken, not the code" >&2
   exit 1
@@ -99,7 +100,7 @@ for target in ${targets}; do
   # `-max_total_time` bounds the campaign; a crash exits non-zero and
   # is retained as a raw artifact before semantic validation.
   set +e
-  TASKMESH_FUZZ_WITNESS=1 cargo +nightly fuzz run --target "${host_target}" "${target}" "${seed_dir}/${target}" -- -max_total_time="${seconds}" 2>&1 | tee "${log}" >&2
+  TASKMESH_FUZZ_WITNESS=1 cargo +"${fuzz_toolchain}" fuzz run --target "${host_target}" "${target}" "${seed_dir}/${target}" -- -max_total_time="${seconds}" 2>&1 | tee "${log}" >&2
   target_exit="${PIPESTATUS[0]}"
   set -e
   if [ "${target_exit}" -ne 0 ]; then

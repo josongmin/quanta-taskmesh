@@ -1,11 +1,12 @@
-# 0.3 technical compatibility review at `aadfa07`
+# 0.3 technical compatibility review
 
 This is a non-approving inventory for the release owner. It does not set
 `version_decision`, create `target/release/input/adjudication.json`, attest
 `all_tool_findings_reviewed`, or qualify a release.
 
-- Candidate: `aadfa07c0ae437dc51e6abd1387e169b8c613921`, clean tree
-  `3e7a3995c97c10ab90c92e7e3ed44294c6ca9a70`.
+- Reference clean report: `7e0e5de4c8647e2d85ef12baa905e1be223a42ce`,
+  tree `a645248a724d45cc86a9925f1209812273d0d139`. Its report was
+  generated before the `AdmissionVerdict` order repair below.
 - Immutable baseline: 0.2.0 commit
   `39bee682d7daa1efaf1c10993ba6221fd0a90871`.
 - Producer: pinned `cargo-semver-checks 0.50.0`, `--default-features`,
@@ -15,7 +16,7 @@ This is a non-approving inventory for the release owner. It does not set
 
 | Crate | Raw report groups | Technical disposition |
 |---|---|---|
-| `taskmesh-contract` | `TopologyConfig.physical_domains`; removed derives and enum-to-struct `PlanSource`; `TerminalReason` derive/discriminant changes; shifted `AdmissionVerdict` discriminants; `TaskScope::Child` fields; `TaskSpec::child_of` arity | Published Rust source breaks. The new child identity and provenance rules also need wire/behavior review. |
+| `taskmesh-contract` | `TopologyConfig.physical_domains`; removed derives and enum-to-struct `PlanSource`; `TerminalReason` derive/discriminant changes; shifted `AdmissionVerdict` discriminants in the reference report; `TaskScope::Child` fields; `TaskSpec::child_of` arity | Published Rust source breaks. The new child identity and provenance rules also need wire/behavior review. |
 | `taskmesh-engine` | `PendingView` and `PermitLedgerView` fields; `Provenance`/`ClaimOutcome` derives; `ReleaseOutcome::HeldByLease`; removed `PolicySet::capability_limit(s)` | Published direct-embedder source breaks. Lease custody changes behavior and must be reviewed independently. |
 | `taskmesh` | `BlockingPoolCpuExecutor` changed from unit struct to a struct with a worker count | Published `taskmesh::ext` source break. Builder users do not directly construct this adapter. The facade's reexported contract/engine/Rayon surface still needs manual review. |
 | `taskmesh-rayon` | Removed `RayonCpuExecutor::new` and `from_topology` | Published source breaks. The typed `try_*` constructors replace these panic wrappers; their return type also changed and is outside this tool's type comparison. |
@@ -24,6 +25,16 @@ The corresponding migration text is in `CHANGELOG.md` under 0.3.0. These
 groups are not a claim that every raw finding has been individually mapped to
 an approved break item. In particular, the release reviewer must bind the
 exact log digests and each raw locator in a reviewer-owned adjudication copy.
+
+## Avoidable discriminant change removed
+
+The reference report listed nine `enum_no_repr_variant_discriminant_changed`
+findings because the new `AdmissionVerdict::IdentityExhausted` preceded
+`ClassificationFailed`. The current source places it after the 0.2 variants.
+A focused dirty-source `cargo semver-checks check-release -p taskmesh-contract`
+comparison against the immutable baseline no longer reported that lint;
+`error_surface` passed 12/12. This diagnostic does not replace the final
+clean four-crate report or CI receipt.
 
 ## Tool blind spots to adjudicate
 

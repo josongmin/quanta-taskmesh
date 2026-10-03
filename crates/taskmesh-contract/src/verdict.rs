@@ -36,11 +36,6 @@ pub enum AdmissionVerdict {
     /// totals (a sticky accounting fault). Neither is a backpressure hint:
     /// there is no retry-after, and retrying does not help.
     RuntimeUnavailable,
-    /// The governor cannot issue another unique permit/ticket identity. No
-    /// queue or resource ledger was changed. Reusing a wrapped identity would
-    /// make stale handles capable of mutating unrelated work, so exhaustion is
-    /// terminal for new admission on this governor.
-    IdentityExhausted,
     ClassificationFailed,
     PermitAcquireTimedOut {
         retry_after_ms: Option<u64>,
@@ -79,6 +74,12 @@ pub enum AdmissionVerdict {
     NestedWaitCycle {
         held_by_root: HeldCapacity,
     },
+    /// The governor cannot issue another unique permit/ticket identity. No
+    /// queue or resource ledger was changed. Reusing a wrapped identity would
+    /// make stale handles capable of mutating unrelated work, so exhaustion is
+    /// terminal for new admission on this governor. Append new variants after
+    /// the 0.2 surface so existing variant discriminants remain stable.
+    IdentityExhausted,
 }
 
 /// The capacity a [`AdmissionVerdict::NestedWaitCycle`] child was waiting for,

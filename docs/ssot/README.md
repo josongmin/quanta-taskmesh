@@ -13,11 +13,11 @@ The current-source verdict and verification scope are in the
 - GitHub `main` protection requires the strict `required 16-gate verdict` check. Its [main-push run](https://github.com/josongmin/quanta-taskmesh/actions/runs/36261855351) passed on that SHA. A later document or code commit needs a new exact-source result.
 - `pr-ci.yml` is active on PR/main. Full `ci.yml`, `bench.yml`, and `release.yml` have manual-only source triggers and were disabled in GitHub settings at inspection. There is no scheduled full nightly run. `nightly` names a high-cost proof profile, not a cron schedule.
 - The current remediation branch contains Taskmesh host/API and
-  measured-admission changes. The initial dirty-source checks are diagnostic.
-  A subsequent clean candidate passed local macOS CI, while its hosted PR check
-  exposed a newer Rust deprecation; the follow-up source repair needs fresh
-  exact-source evidence. Read the [audit](../audits/2026-10-03-current-source-final.md)
-  and PR for candidate identities. Nightly, Linux release, performance and
+  measured-admission changes. Its clean `f2808d3` candidate passed local macOS
+  CI 16/16 and [PR #9's hosted check](https://github.com/josongmin/quanta-taskmesh/actions/runs/37105889890)
+  passed at synthetic merge `85907fc`. The [audit](../audits/2026-10-03-current-source-final.md)
+  records the earlier toolchain failures and source identities. A later commit
+  needs its own exact-source result. Nightly, Linux release, performance and
   Semantica consumer qualification remain OPEN.
 
 ## Authority map

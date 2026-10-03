@@ -15,7 +15,7 @@
   `with_absolute_deadline` to `run_blocking_with`. Changes in that repository
   are deferred by user direction.
 
-## T1 — exact-source Taskmesh CI and publication (completed for `f2808d3`)
+## T1 — exact-source Taskmesh CI and publication (completed for `aadfa07`)
 
 **Owner:** Taskmesh. The implementation was committed on an isolated `codex/`
 branch after reviewing the code, documentation deletion and evidence relocation.
@@ -25,8 +25,13 @@ passed the strict hosted [required check](https://github.com/josongmin/quanta-ta
 on synthetic merge `85907fc3fdef2c13962daf186f7f0b6ab2a08d5e` with 16/16
 PASS. The branch rule was already configured. These results do not qualify a
 later commit: rerun the same exact-source checks for a changed head or merge.
-`docs/ssot/README.md` remains a navigation index, and this repository remains
-library-only.
+The later clean `aadfa07c0ae437dc51e6abd1387e169b8c613921` also passed
+all 16 local macOS CI gates under Rust 1.99.0; its receipt validated with
+`--expected-head` set to that SHA. The hosted [required check](https://github.com/josongmin/quanta-taskmesh/actions/runs/37107738458)
+passed 16/16 for PR #9 head `aadfa07` on synthetic merge
+`5798afc747c7a15fa704f473931142894578d7c1`; that merge and the head have
+the same tree `3e7a3995c97c10ab90c92e7e3ed44294c6ca9a70`. `docs/ssot/README.md`
+remains a navigation index, and this repository remains library-only.
 
 ## T2 — 0.3 API compatibility adjudication
 
@@ -35,11 +40,12 @@ unreleased 0.3 API removes deprecated
 `RayonCpuExecutor::new/from_topology`; consumers use typed
 `try_new/try_from_topology` and `taskmesh::ext::RayonBuildError`.
 
-1. `just semver-release` reported against immutable 0.2.0 on clean `f2808d3`.
+1. `just semver-release` reported against immutable 0.2.0 on clean `aadfa07`.
    All four public crates have findings; the Rayon report names the two
-   intentionally removed constructors. This producer reports Rust API changes
-   but does not decide wire or behavior compatibility. Rerun it for a later
-   release candidate.
+   intentionally removed constructors. The [technical finding inventory](../audits/2026-10-03-semver-technical-review.md)
+   maps the raw reports and known blind spots without supplying reviewer
+   approval. This producer reports Rust API changes but does not decide wire
+   or behavior compatibility. Rerun it for a later release candidate.
 2. Record the final-SHA human adjudication for Rust API, wire and behavior in
    the release process. The independent consumer-MSRV default/Rayon fixture
    passed on the earlier clean CI candidate and in a focused run after the

@@ -45,6 +45,11 @@ receipt.
    [main-push run](https://github.com/josongmin/quanta-taskmesh/actions/runs/36261855351)
    passed at `c4bcb2f`. This is an exact-source merge control, not nightly,
    release, performance or consumer adoption approval.
+8. Pin the PR workflow's Rust toolchain to a versioned compiler with Clippy and
+   rustfmt. A rolling `stable` changed its warning set between the local audit
+   and hosted execution, so a source-identical check was not reproducible.
+   Toolchain upgrades require their own source change and exact-merge-SHA run;
+   the consumer MSRV remains a separate Rust 1.81 check.
 
 ## Completed verification changes
 

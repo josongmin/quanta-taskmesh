@@ -24,7 +24,7 @@
 | SDK / Rayon | Facade reexports plan error types; Rayon panic constructors were removed and `RayonBuildError` reexported. | Removing public methods is a Rust source break; final 0.2.0-to-0.3.0 semver adjudication remains OPEN. |
 | Production `expect` | Default-feature uses were classified by their validated/private preconditions. No caller-controlled panic counterexample was established. Test-only and `test-util` cases are separate; Rayon panic wrappers are removed. | A discovered bypass must get a typed rejection and negative regression; no blanket conversion is justified by count alone. |
 | Module layout | Host acquisition, synchronous dispatch and detached settlement; engine memory, observation, validation and state transitions; fairness tests were split without changing crate boundaries or inventory. Parent runtime/governor/state files are 860/903/655 lines after the toolchain repair below. | Behavior-preserving source move needs exact-source CI. |
-| Atomic sequence | Hosted stable Rust deprecated `AtomicU64::fetch_update` under `-D warnings`. Both governor sequence sites now use one `compare_exchange_weak` loop, retaining unique IDs and checked exhaustion on Rust 1.81. | The revised candidate needs a new local and hosted CI result. |
+| Rust toolchain | Hosted rolling stable Rust deprecated `AtomicU64::fetch_update` under `-D warnings`; the governor now uses one checked `compare_exchange_weak` loop on Rust 1.81. The next hosted run exposed Rust 1.99's style-only `assert_is_empty` lint. CI now selects Rust 1.99.0 explicitly and allows that assertion style in the existing lint policy; all five Clippy passes were checked locally with 1.99.0. | The revised candidate needs a new local and hosted CI result. |
 | Nightly | Full `ci.yml`, `bench.yml` and `release.yml` remain manually triggered and disabled on GitHub; no cron is present. | A mutation-bearing schedule needs explicit authorization under `AGENTS.md`, runner budget and receipt authority. A bounded scheduled CI subset would have a different denominator. |
 | Old receipts | The three ignored root receipts naming `cc5b256` were moved byte-for-byte to `target/verification/historical/cc5b256704a1826e7dde36e2c4b127c6cba8aabf/`. | They remain historical diagnostics; validate any cited receipt with `--expected-head`. |
 
@@ -62,6 +62,8 @@ gates and its receipt validated against that exact HEAD. Its 0.2.0 baseline
 semver audit was `REPORTED` with findings in all four public crates, including
 the intentional Rayon method removals. The [first PR run](https://github.com/josongmin/quanta-taskmesh/actions/runs/37102825665)
 failed Clippy on GitHub's newer stable Rust because `fetch_update` became
-deprecated. The atomic sequence repair above follows that result and requires
-fresh local and hosted CI. Mutation/nightly, Linux release, measured performance
+deprecated. The [second PR run](https://github.com/josongmin/quanta-taskmesh/actions/runs/37103771725)
+then failed on Rust 1.99's new assertion-style lint. The atomic sequence and
+pinned-toolchain repairs above follow those results and require fresh local and
+hosted CI. Mutation/nightly, Linux release, measured performance
 and Semantica deployment acceptance remain **NOT_RUN**.

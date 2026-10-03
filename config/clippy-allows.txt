@@ -37,3 +37,6 @@
 # `run_local` deliberately returns a non-Send future (the local-runtime
 # substrate exists precisely for !Send work), so future_not_send is expected.
 -A clippy::future_not_send
+# Rust 1.99 added a style-only assertion lint that also flags our custom
+# is_empty() test helpers, where a Debug/PartialEq collection is unavailable.
+-A clippy::assert_is_empty

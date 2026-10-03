@@ -13,6 +13,9 @@ aggregate 16-gate check is required by live `main` protection (observed
 manual-only in source and disabled in GitHub settings; they do not replace the
 local final-release procedure. `required.json` also owns the fail-fast execution
 order; an explicit receipt `--tier` is a diagnostic subset, not canonical qualification.
+The bounded PR workflow pins Rust 1.99.0 for deterministic Clippy/rustfmt
+policy. Its Rust 1.81 consumer-MSRV gate is separate; updating the CI compiler
+requires a reviewed workflow change and a new exact-merge-SHA check.
 Run the registered recipes through `just`:
 
 - Per-edit feedback: use `just dev-rust-fast <crate> [consumer-crates...]` for

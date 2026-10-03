@@ -74,6 +74,7 @@ pub use taskmesh_contract::{
     FairnessPolicy,
     GovernorError,
     HeldCapacity,
+    IdentifierViolation,
     MemoryOvercommitPolicy,
     MemoryPermitMode,
     MemoryReleasePolicy,
@@ -96,6 +97,8 @@ pub use taskmesh_contract::{
     SubstrateKind,
     SubstrateRecord,
     TaskClass,
+    TaskIdentifierField,
+    TaskPlanError,
     TaskScope,
     TaskSpec,
     TaskStage,
@@ -136,10 +139,10 @@ pub mod ext {
 
     /// The shared Rayon CPU executor adapter, when the `rayon` feature is on.
     /// Re-exported so a consumer who wants to size or share the pool
-    /// (`RayonCpuExecutor::with_pool`, `from_topology`) does not have to add
+    /// (`RayonCpuExecutor::with_pool`, `try_from_topology`) does not have to add
     /// `taskmesh-rayon` as a direct dependency.
     #[cfg(feature = "rayon")]
-    pub use taskmesh_rayon::RayonCpuExecutor;
+    pub use taskmesh_rayon::{RayonBuildError, RayonCpuExecutor};
 
     /// The governance engine and its admission primitives, for embedding in a
     /// non-Tokio host or driving admission directly.

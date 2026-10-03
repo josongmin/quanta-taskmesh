@@ -26,6 +26,14 @@ only the submissions within its capacity authority.
    runtime teardown crosses it, the caller receives a terminal deadline result
    while the worker keeps its lease until teardown ends. A late success is not
    returned after `CompleteBy`.
+   Synchronous `run_blocking_response_by` and `run_cpu_response_by` instead
+   accept a separate absolute *caller-response* boundary. It covers acquisition
+   and response without claiming that a started synchronous closure can be
+   stopped. The host rejects combining this boundary with
+   `SubmitOptions::deadline`; the existing synchronous `CompleteBy` refusal
+   remains. The boundary is checked at permit handoff, before dispatch, before
+   user-closure start, and against worker completion. A late caller response
+   leaves the worker's lease charged until actual settlement.
 3. Cancellation, deadline, caller drop, root completion, child completion, and
    lease release are distinct transitions. Normal success is visible only after
    the required release fence. A terminal caller response may precede worker
@@ -56,7 +64,7 @@ qualification remain separate decisions.
   pool has a global bound.
 - Deployment owners must check deadline, context, and shared-executor assumptions
   at their actual call sites; see the
-  [external adoption ledger](../plans/bugbash-sep-25-general/tickets/EXTERNAL-ADOPTION.md).
+  [current consumer adoption plan](../plans/2026-10-03-current-source-remediation.md).
 - Exact API behavior and error variants remain in the
   [library spec](../taskmesh-library-spec.md) and
   [external interface](../taskmesh-external-interface.md).

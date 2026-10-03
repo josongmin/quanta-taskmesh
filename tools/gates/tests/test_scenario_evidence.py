@@ -12,9 +12,8 @@ REPO = Path(__file__).resolve().parents[3]
 VALIDATOR = (
     REPO
     / "docs"
-    / "plans"
-    / "bugbash-sep-25-general"
-    / "tickets"
+    / "evidence"
+    / "sep25"
     / "validate_scenario_evidence.py"
 )
 SPEC = importlib.util.spec_from_file_location("validate_scenario_evidence", VALIDATOR)

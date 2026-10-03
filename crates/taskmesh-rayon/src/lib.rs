@@ -63,13 +63,6 @@ impl RayonCpuExecutor {
         })
     }
 
-    /// Build a pool with an explicit worker count, panicking on failure. Prefer
-    /// [`RayonCpuExecutor::try_new`] on a fail-closed construction path.
-    #[deprecated(since = "0.2.0", note = "use RayonCpuExecutor::try_new")]
-    pub fn new(workers: usize) -> Self {
-        Self::try_new(workers).expect("rayon pool must build")
-    }
-
     /// Fallible topology-derived constructor (see [`RayonCpuExecutor::try_new`]).
     pub fn try_from_topology(topology: &TopologyConfig) -> Result<Self, RayonBuildError> {
         let available = available_parallelism().map_or(1, std::num::NonZeroUsize::get);
@@ -77,15 +70,6 @@ impl RayonCpuExecutor {
             .try_resolved_cpu_workers(available)
             .map_err(RayonBuildError::InvalidTopology)?;
         Self::try_new(workers)
-    }
-
-    /// Build a pool whose worker count is derived from the runtime topology:
-    /// `available_parallelism() - reserve_cores`, clamped to
-    /// `[min_workers, max_workers]` (T09). Panics on pool-build failure; prefer
-    /// [`RayonCpuExecutor::try_from_topology`] on a fail-closed path.
-    #[deprecated(since = "0.2.0", note = "use RayonCpuExecutor::try_from_topology")]
-    pub fn from_topology(topology: &TopologyConfig) -> Self {
-        Self::try_from_topology(topology).expect("rayon pool must build")
     }
 
     /// Wrap an already-built shared pool. The adapter declares the pool as

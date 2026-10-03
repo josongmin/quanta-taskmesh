@@ -4,7 +4,7 @@
 - 최초 날짜: 2026-06-04
 - 재정리: 2026-09-26
 - 결정자: Song Min
-- 상세 실행 계획: [Sep-25 벤치 티켓](../plans/sep-25-taskmesh-benchmark/tickets/README.md)
+- 현재 실행 계획: [2026-10-03 current-source plan](../plans/2026-10-03-current-source-remediation.md)
 - 주장 사전등록: [claim-contract.json](../../tools/bench/scenarios/claim-contract.json)
 
 이 ADR은 측정 방법의 경계를 정한다. 현재 소스에는 업계 SOTA 성능 결과나 자격화된
@@ -245,13 +245,30 @@ remain inputs to acquire; code presence is not a performance result.
   `41b7f7d115e9cffa8460ad08bdf54609024ea6a2f01d98d59e332a6590e442e5`.
   These are owner-local, dirty-checkout diagnostics, not clean CI or performance
   qualification. The full source-specific history remains at Git `cbf9764` in
-  `docs/plans/sep-25-taskmesh-benchmark/tickets/B07-minimal-recovery-soak.md`.
+  the deleted B07 owner packet at Git `cbf9764`.
 - Mode-specific repeated performance admission, automatic RSS slope gates and
   performance recovery SLOs are deferred until a declared claim and frozen
   consumer budgets require them. All-mode correctness/cancel/drain/resource-return
   tests remain required. Finite drain, sampled maxima and B07 functional PASS do
   not prove long-term memory stability or qualified performance.
 
-Current defects, file owners, DoD and proof boundaries are retained in
-[B04 remaining audit](../plans/sep-25-taskmesh-benchmark/tickets/B04-remaining-audit.md).
+Current defects, file owners, DoD and proof boundaries are retained in the
+[current plan](../plans/2026-10-03-current-source-remediation.md).
 No whole-engine completion or SOTA performance qualification follows from this audit.
+
+## 2026-10-03 measured-run lag audit and repair
+
+At clean `main@c4bcb2f`, `host_admission.py` requires the frozen lag budget for
+control arms, but its measured attempts go through `host_compare.read_run`.
+That reader calls `host_perf.verify_receipt` without `require_performance=True`.
+The flag is not a one-line repair: after its per-run checks, that function
+deliberately rejects all single-run performance claims. Measured-series
+admission must compare each reconstructed `max_producer_lag_ns` with the same
+rate's hash-bound control policy `max_host_lag_ns`, as control arms already do.
+This was an admission authority gap, not evidence that a production engine
+missed a request. The Taskmesh repair parses each hash-bound rate policy,
+compares each measured attempt's reconstructed lag to that rate's limit before
+admission, and retains a lag-only negative regression and at-limit positive
+case. Focused Python tests passed; clean candidate `aadfa07` passed the local
+and hosted 16-gate CI profiles. No measured series or full host qualification
+was run for this repair.

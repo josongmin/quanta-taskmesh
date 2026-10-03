@@ -78,6 +78,10 @@ pub struct Governor {
     settlement_waker: Option<Arc<dyn SettlementWaker>>,
 }
 
+mod memory_governance;
+mod observation;
+mod validation;
+
 impl std::fmt::Debug for Governor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Governor")
@@ -120,13 +124,8 @@ impl Governor {
         clock: Arc<dyn Clock>,
         settlement_waker: Option<Arc<dyn SettlementWaker>>,
     ) -> Result<Self, GovernorError> {
-        let authority = NEXT_GOVERNOR_AUTHORITY
-            .fetch_update(
-                std::sync::atomic::Ordering::Relaxed,
-                std::sync::atomic::Ordering::Relaxed,
-                |current| current.checked_add(1),
-            )
-            .map_err(|_exhausted| GovernorError::IdentityAuthorityExhausted)?;
+        let authority = Self::take_sequence(&NEXT_GOVERNOR_AUTHORITY)
+            .ok_or(GovernorError::IdentityAuthorityExhausted)?;
         Ok(Self {
             authority,
             policy,
@@ -165,11 +164,15 @@ impl Governor {
     }
 
     fn take_sequence(counter: &AtomicU64) -> Option<u64> {
-        counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                current.checked_add(1)
-            })
-            .ok()
+        let mut current = counter.load(Ordering::Relaxed);
+        loop {
+            let next = current.checked_add(1)?;
+            match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(previous) => return Some(previous),
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     fn fresh_ids(&self) -> Option<admission::Ids> {
@@ -206,7 +209,7 @@ impl Governor {
                         .expect("built-in substrate capabilities are validated at construction")
                 })
         }))
-        .expect("contract stage bound is below capability requirement bound")
+        .expect("unique built-in hint pools are below the capability requirement bound")
     }
 
     // ---- admission --------------------------------------------------------
@@ -785,177 +788,6 @@ impl Governor {
         first_panic
     }
 
-    // ---- memory governance (T05) -----------------------------------------
-
-    /// Reconcile a permit's held memory against a measured byte reading.
-    ///
-    /// A *downward* reconcile frees memory, so queued work is promoted. An
-    /// *upward* reconcile records measured reality even if it pushes held memory
-    /// past `max_memory_units`; the cap is then enforced fail-closed for *new*
-    /// admissions, so an overcommitting in-flight task cannot let new work in.
-    /// Observed overage is real memory: it is recorded as pressure, never
-    /// discarded to keep the total under the cap.
-    ///
-    /// The epoch is assigned *inside* the same transition that applies the
-    /// reading (the next one after whatever is currently recorded). Reading the
-    /// epoch in one critical section and applying under another would let two
-    /// unordered reporters pick the same "next" epoch and have the later commit
-    /// rejected as stale — a lost measurement dressed up as ordering.
-    pub fn reconcile_memory(&self, permit_id: PermitId, measured_bytes: u64) -> ReconcileOutcome {
-        self.reconcile_memory_inner(permit_id, measured_bytes, None)
-    }
-
-    /// Reconcile with an explicit measurement epoch.
-    ///
-    /// Concurrent reporters need an order. Without one, a reading that was taken
-    /// first but committed last silently overwrites newer truth — including the
-    /// lease activity timestamp, which then makes live work look stale.
-    pub fn reconcile_memory_at(
-        &self,
-        permit_id: PermitId,
-        measured_bytes: u64,
-        epoch: u64,
-    ) -> ReconcileOutcome {
-        self.reconcile_memory_inner(permit_id, measured_bytes, Some(epoch))
-    }
-
-    fn reconcile_memory_inner(
-        &self,
-        permit_id: PermitId,
-        measured_bytes: u64,
-        epoch: Option<u64>,
-    ) -> ReconcileOutcome {
-        let sampled = self.sample_clock_ms();
-        let mut effects = TransitionEffects::default();
-        let outcome = {
-            let mut state = self.state.lock();
-            let now = state.commit_time(sampled);
-            let Some(record) = state.permits.get(&permit_id) else {
-                return ReconcileOutcome::UnknownPermit;
-            };
-            let Some(policy) = self.policy.class(&record.class) else {
-                return ReconcileOutcome::UnknownPermit;
-            };
-            let sequence = match epoch {
-                Some(epoch) => MeasurementSequence::from_raw(epoch),
-                None => match record.ledger.measurement_sequence.checked_next() {
-                    Ok(sequence) => sequence,
-                    Err(outcome) => return outcome,
-                },
-            };
-            let mode = policy.memory_permit_mode;
-            let scale = self.policy.resources.memory_unit_scale;
-            let outcome = memory::reconcile(
-                &mut state,
-                permit_id,
-                measured_bytes,
-                sequence,
-                mode,
-                scale,
-                now,
-            );
-            if outcome.is_applied() {
-                // Promote unconditionally on success: a downward reconcile freed
-                // budget; an upward one leaves no capacity so promote is a no-op.
-                let pass = self.promote(&mut state, now);
-                effects.absorb(pass);
-            }
-            outcome
-        };
-        self.drain_effects(effects, sampled);
-        outcome
-    }
-
-    /// Return `freed_units` of a still-held permit's memory at a stage boundary.
-    ///
-    /// Governed by the class's [`taskmesh_contract::MemoryReleasePolicy`] (D02): an
-    /// `OnTaskCompletion` class does not get an early release, and being told so
-    /// is the point — folding a policy refusal into "freed 0 units" is
-    /// indistinguishable from a permit that held nothing.
-    pub fn release_stage_memory(
-        &self,
-        permit_id: PermitId,
-        freed_units: u32,
-    ) -> StageReleaseOutcome {
-        self.release_stage_memory_inner(permit_id, freed_units, None)
-    }
-
-    /// Stage release with an explicit, strictly increasing sequence number.
-    /// A duplicate or reordered stage event is rejected instead of double-applied.
-    pub fn release_stage_memory_seq(
-        &self,
-        permit_id: PermitId,
-        freed_units: u32,
-        sequence: u64,
-    ) -> StageReleaseOutcome {
-        self.release_stage_memory_inner(permit_id, freed_units, Some(sequence))
-    }
-
-    fn release_stage_memory_inner(
-        &self,
-        permit_id: PermitId,
-        freed_units: u32,
-        sequence: Option<u64>,
-    ) -> StageReleaseOutcome {
-        let sampled = self.sample_clock_ms();
-        let mut effects = TransitionEffects::default();
-        let outcome = {
-            let mut state = self.state.lock();
-            let now = state.commit_time(sampled);
-            let Some(record) = state.permits.get(&permit_id) else {
-                return StageReleaseOutcome::UnknownPermit;
-            };
-            let Some(policy) = self.policy.class(&record.class) else {
-                return StageReleaseOutcome::UnknownPermit;
-            };
-            let release_policy = policy.memory_release_policy;
-            let outcome = memory::release_stage_memory(
-                &mut state,
-                permit_id,
-                freed_units,
-                release_policy,
-                sequence,
-                now,
-            );
-            // Promotion is safe on a no-op release and also repairs any
-            // pending runnable queue. Avoid a second, subtly different
-            // resource-change predicate at this composition boundary.
-            let pass = self.promote(&mut state, now);
-            effects.absorb(pass);
-            outcome
-        };
-        self.drain_effects(effects, sampled);
-        outcome
-    }
-
-    /// Sweep for leaked permits using the default staleness window.
-    pub fn reap_leaks(&self) -> LeakSweepReport {
-        self.reap_leaks_with(memory::DEFAULT_LEAK_STALE_MS)
-    }
-
-    /// Sweep for leaked permits older than `stale_after_ms`.
-    ///
-    /// Only permits that never reached an executor are reclaimed; a stale lease
-    /// on running work is reported in `retained_active` and left charged.
-    pub fn reap_leaks_with(&self, stale_after_ms: u64) -> LeakSweepReport {
-        let sampled = self.sample_clock_ms();
-        let mut effects = TransitionEffects::default();
-        let report = {
-            let mut state = self.state.lock();
-            let now = state.commit_time(sampled);
-            let report =
-                memory::reap_leaks(&mut state, &self.policy, now, stale_after_ms, &mut effects);
-            // The memory service owns reclamation truth; promotion is an
-            // idempotent follow-up and must not depend on a duplicated
-            // `reclaimed_permits > 0` interpretation here.
-            let pass = self.promote(&mut state, now);
-            effects.absorb(pass);
-            report
-        };
-        self.drain_effects(effects, sampled);
-        report
-    }
-
     // ---- composite (T06) --------------------------------------------------
 
     /// Validate that every fan-out stage carries a complete reduce policy.
@@ -996,439 +828,6 @@ impl Governor {
     /// The substrate registry snapshot, ordered by name.
     pub fn substrates(&self) -> Vec<SubstrateRecord> {
         inventory::snapshot(self.policy.substrates())
-    }
-
-    // ---- observation ------------------------------------------------------
-
-    pub fn snapshot(&self) -> Snapshot {
-        let state = self.state.lock();
-        let mut classes: BTreeMap<TaskClass, ClassSnapshot> = BTreeMap::new();
-        // O(classes): per-class held totals are maintained incrementally in
-        // grant/unwind/reconcile, so no permit scan is needed.
-        let known = self
-            .policy
-            .classes
-            .keys()
-            .chain(state.classes.keys())
-            .cloned();
-        for class in known {
-            let projection = state
-                .classes
-                .get(&class)
-                .map_or_else(ClassSnapshot::default, |c| ClassSnapshot {
-                    inflight: c.inflight,
-                    queued: c.queued(),
-                    cpu_units_held: c.cpu_units_held,
-                    memory_units_held: c.memory_units_held,
-                    dispatch_reserved: c.dispatch_reserved,
-                    accepted: c.accepted,
-                    running: c.running,
-                    cleanup_pending: c.cleanup_pending,
-                    admitted_total: c.admitted_total,
-                    started_total: c.started_total,
-                    terminated_total: c.terminated_total,
-                });
-            classes.entry(class).or_insert(projection);
-        }
-        // Every authority record is always present. The same record supplies
-        // both the capacity decision and this projection.
-        let mut capabilities: BTreeMap<String, CapabilityUsage> = BTreeMap::new();
-        for record in self.policy.capability_records() {
-            capabilities.insert(
-                record.name().to_owned(),
-                CapabilityUsage {
-                    in_use: state.capability_in_use(record.id()),
-                    limit: record.capacity().limit(),
-                },
-            );
-        }
-        Snapshot {
-            schema_version: SNAPSHOT_SCHEMA_VERSION,
-            classes,
-            substrates: inventory::snapshot(self.policy.substrates()),
-            capabilities,
-        }
-    }
-
-    /// Diagnostic view of a queued ticket using the same current-state
-    /// assessment as admission and promotion.
-    pub fn pending_view(&self, ticket: Ticket) -> Option<PendingView> {
-        let state = self.state.lock();
-        let TicketState::Queued { class } = state.tickets.get(&ticket)? else {
-            return None;
-        };
-        let cstate = state.classes.get(class)?;
-        let (index, request) = cstate
-            .queue
-            .iter()
-            .enumerate()
-            .find(|(_, request)| request.ticket == ticket)?;
-        let policy = self.policy.class(class)?;
-        let assessment = admission::pending::assess_pending(
-            &state,
-            &self.policy,
-            request,
-            policy.max_inflight,
-            state.promotion_pending
-                || admission::pending::queued_behind_index(&cstate.queue, index),
-        );
-        let blocked_on = match &assessment {
-            admission::pending::CapacityAssessment::Runnable => CapacityBlock::Ok,
-            admission::pending::CapacityAssessment::ReversiblyBlocked(blockers) => {
-                blockers.primary()
-            }
-            admission::pending::CapacityAssessment::IrreversibleWaitCycle(_) => request.blocked_on,
-        };
-        Some(PendingView {
-            class: request.class.clone(),
-            request_key: request.request_key.clone(),
-            blocked_on,
-            assessment,
-            enqueued_at_ms: request.enqueued_at_ms,
-            queue_wait_ms: state
-                .commit_watermark_ms
-                .saturating_sub(request.enqueued_at_ms),
-            capabilities: request.capabilities.clone(),
-        })
-    }
-
-    /// The primary current blocker for a queued ticket, or `None` if it is not
-    /// queued. Use [`Self::pending_assessment`] when every simultaneous blocker
-    /// or an irreversible-cycle witness is required.
-    pub fn pending_block_reason(&self, ticket: Ticket) -> Option<CapacityBlock> {
-        self.pending_view(ticket).map(|view| view.blocked_on)
-    }
-
-    pub fn pending_assessment(
-        &self,
-        ticket: Ticket,
-    ) -> Option<admission::pending::CapacityAssessment> {
-        self.pending_view(ticket).map(|view| view.assessment)
-    }
-
-    /// Full ledger view of a live permit.
-    ///
-    /// Exposed so an *independent* observer can recompute the aggregates rather
-    /// than re-reading the same incrementally-maintained counters the engine
-    /// uses — a conservation check that shares its arithmetic with the thing it
-    /// checks proves nothing.
-    pub fn permit_ledger(&self, permit_id: PermitId) -> Option<PermitLedgerView> {
-        let state = self.state.lock();
-        let record = state.permits.get(&permit_id)?;
-        Some(PermitLedgerView {
-            permit_id,
-            class: record.class.clone(),
-            capabilities: record.capabilities.clone(),
-            phase: record.phase,
-            cpu_units: record.ledger.cpu_units,
-            original_estimate_units: record.ledger.original_estimate_units,
-            remaining_reservation_units: record.ledger.remaining_reservation_units,
-            effective_units: record.ledger.effective_units,
-            measured_bytes: record.ledger.measured_bytes,
-            measurement_epoch: record.ledger.measurement_sequence.get(),
-            leased_at_ms: record.ledger.leased_at_ms,
-            last_touched_ms: record.ledger.last_touched_ms,
-        })
-    }
-
-    /// Every live permit ledger, for an independent conservation oracle.
-    pub fn permit_ledgers(&self) -> Vec<PermitLedgerView> {
-        let state = self.state.lock();
-        state
-            .permits
-            .values()
-            .map(|record| PermitLedgerView {
-                permit_id: record.permit_id,
-                class: record.class.clone(),
-                capabilities: record.capabilities.clone(),
-                phase: record.phase,
-                cpu_units: record.ledger.cpu_units,
-                original_estimate_units: record.ledger.original_estimate_units,
-                remaining_reservation_units: record.ledger.remaining_reservation_units,
-                effective_units: record.ledger.effective_units,
-                measured_bytes: record.ledger.measured_bytes,
-                measurement_epoch: record.ledger.measurement_sequence.get(),
-                leased_at_ms: record.ledger.leased_at_ms,
-                last_touched_ms: record.ledger.last_touched_ms,
-            })
-            .collect()
-    }
-
-    /// The sticky accounting-fault reason, if the ledger ever failed to
-    /// represent a total. While set, admission is refused.
-    pub fn accounting_fault(&self) -> Option<&'static str> {
-        self.state.lock().accounting_fault
-    }
-
-    /// Stop admitting new work (ADR 0003 D17). One-way: there is no reopen.
-    ///
-    /// From the moment this returns, a well-formed request using a valid local
-    /// capability is refused with
-    /// [`AdmissionVerdict::RuntimeUnavailable`](taskmesh_contract::AdmissionVerdict::RuntimeUnavailable)
-    /// before anything is queued, charged, or counted. Direct `admit*` methods
-    /// still run their public preflight first: malformed specs return
-    /// `MalformedTask`, and `admit_resolved` can return a capability error.
-    /// Neither preflight path mutates the closed governor. Work already admitted
-    /// or queued is untouched:
-    /// queued requests are still promoted and claimed, leases are still
-    /// released, and the gauges still converge to zero. The flag is read and
-    /// written under the admission lock, so a [`Self::snapshot`] taken after
-    /// this returns already contains every admission that will ever happen.
-    ///
-    /// Distinct from an accounting fault, which refuses admission with the
-    /// same verdict but reports through [`Self::accounting_fault`].
-    pub fn close_admission(&self) {
-        self.state.lock().close_admission();
-    }
-
-    /// Whether [`Self::close_admission`] has been called.
-    pub fn admission_closed(&self) -> bool {
-        self.state.lock().admission_closed
-    }
-
-    /// How many terminal ticket records are currently retained for late
-    /// claimers. Never exceeds [`crate::MAX_TERMINAL_TICKETS`].
-    pub fn retained_terminal_tickets(&self) -> usize {
-        self.state.lock().retained_terminal_tickets()
-    }
-
-    /// Ring positions the DRR scheduler has examined on this governor — the
-    /// work oracle behind TM16-012 (`O(runnable classes)` per selection, never
-    /// `O(cost / quantum)`).
-    #[cfg(feature = "test-util")]
-    #[doc(hidden)]
-    pub fn drr_ring_visits(&self) -> u64 {
-        self.state.lock().drr_ring_visits
-    }
-
-    /// Survivor entries repriced by WFQ after queue mutations. Head-only
-    /// service is `O(1)` and therefore contributes zero.
-    #[cfg(feature = "test-util")]
-    #[doc(hidden)]
-    pub fn wfq_reprice_visits(&self) -> u64 {
-        self.state
-            .lock()
-            .classes
-            .values()
-            .map(|cstate| cstate.wfq_reprice_visits)
-            .fold(0, u64::saturating_add)
-    }
-
-    // ---- validation (T02) -------------------------------------------------
-
-    /// Fail-closed configuration validation. Every impossible budget is rejected
-    /// at construction, never deferred to a runtime admit path.
-    pub fn validate_policy(policy: &PolicySet) -> Result<(), GovernorError> {
-        Self::validate_inventory(policy)?;
-        let budget = &policy.resources;
-        for (class, class_policy) in &policy.classes {
-            class
-                .validate()
-                .map_err(|error| violation(format!("invalid policy class {class:?}: {error}")))?;
-            let cost = class_policy.permit_cost;
-
-            if budget.per_request_max_cpu_units != 0
-                && cost.cpu_units > budget.per_request_max_cpu_units
-            {
-                return Err(violation(format!(
-                    "class {class} exceeds per-request cpu limit"
-                )));
-            }
-            if budget.per_request_max_memory_units != 0
-                && cost.memory_units > budget.per_request_max_memory_units
-            {
-                return Err(violation(format!(
-                    "class {class} exceeds per-request memory limit"
-                )));
-            }
-            if budget.max_cpu_units != 0 && cost.cpu_units > budget.max_cpu_units {
-                return Err(violation(format!(
-                    "class {class} exceeds global cpu budget"
-                )));
-            }
-            if budget.max_memory_units != 0 && cost.memory_units > budget.max_memory_units {
-                return Err(violation(format!(
-                    "class {class} exceeds global memory budget"
-                )));
-            }
-
-            if matches!(
-                class_policy.memory_permit_mode,
-                MemoryPermitMode::Measured | MemoryPermitMode::Hybrid
-            ) && budget.memory_unit_scale.bytes_per_unit == 0
-            {
-                return Err(violation(format!(
-                    "class {class}: measured/hybrid memory requires bytes_per_unit > 0"
-                )));
-            }
-
-            if class_policy.overflow_policy == OverflowPolicy::QueueWithinDepth
-                && class_policy.max_queue_depth == 0
-            {
-                return Err(violation(format!(
-                    "class {class} is queueable but has max_queue_depth == 0"
-                )));
-            }
-
-            // The scavenger discipline only dispatches in the best-effort tier;
-            // declaring it on a non-best-effort class is contradictory.
-            if class_policy.fairness == FairnessPolicy::BestEffortScavenger
-                && !class_policy.best_effort
-            {
-                return Err(violation(format!(
-                    "class {class} uses BestEffortScavenger fairness but is not best_effort"
-                )));
-            }
-
-            // A zero weight has no proportional meaning. Coercing it to 1 would
-            // make an obviously wrong config look like a deliberate one.
-            if let FairnessPolicy::WeightedFairQueue { weight, .. } = class_policy.fairness {
-                if weight == 0 {
-                    return Err(violation(format!(
-                        "class {class} declares WeightedFairQueue weight 0; weight must be >= 1"
-                    )));
-                }
-            }
-
-            if class_policy.memory_overcommit_policy == MemoryOvercommitPolicy::Queue
-                && class_policy.max_queue_depth == 0
-            {
-                return Err(violation(format!(
-                    "class {class} queues on overcommit but has max_queue_depth == 0"
-                )));
-            }
-
-            if let MemoryOvercommitPolicy::DegradeToLight { fallback_class } =
-                &class_policy.memory_overcommit_policy
-            {
-                if fallback_class == class {
-                    return Err(violation(format!("class {class} degrades to itself")));
-                }
-                let Some(fallback) = policy.classes.get(fallback_class) else {
-                    return Err(violation(format!(
-                        "class {class} degrades to unknown fallback {fallback_class}"
-                    )));
-                };
-                // A degrade is a promise of *some* service under memory
-                // pressure. Pointing it at a class that can never dispatch turns
-                // that promise into a rejection with a misleading verdict.
-                if fallback.is_disabled() {
-                    return Err(violation(format!(
-                        "class {class} degrades to disabled fallback {fallback_class}"
-                    )));
-                }
-                // A degrade is one hop (D03): a request that already degraded
-                // is admitted against the fallback's resource account without
-                // consulting the fallback's own overcommit policy. A fallback
-                // that itself declares `DegradeToLight` therefore promises a
-                // second hop the engine never takes — and on a cycle (a → b →
-                // a) the "second hop" is the class that just failed. Either
-                // way the configuration says something the runtime does not
-                // do, so it is refused at construction.
-                if matches!(
-                    fallback.memory_overcommit_policy,
-                    MemoryOvercommitPolicy::DegradeToLight { .. }
-                ) {
-                    return Err(violation(format!(
-                        "class {class} degrades to fallback {fallback_class}, which itself \
-                         degrades; a degrade is one hop and cannot chain"
-                    )));
-                }
-            }
-        }
-
-        // Fairness is a per-tier discipline: when several classes are runnable in
-        // the same tier, the scheduler arbitrates them with ONE discipline. A
-        // heterogeneous mix would let the lexically-first class silently impose
-        // its discipline on the others, so reject it at construction. Weights/
-        // quanta/slack may still differ between classes (same discipline kind);
-        // only the discipline *kind* must agree within a tier. Best-effort forms
-        // a separate tier. Disabled classes never dispatch and are exempt.
-        let mut primary_kind: Option<std::mem::Discriminant<FairnessPolicy>> = None;
-        let mut best_effort_kind: Option<std::mem::Discriminant<FairnessPolicy>> = None;
-        for (class, class_policy) in &policy.classes {
-            if class_policy.is_disabled() {
-                continue;
-            }
-            let kind = std::mem::discriminant(&class_policy.fairness);
-            let tier = if class_policy.best_effort {
-                &mut best_effort_kind
-            } else {
-                &mut primary_kind
-            };
-            match tier {
-                None => *tier = Some(kind),
-                Some(existing) if *existing != kind => {
-                    return Err(violation(format!(
-                        "class {class} mixes a different fairness discipline within its \
-                         scheduling tier; all classes in a tier must share one discipline"
-                    )));
-                }
-                Some(_) => {}
-            }
-        }
-        Ok(())
-    }
-
-    /// Validate the substrate registry as a whole.
-    ///
-    /// Per-record validation at registration time is not enough: a registry can
-    /// still be handed over empty, keyed under a name that disagrees with the
-    /// record it holds, or missing a built-in the host's dispatch table assumes
-    /// exists. The built-ins are intrinsic to *any* governor, so their presence
-    /// and their exact kind/pool binding are checked here, where the policy
-    /// becomes live, regardless of how the registry was assembled.
-    fn validate_inventory(policy: &PolicySet) -> Result<(), GovernorError> {
-        let registry = policy.substrates();
-        for (key, record) in registry {
-            inventory::validate_record(record)?;
-            if key.as_str() != record.name.as_ref() {
-                return Err(violation(format!(
-                    "substrate registry key {key} does not match record name {}",
-                    record.name
-                )));
-            }
-        }
-        for expected in inventory::builtin_records() {
-            let Some(found) = registry.get(expected.name.as_ref()) else {
-                return Err(violation(format!(
-                    "substrate registry is missing built-in {}",
-                    expected.name
-                )));
-            };
-            if found.kind != expected.kind || found.capability_pool != expected.capability_pool {
-                return Err(violation(format!(
-                    "built-in substrate {} is registered with a non-canonical kind/pool binding",
-                    expected.name
-                )));
-            }
-        }
-        for capability in policy.capability_records() {
-            let bound = registry
-                .values()
-                .any(|record| inventory::provides_capability(record, capability.name()));
-            if !bound {
-                return Err(violation(format!(
-                    "capability authority declared for pool {}, which no executing substrate provides",
-                    capability.name()
-                )));
-            }
-        }
-        for record in registry.values() {
-            if record.kind == SubstrateKind::AuthorityOnly {
-                continue;
-            }
-            let Some(pool) = record.capability_pool.as_deref() else {
-                continue;
-            };
-            if policy.resolve_capability(pool).is_err() {
-                return Err(violation(format!(
-                    "executing substrate {} has no capability authority for pool {pool}",
-                    record.name
-                )));
-            }
-        }
-        Ok(())
     }
 }
 
@@ -1477,6 +876,14 @@ pub struct PermitLedgerView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sequence_allocation_rejects_exhaustion_without_wrapping() {
+        let counter = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(Governor::take_sequence(&counter), Some(u64::MAX - 1));
+        assert_eq!(Governor::take_sequence(&counter), None);
+        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+    }
 
     #[test]
     fn accounting_fault_accessor_reports_the_sticky_state_reason() {

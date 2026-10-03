@@ -61,8 +61,8 @@ semgrep:
 
 test-architecture:
     uv run python tools/arch/check_crate_boundaries.py
-    uv run python docs/plans/bugbash-sep-25-general/tickets/validate_plan.py
-    uv run python docs/plans/bugbash-sep-25-general/tickets/validate_scenario_evidence.py
+    uv run python docs/evidence/sep25/validate_ticket_map.py
+    uv run python docs/evidence/sep25/validate_scenario_evidence.py
 
 py-lint:
     uv run python tools/gates/execute_py_lint.py

@@ -38,6 +38,10 @@ but `serde`.
 5. `TerminalReason` / `GovernorError::TicketClaimTerminated` — a queued request
    that ended before its waiter claimed it says so, with the reason
 
+The `taskmesh` facade reexports `TaskPlanError`, `TaskIdentifierField`, and
+`IdentifierViolation`. A consumer that uses only the facade can name the exact
+field and violation returned by `PlanSource::new` or `TaskSpec::validate`.
+
 ### Untrusted JSON ingress
 
 `taskmesh::{parse_task_spec, parse_runtime_config}` is the opt-in bytes boundary;
@@ -170,8 +174,9 @@ described below; these rules do not weaken its live-worker lease fence.
    `physical.shared_blocking`, `physical.cpu`, and `physical.dedicated` are
    finite engine-governed domains; CPU fallback, blocking and maintenance work
    sharing one executor consume the same physical bound. Rayon `try_new` and
-   `try_from_topology` return typed `RayonBuildError`; deprecated constructors
-   retain the old panic behavior only for migration
+   `try_from_topology` return typed `RayonBuildError` through
+   `taskmesh::ext`; the deprecated panic constructors are removed in the
+   unreleased 0.3 surface
 4e. concurrency proofs run the production `Governor`: under `--cfg loom
    --features loom` / `--cfg shuttle --features shuttle` the engine's `sync`
    seam swaps its mutex and atomics for the checker's, and
@@ -260,7 +265,13 @@ The host enforces the declared contract at runtime:
   job cannot be aborted, and the contract does not pretend otherwise.
   `CompleteBy` is admitted only on cooperative async paths and is polled by the
   runtime that owns the work; blocking and CPU work reject it before invoking
-  the job. On requested-stack async execution it also bounds caller response:
+  the job. `TokioRuntime::run_blocking_response_by` and
+  `run_cpu_response_by` accept a separate absolute caller-response instant for
+  synchronous work, including `PreSubmitOnly` classes. It bounds acquisition
+  and the caller wait, rejects combination with `SubmitOptions::deadline`, and
+  prevents an unstarted closure from beginning after expiry. A started worker
+  still retains its lease until termination. On requested-stack async execution
+  `CompleteBy` also bounds caller response:
   if owned-runtime teardown crosses the instant, a ready success or task error
   is discarded and the caller receives `DeadlineExceeded`; teardown retains the
   lease until it really finishes. A non-yielding poll retains its permit until

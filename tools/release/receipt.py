@@ -40,6 +40,10 @@ ADJUDICATION_IDS = {
     "H03-physical-domains",
     "H03-executor-contract",
     "H03-rayon-constructor",
+    "BG25-governor-handle-api",
+    "SEP25-custody-api",
+    "SEP25-verdict-terminal-wire",
+    "SEP25-response-custody-behavior",
     "facade-reexports",
 }
 LOCAL_RELEASE_CHECKS = {

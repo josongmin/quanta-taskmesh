@@ -183,6 +183,199 @@ struct HeldCpuExecutor {
     job: std::sync::Mutex<Option<Box<dyn FnOnce() + Send + 'static>>>,
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn response_boundary_rejects_expired_blocking_and_cpu_without_starting() {
+    let rt = deadline_runtime(1);
+    let starts = Arc::new(AtomicUsize::new(0));
+    let expired = Instant::now()
+        .checked_sub(Duration::from_millis(1))
+        .expect("test instant can move back one millisecond");
+    let blocking_starts = Arc::clone(&starts);
+    let blocking = rt
+        .run_blocking_response_by(
+            TaskSpec::blocking(TaskClass::new("c")).operation("expired-blocking"),
+            SubmitOptions::unbounded(),
+            expired,
+            move || {
+                blocking_starts.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, ()>(1)
+            },
+        )
+        .await;
+    assert!(matches!(
+        blocking,
+        Err(RunError::Governor(GovernorError::DeadlineExceeded))
+    ));
+    let cpu_starts = Arc::clone(&starts);
+    let cpu = rt
+        .run_cpu_response_by(
+            TaskSpec::cpu(TaskClass::new("c")).operation("expired-cpu"),
+            SubmitOptions::unbounded(),
+            expired,
+            move || {
+                cpu_starts.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, ()>(2)
+            },
+        )
+        .await;
+    assert!(matches!(
+        cpu,
+        Err(RunError::Governor(GovernorError::DeadlineExceeded))
+    ));
+    assert_eq!(starts.load(Ordering::SeqCst), 0);
+    assert_drains(&rt, "expired response boundaries").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn response_boundary_times_out_queued_work_without_starting_it() {
+    let rt = deadline_runtime(1);
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    let release = ReleaseOnDrop(Some(release));
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let holder_rt = rt.clone();
+    let holder = tokio::spawn(async move {
+        holder_rt
+            .run_blocking(
+                TaskSpec::blocking(TaskClass::new("c")).operation("response-holder"),
+                move || {
+                    started_tx.send(()).expect("holder start receiver is live");
+                    hold.recv().expect("holder release arrives");
+                    Ok::<_, ()>(())
+                },
+            )
+            .await
+    });
+    bounded("holder starts", started_rx)
+        .await
+        .expect("holder signal");
+    let starts = Arc::new(AtomicUsize::new(0));
+    let queued_starts = Arc::clone(&starts);
+    let response = bounded(
+        "queued response deadline",
+        rt.run_blocking_response_by(
+            TaskSpec::blocking(TaskClass::new("c")).operation("response-queued"),
+            SubmitOptions::unbounded(),
+            Instant::now() + Duration::from_millis(20),
+            move || {
+                queued_starts.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, ()>(1)
+            },
+        ),
+    )
+    .await;
+    assert!(matches!(
+        response,
+        Err(RunError::Governor(GovernorError::DeadlineExceeded))
+    ));
+    assert_eq!(starts.load(Ordering::SeqCst), 0);
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].queued, 0);
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 1);
+    release.release();
+    bounded("holder completion", holder)
+        .await
+        .expect("join")
+        .expect("holder result");
+    assert_drains(&rt, "queued response deadline").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn response_boundary_keeps_started_worker_charged_until_completion() {
+    let rt = deadline_runtime(1);
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    let release = ReleaseOnDrop(Some(release));
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let response = rt.run_blocking_response_by(
+        TaskSpec::blocking(TaskClass::new("c")).operation("response-running"),
+        SubmitOptions::unbounded(),
+        Instant::now() + Duration::from_millis(40),
+        move || {
+            started_tx.send(()).expect("running start receiver is live");
+            hold.recv().expect("running release arrives");
+            Ok::<_, ()>(1)
+        },
+    );
+    let (result, started) = tokio::join!(bounded("response timeout", response), started_rx);
+    started.expect("worker started before timeout");
+    assert!(matches!(
+        result,
+        Err(RunError::Governor(GovernorError::DeadlineExceeded))
+    ));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 1);
+    release.release();
+    assert_drains(&rt, "started worker response deadline").await;
+    let next = rt
+        .run_blocking(
+            TaskSpec::blocking(TaskClass::new("c")).operation("response-successor"),
+            || Ok::<_, ()>(2),
+        )
+        .await
+        .expect("successor can use released capacity");
+    assert_eq!(next, 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn response_boundary_caller_drop_does_not_release_live_worker() {
+    let rt = deadline_runtime(1);
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    let release = ReleaseOnDrop(Some(release));
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let caller_rt = rt.clone();
+    let caller = tokio::spawn(async move {
+        caller_rt
+            .run_blocking_response_by(
+                TaskSpec::blocking(TaskClass::new("c")).operation("response-dropped"),
+                SubmitOptions::unbounded(),
+                Instant::now() + Duration::from_secs(2),
+                move || {
+                    started_tx.send(()).expect("drop start receiver is live");
+                    hold.recv().expect("drop release arrives");
+                    Ok::<_, ()>(())
+                },
+            )
+            .await
+    });
+    bounded("dropped response worker start", started_rx)
+        .await
+        .expect("worker start signal");
+    caller.abort();
+    let aborted = bounded("caller abort", caller)
+        .await
+        .expect_err("caller task was aborted");
+    assert!(aborted.is_cancelled(), "caller ended by abort: {aborted}");
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 1);
+    release.release();
+    assert_drains(&rt, "dropped caller custody").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn response_boundary_covers_dedicated_stack_worker() {
+    let rt = deadline_runtime(1);
+    let (release, hold) = std::sync::mpsc::channel::<()>();
+    let release = ReleaseOnDrop(Some(release));
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let response = rt.run_blocking_response_by(
+        TaskSpec::blocking(TaskClass::new("c"))
+            .operation("response-large-stack")
+            .stack_size_bytes(STACK),
+        SubmitOptions::unbounded(),
+        Instant::now() + Duration::from_millis(40),
+        move || {
+            started_tx.send(()).expect("stack start receiver is live");
+            hold.recv().expect("stack release arrives");
+            Ok::<_, ()>(1)
+        },
+    );
+    let (result, started) = tokio::join!(bounded("large stack response", response), started_rx);
+    started.expect("dedicated worker started before timeout");
+    assert!(matches!(
+        result,
+        Err(RunError::Governor(GovernorError::DeadlineExceeded))
+    ));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 1);
+    release.release();
+    assert_drains(&rt, "dedicated response boundary").await;
+}
+
 impl CpuExecutor for HeldCpuExecutor {
     fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
         let mut slot = self.job.lock().expect("held executor lock");
@@ -198,6 +391,87 @@ impl CpuExecutor for HeldCpuExecutor {
             .declared_workers(1)
             .physical_domain(PHYSICAL_CPU)
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn response_boundary_prevents_cpu_closure_after_executor_wait() {
+    let executor = Arc::new(HeldCpuExecutor {
+        job: std::sync::Mutex::new(None),
+    });
+    let rt = Builder::new()
+        .topology(TopologyConfig::new().cpu_fixed(1))
+        .resources(ResourceBudget::new().cpu_units(1000).memory_units(1000))
+        .class_policy(
+            TaskClass::new("c"),
+            ClassPolicy::new().max_inflight(1).cpu_units(1),
+        )
+        .cpu_executor(executor.clone())
+        .build()
+        .expect("held CPU executor builds");
+    let starts = Arc::new(AtomicUsize::new(0));
+    let job_starts = Arc::clone(&starts);
+    let submission_rt = rt.clone();
+    let submission = tokio::spawn(async move {
+        submission_rt
+            .run_cpu_response_by(
+                TaskSpec::cpu(TaskClass::new("c")).operation("response-held-cpu"),
+                SubmitOptions::unbounded(),
+                Instant::now() + Duration::from_millis(30),
+                move || {
+                    job_starts.fetch_add(1, Ordering::SeqCst);
+                    Ok::<_, ()>(1)
+                },
+            )
+            .await
+    });
+    bounded("CPU handoff", async {
+        loop {
+            if executor.job.lock().expect("held executor lock").is_some() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let result = bounded("CPU response timeout", submission)
+        .await
+        .expect("submission joins");
+    assert!(matches!(
+        result,
+        Err(RunError::Governor(GovernorError::DeadlineExceeded))
+    ));
+    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 1);
+    let job = executor
+        .job
+        .lock()
+        .expect("held executor lock")
+        .take()
+        .expect("accepted CPU work remains held");
+    std::thread::spawn(job).join().expect("worker settles");
+    assert_eq!(starts.load(Ordering::SeqCst), 0);
+    assert_drains(&rt, "held CPU response deadline").await;
+}
+
+#[tokio::test]
+async fn response_boundary_refuses_competing_deadline_authority() {
+    let rt = deadline_runtime(1);
+    let error = rt
+        .run_blocking_response_by(
+            TaskSpec::blocking(TaskClass::new("c")).operation("competing-deadline"),
+            SubmitOptions::unbounded().with_deadline(Duration::from_secs(1)),
+            Instant::now() + Duration::from_secs(1),
+            || Ok::<_, ()>(1),
+        )
+        .await
+        .expect_err("two deadline authorities reject");
+    let RunError::Governor(GovernorError::PolicyViolation(message)) = error else {
+        panic!("expected competing-deadline policy refusal, got {error:?}");
+    };
+    assert_eq!(
+        message.to_string(),
+        "response boundary cannot be combined with a run deadline"
+    );
+    assert_drains(&rt, "competing deadlines").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

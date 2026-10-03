@@ -4,7 +4,7 @@
 - 날짜: 2026-09-16
 - 결정자: Song Min
 - 선행: [0001 — Feature-sliced 헥사고날 아키텍처](0001-hexagonal-feature-sliced-architecture.md), [0002 — DRR proportional ring](0002-drr-proportional-fairness.md)
-- 관련 계획: [Sep-16 structural hardening](../archive/2026-09-25/sep-16-hardening/tickets/README.md)
+- 원본 계획: Git history before the 2026-10-03 plan cleanup.
 - 원본 감사: [Sep-16 general audit](../bugbash/sep-16-general/tickets/README.md)
 - 후속 결정: [0005 — 실행 권한·응답·custody](0005-sep-25-execution-response-and-custody.md)는
   Sep-25 라이브러리의 `CompleteBy` caller-response fence와 executor preflight를 명시한다.
@@ -16,7 +16,7 @@
 않은 계약**의 증상이었다. 같은 질문에 코드의 두 지점이 서로 다르게 답하고 있었다는
 뜻이다. 아래 결정들은 그 질문들을 하나씩 닫는다. 각 항목은 선택·근거·거부한
 대안·소비자 영향 순서로 기록한다. D01–D12는 최초 구현에서, D13–D16과 D05/D08/D09/D10의
-개정은 구현 직후 실행한 3-track 적대적 감사([AUDIT-2026-09-16](../plans/sep-16-hardening/AUDIT-2026-09-16.md))에서
+개정은 구현 직후 실행한 3-track 적대적 감사([AUDIT-2026-09-16](../audits/2026-09-16-sep16-hardening.md))에서
 확정했다. D17은 마무리 검증에서 예외 대장에 남아 있던 shutdown 계약(H16-012-A07)을 닫으며 추가했다.
 
 이 ADR은 구현된 계약을 기술한다. 계획 문서의 `PROPOSED`와 달리 여기 적힌 것은
@@ -294,7 +294,7 @@ regression이 hang이 아니라 assertion으로 나타난다.
 
 ## D11 — PM는 validate → render plan → apply로 분리한다
 
-[H16-020](../archive/2026-09-25/sep-16-hardening/tickets/H16-020-pm-validated-render-plan.md) 참조.
+H16-020의 구현 결정이다. 원본 티켓은 Git history에 남아 있다.
 lint는 읽기 전용이고, target identity는 basename이 아닌 검증된 relative path이며,
 중복 YAML key는 dict로 접히기 *전에* 거절한다. 실제 repo target overwrite는 이 결정의
 범위가 아니며 별도 승인이 필요하다.

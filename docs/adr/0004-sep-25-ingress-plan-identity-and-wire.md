@@ -46,7 +46,7 @@ Snapshot schema versioning does not version every other public enum.
   different contract and needs compatibility review.
 - The library's choices above are accepted; migration approval and deployed
   consumer qualification are recorded in the
-  [external adoption ledger](../plans/bugbash-sep-25-general/tickets/EXTERNAL-ADOPTION.md).
+  [current consumer adoption plan](../plans/2026-10-03-current-source-remediation.md).
 - The exact public fields, validation limits, and error variants belong to the
   [library spec](../taskmesh-library-spec.md) and
   [external interface](../taskmesh-external-interface.md). This ADR records why

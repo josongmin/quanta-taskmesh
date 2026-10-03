@@ -1,0 +1,257 @@
+{
+  "schema_version": 1,
+  "status": "EVIDENCE_ONLY",
+  "audit_head": "76559c483bdd1d6b0b5226f7c5b5591b919afae9",
+  "audit_tree": "215a968630e9f0675bfd1e42f0919bd2047bded2",
+  "checklist": "../../misc/tmp-engine-checklist-sep-25.md",
+  "tickets": [
+    {
+      "id": "BG25-001",
+      "file": "../../adr/0007-sep-25-implementation-closure.md",
+      "priority": "P0",
+      "mode": "decision",
+      "owner": "contract-api",
+      "depends_on": [],
+      "scenarios": [],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "REVIEW_REQUIRED",
+      "external_status": "OPEN"
+    },
+    {
+      "id": "BG25-002",
+      "file": "../../adr/0007-sep-25-implementation-closure.md",
+      "priority": "P0",
+      "mode": "conditional-implementation",
+      "owner": "contract-ingress",
+      "depends_on": [
+        "BG25-001"
+      ],
+      "scenarios": [
+        "D04",
+        "D21",
+        "D22",
+        "D25",
+        "H33"
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "OPEN"
+    },
+    {
+      "id": "BG25-003",
+      "file": "../../adr/0007-sep-25-implementation-closure.md",
+      "priority": "P1",
+      "mode": "contract-proof",
+      "owner": "contract-consumer",
+      "depends_on": [
+        "BG25-001"
+      ],
+      "scenarios": [
+        "B18",
+        "B24",
+        "D03",
+        "D13",
+        "D14",
+        "D17",
+        "D23"
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "OPEN"
+    },
+    {
+      "id": "BG25-004",
+      "file": "../../adr/0007-sep-25-implementation-closure.md",
+      "priority": "P1",
+      "mode": "authority-migration",
+      "owner": "contract-engine",
+      "depends_on": [
+        "BG25-001"
+      ],
+      "scenarios": [
+        "B21",
+        "B22",
+        "B28",
+        "H18"
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
+    },
+    {
+      "id": "BG25-005",
+      "file": "../../adr/0007-sep-25-implementation-closure.md",
+      "priority": "P0",
+      "mode": "confirmed-defect",
+      "owner": "host-executor",
+      "depends_on": [
+        "BG25-001"
+      ],
+      "scenarios": [
+        "B25",
+        "H15",
+        "H27",
+        "H30",
+        "D16"
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
+    },
+    {
+      "id": "BG25-006",
+      "file": "../../adr/0007-sep-25-implementation-closure.md",
+      "priority": "P0",
+      "mode": "conditional-implementation",
+      "owner": "host-runtime",
+      "depends_on": [
+        "BG25-001",
+        "BG25-005"
+      ],
+      "scenarios": [
+        "D05",
+        "D15",
+        "H11",
+        "H12",
+        "H19",
+        "H20",
+        "H31",
+        "H34"
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
+    },
+    {
+      "id": "BG25-007",
+      "file": "../../adr/0007-sep-25-implementation-closure.md",
+      "priority": "P1",
+      "mode": "contract-proof",
+      "owner": "host-runtime",
+      "depends_on": [
+        "BG25-001",
+        "BG25-006"
+      ],
+      "scenarios": [
+        "A11",
+        "H21",
+        "H35"
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
+    },
+    {
+      "id": "BG25-008",
+      "file": "../../adr/0007-sep-25-implementation-closure.md",
+      "priority": "P1",
+      "mode": "proof-first",
+      "owner": "engine-admission",
+      "depends_on": [
+        "BG25-001",
+        "BG25-005"
+      ],
+      "scenarios": [
+        "A05",
+        "B05",
+        "B20",
+        "H01",
+        "H02",
+        "H07",
+        "H32",
+        "D01"
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
+    },
+    {
+      "id": "BG25-009",
+      "file": "../../adr/0007-sep-25-implementation-closure.md",
+      "priority": "P1",
+      "mode": "proof-first",
+      "owner": "engine-scheduler",
+      "depends_on": [
+        "BG25-001",
+        "BG25-008"
+      ],
+      "scenarios": [
+        "B23",
+        "B27",
+        "H04",
+        "H06",
+        "H13",
+        "H14",
+        "H16",
+        "H25",
+        "D19"
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
+    },
+    {
+      "id": "BG25-010",
+      "file": "../../adr/0007-sep-25-implementation-closure.md",
+      "priority": "P1",
+      "mode": "proof-first",
+      "owner": "engine-memory",
+      "depends_on": [
+        "BG25-008",
+        "BG25-009"
+      ],
+      "scenarios": [
+        "H10",
+        "D20"
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
+    },
+    {
+      "id": "BG25-011",
+      "file": "../../adr/0007-sep-25-implementation-closure.md",
+      "priority": "P1",
+      "mode": "evidence",
+      "owner": "bench-host",
+      "depends_on": [
+        "BG25-005",
+        "BG25-006",
+        "BG25-008"
+      ],
+      "scenarios": [
+        "H17",
+        "H28"
+      ],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "STATIC_MAPPED",
+      "external_status": "NOT_APPLICABLE"
+    },
+    {
+      "id": "BG25-012",
+      "file": "../../adr/0007-sep-25-implementation-closure.md",
+      "priority": "P1",
+      "mode": "integration",
+      "owner": "integration-ci",
+      "depends_on": [
+        "BG25-002",
+        "BG25-003",
+        "BG25-004",
+        "BG25-005",
+        "BG25-006",
+        "BG25-007",
+        "BG25-008",
+        "BG25-009",
+        "BG25-010",
+        "BG25-011"
+      ],
+      "scenarios": [],
+      "implementation_status": "IMPLEMENTED",
+      "proof_status": "RECEIPT_REQUIRED",
+      "external_status": "NOT_APPLICABLE"
+    }
+  ],
+  "implementation_status": "IMPLEMENTED",
+  "qualification_status": "RECEIPT_REQUIRED",
+  "external_status": "OPEN"
+}

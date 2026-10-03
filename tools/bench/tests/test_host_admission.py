@@ -81,7 +81,26 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
         scenarios[key] = host_perf.sha256(scenario_bytes)
         point = controls / key
         point.mkdir()
-        policy = b"policy"
+        policy = host_perf.canonical(
+            {
+                "schema_version": 2,
+                "scenario_sha256": scenarios[key],
+                "source_head": "a" * 40,
+                "min_pairs": 2,
+                "min_success_samples_per_cohort": 10,
+                "max_span_ns": 1000,
+                "max_generator_lag_ns": 10,
+                "max_host_lag_ns": 10 if rate == 1000 else 20,
+                "max_aa_relative_delta": 0.1,
+                "max_aa_p99_relative_delta": 0.1,
+                "max_snapshot_relative_delta": 0.1,
+                "max_snapshot_p99_relative_delta": 0.1,
+                "max_recorder_response_fraction_delta": 0.2,
+                "max_recorder_process_duration_relative_delta": 0.1,
+                "max_sampler_relative_delta": 0.1,
+                "max_sampler_p99_relative_delta": 0.1,
+            }
+        )
         (point / "policy").write_bytes(policy)
         policies[key] = host_perf.sha256(policy)
         bundle = {
@@ -150,6 +169,7 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
                     "artifact_sha256": digests,
                     "resource_observation": {},
                     "metrics": {
+                        "max_producer_lag_ns": 10 if rate == 1000 else 20,
                         "cohort_goodput": {
                             "c/io": {
                                 "slo_fraction": 1.0 if rate == 1000 else 0.5,
@@ -230,6 +250,33 @@ def test_admission_reexecutes_rebuild_oracle_and_reports_only_highest_tested_rat
     assert args[6].count(True) == 1
     assert (args[5] / "oracle.stdout").is_file()
     assert (args[5] / "admission.json").is_file()
+    assert {row["producer_lag_limit_ns"] for row in report["runs"]} == {10, 20}
+
+
+def test_measured_attempt_lag_above_frozen_rate_budget_rejects_before_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    attempt = next(iter(args[9]))
+    args[9][attempt]["metrics"]["max_producer_lag_ns"] = 11
+    original_raw = (args[1] / attempt / "raw").read_bytes()
+    with pytest.raises(host_perf.ReceiptError, match="producer lag exceeds frozen rate 1000"):
+        admission.admit(*args[:6])
+    assert (args[1] / attempt / "raw").read_bytes() == original_raw
+    assert True not in args[6]
+    assert not (args[5] / "admission.json").exists()
+
+
+def test_measured_attempt_at_frozen_rate_budget_is_admissible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = fixture(tmp_path, monkeypatch)
+    report = admission.admit(*args[:6])
+    assert report["status"] == "MEASURED_SERIES_ADMITTED"
+    assert all(
+        row["max_producer_lag_ns"] == row["producer_lag_limit_ns"]
+        for row in report["runs"]
+    )
 
 
 def test_oracle_uses_frozen_effective_environment_over_ambient_incremental(

@@ -15,9 +15,13 @@ rules:
         - "**/crates/taskmesh/src/adapters/**"
         # The Clock port adapters (SystemClock/ManualClock) live in contract.
         - "**/crates/taskmesh-contract/src/ports.rs"
-        # Host adapter: tokio monotonic-timer deadlines for bounded acquire waits
-        # (`runtime.rs`) and the bounded drain wait (`runtime/drain.rs`, D17).
+        # Host adapter: tokio monotonic-timer deadlines for bounded acquire,
+        # synchronous response and worker settlement (`runtime.rs` and its
+        # named modules), plus bounded drain (`runtime/drain.rs`, D17).
         - "**/crates/taskmesh/src/runtime.rs"
+        - "**/crates/taskmesh/src/runtime/acquisition.rs"
+        - "**/crates/taskmesh/src/runtime/synchronous.rs"
+        - "**/crates/taskmesh/src/runtime/detached.rs"
         - "**/crates/taskmesh/src/runtime/drain.rs"
         # Host acquisition arbiter owns monotonic pre-dispatch timeouts;
         # semantic engine time remains injected through contract::Clock.

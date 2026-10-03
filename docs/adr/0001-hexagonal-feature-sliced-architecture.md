@@ -100,7 +100,14 @@ vertical slice(모듈)로 둔다. 각 slice는 `domain`(순수 규칙) / `servic
 | `inventory` | T08 | capability-pool 무결성, snapshot 합성 |
 
 `engine/governor.rs`가 composition root로서 port를 보유하고 각 slice service에
-위임한다. 공유 가변 상태는 `engine/state.rs`(`Mutex<GovernedState>`)에 격리한다.
+위임한다. 내부의 memory/observation/validation 메서드는
+`engine/governor/`에 분리돼 있다. 공유 가변 상태는
+`engine/state.rs`의 `GovernedState`에 격리하고 전이는
+`engine/state/transition.rs`에 둔다. Host `runtime.rs`는 진입점,
+`runtime/acquisition.rs`는 획득/선행 검증,
+`runtime/synchronous.rs`는 동기 dispatch,
+`runtime/detached.rs`는 worker 정산을 소유한다. 모듈 이동은 crate 경계나
+capability inventory를 변경하지 않는다.
 
 ### 5. 구현된 소스 경계
 
@@ -111,10 +118,13 @@ crates/
 │   ├── runtime.rs              # driving port: Runtime
 │   └── ports.rs                # driven ports
 ├── taskmesh-engine/src/
-│   ├── engine/{governor,state}.rs               # composition root
+│   ├── engine/{governor,state}.rs               # composition root/state types
+│   ├── engine/governor/{memory_governance,observation,validation}.rs
+│   ├── engine/state/transition.rs               # state transitions
 │   └── features/{admission,fairness,memory,composite,inventory}/
 ├── taskmesh/src/                                # package name = taskmesh
 │   ├── lib.rs  builder.rs  runtime.rs  ingress.rs
+│   ├── runtime/{acquisition,synchronous,detached,drain}.rs
 │   ├── executor/{mod,tokio_exec,cancel}.rs      # Tokio CPU 어댑터
 │   └── adapters/permit_waker.rs
 └── taskmesh-rayon/src/lib.rs
@@ -140,8 +150,7 @@ crates/
 ### 부정 / 트레이드오프
 
 - crate 재배치(특히 facade를 `crates/taskmesh-tokio` → `crates/taskmesh`)는
-  기존 jun-4-startup 플랜의 no-go("facade source = crates/taskmesh-tokio/src/lib.rs")를
-  override한다. 플랜 문서를 이 ADR 기준으로 갱신해야 한다.
+  과거 jun-4-startup 초안의 경로 가정을 대체했다. 그 초안은 현재 실행 계획에서 제거됐다.
 - port trait을 contract로 끌어올리면 contract가 async trait를 노출한다
   (Rust 1.95 기준 문제 없음, 단 contract의 표면적이 커진다).
 - 모듈 분할이 늘어 초기 보일러플레이트(`mod.rs` re-export)가 증가한다.
@@ -157,6 +166,5 @@ crates/
 
 ## 관련 문서
 
-- [RFC 0001 — Governed Runtime](../rfcs/0001-governed-runtime.md)
 - [Library Spec](../taskmesh-library-spec.md)
-- [Jun-4 Startup Ticket Set](../archive/2026-09-25/jun-4-startup/README.md)
+- Original Jun-4 ticket text: Git history before the 2026-10-03 plan cleanup.

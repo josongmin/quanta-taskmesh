@@ -1,6 +1,8 @@
 # taskmesh
 
 `taskmesh`는 분석 시스템과 서비스 런타임을 위한 governed execution control-plane이다.
+현재 구현·검증·소비자 적용·release 상태와 각 권한 문서의 경로는
+[operating kernel](docs/ssot/README.md)에 정리한다.
 
 핵심 원칙:
 
@@ -97,8 +99,11 @@ nightly receipt에서 `SKIPPED_PLATFORM`으로 기록된다. `just install-hooks
 CI receipt가 현재 push SHA와 일치하지 않으면 branch push를 거부한다(`qualify-local` release receipt도
 허용). nightly는 별도 `just verify-macos-nightly`로 실행하며 일반 CI/push 증거에 필요하지 않다.
 전체 cross-platform/release 자격은 mutation을 포함한 local Linux `just qualify-local`, release 판정은
-`just release-local`로 수행한다. GitHub workflow 세 개는
-호환성 기록으로만 남기고 repository 설정에서 비활성화한다. `docs/release-checklist.md` 참조.
+`just release-local`로 수행한다. 별도 `pr-ci.yml`은 PR/main에서 bounded 16-gate profile을
+자동 실행하며, `main` branch protection은 그 aggregate check를 요구한다
+(2026-10-03 관찰). `ci.yml`, `bench.yml`, `release.yml`은 수동 전용 소스이고
+GitHub 설정에서 비활성화돼 있다. PR GREEN은 nightly/release 또는 외부 소비자 적용
+증거가 아니다. `docs/release-checklist.md` 참조.
 전체 gate runner는 첫 non-PASS에서 기본 fail-fast하며, 남은 applicable gate를
 `NOT_RUN`/`blocked_by`로 기록해 분모를 보존한다. 실패 뒤의 전체 진단이 필요한 경우에만
 `tools/gates/run.py ... --keep-going`을 사용한다.
@@ -536,9 +541,9 @@ lease를 돌려준다 — 그 뒤로는 `release_leased(token)`만 permit을 끝
 
 문서:
 
-1. [SDK DX와 확장성 제안 — SEP-27 (Proposed)](docs/rfc/sep-27-sdk-dx-extensibility.md)
+1. [Current-source audit and remediation plan](docs/plans/2026-10-03-current-source-remediation.md)
 2. [Library Spec](docs/taskmesh-library-spec.md)
 3. [External Interface](docs/taskmesh-external-interface.md)
 4. [Accepted ADR index](docs/adr/README.md)
-5. [Completed work archive](docs/archive/2026-09-25/README.md)
-6. [Open BG25 follow-ups](docs/plans/bugbash-sep-25-general/tickets/OPEN-FOLLOWUPS.md)
+5. [Completed implementation decisions](docs/adr/0007-sep-25-implementation-closure.md)
+6. [Source-bound evidence inventory](docs/evidence/sep25/README.md)

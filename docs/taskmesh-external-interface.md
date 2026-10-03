@@ -63,7 +63,7 @@ let out = runtime
 4. CPU executor 교체: `Builder::cpu_executor(Arc::new(taskmesh::ext::RayonCpuExecutor::try_from_topology(&topo)?))`
    (`features = ["rayon"]`; 직접 `taskmesh-rayon` 의존 불필요). `try_new`/`try_from_topology`는
    zero workers, invalid topology, pool construction 실패를 typed `RayonBuildError`로 반환한다.
-   구 `new`/`from_topology`는 deprecated panic 경로다. adapter의 worker count·physical domain·
+   구 `new`/`from_topology`는 unreleased 0.3 API에서 제거됐다. adapter의 worker count·physical domain·
    nonblocking submit 선언이 실제 executor와 다르면 `Builder::build()`가 typed reject한다.
 5. cancel/timeout: `run_*_with(spec, SubmitOptions::unbounded().with_cancel(token).with_acquire_timeout(d).with_deadline(d), ...)`
    - pre-submit cancel는 모든 클래스에서 honored.
@@ -82,6 +82,12 @@ let out = runtime
      execution 전체를 하나의 `Instant`로 제한한다. 상대 run budget으로 변환하거나 단계별로 재시작하지 않는다.
      cooperative poll 경계를 소유하는 `run_io`, `run_local`, requested-stack async에서만 허용되며,
      동기 blocking/CPU 경로는 permit 조기 반환을 막기 위해 fail-closed로 거부한다.
+   - 동기 호출의 별도 **caller response boundary**는
+     `TokioRuntime::run_blocking_response_by(spec, opts, instant, job)` 또는
+     `run_cpu_response_by(spec, opts, instant, job)`로 요청한다. 획득부터 caller 응답까지
+     하나의 absolute instant를 적용하며 `PreSubmitOnly` 클래스에서도 사용할 수 있다.
+     `opts.deadline`과 함께 쓰면 typed policy error로 거절한다. 만료 뒤 시작하지 않은
+     closure는 실행하지 않으며, 이미 시작한 worker는 종료까지 lease를 보유한다.
    - `acquire_timeout`은 admission lock 대기를 포함한 **모든** 획득 대기를 하나의 checked budget으로
      bound한다. 만료 후 즉시 승인된 permit은 unwind되고 `PermitAcquireTimedOut`이 반환된다.
      capability pool 때문에 큐에 들어갔다 만료된 요청은 `SubstratePoolTimedOut`으로 원인을 구분해 보고한다.

@@ -1,6 +1,6 @@
 # Taskmesh 엔진 필수 유즈케이스·적대 시나리오 체크리스트
 
-- 기준: `main@76559c483bdd1d6b0b5226f7c5b5591b919afae9` (2026-09-25)의 원본 oracle inventory. 현재 매핑과 잔여 작업은 `docs/plans/bugbash-sep-25-general/tickets/{scenario-evidence.json,OPEN-FOLLOWUPS.md,EXTERNAL-ADOPTION.md}`를 따른다. 당시 구현 감사는 `docs/adr/0007-sep-25-implementation-closure.md`에 보존한다. 아래 fixture 참조는 clean-HEAD 실행 증거가 아니다.
+- 기준: `main@76559c483bdd1d6b0b5226f7c5b5591b919afae9` (2026-09-25)의 원본 oracle inventory. 현재 정적 매핑은 `docs/evidence/sep25/scenario-evidence.json`, 열린 작업은 `docs/plans/2026-10-03-current-source-remediation.md`를 따른다. 당시 구현 감사는 `docs/adr/0007-sep-25-implementation-closure.md`에 보존한다. 아래 fixture 참조는 clean-HEAD 실행 증거가 아니다.
 - 범위: 현재 `taskmesh-contract` / `taskmesh-engine` / Tokio facade / Rayon adapter / benchmark harness의 기능과 그 경계에 필요한 안전 시나리오. 현행 보장과 미결정 목표 계약은 각 행에서 구분한다. 미래의 실행형 flow·분산 복구·자동 checkpoint 실행은 제외한다.
 - 상태: 시나리오 설계 목록. 관련 테스트 파일은 탐색 앵커일 뿐, 각 행의 완전한 커버리지나 현재 HEAD의 PASS 영수증이 아니다. 원본 목록 작성 시 테스트·mutation·nightly는 실행하지 않았다. 2026-09-26의 별도 재검증 범위는 아래에 기록한다.
 - 규모: 기본 16·엣지 28·헬게이트 35·코너 25, 총 104개. 미결정 계약과 source-backed 실패 후보는 해당 행에 표시했다.
@@ -177,7 +177,7 @@
 | H28 | 결정적 host↔simulator 비교와 quiet-host 성능 자격을 한 행에 섞었다. simulator에는 task error·cancel·deadline/worker cleanup 모델이 없으므로 그 terminal 유형까지 건수 동치를 요구하지 않는다. | `host_simulator_comparison`은 단일 class 9건 burst의 offered/completed/rejected/max-queue를 비교한다. `unanswered = offered - terminal`은 독립 모집단 계측이 아니며, host의 응답 후 살아 있는 worker, 여러 class/path, warmup·환경을 다루지 않는다. | simulator·host의 공통 admission 계정 CI fixture는 유효하다. 제품 코드 결함은 확인되지 않았다. 별도 host harness/quiet-host report가 필요한 경우 독립 offered·terminal·unanswered·custody 원장과 class/path·환경 메타데이터를 수집한다. |
 | A05 | 요구 자체는 유효하다. | `hardening_admission_ledger::cross_class_global_and_pool_limits_follow_only_admitted_events`가 입력 기반 permit 원장으로 class별 CPU·memory·inflight와 pool 점유를 확인했으나 manifest에 누락됐었다. 현재 매핑의 supporting case로 연결했다. | 추가 제품 코드 변경 근거 없음. manifest의 정적 검증과 실제 CI 실행 판정은 분리한다. |
 
-H12의 최종 clean-HEAD CI 자격과 H28 성능 자격의 실행 작업은 `docs/plans/bugbash-sep-25-general/tickets/OPEN-FOLLOWUPS.md`에서 추적한다. 104개 ID의 `MAPPED`는 테스트 선택 목록이며 모든 행의 의미 충족이나 release 자격이 아니다.
+H12의 clean-HEAD CI와 H28 성능 자격의 후속 작업은 현재 계획에서 추적한다. 104개 ID의 `MAPPED`는 테스트 선택 목록이며 모든 행의 의미 충족이나 release 자격이 아니다.
 
 ## 역사적 소스 감사 스냅샷
 
@@ -238,9 +238,9 @@ H12의 최종 clean-HEAD CI 자격과 H28 성능 자격의 실행 작업은 `doc
 
 **실행 rail:** A·B·D 및 좁은 H 회귀는 owner-local `contract`/`engine`/`taskmesh`/`bench` 타깃에 둔다. 주입 가능한 clock/barrier로 재현 가능한 H를 먼저 일반 `test`에 넣고, 깨끗한 동일 HEAD의 CI profile에서 소비자·feature·문서 타깃까지 묶는다. H16의 확장된 Loom/Shuttle·TSan, fuzz 및 생성 mutation은 별도 nightly/명시적 허가 rail이다. 성능 판단은 기능 PASS와 분리하여 고정 seed·독립 계측·환경·baseline을 기록한다. 이 문서는 실행 명령이나 합격 영수증이 아니다.
 
-## 공백 해소 실행 계획
+## 정적 시나리오 매핑
 
-P 34개와 G 19개의 최종 정적 매핑은 [BG25 execution packet](../plans/bugbash-sep-25-general/tickets/README.md)과 `scenario-evidence.json`에서 관리한다. [S25 초안](../archive/2026-09-25/sep-25-engine-coverage/tickets/README.md)은 대체된 계획 이력이다. 이 체크리스트는 시나리오와 원래 정적 감사 상태를 보존한다.
+P 34개와 G 19개의 최종 정적 매핑은 [Sep-25 evidence](../evidence/sep25/README.md)의 `scenario-evidence.json`에서 관리한다. S25 초안은 Git history에만 남는다. 이 체크리스트는 시나리오와 원래 정적 감사 상태를 보존한다.
 
 ## 근거 위치
 

@@ -71,7 +71,7 @@
 
 ## 작업 문서
 
-- [병렬 보완 계획](PARALLEL-REMEDIATION-PLAN.md): write set, 의존 순서, 통합 DoD.
+- 구현 결정은 [ADR 0003](../../../adr/0003-sep-16-hardening-contracts.md)에 압축했다. 과거 병렬 보완 계획은 현재 실행 지시가 아니므로 제거했다.
 - [코드 품질·중복·의도적 한계](QUALITY-AND-SCOPE.md): 확정 결함과 분리한 cleanup 및 계약 검토.
 - [검증 receipt](evidence/verification.md): 실행 명령, 결과, 이전 증거의 범위.
 - [보존된 observation harness](evidence/repro/src/lib.rs): 현재 동작의 재현; 수정용 regression assertion과 다름.

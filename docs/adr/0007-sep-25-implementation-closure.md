@@ -14,19 +14,19 @@
 
 The twelve BG25 tickets reached `IMPLEMENTED` in the repository. Their long
 implementation, audit, and handoff narratives duplicated the accepted decisions.
-The [active plan](../plans/bugbash-sep-25-general/tickets/plan.json) remains
-`PARTIAL`: static mapping, exact-source verification, consumer adoption, and
-nightly/release qualification have separate authorities. Deleting a completed
-ticket narrative does not close any of those fields.
+The implementation is complete in repository scope. Its
+[ticket map](../evidence/sep25/ticket-map.json) is static ownership evidence,
+not an active plan. Exact-source verification, consumer adoption and
+nightly/release qualification retain separate authorities.
 
 ## Decision
 
 1. Keep the implemented contract in ADR 0004–0005, benchmark interpretation in
    ADR 9000, and source-bound proof rules in ADR 0006. Keep this compact ticket
    map as the index of what was implemented; do not recreate ticket-level plans.
-2. Keep the 104-row scenario manifest, its validators, the active `plan.json`,
-   coverage/command selectors, external-adoption ledger, and open follow-ups.
-   `MAPPED` is a static relationship; it is not an executed scenario or a CI PASS.
+2. Keep the 104-row scenario manifest, its validators and ticket ownership map
+   as evidence. Current open work belongs to one current-source plan. `MAPPED`
+   is a static relationship; it is not an executed scenario or a CI PASS.
 3. Keep historical exact-source receipts at their recorded source identities.
    A later HEAD needs a new complete clean-source receipt. The removed narratives
    remain inspectable in the Git commit named above; their status is historical.
@@ -49,18 +49,16 @@ ticket narrative does not close any of those fields.
 | BG25-012 | Mapped K 51 / P 34 / G 19 scenarios to versioned selectors and exact-source proof roles. | 0006; final clean HEAD CI receipt remains required. |
 
 The per-scenario ownership and executable selectors remain in
-[plan.json](../plans/bugbash-sep-25-general/tickets/plan.json),
-[COVERAGE.md](../plans/bugbash-sep-25-general/tickets/COVERAGE.md),
-[COMMANDS.md](../plans/bugbash-sep-25-general/tickets/COMMANDS.md), and
-[scenario-evidence.json](../plans/bugbash-sep-25-general/tickets/scenario-evidence.json).
-These are live inventories, not duplicate implementation tickets.
+[ticket-map.json](../evidence/sep25/ticket-map.json) and
+[scenario-evidence.json](../evidence/sep25/scenario-evidence.json). These are
+static evidence inventories, not duplicate implementation tickets.
 
 ## Evidence and remaining work
 
 Older macOS 16/16 and focused consumer receipts are valid only for their exact
-source and proof type. The implementation archive, static 104-row mapping, and
-owner-local runs do not qualify the current HEAD. The current work owners are
-listed in [OPEN-FOLLOWUPS.md](../plans/bugbash-sep-25-general/tickets/OPEN-FOLLOWUPS.md):
-clean-source CI, W4 branch-rule adoption, D1–D9 consumer review, conditional H28
-performance, and explicitly requested nightly/release producers. Mutation,
+source and proof type. The implementation record, static 104-row mapping, and
+owner-local runs do not qualify a later HEAD. W4 branch-rule adoption is
+complete at the 2026-10-03 observation. The [current plan](../plans/2026-10-03-current-source-remediation.md)
+owns new clean-source CI, D1–D9 consumer review, conditional H28 performance,
+and explicitly requested nightly/release producers. Mutation,
 modelcheck, TSan, fuzz, coverage, IAI, and release are not completed by this ADR.

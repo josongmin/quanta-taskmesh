@@ -101,11 +101,27 @@ The current operator path is local; hosted attestation remains a compatibility p
   absolute deadline, then relative timeout; equality is expired. Relative
   `Duration::ZERO` is try-once but cannot suppress an expired absolute
   CompleteBy. A rejected handoff returns the unstarted permit exactly once.
-- **Rayon constructors (H03).** `RayonCpuExecutor::new(n)` and
-  `from_topology(&topology)` remain deprecated panic wrappers. Move fail-closed
-  callers to `try_new(n)?` / `try_from_topology(&topology)?`; they return typed
-  `RayonBuildError::{ZeroWorkers, InvalidTopology, Pool}`. No second engine
-  worker pool is introduced.
+- **Rayon constructors (H03).** The deprecated panic wrappers
+  `RayonCpuExecutor::new(n)` and `from_topology(&topology)` are removed in this
+  unreleased 0.3 API. Migrate to `try_new(n)?` /
+  `try_from_topology(&topology)?`; they return typed
+  `RayonBuildError::{ZeroWorkers, InvalidTopology, Pool}`. The error is also
+  exported from `taskmesh::ext`. This is a Rust source break to adjudicate
+  against the 0.2.0 baseline before release. No second engine worker pool is
+  introduced.
+
+### Added and fixed for unreleased 0.3
+
+- `TokioRuntime::run_blocking_response_by` and `run_cpu_response_by` add one
+  absolute acquisition-to-caller-response boundary for synchronous work.
+  `CompleteBy` keeps its cooperative-only meaning. Started workers retain
+  capacity after a timed-out response until actual completion.
+- The facade reexports `TaskPlanError`, `TaskIdentifierField`, and
+  `IdentifierViolation`; the Rayon feature reexports `RayonBuildError` from
+  `taskmesh::ext`.
+- Measured-series admission rejects a measured attempt whose reconstructed
+  producer lag exceeds its hash-bound per-rate control budget. A validator
+  pass is not a host performance qualification.
 
 ### Verification status
 

@@ -15,4 +15,6 @@ Public API and wire details live in the
 [library spec](../taskmesh-library-spec.md) and
 [external interface](../taskmesh-external-interface.md). The
 [release checklist](../release-checklist.md) owns operator procedure. Completed
-ticket narratives are in the [archive](../archive/2026-09-25/README.md).
+ticket narratives remain available in Git history. The
+[current plan](../plans/2026-10-03-current-source-remediation.md) owns open work;
+the [operating kernel](../ssot/README.md) is only a navigation index.

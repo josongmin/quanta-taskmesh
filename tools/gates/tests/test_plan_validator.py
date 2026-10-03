@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[3]
-VALIDATOR = REPO / "docs/plans/bugbash-sep-25-general/tickets/validate_plan.py"
+VALIDATOR = REPO / "docs/evidence/sep25/validate_ticket_map.py"
 SPEC = importlib.util.spec_from_file_location("validate_plan", VALIDATOR)
 assert SPEC is not None and SPEC.loader is not None
 VALIDATE = importlib.util.module_from_spec(SPEC)

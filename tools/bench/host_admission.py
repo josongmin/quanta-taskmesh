@@ -231,6 +231,7 @@ def admit(
     host_build.require_matching_library_profiles(build_root, witness, profile)
     runs, windows, identities, populations, assessments, resource_bounds = [], [], [], {}, {}, []
     control_inputs, control_identities, boots, cadences = {}, [], set(), set()
+    producer_lag_limits = {}
     for rate in frozen["rate_grid"]:
         role_paths = controls[str(rate)]
         if not isinstance(role_paths, dict) or role_paths.keys() != set(CONTROL_ROLES):
@@ -247,6 +248,9 @@ def admit(
         policy = read_regular_bytes(policy_path)
         if host_perf.sha256(policy) != frozen["control_policy_sha256_by_rate"][str(rate)]:
             raise host_perf.ReceiptError("control budget changed after preregistration")
+        producer_lag_limits[str(rate)] = host_control_assess.parse_policy(policy)[
+            "max_host_lag_ns"
+        ]
         assessment = host_control_assess.assess(policy, **paths)
         if assessment["violations"]:
             raise host_perf.ReceiptError(f"measured control budget failed at rate {rate}")
@@ -313,6 +317,15 @@ def admit(
             for role, filename in files.items()
         ):
             raise host_perf.ReceiptError("validated attempt artifacts differ from sealed ledger")
+        producer_lag = host_perf.nat(
+            run["metrics"]["max_producer_lag_ns"],
+            f"{attempt['id']}.max_producer_lag_ns",
+        )
+        producer_lag_limit = producer_lag_limits[str(rate)]
+        if producer_lag > producer_lag_limit:
+            raise host_perf.ReceiptError(
+                f"{attempt['id']}: producer lag exceeds frozen rate {rate} host limit"
+            )
         identity = run["identity"]
         if (
             identity["source_head"] != frozen["source_head"]
@@ -390,7 +403,13 @@ def admit(
             }
         )
         runs.append(
-            {"attempt": attempt["id"], "sha256": run["artifact_sha256"], "cohorts": cohort_rows}
+            {
+                "attempt": attempt["id"],
+                "sha256": run["artifact_sha256"],
+                "cohorts": cohort_rows,
+                "max_producer_lag_ns": producer_lag,
+                "producer_lag_limit_ns": producer_lag_limit,
+            }
         )
     for rate, order in orders.items():
         pairs = [tuple(order[i : i + 2]) for i in range(0, len(order), 2)]

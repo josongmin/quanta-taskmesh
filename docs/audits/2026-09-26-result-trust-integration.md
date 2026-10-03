@@ -159,7 +159,7 @@ Each file below belongs to the stated review lane. Runtime and benchmark finding
 - `CHANGELOG.md`
 - `docs/adr/9000-benchmark-strategy.md`
 - `docs/benchmarks/host-series.md`
-- `docs/plans/sep-25-taskmesh-benchmark/tickets/B04-remaining-audit.md`
-- `docs/plans/sep-25-taskmesh-benchmark/tickets/README.md`
+- `docs/plans/sep-25-taskmesh-benchmark/tickets/B04-remaining-audit.md` (historical path; removed 2026-10-03, source-specific audit retained in Git history)
+- `docs/plans/sep-25-taskmesh-benchmark/tickets/README.md` (historical path; removed 2026-10-03)
 - `pyproject.toml`
 - `uv.lock`

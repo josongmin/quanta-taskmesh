@@ -19,13 +19,16 @@ use taskmesh::ext::{
     ExecutorCapabilities, Governor, ManualClock, PolicySet, ReconcileOutcome, ReleaseOutcome,
     StageReleaseOutcome, BUILTIN_SUBSTRATES,
 };
+#[cfg(feature = "rayon")]
+use taskmesh::ext::{RayonBuildError, RayonCpuExecutor};
 #[cfg(not(feature = "rayon"))]
 use taskmesh::PHYSICAL_SHARED_BLOCKING;
 use taskmesh::{
     AdmissionVerdict, Builder, CancellationPolicy, ClassPolicy, ExecutionPhase, GovernorError,
-    HeldCapacity, MemoryReleasePolicy, MemoryUnitScale, OverflowPolicy, ResourceBudget, RunError,
-    Runtime, SubmitOptions, TaskClass, TaskScope, TaskSpec, TaskStage, TokioRuntime,
-    TopologyConfig, TopologyError, PHYSICAL_CPU,
+    HeldCapacity, IdentifierViolation, MemoryReleasePolicy, MemoryUnitScale, OverflowPolicy,
+    ResourceBudget, RunError, Runtime, SubmitOptions, TaskClass, TaskIdentifierField,
+    TaskPlanError, TaskScope, TaskSpec, TaskStage, TokioRuntime, TopologyConfig, TopologyError,
+    PHYSICAL_CPU,
 };
 
 /// The wire schema a 0.2.0 consumer must expect. The literal is the consumer's
@@ -179,6 +182,9 @@ fn cpu_runtime(executor: Arc<dyn CpuExecutor>) -> Result<TokioRuntime, GovernorE
 
 #[tokio::main]
 async fn main() {
+    facade_plan_errors_are_nameable();
+    #[cfg(feature = "rayon")]
+    rayon_construction_errors_are_typed();
     everyday_ports().await;
     snapshot_schema_2().await;
     deadline_unsupported().await;
@@ -190,6 +196,34 @@ async fn main() {
     drain_is_the_shutdown_contract().await;
     declared_nested_wait_is_refused();
     println!("taskmesh-consumer-msrv ok");
+}
+
+#[cfg(feature = "rayon")]
+fn rayon_construction_errors_are_typed() {
+    let error: RayonBuildError = RayonCpuExecutor::try_new(0)
+        .err()
+        .expect("zero workers must be a typed construction failure");
+    check!(
+        matches!(error, RayonBuildError::ZeroWorkers),
+        "rayon construction error is nameable through taskmesh::ext"
+    );
+}
+
+fn facade_plan_errors_are_nameable() {
+    let error: TaskPlanError = TaskSpec::io(retrieval())
+        .operation(" invalid ")
+        .validate()
+        .expect_err("whitespace around an operation is rejected");
+    check!(
+        matches!(
+            error,
+            TaskPlanError::InvalidIdentifier {
+                field: TaskIdentifierField::Operation,
+                violation: IdentifierViolation::SurroundingWhitespace,
+            }
+        ),
+        "facade must expose the typed task-plan error and its fields"
+    );
 }
 
 /// The everyday driving port, unchanged in shape since 0.1.0.

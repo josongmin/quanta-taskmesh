@@ -1,10 +1,12 @@
 //! Governed state transitions and accounting invariants.
 
+#[cfg(debug_assertions)]
+use super::BTreeMap;
 use super::{
-    mint_lease_nonce, AdvanceOutcome, AdvanceRefusal, BTreeMap, CapabilityId, ClassState,
-    ExecutionPhase, GovernedState, GrantRequest, LeaseToken, MeasurementSequence, PermitId,
-    PermitLedger, PermitRecord, ReleaseOutcome, RootOperationPermits, TaskClass, TaskScope,
-    TaskStage, TerminalReason, Ticket, TicketState, TransitionEffects, MAX_TERMINAL_TICKETS,
+    mint_lease_nonce, AdvanceOutcome, AdvanceRefusal, CapabilityId, ClassState, ExecutionPhase,
+    GovernedState, GrantRequest, LeaseToken, MeasurementSequence, PermitId, PermitLedger,
+    PermitRecord, ReleaseOutcome, RootOperationPermits, TaskClass, TaskScope, TaskStage,
+    TerminalReason, Ticket, TicketState, TransitionEffects, MAX_TERMINAL_TICKETS,
 };
 
 impl GovernedState {

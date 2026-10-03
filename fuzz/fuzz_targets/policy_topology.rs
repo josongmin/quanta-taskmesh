@@ -217,7 +217,7 @@ fuzz_target!(|config: Config| {
                     "validate_policy must refuse with PolicyViolation, got {error:?}"
                 );
                 let rendered = error.to_string();
-                assert!(!rendered.is_empty());
+                assert_ne!(rendered, "");
                 // A refused policy must not build either.
                 assert!(
                     Governor::new(policy, Arc::new(ManualClock::new(0))).is_err(),

@@ -7,13 +7,15 @@ The ordinary gate set is `tools/gates/inventory.json`; the ordinary required sub
 the CI profile excludes that subset, while the release profile still requires it.
 Release-only requirements are independently pinned in
 `tools/release/release-required.json`. Ordinary verification is local-first and runs
-from a clean exact-source checkout. The bounded `pr-ci.yml` is automatic and its
-aggregate 16-gate check is required by live `main` protection (observed
-2026-10-03). The full `ci.yml`, `bench.yml`, and `release.yml` workflows are
+from a clean exact-source checkout. The bounded CircleCI `required` job owns
+automatic PR/main checks; its project trigger, auto-cancel setting, and live
+GitHub `main` required status must be inspected as external state (see
+[CircleCI operations](ci-circleci.md)). The former `pr-ci.yml` is a manual
+fallback. The full `ci.yml`, `bench.yml`, and `release.yml` workflows are
 manual-only in source and disabled in GitHub settings; they do not replace the
 local final-release procedure. `required.json` also owns the fail-fast execution
 order; an explicit receipt `--tier` is a diagnostic subset, not canonical qualification.
-The bounded PR workflow pins Rust 1.99.0 for deterministic Clippy/rustfmt
+The bounded CircleCI workflow pins Rust 1.99.0 for deterministic Clippy/rustfmt
 policy. Its Rust 1.81 consumer-MSRV gate is separate; updating the CI compiler
 requires a reviewed workflow change and a new exact-merge-SHA check.
 Run the registered recipes through `just`:

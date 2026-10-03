@@ -39,13 +39,15 @@ receipt.
    clean-source profile; `nightly` is the seven-gate costly proof profile; and
    `release` additionally needs release-only artifacts and human adjudication.
    Profile, trigger and proof strength are independent. `nightly` is not a cron.
-7. The bounded `.github/workflows/pr-ci.yml` runs on PR/main and emits one
-   aggregate `required 16-gate verdict`. At the 2026-10-03 observation, GitHub
-   `main` protection required that context with strict status checks; its
-   [main-push run](https://github.com/josongmin/quanta-taskmesh/actions/runs/36261855351)
-   passed at `c4bcb2f`. This is an exact-source merge control, not nightly,
-   release, performance or consumer adoption approval.
-8. Pin the PR workflow's Rust toolchain to a versioned compiler with Clippy and
+7. The bounded `.circleci/config.yml` is the automatic PR/main CI authority.
+   Its `required` job checks the GitHub PR merge ref (or the main push SHA),
+   runs the same 16-gate `ci` profile, validates the clean-source receipt, and
+   stores it as an artifact. CircleCI's project trigger and GitHub branch rule
+   are external state and must be inspected during cutover; a config file or
+   green branch head alone does not prove that protection is active. The former
+   `.github/workflows/pr-ci.yml` is a manual fallback. Full qualification and
+   mutation-bearing workflows remain manual and separate from this check.
+8. Pin the automatic CI workflow's Rust toolchain to a versioned compiler with Clippy and
    rustfmt. A rolling `stable` changed its warning set between the local audit
    and hosted execution, so a source-identical check was not reproducible.
    Toolchain upgrades require their own source change and exact-merge-SHA run;

@@ -271,7 +271,7 @@ def test_workflow_trust_allows_trusted_main_write_job(tmp_path: Path) -> None:
     assert vi.workflow_trust_problems(tmp_path / "bench.yml", document) == []
 
 
-def test_only_bounded_pr_ci_has_automatic_triggers() -> None:
+def test_github_actions_are_manual_after_circleci_cutover() -> None:
     assert vi.all_workflow_trigger_problems(vi.WORKFLOWS) == []
     path = vi.WORKFLOWS / "pr-ci.yml"
     document = vi.yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -289,12 +289,12 @@ def test_automatic_hosted_triggers_are_rejected(tmp_path: Path) -> None:
         assert any(trigger in problem for problem in problems), problems
 
 
-def test_pr_ci_rejects_path_filters_skipped_job_and_deep_profile(tmp_path: Path) -> None:
+def test_pr_ci_rejects_automatic_triggers_skipped_job_and_deep_profile(tmp_path: Path) -> None:
     path = tmp_path / "pr-ci.yml"
     document = vi.yaml.safe_load((vi.WORKFLOWS / "pr-ci.yml").read_text())
     invalid = copy.deepcopy(document)
     invalid[True]["pull_request"] = {"paths": ["crates/**"]}
-    assert any("no filters" in problem for problem in vi.workflow_trigger_problems(path, invalid))
+    assert any("pull_request" in problem for problem in vi.workflow_trigger_problems(path, invalid))
 
     invalid = copy.deepcopy(document)
     invalid["jobs"]["required"]["if"] = "false"

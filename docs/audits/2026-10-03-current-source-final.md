@@ -1,9 +1,10 @@
 # 2026-10-03 current-source audit
 
-- **Verdict:** Taskmesh owner-local remediation is implemented and its focused
-  gates pass on a dirty working tree. Clean-source CI, measured performance,
+- **Verdict:** Taskmesh remediation has owner-local proof and one clean-source
+  local CI result on an earlier candidate. The toolchain repair made after that
+  candidate requires a new exact-source CI result. Measured performance,
   release qualification and external deployment acceptance are **OPEN**.
-- **Source under review:** `main@c4bcb2f213c66aac8adc7d3493c5a39917a29e00`
+- **Initial source under review:** `main@c4bcb2f213c66aac8adc7d3493c5a39917a29e00`
   (tree `c99caff9d5b32f69ca6fbde92a2ff14dd19a8b88`) plus uncommitted
   documentation, test and product edits. The baseline HEAD's hosted result is
   not evidence for these working-tree bytes.
@@ -22,7 +23,8 @@
 | Measured admission | `host_admission.py` now checks each measured attempt's reconstructed producer lag against its hash-bound rate policy before `MEASURED_SERIES_ADMITTED`. | B00 budgets, quiet-host repeated series and performance verdict are NOT_RUN. |
 | SDK / Rayon | Facade reexports plan error types; Rayon panic constructors were removed and `RayonBuildError` reexported. | Removing public methods is a Rust source break; final 0.2.0-to-0.3.0 semver adjudication remains OPEN. |
 | Production `expect` | Default-feature uses were classified by their validated/private preconditions. No caller-controlled panic counterexample was established. Test-only and `test-util` cases are separate; Rayon panic wrappers are removed. | A discovered bypass must get a typed rejection and negative regression; no blanket conversion is justified by count alone. |
-| Module layout | Host acquisition, synchronous dispatch and detached settlement; engine memory, observation, validation and state transitions; fairness tests were split without changing crate boundaries or inventory. Parent runtime/governor/state files are 860/896/655 lines. | Behavior-preserving source move still needs exact-source CI. |
+| Module layout | Host acquisition, synchronous dispatch and detached settlement; engine memory, observation, validation and state transitions; fairness tests were split without changing crate boundaries or inventory. Parent runtime/governor/state files are 860/903/655 lines after the toolchain repair below. | Behavior-preserving source move needs exact-source CI. |
+| Atomic sequence | Hosted stable Rust deprecated `AtomicU64::fetch_update` under `-D warnings`. Both governor sequence sites now use one `compare_exchange_weak` loop, retaining unique IDs and checked exhaustion on Rust 1.81. | The revised candidate needs a new local and hosted CI result. |
 | Nightly | Full `ci.yml`, `bench.yml` and `release.yml` remain manually triggered and disabled on GitHub; no cron is present. | A mutation-bearing schedule needs explicit authorization under `AGENTS.md`, runner budget and receipt authority. A bounded scheduled CI subset would have a different denominator. |
 | Old receipts | The three ignored root receipts naming `cc5b256` were moved byte-for-byte to `target/verification/historical/cc5b256704a1826e7dde36e2c4b127c6cba8aabf/`. | They remain historical diagnostics; validate any cited receipt with `--expected-head`. |
 
@@ -53,6 +55,13 @@
 | `just test-rayon`, `just doctest`, `just rustdoc` | PASS. |
 | Markdown local-link resolution and `git diff --check` | PASS. |
 
-`just verify-macos-ci`, hosted PR checks for a new commit, mutation/nightly,
-Linux release, measured performance and Semantica deployment acceptance were
-**NOT_RUN**. No clean-source or release receipt was issued from this dirty tree.
+Those commands ran on the initial dirty audit source, so they did not issue a
+clean-source or release receipt. A later clean candidate
+`aa116aa59889f01bc997d77176ef1d4df75a2693` passed all 16 local macOS CI
+gates and its receipt validated against that exact HEAD. Its 0.2.0 baseline
+semver audit was `REPORTED` with findings in all four public crates, including
+the intentional Rayon method removals. The [first PR run](https://github.com/josongmin/quanta-taskmesh/actions/runs/37102825665)
+failed Clippy on GitHub's newer stable Rust because `fetch_update` became
+deprecated. The atomic sequence repair above follows that result and requires
+fresh local and hosted CI. Mutation/nightly, Linux release, measured performance
+and Semantica deployment acceptance remain **NOT_RUN**.

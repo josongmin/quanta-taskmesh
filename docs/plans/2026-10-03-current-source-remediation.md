@@ -2,11 +2,12 @@
 
 - **Status:** OPEN for exact-source CI, 0.3 compatibility, performance evidence,
   the nightly operating decision and external consumer acceptance.
-- **Taskmesh source:** `main@c4bcb2f213c66aac8adc7d3493c5a39917a29e00`
-  plus uncommitted implementation, documentation and test changes. The
+- **Taskmesh source:** audit baseline
+  `main@c4bcb2f213c66aac8adc7d3493c5a39917a29e00`; the implementation is
+  on `codex/taskmesh-current-source-remediation`. The
   [current-source audit](../audits/2026-10-03-current-source-final.md) records
-  what changed and which dirty-source checks passed. The baseline HEAD's hosted
-  16-gate result does not qualify these working-tree bytes.
+  the candidate sequence and proof scope. A receipt or hosted result qualifies
+  only the exact candidate SHA it names.
 - **Semantica:** read-only observation at
   `a961cf26842e77fc6231f16b057626c69cb7897d`; its Taskmesh manifest and
   lockfile still pin `c4bcb2f`, and its blocking adapter still passes
@@ -15,7 +16,7 @@
 
 ## T1 — exact-source Taskmesh CI and publication
 
-**Owner:** Taskmesh. **Prerequisite:** finalize this working tree and preserve
+**Owner:** Taskmesh. **Prerequisite:** finalize the revised candidate and preserve
 all unrelated dirty hunks. Freeze the candidate HEAD, tree, counted-path digest,
 feature set, owner paths and command. Commit on an isolated `codex/` branch only
 after reviewing the complete diff, including the earlier documentation
@@ -48,8 +49,9 @@ unreleased 0.3 API removes deprecated
    it does not decide wire or behavior compatibility.
 2. Record the final-SHA human adjudication for Rust API, wire and behavior in
    the release process. The independent consumer-MSRV default/Rayon fixture
-   already passes on the dirty working tree, including facade plan errors and
-   typed Rayon construction, but must not stand in for release approval.
+   passed on the earlier clean CI candidate and in a focused run after the
+   atomic sequence repair, including facade plan errors and typed Rayon
+   construction, but does not stand in for release approval.
 3. Follow [release-checklist.md](../release-checklist.md). Mutation/nightly,
    Linux and final release qualification are distinct from T1's 16-gate CI.
 
@@ -132,7 +134,7 @@ D1–D9. Deployment activation and owner acceptance are separate decisions.
   newly demonstrated bypass to a typed error, not every invariant assertion.
 - R1: host acquisition/synchronous/settlement, engine memory/observation/
   validation/state transitions and fairness tests were split. Parent
-  runtime/governor/state files are 860/896/655 lines. This is maintainability,
+  runtime/governor/state files are 860/903/655 lines. This is maintainability,
   not an inferred production defect from line count.
 - O2: ignored root `receipt*.json` naming `cc5b256` moved byte-for-byte to
   `target/verification/historical/<source-head>/`. Use `--expected-head` for

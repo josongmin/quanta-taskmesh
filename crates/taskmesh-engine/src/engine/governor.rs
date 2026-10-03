@@ -124,13 +124,8 @@ impl Governor {
         clock: Arc<dyn Clock>,
         settlement_waker: Option<Arc<dyn SettlementWaker>>,
     ) -> Result<Self, GovernorError> {
-        let authority = NEXT_GOVERNOR_AUTHORITY
-            .fetch_update(
-                std::sync::atomic::Ordering::Relaxed,
-                std::sync::atomic::Ordering::Relaxed,
-                |current| current.checked_add(1),
-            )
-            .map_err(|_exhausted| GovernorError::IdentityAuthorityExhausted)?;
+        let authority = Self::take_sequence(&NEXT_GOVERNOR_AUTHORITY)
+            .ok_or(GovernorError::IdentityAuthorityExhausted)?;
         Ok(Self {
             authority,
             policy,
@@ -169,11 +164,15 @@ impl Governor {
     }
 
     fn take_sequence(counter: &AtomicU64) -> Option<u64> {
-        counter
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                current.checked_add(1)
-            })
-            .ok()
+        let mut current = counter.load(Ordering::Relaxed);
+        loop {
+            let next = current.checked_add(1)?;
+            match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(previous) => return Some(previous),
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     fn fresh_ids(&self) -> Option<admission::Ids> {
@@ -877,6 +876,14 @@ pub struct PermitLedgerView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sequence_allocation_rejects_exhaustion_without_wrapping() {
+        let counter = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(Governor::take_sequence(&counter), Some(u64::MAX - 1));
+        assert_eq!(Governor::take_sequence(&counter), None);
+        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+    }
 
     #[test]
     fn accounting_fault_accessor_reports_the_sticky_state_reason() {

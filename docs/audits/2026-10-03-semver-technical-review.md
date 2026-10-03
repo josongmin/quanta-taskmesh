@@ -25,6 +25,10 @@ The corresponding migration text is in `CHANGELOG.md` under 0.3.0. These
 groups are not a claim that every raw finding has been individually mapped to
 an approved break item. In particular, the release reviewer must bind the
 exact log digests and each raw locator in a reviewer-owned adjudication copy.
+The tracked adjudication template now requires separate BG25 handle API and
+Sep-25 custody API, verdict/terminal wire, and response/custody behavior
+decisions. Technical inventories, including this document, remain
+non-approving.
 
 ## Avoidable discriminant change removed
 

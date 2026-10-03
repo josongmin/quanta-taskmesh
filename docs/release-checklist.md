@@ -295,6 +295,10 @@ Run the registered recipes through `just`:
       Use tracked `tools/release/adjudication.json` only as a non-approving
       template. Save a reviewer-owned copy as
       `target/release/input/adjudication.json` before `just release-local`.
+      The template explicitly requires BG25 Governor-bound handle API and
+      Sep-25 custody API, verdict/terminal wire, and response/custody behavior
+      review alongside the Sep-21 items. These are distinct from Semantica
+      deployment acceptance.
       Bind every item to the final
       candidate SHA,
       with explicit decision, reviewer and CHANGELOG anchor for every accepted break.

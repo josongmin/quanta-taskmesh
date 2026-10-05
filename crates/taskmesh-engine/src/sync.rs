@@ -11,9 +11,10 @@
 //!
 //! The seam is deliberately tiny: one mutex type with a single `lock()` and the
 //! `AtomicU64` the id generators use. Nothing else in the engine synchronizes.
-//! (The process-wide lease-nonce counter in `engine::state` is a `std` atomic
-//! on purpose: no transition synchronizes on it — it only has to hand out
-//! distinct values, which a relaxed `fetch_add` does under any memory model.)
+//! Process-wide governor authority and lease-nonce counters remain `std`
+//! atomics: transitions do not synchronize on their values. They allocate
+//! distinct identities across checker executions. Governor authority allocation
+//! rejects overflow; the local permit/ticket/queue sequences use this seam.
 
 #[cfg(all(loom, shuttle))]
 compile_error!("`--cfg loom` and `--cfg shuttle` are mutually exclusive model-check builds");

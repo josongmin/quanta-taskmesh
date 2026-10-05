@@ -35,10 +35,14 @@ The current operator path is local; hosted attestation remains a compatibility p
   identity exhaustion rejects with `AdmissionVerdict::IdentityExhausted`
   instead of wrapping. Code that stored raw numeric IDs must store the handle.
 - **Composite lineage (C01/E04).** The two-argument
-  `child_of(root, parent_stage)` / `awaited_child_of(root, parent_stage)`
-  builders are replaced with `(root, immediate_parent_operation, parent_stage)`.
-  Before: `.awaited_child_of("root", TaskStage::new("stage"))`.
-  After: `.awaited_child_of("root", "parent-operation", TaskStage::new("stage"))`.
+  `child_of(root, parent_stage)` builder now requires
+  `(root, immediate_parent_operation, parent_stage)`.
+  Before: `.child_of("root", TaskStage::new("stage"))`.
+  After: `.child_of("root", "parent-operation", TaskStage::new("stage"))`.
+  The new `awaited_child_of` builder takes those same three arguments and
+  declares that the parent waits for the child. Direct `TaskScope::Child`
+  construction must add `parent_operation_id` and `parent_awaits`; use `false`
+  for an undeclared wait. Deserialized `parent_awaits` defaults to `false`.
   The child `TaskScope` JSON now requires `parent_operation_id`; old child
   payloads without it reject instead of guessing. Duplicate active
   `(root, operation)` and duplicate/conflicting stage descriptors reject
@@ -77,9 +81,28 @@ The current operator path is local; hosted attestation remains a compatibility p
   `ReleaseOutcome` adds `HeldByLease { phase }`, so exhaustive matches must
   handle an attempted release that did not own worker custody. `TerminalReason`
   adds delivery-failure and irreversible-cycle reasons and is no longer
-  `Copy`, `Ord`, or `Hash`; `ClaimOutcome` and `Provenance` are also no longer
-  `Copy`. Clone owned diagnostic values only where needed and match the new
-  typed outcomes instead of relying on ordering or implicit copies.
+  `Copy`, `PartialOrd`, `Ord`, or `Hash`; `ClaimOutcome` and `Provenance` are also
+  no longer `Copy`. Clone owned diagnostic values only where needed and match the new
+  typed outcomes instead of relying on ordering or implicit copies. The engine's
+  `taskmesh_engine::TerminalReason` is now distinct from the contract wire type;
+  before, both paths named the same reexport. Convert an engine terminal reason
+  with `let wire: taskmesh::TerminalReason = reason.into();` before serializing
+  it or passing it to a consumer of the contract type. Deserializing a wire
+  reason does not create engine governance state. Numeric `as` casts of
+  `TerminalReason` and `ReleaseOutcome` no longer compile because they carry
+  payload variants; match variants and assign explicit diagnostic labels.
+- **Abandon and accounting-fault behavior.** `AbandonOutcome` adds
+  `HeldByLease { phase }`; exhaustive matches must handle it as a refusal,
+  not as worker completion or released capacity. A promoted ticket whose
+  callback already acquired a worker lease keeps its charges until that
+  lease is released. `TerminalReason::AccountingFault` ends queued waiters
+  when accounting cannot be trusted. The fault is sticky: admission and
+  promotion stop, live workers keep custody, and recovery requires draining
+  and replacing the `Governor`; retrying admission does not reset it.
+- **Strict ingress field presence.** Explicit `blocking_dispatch: null`
+  is rejected. Omit the field to select the default dispatch path, or provide
+  a valid dispatch object. Treating null as omission would hide a malformed
+  caller request.
 - **Capability policy inspection (E01).** `PolicySet::capability_limits()` and
   `capability_limit()` are replaced by `capability_records()` and
   `capability_capacity()`. The new API preserves the difference between a

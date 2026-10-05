@@ -170,7 +170,7 @@ def _darwin_group_snapshot(pgid: int) -> dict[int, tuple[int, int, int]]:
     return members
 
 
-def _linux_group_snapshot(pgid: int) -> dict[int, tuple[int, int, str]]:
+def _linux_group_snapshot(pgid: int) -> dict[int, tuple[int, int, str, int]]:
     members = {}
     with os.scandir("/proc") as entries:
         for entry in entries:
@@ -185,7 +185,12 @@ def _linux_group_snapshot(pgid: int) -> dict[int, tuple[int, int, str]]:
                 raise OSError("process stat identity unavailable")
             member_pgid = int(tail[2])
             if member_pgid == pgid:
-                members[int(entry.name)] = (int(tail[19]), member_pgid, tail[0].decode("ascii"))
+                thread_count = int(tail[17])
+                if thread_count < 1:
+                    raise OSError("process thread-group liveness unavailable")
+                members[int(entry.name)] = (
+                    int(tail[19]), member_pgid, tail[0].decode("ascii"), thread_count
+                )
     return members
 
 
@@ -207,6 +212,17 @@ def _require_supported_custody() -> None:
         raise RuntimeError("process-group custody is unsupported on this platform")
 
 
+def _member_exited(identity: tuple) -> bool:
+    state = identity[2]
+    if isinstance(state, str):
+        if len(identity) != 4 or type(identity[3]) is not int or identity[3] < 1:
+            raise OSError("process thread-group liveness unavailable")
+        # A Linux thread-group leader can be a zombie while its workers run.
+        # The retained zombie is the group's only task after all workers exit.
+        return state in ("Z", "X", "x") and identity[3] == 1
+    return state == 5
+
+
 def _stable_group_snapshot(pgid: int) -> dict[int, tuple]:
     first = _group_snapshot(pgid)
     second = _group_snapshot(pgid)
@@ -217,14 +233,19 @@ def _stable_group_snapshot(pgid: int) -> dict[int, tuple]:
     second_identities = {pid: identity[:2] for pid, identity in second.items()}
     if pgid not in first or pgid not in second or first_identities != second_identities:
         raise OSError("process-group membership changed or leader absent")
-    if first[pgid][2] not in ("Z", 5) or second[pgid][2] not in ("Z", 5):
+    if (
+        first[pgid][2] not in ("Z", 5)
+        or second[pgid][2] not in ("Z", 5)
+        or not _member_exited(first[pgid])
+        or not _member_exited(second[pgid])
+    ):
         raise OSError("held process-group leader is not exited")
     return second
 
 
 def _has_live_member(pgid: int, members: dict[int, tuple]) -> bool:
     return any(
-        pid != pgid and identity[2] not in ("Z", "X", "x", 5)
+        pid != pgid and not _member_exited(identity)
         for pid, identity in members.items()
     )
 

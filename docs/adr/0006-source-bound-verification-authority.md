@@ -27,6 +27,11 @@ Two complete group observations must agree on member PID, birth identity and
 PGID, and both must show the held leader exited. A member's scheduling state
 may change without changing its identity. The later observation determines
 live membership; any identity or membership change remains incomplete.
+On Linux, a zombie thread-group leader can still own live worker threads.
+Its stat state is quiescent only with a positive observed thread count of one;
+zero, missing or invalid counts leave custody unproved. Thread count is mutable
+liveness evidence, not process identity, and is read with state in the same stat
+observation before the original group leader is reaped.
 
 1. The 104-scenario inventory is the oracle index. Its K 51 / P 34 / G 19
    baseline and the 104-row manifest describe static target, case, oracle,

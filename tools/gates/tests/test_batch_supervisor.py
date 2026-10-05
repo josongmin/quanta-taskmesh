@@ -109,6 +109,72 @@ def test_kill_signal_without_observed_cleanup_remains_incomplete(
     assert "cleanup incomplete" in reason
 
 
+@pytest.mark.parametrize(
+    ("before_state", "after_state", "leader_state", "expected"),
+    [
+        ("R", "S", "Z", "killed"),
+        ("S", "R", "Z", "killed"),
+        (2, 3, 5, "killed"),
+        ("S", "Z", "Z", "quiescent"),
+        (2, 5, 5, "quiescent"),
+    ],
+)
+def test_member_scheduling_state_does_not_change_process_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    before_state,
+    after_state,
+    leader_state,
+    expected: str,
+) -> None:
+    from tools import process_supervisor as supervisor
+
+    leader, child = 20001, 20002
+    before = {leader: (11, leader, leader_state), child: (12, leader, before_state)}
+    after = {leader: (11, leader, leader_state), child: (12, leader, after_state)}
+    observed = iter([before, after])
+    calls = []
+    monkeypatch.setattr(supervisor, "_group_snapshot", lambda _pgid: next(observed))
+    monkeypatch.setattr(
+        supervisor,
+        "_kill_owned_group",
+        lambda pgid: (calls.append(pgid) or "killed", ""),
+    )
+    monkeypatch.setattr(supervisor, "_await_killed_group_quiescence", lambda _pgid: (True, ""))
+
+    assert supervisor._retire_owned_group(leader) == (expected, "")
+    assert calls == ([leader] if expected == "killed" else [])
+
+
+@pytest.mark.parametrize("changed", ["child_group", "leader_before", "leader_after"])
+def test_scheduling_state_repair_preserves_group_and_exited_leader_requirements(
+    monkeypatch: pytest.MonkeyPatch,
+    changed: str,
+) -> None:
+    from tools import process_supervisor as supervisor
+
+    leader, child = 20001, 20002
+    before = {leader: (11, leader, "Z"), child: (12, leader, "R")}
+    after = {leader: (11, leader, "Z"), child: (12, leader, "S")}
+    if changed == "child_group":
+        after[child] = (12, leader + 1, "S")
+    elif changed == "leader_before":
+        before[leader] = (11, leader, "R")
+    else:
+        after[leader] = (11, leader, "R")
+    observed = iter([before, after])
+    calls = []
+    monkeypatch.setattr(supervisor, "_group_snapshot", lambda _pgid: next(observed))
+    monkeypatch.setattr(
+        supervisor,
+        "_kill_owned_group",
+        lambda pgid: (calls.append(pgid) or "killed", ""),
+    )
+    monkeypatch.setattr(supervisor, "_await_killed_group_quiescence", lambda _pgid: (True, ""))
+
+    assert supervisor._retire_owned_group(leader)[0] == "unknown"
+    assert calls == [leader]
+
+
 @pytest.mark.parametrize("mode", ["single", "batch"])
 def test_bounded_capture_keeps_normal_output_across_poll_intervals(
     tmp_path: Path, mode: str

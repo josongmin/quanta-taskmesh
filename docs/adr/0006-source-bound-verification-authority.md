@@ -23,6 +23,10 @@ kill before reap and remain incomplete. Termination authority covers the
 original process group.
 Descendants that leave it through a new session or PGID require separate
 ownership; otherwise only inherited capture pipes have a bounded deadline.
+Two complete group observations must agree on member PID, birth identity and
+PGID, and both must show the held leader exited. A member's scheduling state
+may change without changing its identity. The later observation determines
+live membership; any identity or membership change remains incomplete.
 
 1. The 104-scenario inventory is the oracle index. Its K 51 / P 34 / G 19
    baseline and the 104-row manifest describe static target, case, oracle,

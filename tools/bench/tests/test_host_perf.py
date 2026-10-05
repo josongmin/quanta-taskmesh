@@ -800,6 +800,76 @@ def test_producer_cap_not_submitted_rejects_performance() -> None:
         )
 
 
+def test_class_admissions_cannot_exceed_submitted_rows() -> None:
+    raw, scenario, _, _ = fixture()
+    raw["class_counters"]["c"]["admitted"] = 3
+    raw["class_counters"]["c"]["terminated"] = 3
+    with pytest.raises(host_perf.ReceiptError, match="counter/row mismatch"):
+        host_perf.analyze_raw(raw, scenario)
+
+    raw, scenario, _, _ = fixture()
+    scenario["classes"].append({**scenario["classes"][0], "name": "unused"})
+    raw["class_counters"]["unused"] = {
+        "admitted": 1,
+        "started": 0,
+        "terminated": 1,
+        "inflight": 0,
+        "queued": 0,
+    }
+    with pytest.raises(host_perf.ReceiptError, match="counter/row mismatch"):
+        host_perf.analyze_raw(raw, scenario)
+
+    raw, scenario, _, _ = fixture()
+    second = raw["records"][1]
+    for key in ("submitted_ns", "body_started_ns", "body_finished_ns", "caller_response_ns"):
+        second[key] = None
+    second["disposition"] = {"kind": "not_submitted"}
+    for counts in (raw["cut"], raw["settlement"]):
+        counts["submitted"] = 1
+        counts["not_submitted"] = 1
+        counts["responded"] = 1
+    for key in ("admitted", "started", "terminated"):
+        raw["class_counters"]["c"][key] = 1
+    host_perf.analyze_raw(raw, scenario)
+    raw["class_counters"]["c"]["admitted"] = 2
+    raw["class_counters"]["c"]["terminated"] = 2
+    with pytest.raises(host_perf.ReceiptError, match="counter/row mismatch"):
+        host_perf.analyze_raw(raw, scenario)
+
+    raw, scenario, _, _ = fixture()
+    second = raw["records"][1]
+    second["body_started_ns"] = None
+    second["body_finished_ns"] = None
+    second["disposition"] = {"kind": "responded", "outcome": {"kind": "cancelled"}}
+    scenario["offers"][1]["cancel_after_ms"] = 0
+    raw["class_counters"]["c"]["started"] = 1
+    host_perf.analyze_raw(raw, scenario)
+
+
+def test_recorded_submit_lateness_is_separate_from_pace_lag() -> None:
+    raw, scenario, _, _ = fixture()
+    second = raw["records"][1]
+    second["submitted_ns"] = second["intended_ns"] + 10
+    second["body_started_ns"] = second["intended_ns"] + 11
+    second["body_finished_ns"] = second["intended_ns"] + 12
+    second["caller_response_ns"] = second["intended_ns"] + 13
+    metrics = host_perf.analyze_raw(raw, scenario)
+    assert metrics["max_producer_lag_ns"] == 0
+    assert metrics["max_recorded_submit_lateness_ns"] == 10
+
+    for row in raw["records"]:
+        for key in ("submitted_ns", "body_started_ns", "body_finished_ns", "caller_response_ns"):
+            row[key] = None
+        row["disposition"] = {"kind": "not_submitted"}
+    for counts in (raw["cut"], raw["settlement"]):
+        counts["submitted"] = 0
+        counts["not_submitted"] = 2
+        counts["responded"] = 0
+    for key in ("admitted", "started", "terminated"):
+        raw["class_counters"]["c"][key] = 0
+    assert host_perf.analyze_raw(raw, scenario)["max_recorded_submit_lateness_ns"] is None
+
+
 def test_precision_floor_and_dirty_source_reject() -> None:
     raw, scenario, identity, calibration = fixture()
     raw_bytes, scenario_bytes = encoded(raw), encoded(scenario)

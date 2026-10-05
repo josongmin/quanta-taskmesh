@@ -369,6 +369,75 @@ async fn complete_raw_rejects_failed_settlement_and_retained_ownership() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn class_admissions_cannot_exceed_submitted_rows() {
+    let mut declaration = valid_scenario();
+    let mut unused = declaration["classes"][0].clone();
+    unused["name"] = json!("unused");
+    declaration["classes"].as_array_mut().unwrap().push(unused);
+    let scenario = HostScenario::from_json(&serde_json::to_vec(&declaration).unwrap()).unwrap();
+    let good = run_host_scenario_with_fault(&scenario, None)
+        .await
+        .expect("diagnostic run retains raw evidence");
+    good.validate_against(&scenario).expect("settled baseline");
+    assert_eq!(good.settlement.submitted, 1);
+
+    let mut excess = good.clone();
+    let active = excess.class_counters.get_mut("c").unwrap();
+    active.admitted = 2;
+    active.terminated = 2;
+    assert!(excess
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("counters differ from raw rows")));
+
+    let mut unused_admission = good.clone();
+    let idle = unused_admission.class_counters.get_mut("unused").unwrap();
+    idle.admitted = 1;
+    idle.terminated = 1;
+    assert!(unused_admission
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("counters differ from raw rows")));
+
+    let mut not_submitted = good.clone();
+    let row = &mut not_submitted.records[0];
+    row.submitted_ns = None;
+    row.body_started_ns = None;
+    row.body_finished_ns = None;
+    row.caller_response_ns = None;
+    row.disposition = CallerDisposition::NotSubmitted;
+    not_submitted.settlement = CallerCounts::from_records(&not_submitted.records).unwrap();
+    not_submitted.cut =
+        CallerCounts::at_cut(&not_submitted.records, not_submitted.injection_window_ns).unwrap();
+    *not_submitted.class_counters.get_mut("c").unwrap() = ClassCounters::default();
+    not_submitted
+        .validate_against(&scenario)
+        .expect("a missed offer contributes no engine admission");
+    let active = not_submitted.class_counters.get_mut("c").unwrap();
+    active.admitted = 1;
+    active.terminated = 1;
+    assert!(not_submitted
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("counters differ from raw rows")));
+
+    let mut cancelled_before_start = good;
+    let row = &mut cancelled_before_start.records[0];
+    row.body_started_ns = None;
+    row.body_finished_ns = None;
+    row.disposition = CallerDisposition::Responded {
+        outcome: ResponseOutcome::Cancelled,
+    };
+    let active = cancelled_before_start.class_counters.get_mut("c").unwrap();
+    active.started = 0;
+    let mut cancel_scenario = scenario.clone();
+    cancel_scenario.offers[0].cancel_after_ms = Some(0);
+    cancel_scenario
+        .validate()
+        .expect("declared immediate cancellation");
+    cancelled_before_start
+        .validate_against(&cancel_scenario)
+        .expect("an admitted job may terminate before its body starts");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn producer_and_sampler_failures_return_bounded_invalid_raw() {
     let scenario =
         HostScenario::from_json(&serde_json::to_vec(&valid_scenario()).unwrap()).unwrap();

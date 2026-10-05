@@ -538,11 +538,13 @@ async fn each_failure_mode_is_reported_as_itself() {
 /// `Accepted` but not `Running` until the test says so.
 struct HoldingExecutor {
     held: HeldJobs,
+    enqueued: Arc<tokio::sync::Notify>,
 }
 
 impl CpuExecutor for HoldingExecutor {
     fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
         self.held.lock().expect("lock").push(work);
+        self.enqueued.notify_one();
     }
 
     fn capabilities(&self) -> ExecutorCapabilities {
@@ -570,6 +572,7 @@ async fn a_caller_that_leaves_while_the_job_is_accepted_but_not_started_keeps_it
         )
         .cpu_executor(Arc::new(HoldingExecutor {
             held: Arc::clone(&held),
+            enqueued: Arc::new(tokio::sync::Notify::new()),
         }))
         .build()
         .expect("runtime builds");
@@ -640,6 +643,7 @@ async fn accepted_unstarted_caller_exit_keeps_follower_queued_until_worker_settl
     for cancel_caller in [true, false] {
         let class = TaskClass::new("c");
         let held: HeldJobs = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let enqueued = Arc::new(tokio::sync::Notify::new());
         let rt = Builder::new()
             .topology(TopologyConfig::new().cpu_fixed(1))
             .resources(ResourceBudget::new().cpu_units(1).memory_units(1))
@@ -654,6 +658,7 @@ async fn accepted_unstarted_caller_exit_keeps_follower_queued_until_worker_settl
             )
             .cpu_executor(Arc::new(HoldingExecutor {
                 held: Arc::clone(&held),
+                enqueued: Arc::clone(&enqueued),
             }))
             .build()
             .expect("one-slot held executor builds");
@@ -669,13 +674,12 @@ async fn accepted_unstarted_caller_exit_keeps_follower_queued_until_worker_settl
                 )
                 .await
         });
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while rt.snapshot().classes[&class].accepted != 1 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("first closure becomes accepted without starting");
+        // The host marks Accepted before invoking the adapter. Only the
+        // adapter's signal proves the closure is actually in its queue.
+        tokio::time::timeout(Duration::from_secs(5), enqueued.notified())
+            .await
+            .expect("executor holds the first closure without starting");
+        assert_eq!(rt.snapshot().classes[&class].accepted, 1);
         assert_eq!(held.lock().expect("lock").len(), 1);
 
         let follower_rt = rt.clone();
@@ -737,15 +741,17 @@ async fn accepted_unstarted_caller_exit_keeps_follower_queued_until_worker_settl
 
         let first_job = held.lock().expect("lock").pop().expect("first closure");
         first_job();
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while rt.snapshot().classes[&class].accepted != 1
-                || rt.snapshot().classes[&class].queued != 0
-            {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("follower promotes and executor accepts it");
+        tokio::time::timeout(Duration::from_secs(5), enqueued.notified())
+            .await
+            .expect("follower promotes and executor accepts it");
+        let promoted = rt.snapshot();
+        assert_eq!(
+            (
+                promoted.classes[&class].accepted,
+                promoted.classes[&class].queued
+            ),
+            (1, 0)
+        );
         let second_job = held.lock().expect("lock").pop().expect("second closure");
         second_job();
         assert_eq!(

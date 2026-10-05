@@ -79,7 +79,12 @@ The current operator path is local; hosted attestation remains a compatibility p
   adds delivery-failure and irreversible-cycle reasons and is no longer
   `Copy`, `Ord`, or `Hash`; `ClaimOutcome` and `Provenance` are also no longer
   `Copy`. Clone owned diagnostic values only where needed and match the new
-  typed outcomes instead of relying on ordering or implicit copies.
+  typed outcomes instead of relying on ordering or implicit copies. The engine's
+  `taskmesh_engine::TerminalReason` is now distinct from the contract wire type;
+  before, both paths named the same reexport. Convert an engine terminal reason
+  with `let wire: taskmesh::TerminalReason = reason.into();` before serializing
+  it or passing it to a consumer of the contract type. Deserializing a wire
+  reason does not create engine governance state.
 - **Abandon and accounting-fault behavior.** `AbandonOutcome` adds
   `HeldByLease { phase }`; exhaustive matches must handle it as a refusal,
   not as worker completion or released capacity. A promoted ticket whose

@@ -46,6 +46,7 @@ use crate::shared::{
 };
 use crate::sync::{AtomicU64, Mutex, Ordering};
 
+// Authority identities span checker executions; transitions never synchronize on them.
 static NEXT_GOVERNOR_AUTHORITY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Permits granted in one promotion pass before the lock is released.
@@ -124,7 +125,7 @@ impl Governor {
         clock: Arc<dyn Clock>,
         settlement_waker: Option<Arc<dyn SettlementWaker>>,
     ) -> Result<Self, GovernorError> {
-        let authority = Self::take_sequence(&NEXT_GOVERNOR_AUTHORITY)
+        let authority = Self::take_process_authority(&NEXT_GOVERNOR_AUTHORITY)
             .ok_or(GovernorError::IdentityAuthorityExhausted)?;
         Ok(Self {
             authority,
@@ -161,6 +162,24 @@ impl Governor {
     /// value is clamped to the monotonic commit watermark inside the transition.
     fn sample_clock_ms(&self) -> u64 {
         self.clock.now_ms()
+    }
+
+    fn take_process_authority(counter: &std::sync::atomic::AtomicU64) -> Option<u64> {
+        use std::sync::atomic::Ordering as StdOrdering;
+
+        let mut current = counter.load(StdOrdering::Relaxed);
+        loop {
+            let next = current.checked_add(1)?;
+            match counter.compare_exchange_weak(
+                current,
+                next,
+                StdOrdering::Relaxed,
+                StdOrdering::Relaxed,
+            ) {
+                Ok(previous) => return Some(previous),
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     fn take_sequence(counter: &AtomicU64) -> Option<u64> {
@@ -991,6 +1010,40 @@ pub struct PermitLedgerView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_authority_rejects_exhaustion_without_wrapping() {
+        let counter = std::sync::atomic::AtomicU64::new(u64::MAX - 1);
+        assert_eq!(
+            Governor::take_process_authority(&counter),
+            Some(u64::MAX - 1)
+        );
+        assert_eq!(Governor::take_process_authority(&counter), None);
+        assert_eq!(Governor::take_process_authority(&counter), None);
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), u64::MAX);
+    }
+
+    #[test]
+    fn concurrent_process_authorities_are_unique_and_monotonic() {
+        let counter = std::sync::atomic::AtomicU64::new(1);
+        let values = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        (0..100)
+                            .map(|_| Governor::take_process_authority(&counter).unwrap())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<std::collections::BTreeSet<_>>()
+        });
+        assert_eq!(values, (1..=400).collect());
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 401);
+    }
 
     #[test]
     fn sequence_allocation_rejects_exhaustion_without_wrapping() {

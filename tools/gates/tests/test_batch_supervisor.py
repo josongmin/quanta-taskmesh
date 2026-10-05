@@ -16,6 +16,100 @@ REPO = Path(__file__).resolve().parents[3]
 
 
 @pytest.mark.parametrize("mode", ["single", "batch"])
+def test_incomplete_utf8_capture_on_hard_stop_retains_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from tools import process_supervisor as supervisor
+
+    monkeypatch.setattr(supervisor, "TERMINATION_GRACE_SECONDS", 0.1)
+    marker = tmp_path / "escaped.pid"
+    argv = [
+        sys.executable,
+        "-c",
+        "import os,pathlib,signal,sys,time\n"
+        "marker=pathlib.Path(sys.argv[1]); child=os.fork()\n"
+        "if child == 0:\n"
+        "    os.setsid(); marker.write_text(str(os.getpid())); signal.pause()\n"
+        "deadline=time.monotonic()+2\n"
+        "while not marker.exists() and time.monotonic()<deadline: time.sleep(.01)\n"
+        "if not marker.exists(): sys.exit(1)\n"
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN)\n"
+        "os.write(1,b'\\xc3'); signal.pause()\n",
+        str(marker),
+    ]
+    try:
+        if mode == "single":
+            result = supervisor.run_process(
+                argv, cwd=tmp_path, env=os.environ.copy(), timeout_seconds=0.5,
+                termination_grace_seconds=0.1,
+            )
+        else:
+            result = supervisor.run_process_batch(
+                [supervisor.SupervisedCommand(argv, tmp_path, os.environ.copy(), 0.5)]
+            )[0].process
+    finally:
+        if marker.exists():
+            try:
+                os.killpg(int(marker.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    assert result.timed_out and result.returncode != 0
+    assert result.stdout == "\ufffd"
+    assert "capture pipes remained open" in result.stderr
+
+
+def test_owned_group_retirement_requires_two_complete_stable_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools import process_supervisor as supervisor
+
+    leader = 20001
+    zombie = 20002
+    held = {leader: (11, leader, 5), zombie: (12, leader, 5)}
+    calls = []
+
+    def snapshots(values):
+        observed = iter(values)
+        monkeypatch.setattr(supervisor, "_group_snapshot", lambda _pgid: next(observed))
+
+    monkeypatch.setattr(
+        supervisor, "_kill_owned_group",
+        lambda pgid: (calls.append(pgid) or "killed", ""),
+    )
+    monkeypatch.setattr(
+        supervisor, "_await_killed_group_quiescence", lambda _pgid: (True, "")
+    )
+    snapshots([held, held])
+    assert supervisor._retire_owned_group(leader) == ("quiescent", "")
+    assert not calls
+
+    snapshots([held, {leader: held[leader]}])
+    assert supervisor._retire_owned_group(leader)[0] == "unknown"
+    snapshots([{}, {}])
+    assert supervisor._retire_owned_group(leader)[0] == "unknown"
+    snapshots([held, {**held, zombie: (99, leader, 5)}])
+    assert supervisor._retire_owned_group(leader)[0] == "unknown"
+    snapshots([{**held, zombie: (12, leader, 2)}] * 2)
+    assert supervisor._retire_owned_group(leader)[0] == "killed"
+    assert calls == [leader, leader, leader, leader]
+
+
+def test_kill_signal_without_observed_cleanup_remains_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools import process_supervisor as supervisor
+
+    leader = 20001
+    live = {leader: (11, leader, 5), 20002: (12, leader, 2)}
+    monkeypatch.setattr(supervisor, "_group_snapshot", lambda _pgid: live)
+    monkeypatch.setattr(supervisor, "_kill_owned_group", lambda _pgid: ("killed", ""))
+    monkeypatch.setattr(supervisor, "POST_KILL_REAP_SECONDS", 0.01)
+    verdict, reason = supervisor._retire_owned_group(leader)
+    assert verdict == "unknown"
+    assert "cleanup incomplete" in reason
+
+
+@pytest.mark.parametrize("mode", ["single", "batch"])
 def test_bounded_capture_keeps_normal_output_across_poll_intervals(
     tmp_path: Path, mode: str
 ) -> None:
@@ -290,16 +384,18 @@ def test_capture_read_error_cannot_hang_exception_cleanup(tmp_path: Path) -> Non
         "from tools.process_supervisor import run_process\n"
         "import tools.process_supervisor as supervisor\n"
         "supervisor.TERMINATION_GRACE_SECONDS = 0.1\n"
-        "original_communicate = supervisor.subprocess.Popen.communicate\n"
-        "def fail_first_capture(self, *args, **kwargs):\n"
-        "    if not getattr(self, '_capture_failure_injected', False):\n"
-        "        self._capture_failure_injected = True\n"
+        "original_read = supervisor.os.read\n"
+        "failed = False\n"
+        "def fail_first_capture(fd, size):\n"
+        "    global failed\n"
+        "    if not failed:\n"
+        "        failed = True\n"
         "        deadline = time.monotonic() + 2\n"
         "        while not os.path.exists(sys.argv[1]) and time.monotonic() < deadline:\n"
         "            time.sleep(0.01)\n"
         "        raise OSError('capture read failed')\n"
-        "    return original_communicate(self, *args, **kwargs)\n"
-        "supervisor.subprocess.Popen.communicate = fail_first_capture\n"
+        "    return original_read(fd, size)\n"
+        "supervisor.os.read = fail_first_capture\n"
         f"run_process([sys.executable, '-c', {leader!r}, sys.argv[1], {escaped!r}], "
         "cwd=Path.cwd(), env=os.environ.copy(), timeout_seconds=0.2)\n",
         encoding="utf-8",

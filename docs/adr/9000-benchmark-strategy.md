@@ -277,3 +277,27 @@ admission, and retains a lag-only negative regression and at-limit positive
 case. Focused Python tests passed; clean candidate `aadfa07` passed the local
 and hosted 16-gate CI profiles. No measured series or full host qualification
 was run for this repair.
+
+
+## Host raw ledger provenance and submission diagnostics
+
+The full host recorder builds a fresh runtime, warms it, and takes a settled
+baseline before the measured window. Its final per-class ledger is the delta
+from that baseline and must be attributable to the rows of the measured run:
+`started` equals the number of rows with a body start, `started <= admitted`,
+`admitted <= submitted`, and `terminated == admitted` after settlement. A
+submitted call may be admitted and cancelled before its body starts, so
+`admitted == started` is not required. Classes with no submitted rows must
+have zero admitted and terminated counts. Both the Rust raw validator and the
+Python retained-artifact validator enforce these bounds.
+
+`max_producer_lag_ns` remains the pacing observation minus the intended
+arrival time. The separate diagnostic `max_recorded_submit_lateness_ns` is
+the maximum `submitted_ns - intended_ns` over submitted rows, or `null` if no
+row was submitted. It exposes time spent between pacing and the recorded
+submission without changing the existing generator/control lag contract.
+The submission timestamp precedes spawning the task that invokes the public
+runtime API, so this diagnostic is a lower bound on invocation lateness. The
+existing `max_host_lag_ns` policy bounds pacing observation only; it does not
+qualify submission or invocation jitter. A claim about either requires an
+explicit measurement boundary and a separate preregistered budget.

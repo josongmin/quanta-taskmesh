@@ -565,13 +565,17 @@ impl RawHostRun {
         for class in &scenario.classes {
             let counters = &self.class_counters[&class.name];
             let class_rows = self.records.iter().filter(|row| row.class == class.name);
+            let submitted_rows = class_rows
+                .clone()
+                .filter(|row| row.submitted_ns.is_some())
+                .count() as u128;
             let started_rows = class_rows
                 .clone()
                 .filter(|row| row.body_started_ns.is_some())
                 .count() as u128;
             if counters.started != started_rows
                 || counters.admitted < counters.started
-                || counters.terminated > counters.admitted
+                || counters.admitted > submitted_rows
             {
                 return Err(format!(
                     "class {}: counters differ from raw rows",

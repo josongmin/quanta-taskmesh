@@ -761,6 +761,7 @@ def analyze_raw(raw: dict[str, Any], scenario: dict[str, Any]) -> dict[str, Any]
     latency_by_path: dict[str, list[int]] = {}
     success_latency: list[int] = []
     starts: Counter[str] = Counter()
+    submitted_by_class: Counter[str] = Counter()
     last_intended = -1
     for index, (offer, row) in enumerate(zip(offers, records)):
         if not isinstance(offer, dict) or not isinstance(row, dict):
@@ -820,6 +821,7 @@ def analyze_raw(raw: dict[str, Any], scenario: dict[str, Any]) -> dict[str, Any]
             if submit < intended or submit >= cut_ns or lag > submit - intended:
                 raise ReceiptError(f"row {index}: invalid submit/producer time")
             totals["submitted"] += 1
+            submitted_by_class[class_name] += 1
             cut["submitted"] += 1
             if (interval := bucket(submit)) is not None:
                 interval["submitted"] += 1
@@ -914,7 +916,9 @@ def analyze_raw(raw: dict[str, Any], scenario: dict[str, Any]) -> dict[str, Any]
         admitted = nat(item.get("admitted"), f"{name}.admitted")
         started = nat(item.get("started"), f"{name}.started")
         terminated = nat(item.get("terminated"), f"{name}.terminated")
-        if started != starts[name] or not (started <= admitted == terminated):
+        if started != starts[name] or not (
+            started <= admitted == terminated <= submitted_by_class[name]
+        ):
             raise ReceiptError(f"class {name}: counter/row mismatch")
         if nat(item.get("inflight"), f"{name}.inflight") or nat(
             item.get("queued"), f"{name}.queued"
@@ -961,6 +965,16 @@ def analyze_raw(raw: dict[str, Any], scenario: dict[str, Any]) -> dict[str, Any]
             for key in sorted(intended_by_path)
         },
         "max_producer_lag_ns": max(row["scheduled_lag_ns"] for row in records),
+        # Recorded immediately before scheduling the public call; later host
+        # entry or admission time is outside this raw observation.
+        "max_recorded_submit_lateness_ns": max(
+            (
+                row["submitted_ns"] - row["intended_ns"]
+                for row in records
+                if row["submitted_ns"] is not None
+            ),
+            default=None,
+        ),
         "intervals": intervals,
         "sampled_peaks_lower_bound": sampled_peaks,
         "sampled_capability_peaks_lower_bound": capability_peaks,

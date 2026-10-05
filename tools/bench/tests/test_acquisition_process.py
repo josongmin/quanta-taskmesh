@@ -227,6 +227,19 @@ def test_hung_child_retains_partial_output_and_deadline(tmp_path: Path) -> None:
     wait_gone(pids[0])
 
 
+def test_on_started_exposes_exact_payload_pid_without_reap_capability(tmp_path: Path) -> None:
+    started = []
+    result = acquisition.run_acquisition(
+        [sys.executable, "-c", "import os; print(os.getpid())"],
+        cwd=tmp_path,
+        timeout_seconds=2,
+        on_started=started.append,
+    )
+    assert result.returncode == 0
+    assert len(started) == 1 and started[0].pid == int(result.stdout)
+    assert not hasattr(started[0], "wait") and not hasattr(started[0], "poll")
+
+
 def test_capture_limit_is_bounded_and_not_success(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(acquisition, "MAX_CAPTURE_BYTES", 4096)
     result = acquisition.run_acquisition(

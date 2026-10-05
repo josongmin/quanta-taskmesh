@@ -274,24 +274,50 @@ def test_metadata_capture_cap_cannot_admit_truncated_identity(tmp_path: Path, mo
 def test_inaccessible_group_forensics_never_promote_execution(
     tmp_path: Path, monkeypatch, mode: str
 ) -> None:
+    marker = tmp_path / "owned-child.pid"
+    program = (
+        "import os, pathlib, signal, sys, time\n"
+        "marker = pathlib.Path(sys.argv[1])\n"
+        "child = os.fork()\n"
+        "if child == 0:\n"
+        "    os.close(1); os.close(2)\n"
+        "    marker.write_text(str(os.getpid()))\n"
+        "    signal.pause()\n"
+        "    os._exit(0)\n"
+        "deadline = time.monotonic() + 2\n"
+        "while not marker.exists() and time.monotonic() < deadline:\n"
+        "    time.sleep(.01)\n"
+        "if not marker.exists(): sys.exit(1)\n"
+        "print('complete')\n"
+    )
+    original_killpg = process_supervisor.os.killpg
+
     def inaccessible(pgid: int, signum: int) -> None:
         assert pgid > 0 and signum == signal.SIGKILL
         raise PermissionError(errno.EPERM, "group is inaccessible")
 
     monkeypatch.setattr(process_supervisor.os, "killpg", inaccessible)
-    command = [sys.executable, "-c", "print('complete')"]
-    if mode == "batch":
-        result = run_process_batch(
-            [SupervisedCommand(command, tmp_path, os.environ.copy(), 2)]
-        )[0].process
-    else:
-        result = run_process(
-            command,
-            cwd=tmp_path,
-            env=os.environ.copy(),
-            timeout_seconds=2,
-            binary_output=mode == "binary",
-        )
+    command = [sys.executable, "-c", program, str(marker)]
+    try:
+        if mode == "batch":
+            result = run_process_batch(
+                [SupervisedCommand(command, tmp_path, os.environ.copy(), 2)]
+            )[0].process
+        else:
+            result = run_process(
+                command,
+                cwd=tmp_path,
+                env=os.environ.copy(),
+                timeout_seconds=2,
+                binary_output=mode == "binary",
+            )
+    finally:
+        if marker.exists():
+            child_pid = int(marker.read_text())
+            try:
+                original_killpg(os.getpgid(child_pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
     assert result.returncode is None and result.aborted_early
     assert not result.timed_out and result.interrupted_by_signal is None
     stderr = result.stderr.decode() if isinstance(result.stderr, bytes) else result.stderr

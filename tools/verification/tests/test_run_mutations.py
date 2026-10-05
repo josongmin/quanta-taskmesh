@@ -27,39 +27,33 @@ campaign_module = sys.modules["campaign"]
 
 
 def test_timeout_exit_race_preserves_process_truth(tmp_path: Path, monkeypatch) -> None:
-    class ExitingProcess:
-        pid = 12345
-        returncode = 0
-        calls = 0
-
-        def communicate(self, timeout=None):
-            self.calls += 1
-            if self.calls == 1:
-                raise subprocess.TimeoutExpired(["probe"], timeout)
-            return "finished", ""
-
-    process = ExitingProcess()
     import tools.process_supervisor as supervisor
 
-    monkeypatch.setattr(supervisor.subprocess, "Popen", lambda *_a, **_kw: process)
+    original_exited = supervisor._leader_exited
+    delayed_once = False
 
-    clock_calls = 0
+    def observe_after_deadline(process) -> bool:
+        nonlocal delayed_once
+        if not delayed_once:
+            deadline = time.monotonic() + 2
+            while not original_exited(process) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert original_exited(process), "fixture leader did not exit"
+            time.sleep(0.05)
+            delayed_once = True
+            return False
+        return original_exited(process)
 
-    def monotonic_after_timeout() -> float:
-        nonlocal clock_calls
-        clock_calls += 1
-        return 0.0 if clock_calls <= 2 else 2.0
-
-    monkeypatch.setattr(campaign_module.time, "monotonic", monotonic_after_timeout)
-
-    def already_exited(_pid: int, _sig: int) -> None:
-        raise ProcessLookupError
-
-    monkeypatch.setattr(campaign_module.os, "killpg", already_exited)
-    result = campaign_module.execute(["probe"], cwd=tmp_path, env={}, timeout_seconds=1)
+    monkeypatch.setattr(supervisor, "_leader_exited", observe_after_deadline)
+    result = campaign_module.execute(
+        [sys.executable, "-c", "print('finished')"],
+        cwd=tmp_path,
+        env=os.environ.copy(),
+        timeout_seconds=0.01,
+    )
     assert result.timed_out is True
     assert result.returncode == 0
-    assert result.stdout == "finished"
+    assert result.stdout == "finished\n"
 
 
 def test_parent_sigterm_kills_and_reaps_the_owned_process_group(tmp_path: Path) -> None:

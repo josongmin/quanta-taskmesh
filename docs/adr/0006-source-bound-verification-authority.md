@@ -16,6 +16,14 @@ receipt.
 
 ## Decision
 
+Result-producing evidence paths retain the original waitable process-group
+leader until owned-group observation and cleanup finish; pipe EOF or leader
+exit alone does not prove completion. Exceptional paths perform bounded group
+kill before reap and remain incomplete. Termination authority covers the
+original process group.
+Descendants that leave it through a new session or PGID require separate
+ownership; otherwise only inherited capture pipes have a bounded deadline.
+
 1. The 104-scenario inventory is the oracle index. Its K 51 / P 34 / G 19
    baseline and the 104-row manifest describe static target, case, oracle,
    feature, platform, and gate selection. `MAPPED` means that relationship was

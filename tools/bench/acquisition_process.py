@@ -14,7 +14,6 @@ import math
 import os
 import signal
 import stat
-import subprocess
 import sys
 import tempfile
 import uuid
@@ -27,7 +26,7 @@ import psutil
 REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
-from tools.process_supervisor import SupervisedProcess, run_process  # noqa: E402
+from tools.process_supervisor import StartedProcess, SupervisedProcess, run_process  # noqa: E402
 
 OWNER_DIRECTORY = "TASKMESH_ACQUISITION_OWNER_DIRECTORY"
 OWNER_CALL = "TASKMESH_ACQUISITION_OWNER_CALL"
@@ -194,7 +193,7 @@ def run_acquisition(
     cwd: Path,
     timeout_seconds: float = 1800,
     env: dict[str, str] | None = None,
-    on_started: Callable[[subprocess.Popen[str]], None] | None = None,
+    on_started: Callable[[StartedProcess], None] | None = None,
     stdin_data: bytes | None = None,
     termination_grace_seconds: float = TERMINATION_GRACE_SECONDS,
 ) -> SupervisedProcess:
@@ -216,7 +215,7 @@ def run_acquisition(
     environment[OWNER_DIRECTORY] = str(directory)
     environment[OWNER_CALL] = call
 
-    def started(process: subprocess.Popen[str]) -> None:
+    def started(process: StartedProcess) -> None:
         created = psutil.Process(process.pid).create_time()
         record = {"call": call, "parent": parent, "pid": process.pid, "created": created}
         target = directory / (call + ".json")

@@ -1,27 +1,32 @@
 """Run a child process group with bounded timeout and capture cleanup.
 
-Descendants that create a new session leave the owned group and cannot be
-signaled through it. Their inherited capture pipes still have a hard drain
-boundary, so an escaped descendant cannot hold a gate open indefinitely.
+Descendants that leave the owned process group (including a new session or
+PGID) cannot be signaled through it. Their inherited capture pipes still have
+a hard drain boundary, so they cannot hold a gate open indefinitely.
 """
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import math
 import os
 import selectors
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
 TERMINATION_GRACE_SECONDS = 5.0
 POLL_INTERVAL_SECONDS = 0.2
+POST_KILL_REAP_SECONDS = 2 * POLL_INTERVAL_SECONDS
 ORPHANED_GROUP_DIAGNOSTIC = (
     "\nSUPERVISOR: leader exited with live process group; remaining members killed\n"
 )
@@ -31,15 +36,11 @@ INACCESSIBLE_GROUP_DIAGNOSTIC = (
 OPEN_CAPTURE_DIAGNOSTIC = (
     "\nSUPERVISOR: capture pipes remained open after the process-group deadline\n"
 )
+UNKNOWN_GROUP_DIAGNOSTIC = "\nSUPERVISOR: owned process-group custody could not be proved\n"
 
 
-def _kill_remaining_group(pgid: int) -> tuple[str, str]:
-    """Close an owned group after its leader has been reaped.
-
-    A grandchild can close the captured pipes, outlive a successful leader,
-    and otherwise turn an incomplete command into a false PASS. Killing the
-    group also handles descendants that were not connected to those pipes.
-    """
+def _kill_owned_group(pgid: int) -> tuple[str, str]:
+    """Signal the still-owned group while its original leader is unreaped."""
     try:
         os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
@@ -53,10 +54,213 @@ def _kill_remaining_group(pgid: int) -> tuple[str, str]:
     return "killed", ""
 
 
-def _partial_text(value: str | bytes | None) -> str:
-    if value is None:
-        return ""
-    return value.decode(errors="replace") if isinstance(value, bytes) else value
+class _SigVal(ctypes.Union):
+    _fields_ = [("integer", ctypes.c_int), ("pointer", ctypes.c_void_p)]
+
+
+class _SigInfo(ctypes.Structure):
+    _fields_ = [
+        ("signo", ctypes.c_int), ("error", ctypes.c_int),
+        ("code", ctypes.c_int), ("pid", ctypes.c_int),
+        ("uid", ctypes.c_uint), ("status", ctypes.c_int),
+        ("address", ctypes.c_void_p), ("value", _SigVal),
+        ("band", ctypes.c_long), ("padding", ctypes.c_ulong * 7),
+    ]
+
+
+@lru_cache(maxsize=1)
+def _darwin_waitid():
+    libc = ctypes.CDLL(None, use_errno=True)
+    waitid = libc.waitid
+    waitid.argtypes = [ctypes.c_int, ctypes.c_uint, ctypes.POINTER(_SigInfo), ctypes.c_int]
+    waitid.restype = ctypes.c_int
+    if ctypes.sizeof(_SigInfo) != 104:
+        raise RuntimeError("unsupported Darwin siginfo_t ABI")
+    return libc, waitid
+
+
+def _leader_exited(process: subprocess.Popen[str] | subprocess.Popen[bytes]) -> bool:
+    """Observe exit without releasing the PID which anchors the owned PGID."""
+    if os.name != "posix":
+        raise RuntimeError("process-group custody requires a POSIX platform")
+    if sys.platform == "darwin":
+        _libc, waitid = _darwin_waitid()
+        info = _SigInfo()
+        if waitid(os.P_PID, process.pid, ctypes.byref(info), os.WEXITED | os.WNOWAIT | os.WNOHANG):
+            if ctypes.get_errno() == errno.EINTR:
+                return False
+            raise OSError(ctypes.get_errno(), "waitid(WNOWAIT) failed")
+        if info.pid not in (0, process.pid):
+            raise OSError("waitid returned a different process identity")
+        return info.pid == process.pid
+    if sys.platform == "linux":
+        try:
+            info = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+        except InterruptedError:
+            return False
+        return info is not None and info.si_pid == process.pid
+    raise RuntimeError("process-group custody is unsupported on this platform")
+
+
+class _DarwinBsdInfo(ctypes.Structure):
+    """MacOSX15.5 SDK proc_bsdinfo, including zombie status and start identity."""
+
+    _fields_ = [
+        (name, ctypes.c_uint32)
+        for name in (
+            "flags", "status", "xstatus", "pid", "ppid", "uid", "gid",
+            "ruid", "rgid", "svuid", "svgid", "reserved",
+        )
+    ] + [
+        ("comm", ctypes.c_char * 16),
+        ("name", ctypes.c_char * 32),
+    ] + [
+        (name, ctypes.c_uint32)
+        for name in ("nfiles", "pgid", "pjobc", "tdev", "tpgid")
+    ] + [
+        ("nice", ctypes.c_int32),
+        ("start_sec", ctypes.c_uint64),
+        ("start_usec", ctypes.c_uint64),
+    ]
+
+
+@lru_cache(maxsize=1)
+def _darwin_libproc():
+    libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    listing = libproc.proc_listpgrppids
+    listing.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+    listing.restype = ctypes.c_int
+    pidinfo = libproc.proc_pidinfo
+    pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+    pidinfo.restype = ctypes.c_int
+    if ctypes.sizeof(_DarwinBsdInfo) != 136:
+        raise RuntimeError("unsupported Darwin proc_bsdinfo ABI")
+    return libproc, listing, pidinfo
+
+
+def _darwin_group_snapshot(pgid: int) -> dict[int, tuple[int, int, int]]:
+    """Return the kernel's group members and their process identities.
+
+    libproc returns a PID count. Its underlying proc_listpids maps errors to
+    zero, so empty output cannot establish custody while the leader is held.
+    """
+    _libproc, listing, pidinfo = _darwin_libproc()
+    estimate = listing(pgid, None, 0)
+    if estimate <= 0 or estimate > 65536:
+        raise OSError("process-group membership estimate unavailable")
+    capacity = estimate + 20
+    pids = (ctypes.c_int * capacity)()
+    count = listing(pgid, pids, ctypes.sizeof(pids))
+    if count <= 0 or count >= capacity:
+        raise OSError("process-group membership unavailable or truncated")
+    members = {}
+    for pid in pids[:count]:
+        if pid <= 0 or pid in members:
+            raise OSError("invalid process-group membership")
+        info = _DarwinBsdInfo()
+        ctypes.set_errno(0)
+        # arg=1 includes zombproc. The default arg=0 reports ESRCH for a
+        # listed zombie and would lose its identity at retirement.
+        returned = pidinfo(pid, 3, 1, ctypes.byref(info), ctypes.sizeof(info))
+        if returned != ctypes.sizeof(info):
+            raise OSError(ctypes.get_errno(), "process-group member identity unavailable")
+        if info.pid != pid or info.pgid != pgid:
+            raise OSError("process-group member identity changed")
+        members[pid] = (info.start_sec * 1_000_000 + info.start_usec, info.pgid, info.status)
+    return members
+
+
+def _linux_group_snapshot(pgid: int) -> dict[int, tuple[int, int, str]]:
+    members = {}
+    with os.scandir("/proc") as entries:
+        for entry in entries:
+            if not entry.name.isdecimal():
+                continue
+            try:
+                stat = (Path(entry.path) / "stat").read_bytes()
+            except FileNotFoundError:
+                continue
+            tail = stat[stat.rfind(b")") + 2 :].split()
+            if len(tail) < 20:
+                raise OSError("process stat identity unavailable")
+            member_pgid = int(tail[2])
+            if member_pgid == pgid:
+                members[int(entry.name)] = (int(tail[19]), member_pgid, tail[0].decode("ascii"))
+    return members
+
+
+def _group_snapshot(pgid: int) -> dict[int, tuple]:
+    if sys.platform == "darwin":
+        return _darwin_group_snapshot(pgid)
+    if sys.platform == "linux":
+        return _linux_group_snapshot(pgid)
+    raise RuntimeError("process-group custody is unsupported on this platform")
+
+
+def _require_supported_custody() -> None:
+    if sys.platform == "darwin":
+        _darwin_waitid()
+        _darwin_libproc()
+    elif sys.platform == "linux" and hasattr(os, "waitid") and Path("/proc").is_dir():
+        return
+    else:
+        raise RuntimeError("process-group custody is unsupported on this platform")
+
+
+def _stable_group_snapshot(pgid: int) -> dict[int, tuple]:
+    first = _group_snapshot(pgid)
+    second = _group_snapshot(pgid)
+    if pgid not in first or pgid not in second or first != second:
+        raise OSError("process-group membership changed or leader absent")
+    if first[pgid][2] not in ("Z", 5):
+        raise OSError("held process-group leader is not exited")
+    return second
+
+
+def _has_live_member(pgid: int, members: dict[int, tuple]) -> bool:
+    return any(
+        pid != pgid and identity[2] not in ("Z", "X", "x", 5)
+        for pid, identity in members.items()
+    )
+
+
+def _await_killed_group_quiescence(pgid: int) -> tuple[bool, str]:
+    """Bound cleanup after SIGKILL while the original leader remains waitable."""
+    deadline = time.monotonic() + POST_KILL_REAP_SECONDS
+    reason = "group still has live members"
+    while True:
+        try:
+            if not _has_live_member(pgid, _stable_group_snapshot(pgid)):
+                return True, ""
+            reason = "group still has live members"
+        except (OSError, ValueError) as error:
+            reason = str(error)
+        if time.monotonic() >= deadline:
+            return False, f"SUPERVISOR: cleanup incomplete leader_pid={pgid}: {reason}\n"
+        time.sleep(min(POLL_INTERVAL_SECONDS / 4, max(0, deadline - time.monotonic())))
+
+
+def _retire_owned_group(pgid: int) -> tuple[str, str]:
+    """Observe the original group, excluding descendants that left it."""
+    try:
+        members = _stable_group_snapshot(pgid)
+    except (OSError, ValueError) as error:
+        cleanup, forensic = _kill_owned_group(pgid)
+        reason = f"SUPERVISOR: group custody unavailable leader_pid={pgid}: {error}\n"
+        if cleanup == "killed":
+            complete, detail = _await_killed_group_quiescence(pgid)
+            if not complete:
+                reason += detail
+        return "unknown", reason + forensic
+    if not _has_live_member(pgid, members):
+        return "quiescent", ""
+    cleanup, forensic = _kill_owned_group(pgid)
+    if cleanup != "killed":
+        return "inaccessible", forensic or f"SUPERVISOR: live group vanished pgid={pgid}\n"
+    complete, detail = _await_killed_group_quiescence(pgid)
+    if not complete:
+        return "unknown", detail
+    return "killed", ""
 
 
 def _close_capture_pipes(process: subprocess.Popen[str]) -> None:
@@ -65,33 +269,45 @@ def _close_capture_pipes(process: subprocess.Popen[str]) -> None:
             pipe.close()
 
 
-def _finish_leader_after_pipe_abort(process: subprocess.Popen[str]) -> None:
-    _close_capture_pipes(process)
-    try:
-        process.wait(timeout=POLL_INTERVAL_SECONDS)
-    except subprocess.TimeoutExpired:
-        try:
-            process.kill()
-        except (ProcessLookupError, PermissionError):
-            pass
-        try:
-            process.wait(timeout=POLL_INTERVAL_SECONDS)
-        except subprocess.TimeoutExpired:
-            pass
+def _decode_text(
+    value: bytes, process: subprocess.Popen[str], stream: str, *, partial: bool = False
+) -> str:
+    pipe = process.stdout if stream == "stdout" else process.stderr
+    assert pipe is not None
+    decoded = value.decode(pipe.encoding, errors="replace" if partial else pipe.errors or "strict")
+    return decoded.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _drain_capture(process: subprocess.Popen[str], stop: threading.Event) -> tuple[str, str, bool]:
-    """Drain in a reader thread until completion or the owner's hard stop."""
-    while True:
-        try:
-            stdout, stderr = process.communicate(timeout=POLL_INTERVAL_SECONDS)
-            return stdout or "", stderr or "", False
-        except subprocess.TimeoutExpired as exc:
-            if not stop.is_set():
-                continue
-            stdout, stderr = _partial_text(exc.stdout), _partial_text(exc.stderr)
-            _finish_leader_after_pipe_abort(process)
-            return stdout, stderr, True
+    """Drain pipes without calling poll/communicate/wait on the held leader."""
+    selector = selectors.DefaultSelector()
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
+    try:
+        for name, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):
+            assert pipe is not None
+            os.set_blocking(pipe.fileno(), False)
+            selector.register(pipe, selectors.EVENT_READ, name)
+        while selector.get_map():
+            if stop.is_set():
+                return (
+                    _decode_text(bytes(captured["stdout"]), process, "stdout", partial=True),
+                    _decode_text(bytes(captured["stderr"]), process, "stderr", partial=True),
+                    True,
+                )
+            for key, _events in selector.select(POLL_INTERVAL_SECONDS):
+                chunk = os.read(key.fileobj.fileno(), 65536)
+                if chunk:
+                    captured[key.data].extend(chunk)
+                else:
+                    selector.unregister(key.fileobj)
+        return (
+            _decode_text(bytes(captured["stdout"]), process, "stdout"),
+            _decode_text(bytes(captured["stderr"]), process, "stderr"),
+            False,
+        )
+    finally:
+        selector.close()
+        _close_capture_pipes(process)
 
 
 @dataclass(frozen=True)
@@ -123,6 +339,13 @@ class SupervisedCommand:
 
 
 @dataclass(frozen=True)
+class StartedProcess:
+    """Payload identity without a wait/poll capability over the held leader."""
+
+    pid: int
+
+
+@dataclass(frozen=True)
 class SupervisedBatchResult:
     process: SupervisedProcess
     duration_s: float
@@ -146,22 +369,25 @@ def run_process_batch(commands: list[SupervisedCommand]) -> list[SupervisedBatch
         raise ValueError("timeout_seconds must be positive")
     if not commands:
         return []
+    _require_supported_custody()
 
     processes: list[subprocess.Popen[str] | None] = [None] * len(commands)
     started = [0.0] * len(commands)
     ended = [0.0] * len(commands)
     deadlines = [0.0] * len(commands)
     termination_deadlines: list[float | None] = [None] * len(commands)
+    hard_stop_deadlines: list[float | None] = [None] * len(commands)
     timed_out = [False] * len(commands)
-    interrupted = [None] * len(commands)
+    interrupted: list[int | None] = [None] * len(commands)
     outputs: list[tuple[str, str]] = [("", "")] * len(commands)
     orphaned_groups = [False] * len(commands)
+    group_retired = [False] * len(commands)
     capture_stops = [threading.Event() for _ in commands]
     interrupted_by_signal: int | None = None
 
     def signal_group(index: int, signum: int) -> None:
         process = processes[index]
-        if process is None:
+        if process is None or group_retired[index]:
             return
         try:
             os.killpg(process.pid, signum)
@@ -177,9 +403,7 @@ def run_process_batch(commands: list[SupervisedCommand]) -> list[SupervisedBatch
         interrupted_by_signal = signum
         now = time.monotonic()
         for index, process in enumerate(processes):
-            # The group can still own descendants and captured pipes after its
-            # original leader exits, so do not use process.poll() as custody.
-            if process is not None and ended[index] == 0.0:
+            if process is not None and not group_retired[index]:
                 interrupted[index] = signum
                 signal_group(index, signal.SIGTERM)
                 termination_deadlines[index] = now + TERMINATION_GRACE_SECONDS
@@ -188,7 +412,6 @@ def run_process_batch(commands: list[SupervisedCommand]) -> list[SupervisedBatch
     readers = ThreadPoolExecutor(max_workers=len(commands))
     failed = False
     try:
-        # Install the one signal owner before any child is launched.
         for signum in (signal.SIGINT, signal.SIGTERM):
             previous_handlers[signum] = signal.getsignal(signum)
             signal.signal(signum, cancel)
@@ -208,73 +431,88 @@ def run_process_batch(commands: list[SupervisedCommand]) -> list[SupervisedBatch
             processes[index] = process
             started[index] = time.monotonic()
             deadlines[index] = started[index] + command.timeout_seconds
-            futures[readers.submit(_drain_capture, process, capture_stops[index])] = index
+            futures[index] = readers.submit(_drain_capture, process, capture_stops[index])
             if interrupted_by_signal is not None:
                 interrupted[index] = interrupted_by_signal
                 signal_group(index, signal.SIGTERM)
                 termination_deadlines[index] = time.monotonic() + TERMINATION_GRACE_SECONDS
 
         pending = set(futures)
+        captures_done = set()
         while pending:
             now = time.monotonic()
-            for future in pending:
-                index = futures[future]
-                if future.done():
-                    continue
+            for index in list(pending):
+                process = processes[index]
+                assert process is not None
+                future = futures[index]
+                if future.done() and index not in captures_done:
+                    stdout, stderr, capture_aborted = future.result()
+                    if capture_aborted:
+                        stderr += OPEN_CAPTURE_DIAGNOSTIC
+                        if interrupted[index] is None:
+                            timed_out[index] = True
+                    outputs[index] = stdout, stderr
+                    captures_done.add(index)
                 if termination_deadlines[index] is not None:
                     if now >= termination_deadlines[index]:
                         signal_group(index, signal.SIGKILL)
                         capture_stops[index].set()
                         termination_deadlines[index] = None
-                elif interrupted_by_signal is None and now >= deadlines[index]:
+                        hard_stop_deadlines[index] = now + POST_KILL_REAP_SECONDS
+                elif (
+                    interrupted_by_signal is None
+                    and not timed_out[index]
+                    and now >= deadlines[index]
+                ):
                     timed_out[index] = True
                     signal_group(index, signal.SIGTERM)
                     termination_deadlines[index] = now + TERMINATION_GRACE_SECONDS
-            completed, pending = wait(
-                pending, timeout=POLL_INTERVAL_SECONDS, return_when=FIRST_COMPLETED
-            )
-            for future in completed:
-                index = futures[future]
-                stdout, stderr, capture_aborted = future.result()
-                process = processes[index]
-                assert process is not None
-                if capture_aborted:
-                    stderr += OPEN_CAPTURE_DIAGNOSTIC
-                    if interrupted[index] is None:
-                        timed_out[index] = True
-                cleanup, forensic = _kill_remaining_group(process.pid)
-                if cleanup != "absent":
-                    stderr += (
-                        ORPHANED_GROUP_DIAGNOSTIC
-                        if cleanup == "killed"
-                        else INACCESSIBLE_GROUP_DIAGNOSTIC + forensic
-                    )
-                    # Nonzero codes can carry domain results (for example
-                    # semver findings). An unfinished owned group invalidates
-                    # every leader code, not only a zero exit.
-                    orphaned_groups[index] = True
-                outputs[index] = stdout, stderr
-                ended[index] = time.monotonic()
+                leader_done = _leader_exited(process)
+                if index in captures_done and leader_done:
+                    cleanup, forensic = _retire_owned_group(process.pid)
+                    group_retired[index] = True
+                    process.wait()
+                    if cleanup != "quiescent":
+                        stdout, stderr = outputs[index]
+                        stderr += (
+                            ORPHANED_GROUP_DIAGNOSTIC
+                            if cleanup == "killed"
+                            else UNKNOWN_GROUP_DIAGNOSTIC + forensic
+                            if cleanup == "unknown"
+                            else INACCESSIBLE_GROUP_DIAGNOSTIC + forensic
+                        )
+                        outputs[index] = stdout, stderr
+                        orphaned_groups[index] = True
+                    ended[index] = time.monotonic()
+                    pending.remove(index)
+                elif hard_stop_deadlines[index] is not None and now >= hard_stop_deadlines[index]:
+                    raise TimeoutError("owned leader did not exit after group SIGKILL")
+            if pending:
+                unfinished = {futures[index] for index in pending if index not in captures_done}
+                if unfinished:
+                    wait(unfinished, timeout=POLL_INTERVAL_SECONDS, return_when=FIRST_COMPLETED)
+                else:
+                    time.sleep(POLL_INTERVAL_SECONDS)
     except BaseException:
         failed = True
         for stop in capture_stops:
             stop.set()
         for index in range(len(commands)):
             signal_group(index, signal.SIGTERM)
-        for index in range(len(commands)):
             signal_group(index, signal.SIGKILL)
+            group_retired[index] = True
         raise
     finally:
         try:
             readers.shutdown(wait=True)
             if failed:
-                # A failed reader did not necessarily call communicate() or
-                # wait() on its leader. Reap it after all readers have stopped
-                # so no thread still owns the same capture streams.
                 for process in processes:
                     if process is not None:
-                        _finish_leader_after_pipe_abort(process)
-                        _kill_remaining_group(process.pid)
+                        _close_capture_pipes(process)
+                        try:
+                            process.wait(timeout=POLL_INTERVAL_SECONDS)
+                        except subprocess.TimeoutExpired:
+                            pass
         finally:
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)
@@ -310,12 +548,16 @@ def run_process(
     timeout_seconds: float,
     termination_grace_seconds: float | None = None,
     abort_when: Callable[[], bool] | None = None,
-    on_started: Callable[[subprocess.Popen[str]], None] | None = None,
+    on_started: Callable[[StartedProcess], None] | None = None,
     max_capture_bytes: int | None = None,
     stdin_data: bytes | None = None,
     binary_output: bool = False,
 ) -> SupervisedProcess | SupervisedBinaryProcess:
-    """Capture complete output and reap the owned process group on every exit path."""
+    """Settle the original group before returning an execution result.
+
+    Exceptional paths send bounded group cleanup while the leader is held and
+    propagate the error. They do not claim completed worker custody.
+    """
     if (
         type(timeout_seconds) not in (int, float)
         or not math.isfinite(timeout_seconds)
@@ -332,6 +574,7 @@ def run_process(
         raise ValueError("termination_grace_seconds must be positive")
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError("supervised processes must be launched from the main thread")
+    _require_supported_custody()
 
     if max_capture_bytes is not None and (
         type(max_capture_bytes) is not int or max_capture_bytes <= 0
@@ -343,18 +586,21 @@ def run_process(
     if input_file is not None:
         input_file.write(stdin_data)
         input_file.seek(0)
-    capture_selector = selectors.DefaultSelector() if max_capture_bytes is not None else None
+    capture_selector = selectors.DefaultSelector()
     captured = {"stdout": bytearray(), "stderr": bytearray()}
     capture_overflow = False
     process: subprocess.Popen[str] | None = None
+    group_retired = False
     timed_out = False
     aborted_early = False
     interrupted_by_signal: int | None = None
     termination_deadline: float | None = None
     hard_stop = False
+    hard_stop_deadline: float | None = None
+    capture_aborted = False
 
     def signal_group(signum: int) -> None:
-        if process is None:
+        if process is None or group_retired:
             return
         try:
             os.killpg(process.pid, signum)
@@ -389,13 +635,12 @@ def run_process(
             text=not binary_output,
             start_new_session=True,
         )
-        if capture_selector is not None:
-            for name, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):
-                assert pipe is not None
-                os.set_blocking(pipe.fileno(), False)
-                capture_selector.register(pipe, selectors.EVENT_READ, name)
+        for name, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):
+            assert pipe is not None
+            os.set_blocking(pipe.fileno(), False)
+            capture_selector.register(pipe, selectors.EVENT_READ, name)
         if on_started is not None:
-            on_started(process)
+            on_started(StartedProcess(process.pid))
         timeout_deadline = time.monotonic() + timeout_seconds
         if interrupted_by_signal is not None:
             signal_group(signal.SIGTERM)
@@ -411,11 +656,13 @@ def run_process(
                 signal_group(signal.SIGKILL)
                 termination_deadline = None
                 hard_stop = True
+                hard_stop_deadline = now + POST_KILL_REAP_SECONDS
             elif interrupted_by_signal is not None and termination_deadline is not None:
                 if now >= termination_deadline:
                     signal_group(signal.SIGKILL)
                     termination_deadline = None
                     hard_stop = True
+                    hard_stop_deadline = now + POST_KILL_REAP_SECONDS
             elif not timed_out and interrupted_by_signal is None and now >= timeout_deadline:
                 timed_out = True
                 signal_group(signal.SIGTERM)
@@ -443,57 +690,59 @@ def run_process(
                 else POLL_INTERVAL_SECONDS
             )
             wait_seconds = min(POLL_INTERVAL_SECONDS, until_deadline)
-            if capture_selector is not None:
+            if capture_selector.get_map():
                 for key, _events in capture_selector.select(wait_seconds):
                     chunk = os.read(key.fileobj.fileno(), 65536)
                     if not chunk:
                         capture_selector.unregister(key.fileobj)
                         continue
-                    remaining = max_capture_bytes - sum(len(value) for value in captured.values())
-                    captured[key.data].extend(chunk[: max(0, remaining)])
-                    if len(chunk) > remaining:
-                        capture_overflow = True
-                leader_done = process.poll() is not None
-                if leader_done and not capture_selector.get_map():
-                    break
-                if hard_stop:
-                    if capture_selector.get_map():
-                        captured["stderr"].extend(OPEN_CAPTURE_DIAGNOSTIC.encode())
-                    _finish_leader_after_pipe_abort(process)
-                    break
-                continue
-            try:
-                stdout, stderr = process.communicate(timeout=wait_seconds)
-                break
-            except subprocess.TimeoutExpired as exc:
-                if hard_stop:
-                    if binary_output:
-                        stdout, stderr = exc.stdout or b"", exc.stderr or b""
+                    if max_capture_bytes is None:
+                        captured[key.data].extend(chunk)
                     else:
-                        stdout, stderr = _partial_text(exc.stdout), _partial_text(exc.stderr)
-                    stderr += (
-                        OPEN_CAPTURE_DIAGNOSTIC.encode()
-                        if binary_output
-                        else OPEN_CAPTURE_DIAGNOSTIC
-                    )
-                    _finish_leader_after_pipe_abort(process)
-                    break
-                continue
-        if capture_selector is not None:
-            stdout = bytes(captured["stdout"])
-            stderr = bytes(captured["stderr"])
-            if not binary_output:
+                        remaining = max_capture_bytes - sum(
+                            len(value) for value in captured.values()
+                        )
+                        captured[key.data].extend(chunk[: max(0, remaining)])
+                        if len(chunk) > remaining:
+                            capture_overflow = True
+            else:
+                time.sleep(wait_seconds)
+            leader_done = _leader_exited(process)
+            if leader_done and not capture_selector.get_map():
+                break
+            if hard_stop and capture_selector.get_map():
+                capture_aborted = True
+                captured["stderr"].extend(OPEN_CAPTURE_DIAGNOSTIC.encode())
+                for key in list(capture_selector.get_map().values()):
+                    capture_selector.unregister(key.fileobj)
+                _close_capture_pipes(process)
+            if hard_stop and not leader_done and termination_deadline is None:
+                # SIGKILL was sent to the anchored group. Do not wait forever
+                # for a kernel-stuck child or an escaped capture writer.
+                if hard_stop_deadline is not None and time.monotonic() >= hard_stop_deadline:
+                    raise TimeoutError("owned leader did not exit after group SIGKILL")
+        stdout = bytes(captured["stdout"])
+        stderr = bytes(captured["stderr"])
+        if not binary_output:
+            if max_capture_bytes is not None:
                 stdout = stdout.decode(errors="replace")
                 stderr = stderr.decode(errors="replace")
-            if capture_overflow:
-                diagnostic = "\nSUPERVISOR: capture byte limit exceeded\n"
-                stderr += diagnostic.encode() if binary_output else diagnostic
-                aborted_early = True
-        cleanup, forensic = _kill_remaining_group(process.pid)
-        if cleanup != "absent":
+            else:
+                stdout = _decode_text(stdout, process, "stdout", partial=capture_aborted)
+                stderr = _decode_text(stderr, process, "stderr", partial=capture_aborted)
+        if capture_overflow:
+            diagnostic = "\nSUPERVISOR: capture byte limit exceeded\n"
+            stderr += diagnostic.encode() if binary_output else diagnostic
+            aborted_early = True
+        cleanup, forensic = _retire_owned_group(process.pid)
+        group_retired = True
+        process.wait()
+        if cleanup != "quiescent":
             diagnostic = (
                 ORPHANED_GROUP_DIAGNOSTIC
                 if cleanup == "killed"
+                else UNKNOWN_GROUP_DIAGNOSTIC + forensic
+                if cleanup == "unknown"
                 else INACCESSIBLE_GROUP_DIAGNOSTIC + forensic
             )
             stderr += diagnostic.encode() if binary_output else diagnostic
@@ -502,29 +751,22 @@ def run_process(
             orphaned_group = True
             aborted_early = True
     except BaseException:
-        if process is not None:
+        if process is not None and not group_retired:
             signal_group(signal.SIGTERM)
-            # Capture itself may have failed while a descendant outside the
-            # owned process group still holds these pipes. Never retry an
-            # unbounded communicate on the exceptional path.
+            signal_group(signal.SIGKILL)
+            group_retired = True
             _close_capture_pipes(process)
             try:
-                process.wait(timeout=termination_grace_seconds)
+                process.wait(timeout=POLL_INTERVAL_SECONDS)
             except subprocess.TimeoutExpired:
-                signal_group(signal.SIGKILL)
-                _finish_leader_after_pipe_abort(process)
-            finally:
-                # A child can close our pipes and outlive the leader even on
-                # an exceptional path where the leader has already exited.
-                _kill_remaining_group(process.pid)
+                pass
         raise
     finally:
         if input_file is not None:
             input_file.close()
-        if capture_selector is not None:
-            capture_selector.close()
-            if process is not None:
-                _close_capture_pipes(process)
+        capture_selector.close()
+        if process is not None:
+            _close_capture_pipes(process)
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
 

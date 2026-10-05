@@ -94,11 +94,11 @@ Run the registered recipes through `just`:
       Git-visible Python source rather than assuming all gate scripts live in
       `tools/`. Hosted inventory-gate steps must invoke a single direct `just`
       command so shell composition cannot mask a failing gate.
-- [ ] Remote `main` protection requires the single `required 16-gate verdict`
-      check with an up-to-date branch. A PR run must inspect GitHub's synthetic
-      merge SHA (`github.sha`), while the main push run inspects its commit SHA.
-      Local YAML validation and an older successful Actions run do not activate
-      or prove this remote rule.
+- [ ] Remote `main` protection requires the observed `ci/circleci: required`
+      status with an up-to-date branch. The CircleCI PR run must inspect GitHub's
+      synthetic merge SHA and verify its second parent against the PR head;
+      the main push run inspects its exact commit SHA. Local YAML validation
+      and an older successful run do not activate or prove this remote rule.
 - [ ] Finding proof: each row in `tools/release/finding-proof-spec.json` runs
       its named focused Cargo or pytest witness through
       `tools/release/finding_proof.py`. Its `required_gate` names an additional

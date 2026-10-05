@@ -347,14 +347,14 @@
     {
       "id": "claim-does-not-touch-the-lease",
       "finding": "A1-P2-6",
-      "rationale": "If a claim is not lease activity, a permit can be reclaimed by the sweep in the window where the host has just taken ownership and is dispatching it.",
+      "rationale": "Claim activity must be recorded before retiring the final host waker outside the state lock. Its destructor can re-enter a leak sweep; a refresh after that callback cannot recover a permit already reclaimed.",
       "file": "crates/taskmesh-engine/src/engine/governor.rs",
-      "find": "                record.ledger.last_touched_ms = record.ledger.last_touched_ms.max(now);",
-      "replace": "                let _ = now;",
+      "find": "                    record.ledger.last_touched_ms = record.ledger.last_touched_ms.max(now);\n                    let mut effects = TransitionEffects::default();",
+      "replace": "                    let mut effects = TransitionEffects::default();",
       "package": "taskmesh-engine",
       "test_target": "hardening_lifecycle",
-      "expect_failing_test": "a_claim_restarts_the_lease_staleness_clock",
-      "expect_message": "the claim is activity"
+      "expect_failing_test": "claim_activity_precedes_host_waker_retirement",
+      "expect_message": "live claimer must keep its promoted permit during final waker Drop"
     },
     {
       "id": "degrade-to-disabled-fallback-accepted",

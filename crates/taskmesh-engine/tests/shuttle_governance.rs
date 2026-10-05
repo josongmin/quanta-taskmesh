@@ -373,10 +373,13 @@ fn randomized_claim_versus_reap_fails_closed_both_ways() {
 /// Schedules in which the closer must have beaten at least one admitter, and
 /// schedules in which at least one admitter must have beaten the closer (5% of
 /// the sample each): a model where only one side ever wins proves nothing
-/// about the race.
+/// about closing an active governor.
 const MIN_MIXED: usize = SCHEDULES / 20;
 
-/// Four admitters race one closer on the real engine. The property: the
+/// Four admitters submit twice. One first submission completes before the
+/// closer participates; the other submissions race it. This establishes live
+/// work without relying on the relative number of instrumented operations in
+/// admission and close to sample that state. The property: the
 /// snapshot the closer takes right after `close_admission` returns is the last
 /// word — no admission that began before the close lands after it. A close
 /// decided outside the admission lock (or checked before the lock is taken)
@@ -396,9 +399,11 @@ fn randomized_close_admission_is_the_last_word_on_what_was_admitted() {
         SCHEDULES,
         move || {
             let g = governor(8, 8, Arc::new(ManualClock::new(1_000)));
+            let start_close = Arc::new(shuttle::sync::Barrier::new(2));
             let admitters: Vec<_> = (0..4)
                 .map(|i| {
                     let g = Arc::clone(&g);
+                    let start_close = Arc::clone(&start_close);
                     thread::spawn(move || {
                         let mut mine = Vec::new();
                         let mut refused = 0usize;
@@ -416,6 +421,9 @@ fn randomized_close_admission_is_the_last_word_on_what_was_admitted() {
                                 }
                                 other => panic!("unexpected {other:?}"),
                             }
+                            if i == 0 && round == 0 {
+                                start_close.wait();
+                            }
                         }
                         (mine, refused)
                     })
@@ -423,7 +431,9 @@ fn randomized_close_admission_is_the_last_word_on_what_was_admitted() {
                 .collect();
             let closer = {
                 let g = Arc::clone(&g);
+                let start_close = Arc::clone(&start_close);
                 thread::spawn(move || {
+                    start_close.wait();
                     g.close_admission();
                     g.snapshot().classes[&class()].admitted_total
                 })

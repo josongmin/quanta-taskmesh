@@ -438,6 +438,27 @@ async fn class_admissions_cannot_exceed_submitted_rows() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn body_start_requires_a_corresponding_class_admission() {
+    let scenario =
+        HostScenario::from_json(&serde_json::to_vec(&valid_scenario()).unwrap()).unwrap();
+    let mut raw = run_host_scenario_with_fault(&scenario, None)
+        .await
+        .expect("diagnostic run retains raw evidence");
+    raw.validate_against(&scenario).expect("settled baseline");
+    assert_eq!(raw.class_counters["c"].started, 1);
+    assert!(raw.records[0].body_started_ns.is_some());
+
+    let counters = raw.class_counters.get_mut("c").unwrap();
+    counters.admitted = 0;
+    counters.terminated = 0;
+    // Started still matches the body-start row, admission is within the
+    // submitted bound, and the terminal ledger remains settled.
+    assert!(raw
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("counters differ from raw rows")));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn producer_and_sampler_failures_return_bounded_invalid_raw() {
     let scenario =
         HostScenario::from_json(&serde_json::to_vec(&valid_scenario()).unwrap()).unwrap();

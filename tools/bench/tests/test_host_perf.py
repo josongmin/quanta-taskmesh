@@ -846,6 +846,16 @@ def test_class_admissions_cannot_exceed_submitted_rows() -> None:
     host_perf.analyze_raw(raw, scenario)
 
 
+def test_body_start_requires_a_corresponding_class_admission() -> None:
+    raw, scenario, _, _ = fixture()
+    assert raw["class_counters"]["c"]["started"] == 2
+    assert all(row["body_started_ns"] is not None for row in raw["records"])
+    raw["class_counters"]["c"]["admitted"] = 0
+    raw["class_counters"]["c"]["terminated"] = 0
+    with pytest.raises(host_perf.ReceiptError, match="counter/row mismatch"):
+        host_perf.analyze_raw(raw, scenario)
+
+
 def test_recorded_submit_lateness_is_separate_from_pace_lag() -> None:
     raw, scenario, _, _ = fixture()
     second = raw["records"][1]

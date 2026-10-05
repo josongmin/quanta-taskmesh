@@ -33,7 +33,7 @@ OPEN_CAPTURE_DIAGNOSTIC = (
 )
 
 
-def _kill_remaining_group(pgid: int) -> str:
+def _kill_remaining_group(pgid: int) -> tuple[str, str]:
     """Close an owned group after its leader has been reaped.
 
     A grandchild can close the captured pipes, outlive a successful leader,
@@ -43,10 +43,14 @@ def _kill_remaining_group(pgid: int) -> str:
     try:
         os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
-        return "absent"
-    except PermissionError:
-        return "inaccessible"
-    return "killed"
+        return "absent", ""
+    except PermissionError as error:
+        # The leader started a new session, so its PID is the owned PGID.
+        # Keep the forensic record numeric and leave the fail-closed verdict intact.
+        return "inaccessible", (
+            f"SUPERVISOR: group forensic leader_pid={pgid} pgid={pgid} errno={error.errno}\n"
+        )
+    return "killed", ""
 
 
 def _partial_text(value: str | bytes | None) -> str:
@@ -238,12 +242,12 @@ def run_process_batch(commands: list[SupervisedCommand]) -> list[SupervisedBatch
                     stderr += OPEN_CAPTURE_DIAGNOSTIC
                     if interrupted[index] is None:
                         timed_out[index] = True
-                cleanup = _kill_remaining_group(process.pid)
+                cleanup, forensic = _kill_remaining_group(process.pid)
                 if cleanup != "absent":
                     stderr += (
                         ORPHANED_GROUP_DIAGNOSTIC
                         if cleanup == "killed"
-                        else INACCESSIBLE_GROUP_DIAGNOSTIC
+                        else INACCESSIBLE_GROUP_DIAGNOSTIC + forensic
                     )
                     # Nonzero codes can carry domain results (for example
                     # semver findings). An unfinished owned group invalidates
@@ -485,10 +489,12 @@ def run_process(
                 diagnostic = "\nSUPERVISOR: capture byte limit exceeded\n"
                 stderr += diagnostic.encode() if binary_output else diagnostic
                 aborted_early = True
-        cleanup = _kill_remaining_group(process.pid)
+        cleanup, forensic = _kill_remaining_group(process.pid)
         if cleanup != "absent":
             diagnostic = (
-                ORPHANED_GROUP_DIAGNOSTIC if cleanup == "killed" else INACCESSIBLE_GROUP_DIAGNOSTIC
+                ORPHANED_GROUP_DIAGNOSTIC
+                if cleanup == "killed"
+                else INACCESSIBLE_GROUP_DIAGNOSTIC + forensic
             )
             stderr += diagnostic.encode() if binary_output else diagnostic
             # An owned descendant required forced cleanup: the command did

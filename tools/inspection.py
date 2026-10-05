@@ -22,6 +22,22 @@ class InspectionExecutionError(OSError):
     """Incomplete metadata execution must never become a usable identity."""
 
 
+_SAFE_GIT_METADATA_COMMANDS = {
+    ("git", "rev-parse", "HEAD"),
+    ("git", "rev-parse", "HEAD^{tree}"),
+    ("git", "rev-parse", "--show-object-format"),
+    ("git", "status", "--porcelain=v1"),
+    ("git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"),
+    ("git", "ls-tree", "-r", "-z", "--full-tree", "HEAD"),
+}
+
+
+def _metadata_command_label(command: list[str]) -> str:
+    if tuple(command) in _SAFE_GIT_METADATA_COMMANDS:
+        return " ".join(command)
+    return command[0]
+
+
 def inspect_process(
     command: list[str],
     *,
@@ -55,7 +71,8 @@ def inspect_process(
             else "unsettled execution"
         )
         raise InspectionExecutionError(
-            f"metadata {command[0]} {reason}: {result.stderr.decode(errors='replace')[-1000:]}"
+            f"metadata {_metadata_command_label(command)} {reason}: "
+            f"{result.stderr.decode(errors='replace')[-1000:]}"
         )
     return result
 

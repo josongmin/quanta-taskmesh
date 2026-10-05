@@ -204,18 +204,15 @@ impl ClosedLoopRun {
         {
             return Err("closed-loop class catalog differs".into());
         }
-        let observed_successes = self
-            .class_counters
-            .values()
-            .map(|class| class.started)
-            .sum::<u128>();
-        if observed_successes != successes
-            || self
-                .class_counters
-                .values()
-                .any(|class| class.admitted != class.started)
-        {
-            return Err("closed-loop class counters differ from caller terminals".into());
+        for (name, counters) in &self.class_counters {
+            let expected_successes = if name == &scenario.template.class {
+                successes
+            } else {
+                0
+            };
+            if counters.started != expected_successes || counters.admitted != counters.started {
+                return Err("closed-loop class counters differ from caller terminals".into());
+            }
         }
         Ok(())
     }

@@ -101,6 +101,11 @@ Taskmesh는 단일 프로세스의 governed execution library다. 측정 대상�
   응답 뒤에만 다음 호출을 제출하고 요청 수·최대 실행 시간을 제한한다. 독립 raw
   schema에는 외생 intended-arrival 시각이 없으므로 open-loop의 overload tail이나
   intended-arrival SLO-goodput과 합치지 않는다.
+  모든 호출은 하나의 `template.class`에 속한다. 성공 행 수는 그 클래스의
+  `started`와 일치해야 하고, 호출이 없는 등록 클래스의 `started`는 0이어야 한다.
+  클래스별 귀속을 전체 합계로 대체하지 않으며, 임의의 큰 카운터도 합산하지 않는다.
+  측정 시작 전 warmup Snapshot은 보존식을 만족하고 클래스의 inflight·queue와
+  capability 점유가 모두 0이어야 한다. raw 검증과 producer는 같은 실행 시간 경계를 쓴다.
   `local_host.rs`는 current-thread LocalSet에서 `!Send` payload를 실행하고,
   같은 caller thread의 finite pacer 지연/미제출을 별도 raw에 남긴다. 현재 local
   schema v3는 Snapshot, deadline, cancel/drop도 지원하며 caller 종료와 worker

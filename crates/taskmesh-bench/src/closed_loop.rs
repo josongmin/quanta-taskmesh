@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use taskmesh::{Runtime, TaskClass};
+use taskmesh::{Runtime, Snapshot, TaskClass};
 
 use crate::host_load::{
     classify_response, execute, since, warmup_runtime, ClassCounters, ResolvedHostTopology,
@@ -78,6 +78,10 @@ impl ClosedLoopScenario {
         Ok(ResolvedHostTopology::from_runtime(
             &self.host_shape().build_runtime()?,
         ))
+    }
+
+    fn elapsed_exceeds_limit(&self, elapsed_ns: u64) -> bool {
+        elapsed_ns > self.max_run_ms * 1_000_000
     }
 
     fn offer(&self) -> HostOffer {
@@ -155,7 +159,7 @@ impl ClosedLoopRun {
             || self.iterations_per_slot != scenario.iterations_per_slot
             || self.records.len() != total
             || self.elapsed_ns == 0
-            || self.elapsed_ns > scenario.max_run_ms * 1_000_000
+            || scenario.elapsed_exceeds_limit(self.elapsed_ns)
         {
             return Err("closed-loop raw identity or population differs".into());
         }
@@ -204,21 +208,34 @@ impl ClosedLoopRun {
         {
             return Err("closed-loop class catalog differs".into());
         }
-        let observed_successes = self
-            .class_counters
-            .values()
-            .map(|class| class.started)
-            .sum::<u128>();
-        if observed_successes != successes
-            || self
-                .class_counters
-                .values()
-                .any(|class| class.admitted != class.started)
-        {
-            return Err("closed-loop class counters differ from caller terminals".into());
+        for (name, counters) in &self.class_counters {
+            let expected_successes = if name == &scenario.template.class {
+                successes
+            } else {
+                0
+            };
+            if counters.started != expected_successes || counters.admitted != counters.started {
+                return Err("closed-loop class counters differ from caller terminals".into());
+            }
         }
         Ok(())
     }
+}
+
+fn validate_warmup_snapshot(snapshot: &Snapshot) -> Result<(), String> {
+    if snapshot.conservation_violation().is_some()
+        || snapshot
+            .classes
+            .values()
+            .any(|class| class.inflight != 0 || class.queued != 0)
+        || snapshot
+            .capabilities
+            .values()
+            .any(|usage| usage.in_use != 0)
+    {
+        return Err("closed-loop warmup did not settle".into());
+    }
+    Ok(())
 }
 
 /// The returned raw artifact is retained even after a caller task failure.
@@ -232,14 +249,7 @@ pub async fn run_closed_loop_with_topology(
     let topology = ResolvedHostTopology::from_runtime(&runtime);
     warmup_runtime(&host_shape, &runtime).await?;
     let baseline = runtime.snapshot();
-    if baseline.conservation_violation().is_some()
-        || baseline
-            .classes
-            .values()
-            .any(|class| class.inflight != 0 || class.queued != 0)
-    {
-        return Err("closed-loop warmup did not settle".into());
-    }
+    validate_warmup_snapshot(&baseline)?;
     let total = scenario.concurrency * scenario.iterations_per_slot;
     let slots: Arc<Vec<Mutex<Option<ClosedLoopRecord>>>> =
         Arc::new((0..total).map(|_| Mutex::new(None)).collect());
@@ -253,8 +263,8 @@ pub async fn run_closed_loop_with_topology(
         jobs.push(tokio::spawn(async move {
             for iteration in 0..iterations {
                 let id = caller_slot * iterations + iteration;
+                let submitted_at = Instant::now();
                 let submitted_ns = since(origin);
-                let submitted_at = origin + Duration::from_nanos(submitted_ns);
                 let response = execute(
                     runtime.clone(),
                     offer.clone(),
@@ -297,7 +307,7 @@ pub async fn run_closed_loop_with_topology(
         }
     }
     let elapsed_ns = since(origin);
-    if elapsed_ns > scenario.max_run_ms * 1_000_000 {
+    if scenario.elapsed_exceeds_limit(elapsed_ns) {
         problems.push("closed-loop maximum run time exceeded");
     }
     let drain_ok = runtime
@@ -353,4 +363,57 @@ pub async fn run_closed_loop_with_topology(
         },
     };
     Ok((run, topology))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_warmup_snapshot, ClosedLoopScenario};
+    use taskmesh::{Runtime, TaskClass};
+
+    #[tokio::test]
+    async fn warmup_snapshot_requires_conservation_and_zero_owned_capacity() {
+        let scenario = ClosedLoopScenario::from_json(include_bytes!(
+            "../../../tools/bench/scenarios/h1-io-closed-loop-smoke.json"
+        ))
+        .expect("fixture");
+        let runtime = scenario.host_shape().build_runtime().expect("runtime");
+        let mut settled = runtime.snapshot();
+        let class = TaskClass::new("io");
+        let io = settled.classes.get_mut(&class).expect("registered class");
+        io.admitted_total = 1;
+        io.started_total = 1;
+        io.terminated_total = 1;
+        validate_warmup_snapshot(&settled).expect("terminated warmup work is settled");
+
+        let rejects = |snapshot| {
+            assert!(validate_warmup_snapshot(snapshot)
+                .is_err_and(|error| error.contains("warmup did not settle")));
+        };
+        let mut wrong = settled.clone();
+        wrong.classes.get_mut(&class).unwrap().terminated_total = 0;
+        rejects(&wrong);
+
+        let mut queued = settled.clone();
+        queued.classes.get_mut(&class).unwrap().queued = 1;
+        assert_eq!(queued.conservation_violation(), None);
+        rejects(&queued);
+
+        let mut accepted = settled.clone();
+        let io = accepted.classes.get_mut(&class).unwrap();
+        io.admitted_total = 2;
+        io.inflight = 1;
+        io.accepted = 1;
+        assert_eq!(accepted.conservation_violation(), None);
+        rejects(&accepted);
+
+        let mut held = settled;
+        let usage = held
+            .capabilities
+            .values_mut()
+            .find(|usage| usage.limit > 0)
+            .expect("registered bounded capability");
+        usage.in_use = 1;
+        assert_eq!(held.conservation_violation(), None);
+        rejects(&held);
+    }
 }

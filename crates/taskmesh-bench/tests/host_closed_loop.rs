@@ -313,5 +313,8 @@ fn closed_loop_preflight_accepts_inclusive_limits_and_rejects_adjacent_values() 
 
     let mut invalid_json: serde_json::Value = serde_json::from_slice(FIXTURE).expect("JSON");
     invalid_json["unexpected_field"] = serde_json::json!(true);
-    assert!(ClosedLoopScenario::from_json(&serde_json::to_vec(&invalid_json).unwrap()).is_err());
+    assert!(
+        ClosedLoopScenario::from_json(&serde_json::to_vec(&invalid_json).unwrap())
+            .is_err_and(|error| error.contains("unknown field `unexpected_field`"))
+    );
 }

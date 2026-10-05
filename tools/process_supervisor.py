@@ -210,9 +210,14 @@ def _require_supported_custody() -> None:
 def _stable_group_snapshot(pgid: int) -> dict[int, tuple]:
     first = _group_snapshot(pgid)
     second = _group_snapshot(pgid)
-    if pgid not in first or pgid not in second or first != second:
+    # Scheduling state changes while an identified member remains in the group.
+    # Stability binds membership, birth identity and PGID; liveness belongs to
+    # the later observation, with the original exited leader held throughout.
+    first_identities = {pid: identity[:2] for pid, identity in first.items()}
+    second_identities = {pid: identity[:2] for pid, identity in second.items()}
+    if pgid not in first or pgid not in second or first_identities != second_identities:
         raise OSError("process-group membership changed or leader absent")
-    if first[pgid][2] not in ("Z", 5):
+    if first[pgid][2] not in ("Z", 5) or second[pgid][2] not in ("Z", 5):
         raise OSError("held process-group leader is not exited")
     return second
 

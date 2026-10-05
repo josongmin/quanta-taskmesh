@@ -2015,3 +2015,56 @@ def test_coverage_status_line_discloses_uncollected_and_instantiation_metrics(
     assert "instantiations=56.63" in proc.stdout, "instantiation coverage was omitted"
     assert "branches=NOT_COLLECTED branch_count=0" in proc.stdout
     assert "mcdc=NOT_COLLECTED mcdc_count=0" in proc.stdout
+
+
+@pytest.mark.parametrize("phase", ["tests", "report"])
+def test_coverage_failure_retains_assertion_output_and_cargo_exit_code(
+    tmp_path: Path, phase: str
+) -> None:
+    root = tmp_path / "repo"
+    script = root / "tools" / "coverage" / "report.sh"
+    script.parent.mkdir(parents=True)
+    script.write_bytes((REPO / "tools" / "coverage" / "report.sh").read_bytes())
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    cargo = fake_bin / "cargo"
+    cargo.write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$*" in\n'
+        '  "llvm-cov --version"|"llvm-cov clean --workspace") exit 0 ;;\n'
+        '  "llvm-cov report "*) phase=report ;;\n'
+        "  *) phase=tests ;;\n"
+        "esac\n"
+        'printf "%s\\n" "$phase" >> "$CARGO_CALLS"\n'
+        'if [[ "$phase" != "$FAIL_PHASE" ]]; then exit 0; fi\n'
+        "echo 'test custody_contract ... FAILED'\n"
+        "echo 'assertion failed: executor has not enqueued the closure'\n"
+        "echo 'error: test failed; rerun with --test custody_contract' >&2\n"
+        "exit 101\n",
+        encoding="utf-8",
+    )
+    cargo.chmod(0o755)
+    proc = subprocess.run(
+        ["bash", str(script)],
+        cwd=root,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "FAIL_PHASE": phase,
+            "CARGO_CALLS": str(tmp_path / "calls.log"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 101, proc.stderr
+    for witness in (
+        "test custody_contract ... FAILED",
+        "assertion failed: executor has not enqueued the closure",
+        "error: test failed; rerun with --test custody_contract",
+    ):
+        assert witness in proc.stderr, "gate failure must disclose both test output streams"
+        assert witness in (root / "target" / "coverage" / f"{phase}.log").read_text()
+    calls = (tmp_path / "calls.log").read_text().splitlines()
+    assert calls == (["tests"] if phase == "tests" else ["tests", "report"])
+    assert "status=REPORTED" not in proc.stdout

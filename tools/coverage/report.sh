@@ -83,8 +83,22 @@ cargo llvm-cov clean --workspace
 # The bench harness measures and the doc-examples crate only type-checks the
 # README's fragments (never executed); neither is the library, and counting
 # them would move the numbers without a single library line changing.
-cargo llvm-cov --workspace --exclude taskmesh-bench --exclude taskmesh-doc-examples --all-targets \
-  --json --summary-only --output-path "${out_dir}/summary.json" >/dev/null
-cargo llvm-cov report --lcov --output-path "${out_dir}/lcov.info" >/dev/null
+# libtest prints failed assertions on stdout. Retain both streams and expose
+# them on failure so a nonzero exit can be diagnosed from the gate output.
+if cargo llvm-cov --workspace --exclude taskmesh-bench --exclude taskmesh-doc-examples --all-targets \
+  --json --summary-only --output-path "${out_dir}/summary.json" >"${out_dir}/tests.log" 2>&1; then
+  :
+else
+  status=$?
+  cat "${out_dir}/tests.log" >&2 || true
+  exit "$status"
+fi
+if cargo llvm-cov report --lcov --output-path "${out_dir}/lcov.info" >"${out_dir}/report.log" 2>&1; then
+  :
+else
+  status=$?
+  cat "${out_dir}/report.log" >&2 || true
+  exit "$status"
+fi
 
 summarize "${out_dir}/summary.json"

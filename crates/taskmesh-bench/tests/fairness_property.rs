@@ -1,22 +1,28 @@
 //! Inferno · property fuzz: thousands of randomized class/discipline/queue
-//! configurations, each asserted against the invariants that must hold for
-//! *every* fairness discipline (and any mix of them):
+//! valid configurations, each asserted against the invariants that must hold
+//! for every fairness discipline. Classes in one tier share a discipline kind.
 //!
 //!   P1 conservation — every queued request is dispatched exactly once.
 //!   P2 within-class FIFO — a class's requests dispatch in arrival order,
 //!      regardless of the cross-class discipline.
-//!   P3 no permanent starvation follows from P1 for every queued class.
+//!   P3 finite backlog drains; continuous-arrival starvation is outside this test.
 //!   P4 determinism — identical config ⇒ identical dispatch order.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use taskmesh_bench::workload::{fixture, root_spec, Fixture};
-use taskmesh_contract::{ClassPolicy, FairnessPolicy, OverflowPolicy};
-use taskmesh_engine::{AdmissionDecision, ClaimOutcome, ReleaseOutcome};
+use taskmesh_bench::workload::{root_spec, Fixture};
+use taskmesh_contract::{
+    ClassPolicy, FairnessPolicy, GovernorError, ManualClock, OverflowPolicy, ResourceBudget,
+    TaskClass,
+};
+use taskmesh_engine::{AdmissionDecision, ClaimOutcome, Governor, PolicySet, ReleaseOutcome};
 
-fn rand_fairness(rng: &mut StdRng) -> FairnessPolicy {
-    match rng.gen_range(0..5) {
+fn rand_fairness(rng: &mut StdRng, kind: u8) -> FairnessPolicy {
+    match kind {
         0 => FairnessPolicy::Fifo,
         1 => FairnessPolicy::WeightedFairQueue {
             weight: rng.gen_range(1..=8),
@@ -28,18 +34,25 @@ fn rand_fairness(rng: &mut StdRng) -> FairnessPolicy {
         3 => FairnessPolicy::DeadlineAware {
             slack_ms: rng.gen_range(0..1_000),
         },
-        _ => FairnessPolicy::BestEffortScavenger,
+        4 => FairnessPolicy::BestEffortScavenger,
+        _ => unreachable!("generated fairness kind is in 0..5"),
     }
 }
 
-fn rand_policy(rng: &mut StdRng) -> ClassPolicy {
+fn rand_policy(rng: &mut StdRng, primary_kind: u8, best_effort_kind: u8) -> ClassPolicy {
+    let best_effort = rng.gen_bool(0.25);
+    let kind = if best_effort {
+        best_effort_kind
+    } else {
+        primary_kind
+    };
     ClassPolicy::new()
         .max_inflight(1_000)
         .max_queue_depth(1_000)
         .cpu_units(1)
         .overflow_policy(OverflowPolicy::QueueWithinDepth)
-        .fairness(rand_fairness(rng))
-        .best_effort(rng.gen_bool(0.25))
+        .fairness(rand_fairness(rng, kind))
+        .best_effort(best_effort)
 }
 
 /// Drain `queue` (class indices) through a single global slot and return the
@@ -92,13 +105,66 @@ fn drain_indices(fx: &Fixture, names: &[String], queue: &[usize]) -> Vec<usize> 
 fn build(nclasses: usize, disciplines_seed: u64) -> (Fixture, Vec<String>) {
     let mut prng = StdRng::seed_from_u64(disciplines_seed);
     let names: Vec<String> = (0..nclasses).map(|i| format!("cls{i}")).collect();
-    let policies: Vec<ClassPolicy> = (0..nclasses).map(|_| rand_policy(&mut prng)).collect();
-    let classes: Vec<(&str, ClassPolicy)> = names
+    // One discipline kind per tier; parameters may still differ by class.
+    // Scavenger is valid only in the best-effort tier.
+    let primary_kind = prng.gen_range(0..4);
+    let best_effort_kind = prng.gen_range(0..5);
+    let policies: Vec<ClassPolicy> = (0..nclasses)
+        .map(|_| rand_policy(&mut prng, primary_kind, best_effort_kind))
+        .collect();
+    let classes: BTreeMap<TaskClass, ClassPolicy> = names
         .iter()
         .zip(policies)
-        .map(|(n, p)| (n.as_str(), p))
+        .map(|(name, policy)| (TaskClass::new(name.to_owned()), policy))
         .collect();
-    (fixture(classes, 1, 0), names)
+    let clock = Arc::new(ManualClock::new(0));
+    let governor = Arc::new(
+        Governor::new(
+            PolicySet::new(ResourceBudget::new().cpu_units(1), classes),
+            clock.clone(),
+        )
+        .expect("generated fairness policy must pass production validation"),
+    );
+    (Fixture { governor, clock }, names)
+}
+
+#[test]
+fn invalid_discipline_mix_is_rejected_by_the_production_constructor() {
+    let classes = BTreeMap::from([
+        (TaskClass::new("a"), ClassPolicy::new()),
+        (
+            TaskClass::new("b"),
+            ClassPolicy::new().fairness(FairnessPolicy::DeficitRoundRobin { quantum: 1 }),
+        ),
+    ]);
+    let result = Governor::new(
+        PolicySet::new(ResourceBudget::new(), classes),
+        Arc::new(ManualClock::new(0)),
+    );
+    match result {
+        Err(GovernorError::PolicyViolation(reason)) => {
+            assert!(reason.contains("mixes a different fairness discipline"));
+        }
+        other => panic!("mixed tier discipline must be rejected, got {other:?}"),
+    }
+}
+
+#[test]
+fn scavenger_outside_best_effort_tier_is_rejected() {
+    let classes = BTreeMap::from([(
+        TaskClass::new("scavenger"),
+        ClassPolicy::new().fairness(FairnessPolicy::BestEffortScavenger),
+    )]);
+    let result = Governor::new(
+        PolicySet::new(ResourceBudget::new(), classes),
+        Arc::new(ManualClock::new(0)),
+    );
+    match result {
+        Err(GovernorError::PolicyViolation(reason)) => {
+            assert!(reason.contains("is not best_effort"));
+        }
+        other => panic!("non-best-effort scavenger must be rejected, got {other:?}"),
+    }
 }
 
 fn check_fairness_seeds(seeds: std::ops::Range<u64>) {

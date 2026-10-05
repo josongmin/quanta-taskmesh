@@ -140,7 +140,7 @@ def _cleanup(directory: Path, call: str, *, root_owner: bool = False) -> tuple[b
             diagnostics.append(f"owned live group killed: pid={process.pid} call={key}")
         except psutil.NoSuchProcess:
             continue
-        except (psutil.Error, OSError, ValueError) as error:
+        except (psutil.Error, OSError, ValueError, SystemError) as error:
             diagnostics.append(f"owner cleanup failed: {error}")
     # A registered leader may already have exited while group members survive.
     # Inherited owner environment identifies cooperative descendants independently
@@ -148,7 +148,19 @@ def _cleanup(directory: Path, call: str, *, root_owner: bool = False) -> tuple[b
     signaled = set()
     for process in psutil.process_iter(["pid", "create_time"]):
         try:
-            environment = process.environ()
+            try:
+                environment = process.environ()
+            except SystemError:
+                # Native environment observation can report SystemError.
+                # Retry once; a second failure
+                # cannot be classified as unrelated and must fail the receipt.
+                try:
+                    environment = process.environ()
+                except SystemError as error:
+                    diagnostics.append(
+                        f"owner environment unavailable: pid={process.pid}: {error}"
+                    )
+                    continue
             if (
                 environment.get(OWNER_DIRECTORY) != str(directory)
                 or (not root_owner and environment.get(OWNER_CALL) not in owned)
@@ -171,6 +183,8 @@ def _cleanup(directory: Path, call: str, *, root_owner: bool = False) -> tuple[b
             # Uninspectable unrelated processes do not belong to this private
             # ownership contract. Registered groups are checked separately above.
             continue
+        except SystemError as error:
+            diagnostics.append(f"owner process observation unavailable: pid={process.pid}: {error}")
     return live or bool(diagnostics), diagnostics
 
 

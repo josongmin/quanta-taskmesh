@@ -245,11 +245,10 @@ def run_process_batch(commands: list[SupervisedCommand]) -> list[SupervisedBatch
                         if cleanup == "killed"
                         else INACCESSIBLE_GROUP_DIAGNOSTIC
                     )
-                    orphaned_groups[index] = (
-                        process.returncode == 0
-                        and not timed_out[index]
-                        and interrupted[index] is None
-                    )
+                    # Nonzero codes can carry domain results (for example
+                    # semver findings). An unfinished owned group invalidates
+                    # every leader code, not only a zero exit.
+                    orphaned_groups[index] = True
                 outputs[index] = stdout, stderr
                 ended[index] = time.monotonic()
     except BaseException:
@@ -291,6 +290,7 @@ def run_process_batch(commands: list[SupervisedCommand]) -> list[SupervisedBatch
                     interrupted_by_signal=interrupted[index]
                     if process is not None
                     else interrupted_by_signal,
+                    aborted_early=orphaned_groups[index],
                 ),
                 duration_s=ended[index] - started[index] if process is not None else 0.0,
             )
@@ -491,12 +491,10 @@ def run_process(
                 ORPHANED_GROUP_DIAGNOSTIC if cleanup == "killed" else INACCESSIBLE_GROUP_DIAGNOSTIC
             )
             stderr += diagnostic.encode() if binary_output else diagnostic
-            orphaned_group = (
-                process.returncode == 0
-                and not timed_out
-                and not aborted_early
-                and interrupted_by_signal is None
-            )
+            # An owned descendant required forced cleanup: the command did
+            # not complete, even if its leader returned a domain result code.
+            orphaned_group = True
+            aborted_early = True
     except BaseException:
         if process is not None:
             signal_group(signal.SIGTERM)

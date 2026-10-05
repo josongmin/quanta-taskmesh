@@ -44,14 +44,19 @@ fn promotion_order(weights: &[(&'static str, u32)], rounds: usize) -> Vec<&'stat
             .max_inflight(1)
             .max_queue_depth(1)
             .cpu_units(1)
-            .overflow_policy(OverflowPolicy::QueueWithinDepth),
+            .overflow_policy(OverflowPolicy::QueueWithinDepth)
+            .fairness(FairnessPolicy::WeightedFairQueue {
+                weight: 1,
+                burst: 0,
+            }),
     );
     // Global budget of one unit → single inflight → observable promotion order.
     let resources = ResourceBudget::new().cpu_units(1).memory_units(1_000_000);
-    let g = Governor::new_unchecked(
+    let g = Governor::new(
         PolicySet::new(resources, classes),
         Arc::new(ManualClock::new(0)),
-    );
+    )
+    .expect("fairness benchmark policy must be production-valid");
 
     let spec = |class: &str, op: &str| {
         TaskSpec::blocking(TaskClass::new(class.to_string())).operation(op.to_string())

@@ -12,7 +12,6 @@ import argparse
 import hashlib
 import json
 import re
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,7 +23,9 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from tools.inspection import metadata_output  # noqa: E402
 from tools.qualification.receipt import source_identity  # noqa: E402
+from tools.release.execution import run_release_command, settled_exit_code  # noqa: E402
 
 
 def sha256(path: Path) -> str:
@@ -32,8 +33,7 @@ def sha256(path: Path) -> str:
 
 
 def git(*args: str) -> str:
-    result = subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True, check=True)
-    return result.stdout.strip()
+    return metadata_output(["git", *args], cwd=REPO).decode("utf-8").strip()
 
 
 def workspace_version(text: str) -> str | None:
@@ -106,32 +106,31 @@ def produce(out: Path) -> int:
     if not out.is_relative_to((REPO / "target").resolve()):
         raise ValueError("output must be under repository target/")
     out.mkdir(parents=True, exist_ok=True)
-    tool = subprocess.run(
+    tool = run_release_command(
         ["cargo", "semver-checks", "--version"],
         cwd=REPO,
-        capture_output=True,
-        text=True,
-        check=False,
+        timeout_seconds=30,
     )
-    if tool.returncode != 0 or tool.stdout.strip() != policy["semver_tool"]:
+    tool_version = tool.stdout.decode("utf-8", errors="replace").strip()
+    if settled_exit_code(tool) != 0 or tool_version != policy["semver_tool"]:
         raise ValueError("installed cargo-semver-checks does not match release policy")
     results = []
     for crate in policy["public_crates"]:
         argv = command(crate, baseline)
         started_at = datetime.now(timezone.utc).isoformat()
         try:
-            process = subprocess.run(argv, cwd=REPO, capture_output=True, check=False, timeout=3600)
-            exit_code = process.returncode
+            process = run_release_command(argv, cwd=REPO, timeout_seconds=3600)
+            exit_code = settled_exit_code(process)
             stdout, stderr = process.stdout, process.stderr
-            timed_out = False
-        except subprocess.TimeoutExpired as exc:
-            exit_code = None
-            stdout, stderr = exc.stdout or b"", exc.stderr or b""
-            timed_out = True
+            timed_out = process.timed_out
+            interrupted = process.interrupted_by_signal
+            aborted_early = process.aborted_early
         except OSError as exc:
             exit_code = None
             stdout, stderr = b"", str(exc).encode()
             timed_out = False
+            interrupted = None
+            aborted_early = False
         stdout_path = out / f"{crate}.stdout.log"
         stderr_path = out / f"{crate}.stderr.log"
         stdout_path.write_bytes(stdout)
@@ -145,6 +144,8 @@ def produce(out: Path) -> int:
                 "finished_at": datetime.now(timezone.utc).isoformat(),
                 "exit_code": exit_code,
                 "timed_out": timed_out,
+                "interrupted_by_signal": interrupted,
+                "aborted_early": aborted_early,
                 "status": audit_status,
                 "stdout": {
                     "path": str(stdout_path.relative_to(REPO)),
@@ -158,6 +159,10 @@ def produce(out: Path) -> int:
                 },
             }
         )
+        if interrupted is not None:
+            # The supervisor consumes the signal to settle child custody.
+            # Preserve the user's stop request across subsequent commands.
+            break
     after = source_identity()
     stable = before["paths_digest"] == after["paths_digest"] and not after["dirty"]
     manifest = {
@@ -165,7 +170,9 @@ def produce(out: Path) -> int:
         "producer": "taskmesh-semver-release-v1",
         "status": (
             "REPORTED"
-            if stable and all(r["status"] in ("CLEAN", "FINDINGS") for r in results)
+            if stable
+            and len(results) == len(policy["public_crates"])
+            and all(r["status"] in ("CLEAN", "FINDINGS") for r in results)
             else "FAIL"
         ),
         "source": before,
@@ -175,7 +182,7 @@ def produce(out: Path) -> int:
         "baseline_sha": baseline,
         "baseline_version": policy["baseline_version"],
         "policy_sha256": sha256(POLICY),
-        "tool": tool.stdout.strip(),
+        "tool": tool_version,
         "features": policy["features"],
         "release_type": policy["release_type"],
         "candidate_version": policy["candidate_version"],
@@ -192,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return produce(args.out)
-    except (OSError, subprocess.CalledProcessError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"semver release NOT_RUN: {exc}", file=sys.stderr)
         return 2
 

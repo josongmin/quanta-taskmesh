@@ -123,7 +123,10 @@ def test_sigterm_reaps_every_parallel_gate_process_group(tmp_path: Path) -> None
             raise AssertionError("parallel child survived cancellation")
 
 
-def test_batch_successful_leader_with_live_child_is_not_success(tmp_path: Path) -> None:
+@pytest.mark.parametrize("exit_code", [0, 100])
+def test_batch_successful_leader_with_live_child_is_not_success(
+    tmp_path: Path, exit_code: int
+) -> None:
     from tools.process_supervisor import SupervisedCommand, run_process_batch
 
     marker = tmp_path / "child.pid"
@@ -142,7 +145,7 @@ def test_batch_successful_leader_with_live_child_is_not_success(tmp_path: Path) 
         "deadline = time.monotonic() + 2\n"
         "while not os.path.exists(marker) and time.monotonic() < deadline:\n"
         "    time.sleep(0.01)\n"
-        "sys.exit(0 if os.path.exists(marker) else 1)\n"
+        f"sys.exit({exit_code} if os.path.exists(marker) else 1)\n"
     )
     pgid: int | None = None
     try:
@@ -160,6 +163,7 @@ def test_batch_successful_leader_with_live_child_is_not_success(tmp_path: Path) 
         child_pid, pgid = map(int, marker.read_text(encoding="utf-8").split())
         assert len(results) == 1
         assert results[0].process.returncode is None
+        assert results[0].process.aborted_early
         assert "live process group" in results[0].process.stderr
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:

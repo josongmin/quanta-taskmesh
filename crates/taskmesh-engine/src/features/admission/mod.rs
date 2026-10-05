@@ -171,13 +171,11 @@ fn admit_class(
     }
 
     let cost = resolve_cost(policy);
-    let queued_behind =
-        state.classes.get(class).is_some_and(|cstate| {
-            cstate
-                .queue
-                .iter()
-                .any(|earlier| earlier.capabilities.intersects(&request.capabilities))
-        }) || (state.promotion_pending && class_can_queue(policy) && state.queued(class) == 0);
+    let queued_behind = state
+        .classes
+        .get(class)
+        .is_some_and(|cstate| cstate.has_queued_domain(&request.capabilities))
+        || (state.promotion_pending && class_can_queue(policy) && state.queued(class) == 0);
     let assessment = pending::assess(
         state,
         policies,
@@ -343,10 +341,11 @@ fn enqueue_or_full(
     let parent_permit_id = state.parent_permit_for_scope(&spec.root_operation_id, &spec.scope);
     let (finish_tag, wfq_arrival_tag, deadline_ms) =
         fairness::enqueue_tags(state, class, policy, cost.cpu_units, now_ms);
-    state.class_mut(class).queue.push_back(PendingRequest {
+    state.enqueue(PendingRequest {
         permit_id: ids.permit_id,
         ticket: ids.ticket,
         seq_no: ids.seq_no,
+        queue_order: 0, // Assigned atomically by GovernedState::enqueue.
         class: class.clone(),
         // Queue/audit only: direct admit and terminal reject paths must not pay
         // this allocation on the governance hot path.

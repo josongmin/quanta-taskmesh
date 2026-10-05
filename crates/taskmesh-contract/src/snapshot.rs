@@ -101,6 +101,7 @@ mod exact_units {
 ///
 /// - `inflight == dispatch_reserved + accepted + running + cleanup_pending`
 /// - `admitted_total == inflight as u128 + terminated_total`
+/// - `started_total <= admitted_total`
 /// - `started_total >= (running + cleanup_pending) as u128`
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ClassSnapshot {
@@ -143,10 +144,24 @@ impl ClassSnapshot {
         if phases != u128::from(self.inflight) {
             return Some(format!("inflight {} != phase sum {phases}", self.inflight));
         }
-        if self.admitted_total != u128::from(self.inflight) + self.terminated_total {
+        let Some(accounted_admissions) =
+            u128::from(self.inflight).checked_add(self.terminated_total)
+        else {
+            return Some(format!(
+                "inflight {} + terminated_total {} exceeds u128",
+                self.inflight, self.terminated_total
+            ));
+        };
+        if self.admitted_total != accounted_admissions {
             return Some(format!(
                 "admitted_total {} != inflight {} + terminated_total {}",
                 self.admitted_total, self.inflight, self.terminated_total
+            ));
+        }
+        if self.started_total > self.admitted_total {
+            return Some(format!(
+                "started_total {} > admitted_total {}",
+                self.started_total, self.admitted_total
             ));
         }
         let started_live = u128::from(self.running) + u128::from(self.cleanup_pending);

@@ -149,7 +149,8 @@ def verify_receipt(
         if actual != receipt[f"{name}_sha256"]:
             raise host_perf.ReceiptError(f"special {name} digest differs")
     host_perf.validate_resource_artifact(artifacts["resources"], receipt["runner_pid"])
-    if require_current_source:
+
+    def check_current_source() -> None:
         if source_content_sha256() != receipt["source_content_sha256"]:
             raise host_perf.ReceiptError("current checkout differs from acquired special source")
         source = receipt["end_identity"]
@@ -157,9 +158,19 @@ def verify_receipt(
             host_perf.parse_object(artifacts["scenario"], "scenario"),
             receipt["features"],
         )
-        for field in ("source_head", "source_tree", "source_dirty", "lock_sha256", "rustc"):
+        for field in (
+            "source_head",
+            "source_tree",
+            "source_dirty",
+            "source_content_sha256",
+            "lock_sha256",
+            "rustc",
+        ):
             if current[field] != source[field]:
                 raise host_perf.ReceiptError(f"current source/toolchain {field} differs")
+
+    if require_current_source:
+        check_current_source()
     # Execute the digest-checked bytes, never reopen mutable receipt inputs.
     with tempfile.TemporaryDirectory(prefix="taskmesh-special-verify-") as temporary:
         sealed = Path(temporary)
@@ -183,6 +194,8 @@ def verify_receipt(
         raise host_perf.ReceiptError(
             f"typed special raw/topology rejected: {result.stderr[-1000:]}"
         )
+    if require_current_source:
+        check_current_source()
     return receipt
 
 

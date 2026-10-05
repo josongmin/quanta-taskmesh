@@ -65,6 +65,33 @@ fn requested_stack_size_bounds_are_enforced_at_strict_ingress() {
 }
 
 #[test]
+fn nonblocking_dispatch_tag_must_be_absent_even_when_null() {
+    let mut blocking = task();
+    blocking["blocking_dispatch"] = Value::Null;
+    assert!(matches!(
+        parse(&blocking, StrictIngressLimits::default()),
+        Err(StrictIngressError::Decode(_))
+    ));
+
+    let mut input = task();
+    input["stages"][0]["stage"] = json!("io");
+    input["stages"][0]["substrate_hint"] = json!("AsyncIo");
+    input.as_object_mut().unwrap().remove("blocking_dispatch");
+    assert_eq!(
+        parse(&input, StrictIngressLimits::default())
+            .expect("omitted dispatch tag is valid for an async IO stage")
+            .as_spec(),
+        &TaskSpec::io(TaskClass::new("c")).operation("root")
+    );
+
+    input["blocking_dispatch"] = Value::Null;
+    assert!(matches!(
+        parse(&input, StrictIngressLimits::default()),
+        Err(StrictIngressError::Decode(_))
+    ));
+}
+
+#[test]
 fn strict_ingress_error_display_is_stable() {
     use taskmesh_contract::TaskPlanError;
 

@@ -54,7 +54,11 @@ pub enum MemoryOvercommitPolicy {
     DegradeToLight { fallback_class: TaskClass },
 }
 
-/// Enforceable checkpoint metadata — inspected at well-defined hook points.
+/// Checkpoint preferences for a caller or adapter to inspect.
+///
+/// The engine preserves this metadata and exposes it through
+/// `Governor::checkpoint_policy`. The Tokio host does not invoke checkpoint
+/// hooks or count work items; declaring a policy alone does not enforce one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckpointPolicy {
     pub every_n_work_items: Option<u32>,

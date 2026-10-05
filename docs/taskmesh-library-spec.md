@@ -306,5 +306,6 @@ The host enforces the declared contract at runtime:
   `NestedWaitCycle` at intake and promotion. Other holders may release, so
   independently held capacity remains queueable. The runtime cannot inspect
   opaque closures or infer undeclared waits (ADR 0003, D12).
-- `checkpoint_policy` is host-inspected metadata (engine preserves, does not
-  enforce).
+- `checkpoint_policy` is caller-inspected metadata, exposed by
+  `Governor::checkpoint_policy`. The engine preserves it; the host installs no
+  automatic checkpoint hooks.

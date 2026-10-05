@@ -18,7 +18,8 @@ use std::sync::Arc;
 use std::thread;
 
 use taskmesh_contract::{
-    ClassPolicy, ManualClock, MemoryPermitMode, ResourceBudget, TaskClass, TaskSpec,
+    ClassPolicy, ManualClock, MemoryPermitMode, MemoryReleasePolicy, ResourceBudget, TaskClass,
+    TaskSpec,
 };
 use taskmesh_engine::{
     AdmissionDecision, Governor, PermitId, PolicySet, ReleaseOutcome, StageReleaseOutcome,
@@ -35,24 +36,46 @@ impl Lcg {
     }
 }
 
-/// (name, cap, cpu, mem, mode)
-const SPECS: [(&str, u32, u32, u32, MemoryPermitMode); 3] = [
-    ("est", 4, 1, 2, MemoryPermitMode::Estimated),
-    ("meas", 8, 2, 1, MemoryPermitMode::Measured),
-    ("hyb", 2, 1, 3, MemoryPermitMode::Hybrid),
+/// (name, cap, cpu, mem, mode, release policy)
+const SPECS: [(&str, u32, u32, u32, MemoryPermitMode, MemoryReleasePolicy); 3] = [
+    (
+        "est",
+        4,
+        1,
+        2,
+        MemoryPermitMode::Estimated,
+        MemoryReleasePolicy::OnTaskCompletion,
+    ),
+    (
+        "meas",
+        8,
+        2,
+        1,
+        MemoryPermitMode::Measured,
+        MemoryReleasePolicy::OnStageBoundary,
+    ),
+    (
+        "hyb",
+        2,
+        1,
+        3,
+        MemoryPermitMode::Hybrid,
+        MemoryReleasePolicy::OnStageBoundary,
+    ),
 ];
 
 fn governor() -> Arc<Governor> {
     let classes: BTreeMap<TaskClass, ClassPolicy> = SPECS
         .iter()
-        .map(|(n, cap, cpu, mem, mode)| {
+        .map(|(n, cap, cpu, mem, mode, release_policy)| {
             (
                 TaskClass::new(*n),
                 ClassPolicy::new()
                     .max_inflight(*cap)
                     .cpu_units(*cpu)
                     .memory_units(*mem)
-                    .memory_permit_mode(*mode),
+                    .memory_permit_mode(*mode)
+                    .memory_release_policy(*release_policy),
             )
         })
         .collect();
@@ -75,7 +98,7 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
     const OPS: usize = 3_000;
     let g = governor();
 
-    let per_thread: Vec<Vec<PermitId>> = thread::scope(|scope| {
+    let per_thread: Vec<(Vec<PermitId>, u64, u64)> = thread::scope(|scope| {
         let handles: Vec<_> = (0..THREADS)
             .map(|tid| {
                 let g = Arc::clone(&g);
@@ -85,6 +108,8 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
                     let mut held: Vec<(PermitId, usize)> = Vec::new();
                     // every id this thread was ever granted (uniqueness proof)
                     let mut granted_ids: Vec<PermitId> = Vec::new();
+                    let mut positive_stage_releases = 0u64;
+                    let mut policy_refusals = 0u64;
 
                     for step in 0..OPS {
                         let roll = lcg.next() % 8;
@@ -130,15 +155,45 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
                                 if !held.is_empty() {
                                     let i = (lcg.next() as usize) % held.len();
                                     let units = (lcg.next() % 4) as u32;
-                                    // The permit is held by this thread, so the
-                                    // only outcomes are the policy's own answers;
-                                    // an unknown permit here would be a lost lease.
+                                    let (permit, class_index) = held[i];
+                                    let before = g.permit_ledger(permit).expect("owned permit");
                                     let outcome = g.release_stage_memory(held[i].0, units);
-                                    assert!(
-                                        !matches!(outcome, StageReleaseOutcome::UnknownPermit),
-                                        "held permit {} reported unknown on stage release",
-                                        held[i].0
-                                    );
+                                    match SPECS[class_index].5 {
+                                        MemoryReleasePolicy::OnTaskCompletion => {
+                                            assert_eq!(
+                                                outcome,
+                                                StageReleaseOutcome::PolicyForbids {
+                                                    policy: MemoryReleasePolicy::OnTaskCompletion,
+                                                }
+                                            );
+                                            assert_eq!(
+                                                g.permit_ledger(permit)
+                                                    .expect("owned permit")
+                                                    .effective_units,
+                                                before.effective_units
+                                            );
+                                            policy_refusals += 1;
+                                        }
+                                        MemoryReleasePolicy::OnStageBoundary => {
+                                            let freed = units.min(before.effective_units);
+                                            assert_eq!(
+                                                outcome,
+                                                StageReleaseOutcome::Released {
+                                                    freed_units: freed
+                                                }
+                                            );
+                                            assert_eq!(
+                                                g.permit_ledger(permit)
+                                                    .expect("owned permit")
+                                                    .effective_units,
+                                                before.effective_units - freed
+                                            );
+                                            positive_stage_releases += u64::from(freed > 0);
+                                        }
+                                        MemoryReleasePolicy::LeakDetecting => {
+                                            unreachable!("not configured")
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -146,7 +201,7 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
                         // Sample the cap invariant periodically (lock-consistent read).
                         if step % 64 == 0 {
                             let snap = g.snapshot();
-                            for (name, cap, _, _, _) in SPECS {
+                            for (name, cap, _, _, _, _) in SPECS {
                                 let inflight = snap.classes[&TaskClass::new(name)].inflight;
                                 assert!(
                                     inflight <= cap,
@@ -160,7 +215,7 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
                     for (id, _) in held {
                         assert_eq!(g.release(id), ReleaseOutcome::Released);
                     }
-                    granted_ids
+                    (granted_ids, positive_stage_releases, policy_refusals)
                 })
             })
             .collect();
@@ -170,17 +225,29 @@ fn all_ops_concurrent_fuzz_stays_consistent_and_drains() {
     // No id was ever granted twice across all threads.
     let mut seen = BTreeSet::new();
     let mut total = 0usize;
-    for ids in &per_thread {
+    let mut positive_stage_releases = 0;
+    let mut policy_refusals = 0;
+    for (ids, positive, refused) in &per_thread {
         for &id in ids {
             assert!(seen.insert(id), "permit id {id} double-granted");
             total += 1;
         }
+        positive_stage_releases += *positive;
+        policy_refusals += *refused;
     }
     assert!(total > 0, "the fuzz must have granted some permits");
+    assert!(
+        positive_stage_releases > 0,
+        "stage releases must free real units"
+    );
+    assert!(
+        policy_refusals > 0,
+        "the policy refusal branch must be exercised"
+    );
 
     // Everything released → the governor is exactly zero on every axis.
     let snap = g.snapshot();
-    for (name, _, _, _, _) in SPECS {
+    for (name, _, _, _, _, _) in SPECS {
         let c = &snap.classes[&TaskClass::new(name)];
         assert_eq!(
             (c.inflight, c.queued, c.cpu_units_held, c.memory_units_held),

@@ -168,11 +168,14 @@ pub enum TerminalReason {
     Released,
     /// The waiter itself abandoned the ticket.
     Abandoned,
-    /// Host notifier retirement panicked; the engine compensated the permit
-    /// before publishing the terminal result.
+    /// Host notifier retirement panicked. Undispatched charges were refunded;
+    /// a worker that already took its lease remains charged until token release.
     ClaimDeliveryFailed,
     /// The resolver proved this wait can never become runnable.
     IrreversibleWaitCycle { held_by_parent: HeldCapacity },
+    /// An unrepresentable resource observation made this Governor fail closed;
+    /// queued work cannot be promoted under an untrustworthy accounting total.
+    AccountingFault,
 }
 
 impl fmt::Display for TerminalReason {
@@ -181,7 +184,8 @@ impl fmt::Display for TerminalReason {
             Self::Reclaimed => "reclaimed by the leak sweep",
             Self::Released => "released before the claim",
             Self::Abandoned => "abandoned by the waiter",
-            Self::ClaimDeliveryFailed => "claim delivery failed after compensation",
+            Self::ClaimDeliveryFailed => "claim delivery failed",
+            Self::AccountingFault => "governor accounting fault",
             Self::IrreversibleWaitCycle { .. } => "irreversible wait cycle",
         })
     }

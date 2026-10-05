@@ -236,11 +236,15 @@ def local_receipt_problems(
     mode = selection.get("mode")
     selected_ids = selection.get("selected_gate_ids")
     skipped_ids = selection.get("skipped_gate_ids")
-    if mode not in {"all", "required", "profile", "tier", "id"}:
+    if not isinstance(mode, str) or mode not in {"all", "required", "profile", "tier", "id"}:
         problems.append("local receipt selection mode is invalid")
     if selected_ids != sorted(ids):
         problems.append("local receipt selected gate ids differ from results")
-    if not isinstance(skipped_ids, list) or skipped_ids != sorted(set(skipped_ids)):
+    if (
+        not isinstance(skipped_ids, list)
+        or any(not isinstance(gate_id, str) or not gate_id for gate_id in skipped_ids)
+        or skipped_ids != sorted(set(skipped_ids))
+    ):
         problems.append("local receipt skipped gate ids are malformed")
         skipped_ids = []
     all_complete = True
@@ -814,11 +818,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.validate_receipt is not None:
         try:
             value = json.loads(args.validate_receipt.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             print(f"local receipt INVALID: {exc}", file=sys.stderr)
             return 1
         saved_profile = value.get("profile", "release") if isinstance(value, dict) else None
-        if saved_profile not in profile_ids:
+        if not isinstance(saved_profile, str) or saved_profile not in profile_ids:
             print(f"local receipt INVALID: unknown profile {saved_profile!r}", file=sys.stderr)
             return 1
         if args.expected_head is not None and saved_profile == "nightly":

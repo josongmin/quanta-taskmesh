@@ -28,12 +28,14 @@ use crate::shared::{
     Ticket,
 };
 
-/// How many terminal ticket outcomes are retained for late claimers.
+/// How many ordinary terminal ticket outcomes are retained for late claimers.
 ///
 /// Retention is bounded on purpose: an unbounded tombstone map is a leak. Past
 /// the bound the oldest outcome is evicted and a late claim reports
 /// [`ClaimOutcome::Invalid`] instead — still terminal, still not a hang, just
-/// without the specific reason.
+/// without the specific reason. Faulted queue tickets are retained separately
+/// until claim or abandon; their count is fixed by the queue depths present
+/// when admission fails closed.
 pub const MAX_TERMINAL_TICKETS: usize = 4096;
 
 /// A request waiting in a class queue for capacity.
@@ -43,6 +45,9 @@ pub struct PendingRequest {
     pub permit_id: PermitId,
     pub ticket: Ticket,
     pub seq_no: Seq,
+    /// Physical queue arrival, assigned under the state lock. Identity
+    /// sequences are allocated before that lock and may commit out of order.
+    pub(crate) queue_order: u128,
     pub class: TaskClass,
     /// Admission key derived from the root operation id; audit/diagnostics only.
     pub request_key: RequestKey,
@@ -79,6 +84,12 @@ pub struct PendingRequest {
 pub struct ClassState {
     pub inflight: u32,
     pub queue: VecDeque<PendingRequest>,
+    /// Arrival index for same-domain FIFO without rescanning queue prefixes.
+    pub(crate) queued_by_capability: BTreeMap<CapabilityId, BTreeSet<u128>>,
+    pub(crate) queued_ungated: BTreeSet<u128>,
+    /// Only awaited children can form a parent-capacity wait cycle. Root and
+    /// unawaited work need no cycle assessment on each promotion pass.
+    pub(crate) queued_awaited_children: BTreeSet<Seq>,
     /// WFQ: the finish tag of the most recently enqueued request.
     pub last_finish_tag: u128,
     /// WFQ: virtual finish after the service actually received in this busy
@@ -112,6 +123,78 @@ pub struct ClassState {
 impl ClassState {
     pub fn queued(&self) -> u32 {
         u32::try_from(self.queue.len()).unwrap_or(u32::MAX)
+    }
+
+    fn index_pending(&mut self, request: &PendingRequest) {
+        if matches!(
+            request.scope,
+            TaskScope::Child {
+                parent_awaits: true,
+                ..
+            }
+        ) {
+            self.queued_awaited_children.insert(request.seq_no);
+        }
+        if request.capabilities.is_empty() {
+            self.queued_ungated.insert(request.queue_order);
+        } else {
+            for id in request.capabilities.iter() {
+                self.queued_by_capability
+                    .entry(id.clone())
+                    .or_default()
+                    .insert(request.queue_order);
+            }
+        }
+    }
+
+    fn unindex_pending(&mut self, request: &PendingRequest) {
+        if matches!(
+            request.scope,
+            TaskScope::Child {
+                parent_awaits: true,
+                ..
+            }
+        ) {
+            self.queued_awaited_children.remove(&request.seq_no);
+        }
+        if request.capabilities.is_empty() {
+            self.queued_ungated.remove(&request.queue_order);
+        } else {
+            for id in request.capabilities.iter() {
+                if let Some(arrivals) = self.queued_by_capability.get_mut(id) {
+                    arrivals.remove(&request.queue_order);
+                    if arrivals.is_empty() {
+                        self.queued_by_capability.remove(id);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn has_queued_predecessor(&self, request: &PendingRequest) -> bool {
+        if request.capabilities.is_empty() {
+            return self
+                .queued_ungated
+                .first()
+                .is_some_and(|order| *order < request.queue_order);
+        }
+        request.capabilities.iter().any(|id| {
+            self.queued_by_capability
+                .get(id)
+                .and_then(|arrivals| arrivals.first())
+                .is_some_and(|order| *order < request.queue_order)
+        })
+    }
+
+    pub fn has_queued_domain(&self, capabilities: &CapabilityRequirementSet) -> bool {
+        if capabilities.is_empty() {
+            return !self.queued_ungated.is_empty();
+        }
+        capabilities.iter().any(|id| {
+            self.queued_by_capability
+                .get(id)
+                .is_some_and(|arrivals| !arrivals.is_empty())
+        })
     }
 
     fn phase_slot(&mut self, phase: ExecutionPhase) -> &mut u32 {
@@ -232,12 +315,15 @@ pub enum TerminalReason {
     Released,
     Abandoned,
     /// The promoted permit could not be handed to its waiter because retiring
-    /// the final host notifier panicked. The engine compensated every charge
-    /// before publishing this outcome.
+    /// the final host notifier panicked. Undispatched charges are refunded;
+    /// a worker that already took its lease remains charged until token release.
     ClaimDeliveryFailed,
     IrreversibleWaitCycle {
         held_by_parent: taskmesh_contract::HeldCapacity,
     },
+    /// A resource observation could not be represented; this Governor stopped
+    /// admitting and promoting work before the waiter received custody.
+    AccountingFault,
 }
 
 impl From<TerminalReason> for taskmesh_contract::TerminalReason {
@@ -247,6 +333,7 @@ impl From<TerminalReason> for taskmesh_contract::TerminalReason {
             TerminalReason::Released => Self::Released,
             TerminalReason::Abandoned => Self::Abandoned,
             TerminalReason::ClaimDeliveryFailed => Self::ClaimDeliveryFailed,
+            TerminalReason::AccountingFault => Self::AccountingFault,
             TerminalReason::IrreversibleWaitCycle { held_by_parent } => {
                 Self::IrreversibleWaitCycle { held_by_parent }
             }
@@ -265,6 +352,10 @@ pub enum TicketState {
     /// permit is not caller-owned until this state is finalized.
     Claiming(PermitId),
     Terminal(TerminalReason),
+    /// The Governor is fail-closed. Kept until its waiter claims or abandons
+    /// so even queues deeper than the ordinary terminal ring receive a typed
+    /// answer. Its size cannot grow after the fault stops admission.
+    Faulted,
 }
 
 /// The result of claiming a ticket. `Pending` and `Terminal` are *different*
@@ -294,6 +385,10 @@ pub enum AbandonOutcome {
     TerminalDiscarded,
     /// The ticket is unknown to this governor. No state or callback changed.
     Invalid,
+    /// The promoted permit has already transferred custody to a worker. The
+    /// ticket and every charge remain live until that worker releases its
+    /// lease. Adding this variant changes downstream exhaustive matches.
+    HeldByLease { phase: ExecutionPhase },
 }
 
 /// The result of releasing a permit.
@@ -516,6 +611,8 @@ pub struct GovernedState {
     pub classes: BTreeMap<TaskClass, ClassState>,
     pub permits: BTreeMap<PermitId, PermitRecord>,
     operation_permits: BTreeMap<String, RootOperationPermits>,
+    queued_operation_identities: BTreeMap<String, BTreeSet<String>>,
+    next_queue_order: u128,
     pub roots: BTreeMap<String, RootExecutionState>,
     /// The `(root, stage)` pairs a child currently occupies — queued or granted.
     /// Keyed by root so the admit-path lookup borrows the spec's strings instead
@@ -608,10 +705,11 @@ mod mutation_semantics {
         // evaluating its exact `(root, operation)` predicate.
         let class = TaskClass::new("queued");
         let spec = taskmesh_contract::TaskSpec::io(class.clone()).operation("queue-root");
-        state.class_mut(&class).queue.push_back(PendingRequest {
+        state.enqueue(PendingRequest {
             permit_id: PermitId::new(1, 8),
             ticket: Ticket::new(1, 1),
             seq_no: 1,
+            queue_order: 0,
             class,
             request_key: RequestKey::from_root("queue-root"),
             operation: "queue-child".to_owned(),
@@ -632,6 +730,182 @@ mod mutation_semantics {
         assert!(state.has_operation_identity("queue-root", "queue-child"));
         assert!(!state.has_operation_identity("queue-root", "other"));
         assert!(!state.has_operation_identity("other", "queue-child"));
+    }
+
+    #[test]
+    fn queued_indexes_match_prefix_oracle_across_middle_and_head_removals() {
+        use crate::features::admission::pending::queued_behind_index;
+        use taskmesh_contract::ResourceBudget;
+
+        let policy = crate::shared::PolicySet::new(ResourceBudget::new(), BTreeMap::new());
+        let blocking = policy.resolve_capability("blocking").expect("built-in");
+        let cpu = policy.resolve_capability("cpu").expect("built-in");
+        let sets = [
+            CapabilityRequirementSet::from_resolved([blocking.clone()])
+                .expect("one registered capability"),
+            CapabilityRequirementSet::from_resolved([cpu.clone()])
+                .expect("one registered capability"),
+            CapabilityRequirementSet::from_resolved([blocking, cpu])
+                .expect("two registered capabilities"),
+            CapabilityRequirementSet::empty(),
+            CapabilityRequirementSet::empty(),
+        ];
+        let class = TaskClass::new("c");
+        let mut state = GovernedState::default();
+        for (index, capabilities) in sets.into_iter().enumerate() {
+            let seq = u64::try_from(index + 1).expect("five queued requests fit u64");
+            let operation = format!("operation-{seq}");
+            let spec = taskmesh_contract::TaskSpec::io(class.clone()).operation(operation.clone());
+            state.enqueue(PendingRequest {
+                permit_id: PermitId::new(1, seq),
+                ticket: Ticket::new(1, seq),
+                seq_no: seq,
+                queue_order: 0,
+                class: class.clone(),
+                request_key: RequestKey::from_root("root"),
+                operation,
+                root_operation_id: "root".to_owned(),
+                scope: if index % 2 == 1 {
+                    TaskScope::Child {
+                        parent_operation_id: "parent".to_owned(),
+                        parent_stage: TaskStage::new("io"),
+                        parent_awaits: true,
+                    }
+                } else {
+                    TaskScope::Root
+                },
+                parent_permit_id: None,
+                target_stage: TaskStage::new("io"),
+                provenance: Provenance::of(&spec),
+                cost: ResolvedCost::default(),
+                capabilities,
+                enqueued_at_ms: 0,
+                deadline_ms: u64::MAX,
+                finish_tag: 0,
+                wfq_arrival_tag: 0,
+                blocked_on: CapacityBlock::Cpu,
+                waker: None,
+            });
+        }
+        for remove_index in [2, 0, 1] {
+            let class_state = state.classes.get(&class).expect("class was enqueued");
+            let queue = &class_state.queue;
+            let awaited: BTreeSet<Seq> = queue
+                .iter()
+                .filter(|request| {
+                    matches!(
+                        request.scope,
+                        TaskScope::Child {
+                            parent_awaits: true,
+                            ..
+                        }
+                    )
+                })
+                .map(|request| request.seq_no)
+                .collect();
+            assert_eq!(class_state.queued_awaited_children, awaited);
+            for (index, request) in queue.iter().enumerate() {
+                assert_eq!(
+                    class_state.has_queued_predecessor(request),
+                    queued_behind_index(queue, index),
+                );
+            }
+            let removed = state.remove_pending(&class, remove_index).expect("queued");
+            assert!(!state.has_operation_identity("root", &removed.operation));
+        }
+        let class_state = state.classes.get(&class).expect("class remains queued");
+        let queue = &class_state.queue;
+        let awaited: BTreeSet<Seq> = queue
+            .iter()
+            .filter(|request| {
+                matches!(
+                    request.scope,
+                    TaskScope::Child {
+                        parent_awaits: true,
+                        ..
+                    }
+                )
+            })
+            .map(|request| request.seq_no)
+            .collect();
+        assert_eq!(class_state.queued_awaited_children, awaited);
+        for (index, request) in queue.iter().enumerate() {
+            assert_eq!(
+                class_state.has_queued_predecessor(request),
+                queued_behind_index(queue, index),
+            );
+        }
+    }
+
+    #[test]
+    fn queued_domain_index_uses_lock_commit_order_when_id_allocation_reorders() {
+        use crate::features::admission::pending::queued_behind_index;
+        use taskmesh_contract::ResourceBudget;
+
+        let policy = crate::shared::PolicySet::new(ResourceBudget::new(), BTreeMap::new());
+        let blocking = policy.resolve_capability("blocking").expect("built-in");
+        let capabilities =
+            CapabilityRequirementSet::from_resolved([blocking]).expect("registered capability");
+        for capabilities in [capabilities, CapabilityRequirementSet::empty()] {
+            let class = TaskClass::new("c");
+            let mut state = GovernedState::default();
+            // IDs are allocated before the state lock, so a later allocator may
+            // acquire the lock and enqueue first. The deque defines FIFO.
+            for seq in [2, 1] {
+                let operation = format!("operation-{seq}");
+                let spec =
+                    taskmesh_contract::TaskSpec::io(class.clone()).operation(operation.clone());
+                state.enqueue(PendingRequest {
+                    permit_id: PermitId::new(1, seq),
+                    ticket: Ticket::new(1, seq),
+                    seq_no: seq,
+                    queue_order: 0,
+                    class: class.clone(),
+                    request_key: RequestKey::from_root("root"),
+                    operation,
+                    root_operation_id: "root".to_owned(),
+                    scope: TaskScope::Root,
+                    parent_permit_id: None,
+                    target_stage: TaskStage::new("io"),
+                    provenance: Provenance::of(&spec),
+                    cost: ResolvedCost::default(),
+                    capabilities: capabilities.clone(),
+                    enqueued_at_ms: 0,
+                    deadline_ms: u64::MAX,
+                    finish_tag: 0,
+                    wfq_arrival_tag: 0,
+                    blocked_on: CapacityBlock::Cpu,
+                    waker: None,
+                });
+            }
+            let class_state = state.classes.get(&class).expect("class enqueued");
+            assert_eq!(
+                class_state
+                    .has_queued_predecessor(class_state.queue.get(1).expect("second arrival")),
+                queued_behind_index(&class_state.queue, 1),
+                "later lock entrant must stay behind earlier physical enqueue"
+            );
+            assert!(
+                !class_state
+                    .has_queued_predecessor(class_state.queue.front().expect("first arrival")),
+                "first physical arrival must remain runnable"
+            );
+            assert!(class_state.has_queued_domain(&capabilities));
+            let first = state
+                .remove_pending(&class, 0)
+                .expect("first arrival queued");
+            assert_eq!(first.seq_no, 2);
+            let remaining = state.classes.get(&class).expect("class still queued");
+            assert!(!remaining.has_queued_predecessor(remaining.queue.front().expect("remaining")));
+            state
+                .remove_pending(&class, 0)
+                .expect("second arrival queued");
+            assert!(!state
+                .classes
+                .get(&class)
+                .expect("class retained")
+                .has_queued_domain(&capabilities));
+        }
     }
 
     #[test]

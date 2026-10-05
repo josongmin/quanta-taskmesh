@@ -16,6 +16,11 @@ impl Governor {
     /// admissions, so an overcommitting in-flight task cannot let new work in.
     /// Observed overage is real memory: it is recorded as pressure, never
     /// discarded to keep the total under the cap.
+    /// An unrepresentable reading reports `ConversionFailed` and sets a sticky
+    /// accounting fault. Queued tickets receive `AccountingFault` terminals and
+    /// their waiters are woken; new admission and promotion then stop, including
+    /// after the measured permit is released. Recovery requires draining and
+    /// replacing this Governor rather than guessing a safe charge.
     ///
     /// The epoch is assigned *inside* the same transition that applies the
     /// reading (the next one after whatever is currently recorded). Reading the
@@ -75,11 +80,15 @@ impl Governor {
                 scale,
                 now,
             );
-            if outcome.is_applied() {
+            if matches!(outcome, ReconcileOutcome::ConversionFailed(_)) {
+                self.terminalize_queued_for_accounting_fault(&mut state, &mut effects);
+            } else if outcome.is_applied() {
                 // Promote unconditionally on success: a downward reconcile freed
                 // budget; an upward one leaves no capacity so promote is a no-op.
                 let pass = self.promote(&mut state, now);
                 effects.absorb(pass);
+            } else {
+                // Refused or stale observations did not change capacity.
             }
             outcome
         };

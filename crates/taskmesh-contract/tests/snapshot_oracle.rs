@@ -95,6 +95,34 @@ fn admitted_total_must_equal_inflight_plus_terminated() {
 }
 
 #[test]
+fn admitted_total_overflow_is_a_violation() {
+    let violation = violation_of(&ClassSnapshot {
+        inflight: 1,
+        dispatch_reserved: 1,
+        admitted_total: 0,
+        terminated_total: u128::MAX,
+        ..ClassSnapshot::default()
+    });
+    assert!(violation.contains("inflight 1 + terminated_total"));
+    assert!(violation.contains("exceeds u128"));
+}
+
+#[test]
+fn started_total_cannot_exceed_admitted_total() {
+    let violation = violation_of(&ClassSnapshot {
+        inflight: 1,
+        running: 1,
+        admitted_total: 1,
+        started_total: 2,
+        ..ClassSnapshot::default()
+    });
+    assert!(
+        violation.contains("started_total 2 > admitted_total 1"),
+        "the report names the impossible cumulative counter, got {violation:?}"
+    );
+}
+
+#[test]
 fn started_total_must_cover_every_running_or_cleaning_request() {
     // A request is running, but the cumulative started counter never saw it.
     let violation = violation_of(&ClassSnapshot {

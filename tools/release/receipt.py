@@ -419,6 +419,8 @@ def finding_proof_problems(
             or type(row.get("exit_code")) is not int
             or row["exit_code"] != 0
             or row.get("timed_out") is not False
+            or row.get("interrupted_by_signal") is not None
+            or row.get("aborted_early", False) is not False
             or type(row.get("selected")) is not int
             or row["selected"] != 1
             or type(row.get("executed")) is not int
@@ -612,7 +614,11 @@ def semver_problems(root: Path, manifest: object, source: dict, policy: dict) ->
             continue
         if result.get("command") != command(crate, policy["baseline_sha"]):
             reasons.append(f"semver {crate} command mismatch")
-        if result.get("timed_out") is not False or (
+        if (
+            result.get("timed_out") is not False
+            or result.get("interrupted_by_signal") is not None
+            or result.get("aborted_early", False) is not False
+        ) or (
             result.get("exit_code"),
             result.get("status"),
         ) not in ((0, "CLEAN"), (100, "FINDINGS")):

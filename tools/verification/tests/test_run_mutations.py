@@ -471,13 +471,21 @@ def test_manifest_env_cannot_override_runner_isolation_authority(key: str) -> No
         rm.validate_entry({**MUT, "env": {key: "attacker-value"}})
 
 
-def test_runner_owned_environment_wins_defensively() -> None:
+def test_runner_owned_environment_wins_defensively(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The fixture owns its input; unrelated developer/CI build settings are
+    # checked separately by the rejection cases below.
+    monkeypatch.setattr(
+        rm.os,
+        "environ",
+        {"CARGO_TARGET_DIR": "/inherited/escape", "PYTHONDONTWRITEBYTECODE": "0"},
+    )
     campaign = SimpleNamespace(target=Path("/isolated/target"))
     mutation = {**MUT, "env": {"RUST_BACKTRACE": "1", "CARGO_TARGET_DIR": "/escape"}}
-    _actual, recorded = rm.command_environment(mutation, campaign)
+    actual, recorded = rm.command_environment(mutation, campaign)
     assert recorded["CARGO_TARGET_DIR"] == "/isolated/target"
     assert recorded["PYTHONDONTWRITEBYTECODE"] == "1"
     assert recorded["RUST_BACKTRACE"] == "1"
+    assert actual == recorded
 
 
 @pytest.mark.parametrize(
@@ -487,12 +495,13 @@ def test_runner_owned_environment_wins_defensively() -> None:
         "RUSTC_WRAPPER",
         "CARGO_ENCODED_RUSTFLAGS",
         "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS",
+        "RUSTUP_TOOLCHAIN",
     ],
 )
 def test_curated_campaign_rejects_unrecorded_build_environment(
     key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv(key, "unexpected")
+    monkeypatch.setattr(rm.os, "environ", {key: "unexpected"})
     campaign = SimpleNamespace(target=Path("/isolated/target"))
     with pytest.raises(ValueError, match=key):
         rm.command_environment(MUT, campaign)

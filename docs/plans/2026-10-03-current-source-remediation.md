@@ -1,6 +1,7 @@
 # Taskmesh remaining work after the 2026-10-03 source audit
 
-- **Status:** OPEN for exact-source CI, 0.3 compatibility, performance evidence,
+- **Status:** Taskmesh candidate CI and PR publication passed at the source
+  identities below. OPEN: 0.3 compatibility adjudication, performance evidence,
   the nightly operating decision and external consumer acceptance.
 - **Taskmesh source:** audit baseline
   `main@c4bcb2f213c66aac8adc7d3493c5a39917a29e00`; the implementation is
@@ -14,28 +15,23 @@
   `with_absolute_deadline` to `run_blocking_with`. Changes in that repository
   are deferred by user direction.
 
-## T1 — exact-source Taskmesh CI and publication
+## T1 — exact-source Taskmesh CI and publication (completed for `aadfa07`)
 
-**Owner:** Taskmesh. **Prerequisite:** finalize the revised candidate and preserve
-all unrelated dirty hunks. Freeze the candidate HEAD, tree, counted-path digest,
-feature set, owner paths and command. Commit on an isolated `codex/` branch only
-after reviewing the complete diff, including the earlier documentation
-cleanup and evidence relocation.
-
-1. Run `just verify-macos-ci` from one clean, unchanged checkout. Validate
-   `target/verification/macos-gates.json` with `tools/gates/run.py
-   --validate-receipt ... --expected-head <candidate-sha>`. Every applicable
-   required CI gate must be PASS; a failed or unrun required gate blocks this
-   item. The working-tree `just dev` result is owner-local feedback only.
-2. Publish the candidate as a PR and require the hosted strict
-   `required 16-gate verdict` on that PR's exact merge SHA. The branch rule is
-   already configured; it needs no new implementation. A new PR/main commit
-   needs its own result.
-3. Keep `docs/ssot/README.md` as a navigation index; ADR/spec/inventory remain
-   the authorities. The repository is intentionally library-only.
-
-**Stop:** source drift, unknown dirty ownership, missing catalog target,
-required FAIL/NOT_RUN, or a receipt whose source differs from the candidate.
+**Owner:** Taskmesh. The implementation was committed on an isolated `codex/`
+branch after reviewing the code, documentation deletion and evidence relocation.
+Clean `f2808d379b743fc5eaa7e295987c906dd7bc2957` passed all 16 local macOS
+CI gates; its receipt validated with `--expected-head`. [PR #9](https://github.com/josongmin/quanta-taskmesh/pull/9)
+passed the strict hosted [required check](https://github.com/josongmin/quanta-taskmesh/actions/runs/37105889890)
+on synthetic merge `85907fc3fdef2c13962daf186f7f0b6ab2a08d5e` with 16/16
+PASS. The branch rule was already configured. These results do not qualify a
+later commit: rerun the same exact-source checks for a changed head or merge.
+The later clean `aadfa07c0ae437dc51e6abd1387e169b8c613921` also passed
+all 16 local macOS CI gates under Rust 1.99.0; its receipt validated with
+`--expected-head` set to that SHA. The hosted [required check](https://github.com/josongmin/quanta-taskmesh/actions/runs/37107738458)
+passed 16/16 for PR #9 head `aadfa07` on synthetic merge
+`5798afc747c7a15fa704f473931142894578d7c1`; that merge and the head have
+the same tree `3e7a3995c97c10ab90c92e7e3ed44294c6ca9a70`. `docs/ssot/README.md`
+remains a navigation index, and this repository remains library-only.
 
 ## T2 — 0.3 API compatibility adjudication
 
@@ -44,9 +40,12 @@ unreleased 0.3 API removes deprecated
 `RayonCpuExecutor::new/from_topology`; consumers use typed
 `try_new/try_from_topology` and `taskmesh::ext::RayonBuildError`.
 
-1. Run `just semver-release` on the clean candidate against the immutable 0.2.0
-   baseline. This producer refuses dirty source and reports Rust API changes;
-   it does not decide wire or behavior compatibility.
+1. `just semver-release` reported against immutable 0.2.0 on clean `aadfa07`.
+   All four public crates have findings; the Rayon report names the two
+   intentionally removed constructors. The [technical finding inventory](../audits/2026-10-03-semver-technical-review.md)
+   maps the raw reports and known blind spots without supplying reviewer
+   approval. This producer reports Rust API changes but does not decide wire
+   or behavior compatibility. Rerun it for a later release candidate.
 2. Record the final-SHA human adjudication for Rust API, wire and behavior in
    the release process. The independent consumer-MSRV default/Rayon fixture
    passed on the earlier clean CI candidate and in a focused run after the

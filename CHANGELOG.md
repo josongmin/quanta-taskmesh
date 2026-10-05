@@ -112,6 +112,8 @@ The current operator path is local; hosted attestation remains a compatibility p
 
 ### Added and fixed for unreleased 0.3
 
+- `AdmissionVerdict::IdentityExhausted` is appended after the 0.2 variants so
+  existing variant discriminants remain stable for direct Rust consumers.
 - `TokioRuntime::run_blocking_response_by` and `run_cpu_response_by` add one
   absolute acquisition-to-caller-response boundary for synchronous work.
   `CompleteBy` keeps its cooperative-only meaning. Started workers retain

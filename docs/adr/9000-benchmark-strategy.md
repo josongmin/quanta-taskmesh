@@ -266,8 +266,9 @@ deliberately rejects all single-run performance claims. Measured-series
 admission must compare each reconstructed `max_producer_lag_ns` with the same
 rate's hash-bound control policy `max_host_lag_ns`, as control arms already do.
 This was an admission authority gap, not evidence that a production engine
-missed a request. The working-tree repair parses each hash-bound rate policy,
+missed a request. The Taskmesh repair parses each hash-bound rate policy,
 compares each measured attempt's reconstructed lag to that rate's limit before
 admission, and retains a lag-only negative regression and at-limit positive
-case. Focused Python tests passed on dirty source. No measured series or full
-host qualification was run for this repair.
+case. Focused Python tests passed; clean candidate `aadfa07` passed the local
+and hosted 16-gate CI profiles. No measured series or full host qualification
+was run for this repair.

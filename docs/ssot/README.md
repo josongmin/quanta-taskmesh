@@ -9,16 +9,18 @@ The current-source verdict and verification scope are in the
 
 ## Source and evidence snapshot
 
-- 2026-10-03 review baseline: clean Taskmesh `main@c4bcb2f213c66aac8adc7d3493c5a39917a29e00`, matching `origin/main` at inspection.
-- GitHub `main` protection requires the strict `required 16-gate verdict` check. Its [main-push run](https://github.com/josongmin/quanta-taskmesh/actions/runs/36261855351) passed on that SHA. A later document or code commit needs a new exact-source result.
-- `pr-ci.yml` is active on PR/main. Full `ci.yml`, `bench.yml`, and `release.yml` have manual-only source triggers and were disabled in GitHub settings at inspection. There is no scheduled full nightly run. `nightly` names a high-cost proof profile, not a cron schedule.
-- The current remediation branch contains Taskmesh host/API and
-  measured-admission changes. The initial dirty-source checks are diagnostic.
-  A subsequent clean candidate passed local macOS CI, while its hosted PR check
-  exposed a newer Rust deprecation; the follow-up source repair needs fresh
-  exact-source evidence. Read the [audit](../audits/2026-10-03-current-source-final.md)
-  and PR for candidate identities. Nightly, Linux release, performance and
-  Semantica consumer qualification remain OPEN.
+- The 2026-10-03 review baseline was `main@c4bcb2f`. PR #9 subsequently
+  merged the Taskmesh host/API, measured-admission, and maintainability changes
+  into `main@f81b138`. The [audit](../audits/2026-10-03-current-source-final.md)
+  records candidate source identities; its receipts do not qualify later edits.
+- `.circleci/config.yml` owns the new bounded automatic PR/main source check.
+  The former `pr-ci.yml` is manual-only in source. The CircleCI project trigger,
+  auto-cancel setting and GitHub required context are live external settings:
+  inspect them as described in [CircleCI operations](../ci-circleci.md).
+  Full `ci.yml`, `bench.yml`, and `release.yml` remain manual-only in source.
+  `nightly` is a high-cost profile, not a schedule.
+- Nightly, Linux release, performance and Semantica consumer qualification
+  remain OPEN after the bounded CI migration.
 
 ## Authority map
 
@@ -34,10 +36,10 @@ The current-source verdict and verification scope are in the
 
 ## Current work, separated by authority
 
-1. **Consumer contract:** Semantica's IDE historical-query caller still forwards an absolute `CompleteBy` deadline to a synchronous blocking path that rejects it. The remediation branch provides a separate `run_blocking_response_by`/`run_cpu_response_by` caller boundary with focused custody tests. Semantica source and deployment remain unchanged; that consumer conflict is still open.
-2. **Performance admission:** the remediation branch's validator compares every measured attempt's producer lag with its hash-bound per-rate control budget. Focused rejection/boundary tests passed. Actual quiet-host series and consumer budgets remain uncollected, so no performance claim is qualified.
+1. **Consumer contract:** Semantica's IDE historical-query caller still forwards an absolute `CompleteBy` deadline to a synchronous blocking path that rejects it. Taskmesh now provides a separate `run_blocking_response_by`/`run_cpu_response_by` caller boundary with focused custody tests. Semantica source and deployment remain unchanged; that consumer conflict is still open.
+2. **Performance admission:** the validator compares every measured attempt's producer lag with its hash-bound per-rate control budget. Focused rejection/boundary tests passed. Actual quiet-host series and consumer budgets remain uncollected, so no performance claim is qualified.
 3. **Deployment adoption:** D1–D9 applicability, real ingress/planner/wire topology, final-source pinned-pair execution and owner decision remain in the [current plan](../plans/2026-10-03-current-source-remediation.md). Earlier focused pinned-pair tests do not close them.
-4. **SDK and maintainability:** the remediation branch reexports facade plan errors, removes two deprecated Rayon panic constructors, and splits the three large source modules by their existing responsibilities. Consumer-MSRV passed; semver adjudication and final-source CI remain distinct. The default production `expect` sites were classified by reachability in the [current plan](../plans/2026-10-03-current-source-remediation.md); no caller-controlled panic was established.
+4. **SDK and maintainability:** Taskmesh reexports facade plan errors, removes two deprecated Rayon panic constructors, and splits the three large source modules by their existing responsibilities. Consumer-MSRV passed on the earlier source; semver adjudication and final-source CI remain distinct. The default production `expect` sites were classified by reachability in the [current plan](../plans/2026-10-03-current-source-remediation.md); no caller-controlled panic was established.
 5. **Deep proof and release:** the required 16-gate merge check is active. The seven costly nightly gates, Linux-only comparison, release adjudication and final release receipt are separate work under the [release checklist](../release-checklist.md).
 
 The ignored root `receipt*.json` set observed in this checkout named

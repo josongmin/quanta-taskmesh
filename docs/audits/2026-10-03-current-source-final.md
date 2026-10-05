@@ -1,9 +1,10 @@
 # 2026-10-03 current-source audit
 
-- **Verdict:** Taskmesh remediation has owner-local proof and one clean-source
-  local CI result on an earlier candidate. The toolchain repair made after that
-  candidate requires a new exact-source CI result. Measured performance,
-  release qualification and external deployment acceptance are **OPEN**.
+- **Verdict:** Taskmesh remediation passed local 16-gate CI at
+  `aadfa07c0ae437dc51e6abd1387e169b8c613921` and the hosted required
+  check at its synthetic merge SHA `5798afc747c7a15fa704f473931142894578d7c1`.
+  Measured performance, release qualification and external deployment
+  acceptance are **OPEN**. A later commit requires its own exact-source checks.
 - **Initial source under review:** `main@c4bcb2f213c66aac8adc7d3493c5a39917a29e00`
   (tree `c99caff9d5b32f69ca6fbde92a2ff14dd19a8b88`) plus uncommitted
   documentation, test and product edits. The baseline HEAD's hosted result is
@@ -18,13 +19,13 @@
 
 | Area | Source finding / result | Remaining boundary |
 |---|---|---|
-| Required PR check | GitHub `main` protection still has strict `required 16-gate verdict`; `pr-ci.yml` is active for PR/main. [Last main result](https://github.com/josongmin/quanta-taskmesh/actions/runs/36261855351) passed at the baseline HEAD. | New source needs its own hosted result. |
+| Required PR check | GitHub `main` protection has strict `required 16-gate verdict`; `pr-ci.yml` is active for PR/main. The [PR #9 run](https://github.com/josongmin/quanta-taskmesh/actions/runs/37107738458) passed 16/16 on synthetic merge `5798afc` for head `aadfa07`. | Every later head/merge SHA needs its own result. |
 | Synchronous deadline | `CompleteBy` still rejects blocking/CPU by contract. Taskmesh now has `run_blocking_response_by` and `run_cpu_response_by`: absolute acquisition and caller-response bound, pre-start refusal, and retained lease for a started worker. | Semantica still calls the old contract. Fixed-pair consumer and D1–D9 deployment acceptance are deferred and OPEN. |
 | Measured admission | `host_admission.py` now checks each measured attempt's reconstructed producer lag against its hash-bound rate policy before `MEASURED_SERIES_ADMITTED`. | B00 budgets, quiet-host repeated series and performance verdict are NOT_RUN. |
 | SDK / Rayon | Facade reexports plan error types; Rayon panic constructors were removed and `RayonBuildError` reexported. | Removing public methods is a Rust source break; final 0.2.0-to-0.3.0 semver adjudication remains OPEN. |
 | Production `expect` | Default-feature uses were classified by their validated/private preconditions. No caller-controlled panic counterexample was established. Test-only and `test-util` cases are separate; Rayon panic wrappers are removed. | A discovered bypass must get a typed rejection and negative regression; no blanket conversion is justified by count alone. |
-| Module layout | Host acquisition, synchronous dispatch and detached settlement; engine memory, observation, validation and state transitions; fairness tests were split without changing crate boundaries or inventory. Parent runtime/governor/state files are 860/903/655 lines after the toolchain repair below. | Behavior-preserving source move needs exact-source CI. |
-| Rust toolchain | Hosted rolling stable Rust deprecated `AtomicU64::fetch_update` under `-D warnings`; the governor now uses one checked `compare_exchange_weak` loop on Rust 1.81. The next hosted run exposed Rust 1.99's style-only `assert_is_empty` lint. CI now selects Rust 1.99.0 explicitly and allows that assertion style in the existing lint policy. The separate fuzz harness assertion was rewritten for the same lint; five Clippy passes, fuzz-check and the matrix passed locally with 1.99.0. | The revised candidate needs a new local and hosted CI result. |
+| Module layout | Host acquisition, synchronous dispatch and detached settlement; engine memory, observation, validation and state transitions; fairness tests were split without changing crate boundaries or inventory. Parent runtime/governor/state files are 860/903/655 lines. | Local and hosted CI passed at the source identities above; future source changes requalify. |
+| Rust toolchain | Hosted rolling stable Rust deprecated `AtomicU64::fetch_update` under `-D warnings`; the governor now uses one checked `compare_exchange_weak` loop on Rust 1.81. The next hosted run exposed Rust 1.99's style-only `assert_is_empty` lint. CI now selects Rust 1.99.0 explicitly, allows that assertion style in the existing lint policy, and rewrites the separate fuzz harness assertion. | Local Rust 1.99.0 and hosted 16-gate checks passed for `aadfa07`; later compiler upgrades need a reviewed source change. |
 | Nightly | Full `ci.yml`, `bench.yml` and `release.yml` remain manually triggered and disabled on GitHub; no cron is present. | A mutation-bearing schedule needs explicit authorization under `AGENTS.md`, runner budget and receipt authority. A bounded scheduled CI subset would have a different denominator. |
 | Old receipts | The three ignored root receipts naming `cc5b256` were moved byte-for-byte to `target/verification/historical/cc5b256704a1826e7dde36e2c4b127c6cba8aabf/`. | They remain historical diagnostics; validate any cited receipt with `--expected-head`. |
 
@@ -44,7 +45,7 @@
   are release evidence inputs, not an active implementation queue. Moving them
   requires a versioned manifest migration and new exact-source proof.
 
-## Verification run on the dirty working tree
+## Initial dirty-source verification
 
 | Command / scope | Result |
 |---|---|
@@ -63,7 +64,18 @@ semver audit was `REPORTED` with findings in all four public crates, including
 the intentional Rayon method removals. The [first PR run](https://github.com/josongmin/quanta-taskmesh/actions/runs/37102825665)
 failed Clippy on GitHub's newer stable Rust because `fetch_update` became
 deprecated. The [second PR run](https://github.com/josongmin/quanta-taskmesh/actions/runs/37103771725)
-then failed on Rust 1.99's new assertion-style lint. The atomic sequence and
-pinned-toolchain repairs above follow those results and require fresh local and
-hosted CI. Mutation/nightly, Linux release, measured performance
-and Semantica deployment acceptance remain **NOT_RUN**.
+then failed on Rust 1.99's new assertion-style lint. After the atomic sequence,
+toolchain and fuzz harness repairs, clean `f2808d3` passed local macOS CI 16/16
+under Rust 1.99.0; the saved receipt validated with `--expected-head` set to
+its full SHA. The [final PR run](https://github.com/josongmin/quanta-taskmesh/actions/runs/37105889890)
+passed hosted Linux CI 16/16 at synthetic merge `85907fc`. Its uploaded receipt
+has `qualified=true`, no required FAIL/NOT_RUN, matching before/after source,
+and a tree identical to `f2808d3`. The semver producer was rerun on that clean
+head and remained `REPORTED` with findings in all four public crates; human
+Rust API/wire/behavior adjudication is OPEN. The later clean `aadfa07` passed
+local macOS CI 16/16 with an exact-head receipt and hosted Linux CI 16/16 at
+synthetic merge `5798afc`; the merge tree and head tree both equal
+`3e7a3995c97c10ab90c92e7e3ed44294c6ca9a70`. A fresh four-crate semver
+audit at `aadfa07` remained `REPORTED`; its [technical finding inventory](2026-10-03-semver-technical-review.md)
+is not release-owner approval. Mutation/nightly, Linux release, measured
+performance and Semantica deployment acceptance remain **NOT_RUN**.

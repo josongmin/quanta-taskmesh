@@ -131,6 +131,14 @@ def test_coverage_missing_raw_counts_fail_closed() -> None:
 
 def test_adjudication_requires_reviewer_source_and_every_blind_spot() -> None:
     value = json.loads(receipt.ADJUDICATION.read_text())
+    later_boundaries = {
+        "BG25-governor-handle-api",
+        "SEP25-custody-api",
+        "SEP25-verdict-terminal-wire",
+        "SEP25-response-custody-behavior",
+    }
+    assert later_boundaries <= receipt.ADJUDICATION_IDS
+    assert later_boundaries <= {item["id"] for item in value["items"]}
     reasons = receipt.adjudication_problems(REPO, value, "a" * 40, value["baseline_sha"])
     assert any("candidate SHA" in reason for reason in reasons)
     assert any("reviewer" in reason for reason in reasons)
@@ -143,6 +151,15 @@ def test_adjudication_requires_reviewer_source_and_every_blind_spot() -> None:
         "item set" in r
         for r in receipt.adjudication_problems(REPO, bad, "a" * 40, bad["baseline_sha"])
     )
+    for item_id in later_boundaries:
+        missing = deepcopy(value)
+        missing["items"] = [item for item in missing["items"] if item["id"] != item_id]
+        assert any(
+            "item set" in reason
+            for reason in receipt.adjudication_problems(
+                REPO, missing, "a" * 40, missing["baseline_sha"]
+            )
+        )
 
 
 def test_semver_manifest_cannot_launder_missing_crate_or_raw_output() -> None:

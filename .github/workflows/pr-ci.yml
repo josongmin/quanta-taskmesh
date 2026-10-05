@@ -1,11 +1,10 @@
-name: pr-ci (bounded 16-gate profile)
+name: pr-ci (manual migration fallback)
 
-# The full ci.yml remains manual: it includes mutation, model, fuzz, and
-# release producers. This workflow owns only required.json's CI complement.
+# CircleCI owns automatic PR/main verification. Keep this bounded workflow as
+# a manual fallback; its existing check is replaced in branch protection only
+# after CircleCI's exact-source verdict succeeds.
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read

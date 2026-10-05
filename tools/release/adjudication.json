@@ -19,6 +19,10 @@
     {"id": "H03-physical-domains", "surface": "behavior", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-H03-executor-domain.md", "changelog_anchor": null},
     {"id": "H03-executor-contract", "surface": "rust-api", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-H03-executor-domain.md", "changelog_anchor": null},
     {"id": "H03-rayon-constructor", "surface": "rust-api", "decision": "PENDING", "evidence": "docs/bugbash/sep-21/tickets/SEP21-H03-executor-domain.md", "changelog_anchor": null},
+    {"id": "BG25-governor-handle-api", "surface": "rust-api", "decision": "PENDING", "evidence": "docs/adr/0004-sep-25-ingress-plan-identity-and-wire.md", "changelog_anchor": null},
+    {"id": "SEP25-custody-api", "surface": "rust-api", "decision": "PENDING", "evidence": "docs/adr/0005-sep-25-execution-response-and-custody.md", "changelog_anchor": null},
+    {"id": "SEP25-verdict-terminal-wire", "surface": "serde-wire", "decision": "PENDING", "evidence": "docs/adr/0004-sep-25-ingress-plan-identity-and-wire.md", "changelog_anchor": null},
+    {"id": "SEP25-response-custody-behavior", "surface": "behavior", "decision": "PENDING", "evidence": "docs/adr/0005-sep-25-execution-response-and-custody.md", "changelog_anchor": null},
     {"id": "facade-reexports", "surface": "facade", "decision": "PENDING", "evidence": "crates/taskmesh/src/lib.rs", "changelog_anchor": null}
   ]
 }

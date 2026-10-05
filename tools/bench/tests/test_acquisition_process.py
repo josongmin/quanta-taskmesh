@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -29,6 +30,40 @@ def wait_gone(pid: int) -> None:
     while time.monotonic() < deadline and not gone(pid):
         time.sleep(0.01)
     assert gone(pid), f"child {pid} survived cleanup"
+
+
+def owned_child(directory: Path, call: str) -> subprocess.Popen:
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            f"import os,time; print(os.environ[{acquisition.OWNER_CALL!r}], flush=True); "
+            "time.sleep(60)",
+        ],
+        start_new_session=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        env={
+            **os.environ,
+            acquisition.OWNER_DIRECTORY: str(directory),
+            acquisition.OWNER_CALL: call,
+        },
+    )
+    assert child.stdout is not None
+    try:
+        # Popen completion can precede observable /proc environment publication.
+        # Scan an initialized owned child, rather than racing its exec startup.
+        readable, _, _ = select.select([child.stdout], [], [], 3)
+        assert readable, "owned child did not publish its startup identity"
+        assert child.stdout.readline() == (call + "\n").encode()
+        return child
+    except BaseException:
+        if child.poll() is None:
+            os.killpg(child.pid, signal.SIGKILL)
+        child.wait(timeout=3)
+        raise
+    finally:
+        child.stdout.close()
 
 
 def test_transient_system_error_retries_environment_observation(
@@ -65,17 +100,7 @@ def test_persistent_system_error_fails_closed_and_keeps_scanning_owned_child(
     directory = tmp_path / "registry"
     directory.mkdir(mode=0o700)
     call = "a" * 32
-    child = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"],
-        start_new_session=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env={
-            **os.environ,
-            acquisition.OWNER_DIRECTORY: str(directory),
-            acquisition.OWNER_CALL: call,
-        },
-    )
+    child = owned_child(directory, call)
 
     class UnreadableProcess:
         pid = os.getpid()
@@ -96,7 +121,7 @@ def test_persistent_system_error_fails_closed_and_keeps_scanning_owned_child(
         assert unreadable.reads == 2
         assert incomplete
         assert any("owner environment unavailable" in item for item in diagnostics)
-        assert any("owned descendant group killed" in item for item in diagnostics)
+        assert any("owned descendant group killed" in item for item in diagnostics), diagnostics
         wait_gone(child.pid)
     finally:
         if not gone(child.pid):
@@ -135,17 +160,7 @@ def test_registered_process_observation_error_does_not_skip_other_cleanup(
     directory = tmp_path / "registry"
     directory.mkdir(mode=0o700)
     call = "a" * 32
-    child = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"],
-        start_new_session=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env={
-            **os.environ,
-            acquisition.OWNER_DIRECTORY: str(directory),
-            acquisition.OWNER_CALL: call,
-        },
-    )
+    child = owned_child(directory, call)
     actual = psutil.Process(child.pid)
     (directory / f"{call}.json").write_text(
         json.dumps(
@@ -169,7 +184,7 @@ def test_registered_process_observation_error_does_not_skip_other_cleanup(
         monkeypatch.setattr(acquisition.psutil, "Process", original_process)
         assert incomplete
         assert any("owner cleanup failed" in item for item in diagnostics)
-        assert any("owned descendant group killed" in item for item in diagnostics)
+        assert any("owned descendant group killed" in item for item in diagnostics), diagnostics
         wait_gone(child.pid)
     finally:
         monkeypatch.setattr(acquisition.psutil, "Process", original_process)

@@ -102,7 +102,15 @@ described below; these rules do not weaken its live-worker lease fence.
 ## Engine Highlights
 
 1. fail-closed class lookup (unknown/disabled reject, never default-admit)
-2. bounded per-class queues; cross-class fairness (FIFO/WFQ/DRR/EDF/scavenger).
+2. bounded per-class queues; cross-class fairness (FIFO/WFQ/DRR/`DeadlineAware { slack_ms }`/scavenger).
+   `DeadlineAware` orders the runnable head by `enqueued_at + slack_ms`; it is
+   not classic absolute EDF and is a different axis from host
+   `SubmissionDeadline::CompleteBy`. `WeightedFairQueue.burst` is a reserved
+   no-op field. FIFO and WFQ/`DeadlineAware` ties use physical enqueue order,
+   assigned under the state lock rather than the preallocated identity sequence.
+   On capacity overflow, `OverflowPolicy::DropBestEffort` rejects like `Reject`;
+   it does not drop or evict work. A separate memory-overcommit queue policy can
+   still queue. `CheckpointPolicy` is preserved metadata, not host enforcement.
    Candidates must satisfy semantic capacity **and** the capability pool their
    head froze at intake; there is no second scheduling queue behind the first.
    DRR walks its ring arithmetically (`O(classes)`, never `O(cost/quantum)`) and

@@ -11,13 +11,13 @@
 //! Each section is labelled with the changelog entry it proves.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use taskmesh::ext::{
     AbandonOutcome, AdmissionDecision, AdvanceOutcome, AdvanceRefusal, ClaimOutcome, CpuExecutor,
-    ExecutorCapabilities, Governor, ManualClock, PolicySet, ReconcileOutcome, ReleaseOutcome,
-    StageReleaseOutcome, BUILTIN_SUBSTRATES,
+    ExecutorCapabilities, Governor, LeaseToken, ManualClock, PermitWaker, PolicySet,
+    ReconcileOutcome, ReleaseOutcome, StageReleaseOutcome, Ticket, BUILTIN_SUBSTRATES,
 };
 #[cfg(feature = "rayon")]
 use taskmesh::ext::{RayonBuildError, RayonCpuExecutor};
@@ -192,6 +192,7 @@ async fn main() {
     executor_capabilities_are_load_bearing().await;
     topology_is_validated();
     governor_outcomes();
+    abandon_keeps_worker_custody();
     memory_outcomes();
     drain_is_the_shutdown_contract().await;
     declared_nested_wait_is_refused();
@@ -794,6 +795,122 @@ fn governor_outcomes() {
     check!(
         governor.claim(ticket) == ClaimOutcome::Invalid,
         "a claimed ticket is Invalid afterwards"
+    );
+}
+
+struct LeaseOnPromotion {
+    governor: Weak<Governor>,
+    lease: Arc<Mutex<Option<LeaseToken>>>,
+}
+
+impl PermitWaker for LeaseOnPromotion {
+    fn wake(&self) {
+        let governor = self.governor.upgrade().expect("consumer governor alive");
+        let permit = governor.permit_ledgers()[0].permit_id;
+        let token = match governor.advance_phase(permit, ExecutionPhase::Running) {
+            AdvanceOutcome::Leased(token) => token,
+            other => {
+                check!(false, "promotion callback takes custody, got {other:?}");
+                unreachable!()
+            }
+        };
+        *self.lease.lock().expect("consumer lease slot") = Some(token);
+    }
+}
+
+/// CHANGELOG: exhaustive abandon outcomes cannot imply worker termination.
+fn abandon_keeps_worker_custody() {
+    let governor = Arc::new(direct_governor());
+    let admit = |operation| match governor.admit(&TaskSpec::io(retrieval()).operation(operation)) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => {
+            check!(false, "consumer holder admits, got {other:?}");
+            unreachable!()
+        }
+    };
+    let holder = admit("abandon-holder");
+    let lease = Arc::new(Mutex::new(None));
+    let waker: Arc<dyn PermitWaker> = Arc::new(LeaseOnPromotion {
+        governor: Arc::downgrade(&governor),
+        lease: Arc::clone(&lease),
+    });
+    let ticket = match governor.admit_waitable(
+        &TaskSpec::io(retrieval()).operation("abandon-leased"),
+        waker,
+    ) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => {
+            check!(false, "consumer waiter queues, got {other:?}");
+            unreachable!()
+        }
+    };
+    let follower: Ticket =
+        match governor.admit(&TaskSpec::io(retrieval()).operation("abandon-follower")) {
+            AdmissionDecision::Queued { ticket } => ticket,
+            other => {
+                check!(false, "consumer follower queues, got {other:?}");
+                unreachable!()
+            }
+        };
+    check!(
+        governor.release(holder) == ReleaseOutcome::Released,
+        "holder releases"
+    );
+    // This exhaustive match is the downstream migration for the added arm.
+    match governor.abandon(ticket) {
+        AbandonOutcome::HeldByLease { phase } => {
+            check!(
+                phase == ExecutionPhase::Running,
+                "worker still owns the lease"
+            );
+        }
+        AbandonOutcome::Abandoned => check!(false, "leased work cannot be abandoned"),
+        AbandonOutcome::TerminalDiscarded => check!(false, "live work is not terminal"),
+        AbandonOutcome::Invalid => check!(false, "the promoted ticket remains valid"),
+    }
+    check!(
+        governor.claim(follower) == ClaimOutcome::Pending,
+        "abandon cannot promote a follower"
+    );
+    check!(
+        governor.snapshot().classes[&retrieval()].inflight == 1,
+        "abandon keeps the charge"
+    );
+    check!(
+        matches!(governor.claim(ticket), ClaimOutcome::Ready(_)),
+        "refused abandon keeps its ticket"
+    );
+    let token = lease
+        .lock()
+        .expect("consumer lease slot")
+        .take()
+        .expect("worker took custody");
+    check!(
+        governor.release_leased(token) == ReleaseOutcome::Released,
+        "worker releases custody"
+    );
+    let follower_permit = match governor.claim(follower) {
+        ClaimOutcome::Ready(permit) => permit,
+        other => {
+            check!(
+                false,
+                "follower promotes after worker release, got {other:?}"
+            );
+            unreachable!()
+        }
+    };
+    check!(
+        governor.release(follower_permit) == ReleaseOutcome::Released,
+        "follower releases"
+    );
+    let snapshot = governor.snapshot();
+    check!(
+        snapshot.classes[&retrieval()].inflight == 0 && snapshot.classes[&retrieval()].queued == 0,
+        "consumer fixture drains"
+    );
+    check!(
+        snapshot.conservation_violation().is_none(),
+        "consumer accounting conserves"
     );
 }
 

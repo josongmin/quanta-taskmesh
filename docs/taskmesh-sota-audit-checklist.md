@@ -207,7 +207,7 @@ cargo metadata --format-version 1 --no-deps
 
 | ID | 등급 | 검사항목 | PASS 조건 / 필수 증거 |
 |---|---:|---|---|
-| FAIR-01 | M | policy별 독립 oracle | FIFO/WFQ/DRR/EDF/scavenger가 구현 코드와 다른 reference로 검증됨 |
+| FAIR-01 | M | policy별 독립 oracle | FIFO/WFQ/DRR/`DeadlineAware`/scavenger가 구현 코드와 다른 reference로 검증됨 (`DeadlineAware` ≠ host `CompleteBy`) |
 | FAIR-02 | M | asymmetric fixtures | weight/quantum/cost/deadline이 서로 다른 입력으로 priority와 fairness를 구분 |
 | FAIR-03 | M | DRR active ring | runnable class ring, deficit carry/debit, wrap 순서가 결정적 |
 | FAIR-04 | M | DRR idle reset | queue가 빈 class의 오래된 credit이 새 burst에 특혜를 주지 않음 |
@@ -216,7 +216,7 @@ cargo metadata --format-version 1 --no-deps
 | FAIR-07 | M | cancellation debt | cancel/abandon이 이미 받은 service debt를 지우지 않음 |
 | FAIR-08 | M | fully-runnable selection | semantic resource와 capability pool을 모두 만족한 후보만 scheduler state 변경 |
 | FAIR-09 | M | in-class FIFO | promotion budget 경계와 newcomer race에서도 같은 class의 앞선 runnable head 보존 |
-| FAIR-10 | M | deadline ordering | absolute deadline 동률·없음·clock regression에서 stable tie-break |
+| FAIR-10 | M | deadline ordering | `DeadlineAware` slack-derived queue deadline 동률·포화·clock regression에서 physical enqueue order로 stable tie-break (host absolute `CompleteBy`가 아님) |
 | FAIR-11 | M | starvation bound | 지속 backlog와 mixed cost에서 각 eligible class의 service gap 상한을 실측 |
 | FAIR-12 | R | multi-resource interaction | CPU-heavy/memory-heavy/pool-heavy class가 single-resource fairness 착시로 굶지 않음 |
 | FAIR-13 | R | fairness metric honesty | Jain index·service ratio의 분모와 window가 명시되고 rejected work를 섞지 않음 |
@@ -263,7 +263,7 @@ cargo metadata --format-version 1 --no-deps
 | TIME-01 | M | pre-submit cancel | 어떤 charge/queue/spawn도 만들지 않고 typed cancel |
 | TIME-02 | M | queue cancel | ticket 제거, scheduler debt 보존, 뒤 작업 promotion, waker retirement |
 | TIME-03 | M | accepted/running cancel | caller response와 worker custody를 분리하고 cooperative policy만 발효 |
-| TIME-04 | M | absolute deadline propagation | admission lock→queue→substrate→execution에 하나의 absolute deadline 사용 |
+| TIME-04 | M | absolute deadline propagation | cooperative async `CompleteBy`는 admission lock→queue→substrate→execution에 하나의 absolute deadline 사용; synchronous `response_by`는 caller 응답만 제한하고 worker lease는 종료까지 보유 |
 | TIME-05 | M | zero budget | `Duration::ZERO`는 try-once이며 sleep이나 한 tick 유예가 없음 |
 | TIME-06 | M | boundary semantics | deadline 직전/동시/직후 completion 판정이 단일 선형화 규칙 |
 | TIME-07 | M | no late success | deadline 이후 도착한 worker result를 `Ok`로 반환하지 않음 |
@@ -470,7 +470,7 @@ clean local Linux에서 `collect --local-qualified`가 만든 exact-SHA receipt�
 | class queue full·shed | 필수 | 필수 | N/A | 필수 | 필수 |
 | CPU/memory/pool 동시 포화 | 필수 | 필수 | 조건부 | 필수 | 필수 |
 | cross-pool head-of-line | 필수 | 필수 | 조건부 | 필수 | 필수 |
-| FIFO/WFQ/DRR/EDF 비대칭 경쟁 | 필수 | 경계 | 조건부 | 필수 | 필수 |
+| FIFO/WFQ/DRR/`DeadlineAware` 비대칭 경쟁 | 필수 | 경계 | 조건부 | 필수 | 필수 |
 | cancel: pre/queued/accepted/running | 필수 | 필수 | 조건부 | 필수 | 필수 |
 | deadline: lock/queue/pool/run/boundary | 필수 | 필수 | 조건부 | 필수 | 필수 |
 | caller future drop | 필수 | 필수 | 조건부 | 필수 | 필수 |

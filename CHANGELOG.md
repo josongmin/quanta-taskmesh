@@ -80,6 +80,18 @@ The current operator path is local; hosted attestation remains a compatibility p
   `Copy`, `Ord`, or `Hash`; `ClaimOutcome` and `Provenance` are also no longer
   `Copy`. Clone owned diagnostic values only where needed and match the new
   typed outcomes instead of relying on ordering or implicit copies.
+- **Abandon and accounting-fault behavior.** `AbandonOutcome` adds
+  `HeldByLease { phase }`; exhaustive matches must handle it as a refusal,
+  not as worker completion or released capacity. A promoted ticket whose
+  callback already acquired a worker lease keeps its charges until that
+  lease is released. `TerminalReason::AccountingFault` ends queued waiters
+  when accounting cannot be trusted. The fault is sticky: admission and
+  promotion stop, live workers keep custody, and recovery requires draining
+  and replacing the `Governor`; retrying admission does not reset it.
+- **Strict ingress field presence.** Explicit `blocking_dispatch: null`
+  is rejected. Omit the field to select the default dispatch path, or provide
+  a valid dispatch object. Treating null as omission would hide a malformed
+  caller request.
 - **Capability policy inspection (E01).** `PolicySet::capability_limits()` and
   `capability_limit()` are replaced by `capability_records()` and
   `capability_capacity()`. The new API preserves the difference between a

@@ -171,11 +171,11 @@ pub enum TerminalReason {
     /// Host notifier retirement panicked. Undispatched charges were refunded;
     /// a worker that already took its lease remains charged until token release.
     ClaimDeliveryFailed,
+    /// The resolver proved this wait can never become runnable.
+    IrreversibleWaitCycle { held_by_parent: HeldCapacity },
     /// An unrepresentable resource observation made this Governor fail closed;
     /// queued work cannot be promoted under an untrustworthy accounting total.
     AccountingFault,
-    /// The resolver proved this wait can never become runnable.
-    IrreversibleWaitCycle { held_by_parent: HeldCapacity },
 }
 
 impl fmt::Display for TerminalReason {

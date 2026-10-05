@@ -318,12 +318,12 @@ pub enum TerminalReason {
     /// the final host notifier panicked. Undispatched charges are refunded;
     /// a worker that already took its lease remains charged until token release.
     ClaimDeliveryFailed,
-    /// A resource observation could not be represented; this Governor stopped
-    /// admitting and promoting work before the waiter received custody.
-    AccountingFault,
     IrreversibleWaitCycle {
         held_by_parent: taskmesh_contract::HeldCapacity,
     },
+    /// A resource observation could not be represented; this Governor stopped
+    /// admitting and promoting work before the waiter received custody.
+    AccountingFault,
 }
 
 impl From<TerminalReason> for taskmesh_contract::TerminalReason {
@@ -381,14 +381,14 @@ pub enum ClaimOutcome {
 pub enum AbandonOutcome {
     /// A queued request was removed or its promoted permit was released.
     Abandoned,
-    /// The promoted permit has already transferred custody to a worker. The
-    /// ticket and every charge remain live until that worker releases its
-    /// lease. Adding this variant changes downstream exhaustive matches.
-    HeldByLease { phase: ExecutionPhase },
     /// A retained terminal result was explicitly discarded.
     TerminalDiscarded,
     /// The ticket is unknown to this governor. No state or callback changed.
     Invalid,
+    /// The promoted permit has already transferred custody to a worker. The
+    /// ticket and every charge remain live until that worker releases its
+    /// lease. Adding this variant changes downstream exhaustive matches.
+    HeldByLease { phase: ExecutionPhase },
 }
 
 /// The result of releasing a permit.

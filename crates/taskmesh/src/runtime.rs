@@ -176,10 +176,12 @@ impl TokioRuntime {
         Fut: Future<Output = Result<T, E>> + Send,
     {
         lease.advance(ExecutionPhase::Running)?;
-        run_cancellable(plan.cancel.clone(), plan.deadline, async {
+        let result = run_cancellable(plan.cancel.clone(), plan.deadline, async {
             fut.await.map_err(RunError::Task)
         })
-        .await
+        .await;
+        drop(lease);
+        finalize_released_response(result, plan.cancel.as_ref(), plan.absolute_deadline())
     }
 
     /// Run an async future on an owned current-thread Tokio runtime hosted by
@@ -389,24 +391,33 @@ impl TokioRuntime {
                 &error,
             ));
         }
-        let received = match plan.absolute_deadline() {
-            Some(deadline) => {
-                let timeout = tokio::time::sleep_until(Instant::from_std(deadline));
-                tokio::pin!(timeout);
-                tokio::select! {
-                    biased;
-                    () = &mut timeout => return Err(RunError::Governor(GovernorError::DeadlineExceeded)),
-                    received = &mut rx => received,
+        // The root may have completed while owned-runtime teardown waits for a
+        // blocking child. Keep the worker's lease there, but let a cancelled
+        // caller stop waiting even after the root's cooperative poll has ended.
+        let cancel = plan.cancel.as_ref();
+        let deadline = plan.absolute_deadline();
+        let received = tokio::select! {
+            biased;
+            () = async {
+                match cancel {
+                    Some(token) => token.cancelled().await,
+                    None => std::future::pending::<()>().await,
                 }
-            }
-            None => rx.await,
+            }, if cancel.is_some() => return Err(RunError::Governor(GovernorError::Cancelled)),
+            () = async {
+                match deadline {
+                    Some(instant) => tokio::time::sleep_until(Instant::from_std(instant)).await,
+                    None => std::future::pending::<()>().await,
+                }
+            }, if deadline.is_some() => return Err(RunError::Governor(GovernorError::DeadlineExceeded)),
+            received = &mut rx => received,
         };
         match received {
             Ok(AsyncThreadOutcome::Completed(result, lease)) => {
                 // Release before returning: a result the caller can see is a
                 // result whose capacity is already back in the pool.
                 drop(lease);
-                result
+                finalize_released_response(result, plan.cancel.as_ref(), plan.absolute_deadline())
             }
             Ok(AsyncThreadOutcome::Terminated(error)) => Err(error),
             Err(_) => Err(RunError::Governor(GovernorError::JobAbandoned {
@@ -445,7 +456,9 @@ impl TokioRuntime {
                 .await
                 .map_err(RunError::Task)
         };
-        run_cancellable(plan.cancel.clone(), plan.deadline, work).await
+        let result = run_cancellable(plan.cancel.clone(), plan.deadline, work).await;
+        drop(lease);
+        finalize_released_response(result, plan.cancel.as_ref(), plan.absolute_deadline())
     }
 }
 
@@ -620,6 +633,23 @@ async fn run_cancellable<T, E>(
     }
 }
 
+/// Project a settled result only after custody has been released. A release can
+/// synchronously promote a queued request and run its wake callback, so a result
+/// computed before that callback is not yet the caller's response.
+fn finalize_released_response<T, E>(
+    result: Result<T, RunError<E>>,
+    cancel: Option<&CancellationToken>,
+    response_by: Option<std::time::Instant>,
+) -> Result<T, RunError<E>> {
+    if cancel.is_some_and(CancellationToken::is_cancelled) {
+        Err(RunError::Governor(GovernorError::Cancelled))
+    } else if response_by.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+        Err(RunError::Governor(GovernorError::DeadlineExceeded))
+    } else {
+        result
+    }
+}
+
 /// Owns one execution's governed capacity: the semantic permit and, through it,
 /// the capability-pool slot the engine reserved in the same transition.
 ///
@@ -760,8 +790,9 @@ impl Drop for ExecutionLease {
 
 /// Owns a queued ticket while the caller waits for promotion. On drop (caller
 /// cancelled / timed out) it abandons the ticket: removing it from the engine
-/// queue, or releasing it if it was already promoted. Disarmed once the permit
-/// is successfully claimed (ownership then passes to an [`ExecutionLease`]).
+/// queue, or releasing it if it was already promoted and remains unleased.
+/// Disarmed once the permit is successfully claimed (ownership then passes to
+/// an [`ExecutionLease`]).
 struct TicketGuard {
     governor: Arc<Governor>,
     ticket: Option<Ticket>,
@@ -778,6 +809,7 @@ impl Drop for TicketGuard {
         if let Some(ticket) = self.ticket {
             match self.governor.abandon(ticket) {
                 AbandonOutcome::Abandoned
+                | AbandonOutcome::HeldByLease { .. }
                 | AbandonOutcome::TerminalDiscarded
                 | AbandonOutcome::Invalid => {}
             }
@@ -789,8 +821,8 @@ impl Drop for TicketGuard {
 mod tests {
     use super::{run_cancellable, TicketGuard};
     use std::sync::Arc;
-    use taskmesh_contract::{ClassPolicy, OverflowPolicy, TaskClass, TaskSpec};
-    use taskmesh_engine::{AdmissionDecision, ClaimOutcome, ReleaseOutcome};
+    use taskmesh_contract::{ClassPolicy, ExecutionPhase, OverflowPolicy, TaskClass, TaskSpec};
+    use taskmesh_engine::{AdmissionDecision, AdvanceOutcome, ClaimOutcome, ReleaseOutcome};
 
     #[tokio::test]
     async fn run_deadline_is_observed_without_a_cancel_token() {
@@ -856,5 +888,71 @@ mod tests {
             );
         };
         assert_eq!(runtime.governor.release(permit), ReleaseOutcome::Released);
+    }
+
+    #[test]
+    fn ticket_guard_drop_preserves_promoted_worker_lease() {
+        let class = TaskClass::new("guard-leased");
+        let runtime = crate::Builder::new()
+            .class_policy(
+                class.clone(),
+                ClassPolicy::new()
+                    .max_inflight(1)
+                    .max_queue_depth(2)
+                    .overflow_policy(OverflowPolicy::QueueWithinDepth),
+            )
+            .build()
+            .expect("valid runtime");
+        let holder = match runtime
+            .governor
+            .admit(&TaskSpec::io(class.clone()).operation("holder"))
+        {
+            AdmissionDecision::Admitted { permit_id } => permit_id,
+            other => panic!("holder must admit: {other:?}"),
+        };
+        let ticket = match runtime
+            .governor
+            .admit(&TaskSpec::io(class.clone()).operation("queued"))
+        {
+            AdmissionDecision::Queued { ticket } => ticket,
+            other => panic!("second request must queue: {other:?}"),
+        };
+        let follower = match runtime
+            .governor
+            .admit(&TaskSpec::io(class.clone()).operation("follower"))
+        {
+            AdmissionDecision::Queued { ticket } => ticket,
+            other => panic!("follower must queue: {other:?}"),
+        };
+        assert_eq!(runtime.governor.release(holder), ReleaseOutcome::Released);
+        let ClaimOutcome::Ready(promoted) = runtime.governor.ticket_status(ticket) else {
+            panic!("queued request must promote");
+        };
+        let AdvanceOutcome::Leased(token) = runtime
+            .governor
+            .advance_phase(promoted, ExecutionPhase::Running)
+        else {
+            panic!("promoted permit must transfer custody to worker");
+        };
+        drop(TicketGuard {
+            governor: Arc::clone(&runtime.governor),
+            ticket: Some(ticket),
+        });
+        assert_eq!(runtime.governor.snapshot().classes[&class].inflight, 1);
+        assert_eq!(
+            runtime.governor.ticket_status(follower),
+            ClaimOutcome::Pending
+        );
+        assert_eq!(
+            runtime.governor.release_leased(token),
+            ReleaseOutcome::Released
+        );
+        let ClaimOutcome::Ready(follower_permit) = runtime.governor.claim(follower) else {
+            panic!("follower must promote after worker termination");
+        };
+        assert_eq!(
+            runtime.governor.release(follower_permit),
+            ReleaseOutcome::Released
+        );
     }
 }

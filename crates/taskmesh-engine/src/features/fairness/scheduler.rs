@@ -207,7 +207,7 @@ struct Candidate {
     queue_index: usize,
     fairness: FairnessPolicy,
     best_effort: bool,
-    head_seq: u64,
+    head_queue_order: u128,
     head_finish_tag: u128,
     head_deadline_ms: u64,
     head_cost_cpu: u32,
@@ -248,14 +248,14 @@ pub fn select(state: &mut GovernedState, policies: &PolicySet) -> Option<Selecti
     let discipline = pool.first()?.fairness;
     let chosen_class = match discipline {
         FairnessPolicy::Fifo | FairnessPolicy::BestEffortScavenger => {
-            pick_min(&pool, |c| (u128::from(c.head_seq), 0u128))
+            pick_min(&pool, |c| c.head_queue_order)
         }
         FairnessPolicy::WeightedFairQueue { .. } => {
-            pick_min(&pool, |c| (c.head_finish_tag, u128::from(c.head_seq)))
+            pick_min(&pool, |c| (c.head_finish_tag, c.head_queue_order))
         }
-        FairnessPolicy::DeadlineAware { .. } => pick_min(&pool, |c| {
-            (u128::from(c.head_deadline_ms), u128::from(c.head_seq))
-        }),
+        FairnessPolicy::DeadlineAware { .. } => {
+            pick_min(&pool, |c| (c.head_deadline_ms, c.head_queue_order))
+        }
         FairnessPolicy::DeficitRoundRobin { .. } => drr_select(state, &pool)?,
     };
 
@@ -281,8 +281,8 @@ fn runnable_candidates(state: &GovernedState, policies: &PolicySet) -> Vec<Candi
         let Some(policy) = policies.class(class) else {
             continue;
         };
-        let Some((queue_index, head)) = cstate.queue.iter().enumerate().find(|(index, request)| {
-            !pending::queued_behind_index(&cstate.queue, *index)
+        let Some((queue_index, head)) = cstate.queue.iter().enumerate().find(|(_, request)| {
+            !cstate.has_queued_predecessor(request)
                 && matches!(
                     pending::assess_pending(state, policies, request, policy.max_inflight, false),
                     CapacityAssessment::Runnable
@@ -303,7 +303,7 @@ fn runnable_candidates(state: &GovernedState, policies: &PolicySet) -> Vec<Candi
             queue_index,
             fairness: policy.fairness,
             best_effort: policy.best_effort,
-            head_seq: head.seq_no,
+            head_queue_order: head.queue_order,
             head_finish_tag: service_finish_tag,
             head_deadline_ms: head.deadline_ms,
             head_cost_cpu: head.cost.cpu_units,
@@ -426,7 +426,7 @@ fn drr_select(state: &mut GovernedState, pool: &[&Candidate]) -> Option<TaskClas
 
 fn drr_quantum(fairness: FairnessPolicy) -> u32 {
     match fairness {
-        FairnessPolicy::DeficitRoundRobin { quantum } => quantum.max(1),
+        FairnessPolicy::DeficitRoundRobin { quantum } => quantum,
         _ => 1,
     }
 }

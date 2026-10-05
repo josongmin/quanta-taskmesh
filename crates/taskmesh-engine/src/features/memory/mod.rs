@@ -160,7 +160,14 @@ pub fn reconcile(
         scale,
     ) {
         Ok(units) => units,
-        Err(error) => return ReconcileOutcome::ConversionFailed(error),
+        Err(error) => {
+            // A real observation that cannot be represented is pressure, not
+            // an optional reading. The old reservation may be far smaller
+            // than actual usage, so admission must stop until this Governor
+            // is drained and replaced. Keep the typed outcome for the caller.
+            state.record_accounting_fault("measured memory exceeds the unit domain");
+            return ReconcileOutcome::ConversionFailed(error);
+        }
     };
 
     let record = state

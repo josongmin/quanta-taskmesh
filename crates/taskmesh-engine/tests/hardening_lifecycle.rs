@@ -10,11 +10,11 @@
 //! yet" were the same `None`.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 use taskmesh_contract::{
-    ClassPolicy, ManualClock, MemoryReleasePolicy, OverflowPolicy, ResourceBudget, TaskClass,
-    TaskSpec,
+    ClassPolicy, ManualClock, MemoryReleasePolicy, OverflowPolicy, PermitWaker, ResourceBudget,
+    TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
     AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome, TerminalReason,
@@ -32,6 +32,10 @@ fn engine_terminal_reasons_preserve_the_public_contract_reason() {
         (
             TerminalReason::ClaimDeliveryFailed,
             ContractTerminalReason::ClaimDeliveryFailed,
+        ),
+        (
+            TerminalReason::AccountingFault,
+            ContractTerminalReason::AccountingFault,
         ),
         (
             TerminalReason::IrreversibleWaitCycle {
@@ -380,4 +384,46 @@ fn a_claim_restarts_the_lease_staleness_clock() {
     // The reclaimed permit is gone; releasing it reports exactly that.
     assert_eq!(g.release(permit), ReleaseOutcome::UnknownPermit);
     assert_eq!(g.snapshot().classes[&class].inflight, 0);
+}
+
+struct SweepOnFinalWakerDrop {
+    governor: Weak<Governor>,
+    reclaimed: Arc<Mutex<Option<u32>>>,
+}
+
+impl PermitWaker for SweepOnFinalWakerDrop {
+    fn wake(&self) {}
+}
+
+impl Drop for SweepOnFinalWakerDrop {
+    fn drop(&mut self) {
+        let governor = self.governor.upgrade().expect("governor is still live");
+        let report = governor.reap_leaks_with(5);
+        *self.reclaimed.lock().expect("record sweep") = Some(report.reclaimed_permits);
+    }
+}
+
+#[test]
+fn claim_activity_precedes_host_waker_retirement() {
+    let (governor, clock, class) = gov(leak_detecting_single_slot());
+    let governor = Arc::new(governor);
+    let holder = admit(&governor, "holder");
+    let reclaimed = Arc::new(Mutex::new(None));
+    let waker: Arc<dyn PermitWaker> = Arc::new(SweepOnFinalWakerDrop {
+        governor: Arc::downgrade(&governor),
+        reclaimed: Arc::clone(&reclaimed),
+    });
+    let ticket = match governor.admit_waitable(&spec("queued"), waker) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("waiter must queue: {other:?}"),
+    };
+    assert_eq!(governor.release(holder), ReleaseOutcome::Released);
+    clock.advance(9);
+
+    let ClaimOutcome::Ready(permit) = governor.claim(ticket) else {
+        panic!("live claimer must keep its promoted permit during final waker Drop")
+    };
+    assert_eq!(*reclaimed.lock().expect("sweep completed"), Some(0));
+    assert_eq!(governor.snapshot().classes[&class].inflight, 1);
+    assert_eq!(governor.release(permit), ReleaseOutcome::Released);
 }

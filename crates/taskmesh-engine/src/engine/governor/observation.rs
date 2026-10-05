@@ -67,7 +67,7 @@ impl Governor {
             return None;
         };
         let cstate = state.classes.get(class)?;
-        let (index, request) = cstate
+        let (_, request) = cstate
             .queue
             .iter()
             .enumerate()
@@ -78,8 +78,7 @@ impl Governor {
             &self.policy,
             request,
             policy.max_inflight,
-            state.promotion_pending
-                || admission::pending::queued_behind_index(&cstate.queue, index),
+            state.promotion_pending || cstate.has_queued_predecessor(request),
         );
         let blocked_on = match &assessment {
             admission::pending::CapacityAssessment::Runnable => CapacityBlock::Ok,
@@ -195,8 +194,9 @@ impl Governor {
         self.state.lock().admission_closed
     }
 
-    /// How many terminal ticket records are currently retained for late
-    /// claimers. Never exceeds [`crate::MAX_TERMINAL_TICKETS`].
+    /// How many ordinary terminal ticket records are currently retained for
+    /// late claimers. Never exceeds [`crate::MAX_TERMINAL_TICKETS`]. Faulted
+    /// queue tickets are retained separately until claim or abandon.
     pub fn retained_terminal_tickets(&self) -> usize {
         self.state.lock().retained_terminal_tickets()
     }

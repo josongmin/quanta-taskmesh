@@ -461,7 +461,7 @@ struct StrictTaskInput {
     source: PlanSource,
     reason: ClassificationRationale,
     scope: StrictScope,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_blocking_dispatch_presence")]
     blocking_dispatch: Option<StrictBlockingDispatch>,
     stages: Vec<StageDescriptor>,
 }
@@ -489,6 +489,15 @@ struct StrictChild {
 enum StrictBlockingDispatch {
     SharedBlocking,
     RequestedStack(StrictRequestedStack),
+}
+
+// `Option<T>` treats an explicit JSON null as absent. Strict wire requires the
+// dispatch tag to be omitted for non-blocking work, so a present field must
+// deserialize as a concrete dispatch even when its value is null.
+fn deserialize_blocking_dispatch_presence<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<StrictBlockingDispatch>, D::Error> {
+    StrictBlockingDispatch::deserialize(deserializer).map(Some)
 }
 
 #[derive(Deserialize)]

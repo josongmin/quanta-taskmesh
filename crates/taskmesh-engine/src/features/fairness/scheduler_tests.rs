@@ -21,6 +21,7 @@ fn pending_wfq(
         permit_id: PermitId::new(1, seq_no),
         ticket: Ticket::new(1, seq_no),
         seq_no,
+        queue_order: 0,
         class: class.clone(),
         request_key: RequestKey::from_root(operation),
         operation: operation.to_owned(),
@@ -57,6 +58,58 @@ fn has_runnable_is_false_when_every_class_queue_is_empty() {
         !has_runnable(&state, &policies),
         "an empty active-class ring cannot owe a promotion continuation"
     );
+}
+
+#[test]
+fn fifo_and_tied_priorities_select_lock_commit_arrival_before_preallocated_identity() {
+    for fairness in [
+        FairnessPolicy::Fifo,
+        FairnessPolicy::WeightedFairQueue {
+            weight: 1,
+            burst: 0,
+        },
+        FairnessPolicy::DeadlineAware { slack_ms: 0 },
+    ] {
+        let first_class = TaskClass::new("first");
+        let second_class = TaskClass::new("second");
+        let policies = PolicySet::new(
+            ResourceBudget::new().cpu_units(2),
+            BTreeMap::from([
+                (
+                    first_class.clone(),
+                    ClassPolicy::new().max_inflight(1).fairness(fairness),
+                ),
+                (
+                    second_class.clone(),
+                    ClassPolicy::new().max_inflight(1).fairness(fairness),
+                ),
+            ]),
+        );
+        let mut state = GovernedState::default();
+        // The second ID allocator can acquire the state lock first. Global
+        // FIFO and priority ties follow commit, not pre-lock ID allocation.
+        state.enqueue(pending_wfq(
+            &first_class,
+            "first-arrival",
+            2,
+            1,
+            0,
+            CapabilityRequirementSet::empty(),
+        ));
+        state.enqueue(pending_wfq(
+            &second_class,
+            "second-arrival",
+            1,
+            1,
+            0,
+            CapabilityRequirementSet::empty(),
+        ));
+        assert_eq!(
+            select(&mut state, &policies).map(|selection| selection.class),
+            Some(first_class),
+            "fairness {fairness:?} must follow physical arrival on a tie"
+        );
+    }
 }
 
 #[test]
@@ -115,11 +168,11 @@ fn wfq_rebased_head_dispatches_with_its_stored_finish_tag() {
     state.classes.insert(
         class.clone(),
         ClassState {
-            queue: std::collections::VecDeque::from([request]),
             last_finish_tag: WFQ_SCALE,
             ..ClassState::default()
         },
     );
+    state.enqueue(request);
 
     rebase_virtual_time(&mut state);
     assert_eq!(state.classes[&class].queue[0].finish_tag, 0);
@@ -161,21 +214,26 @@ fn wfq_runnable_follower_excludes_blocked_head_debt() {
         class.clone(),
         ClassState {
             inflight: 1,
-            queue: std::collections::VecDeque::from([
-                pending_wfq(&class, "blocked-head", 1, 2, 2 * WFQ_SCALE, cpu_capability),
-                pending_wfq(
-                    &class,
-                    "runnable-follower",
-                    2,
-                    1,
-                    3 * WFQ_SCALE,
-                    CapabilityRequirementSet::empty(),
-                ),
-            ]),
             last_finish_tag: 3 * WFQ_SCALE,
             ..ClassState::default()
         },
     );
+    state.enqueue(pending_wfq(
+        &class,
+        "blocked-head",
+        1,
+        2,
+        2 * WFQ_SCALE,
+        cpu_capability,
+    ));
+    state.enqueue(pending_wfq(
+        &class,
+        "runnable-follower",
+        2,
+        1,
+        3 * WFQ_SCALE,
+        CapabilityRequirementSet::empty(),
+    ));
 
     assert_eq!(
         select(&mut state, &policies),

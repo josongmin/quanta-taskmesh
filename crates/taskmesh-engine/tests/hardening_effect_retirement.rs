@@ -14,16 +14,16 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, OnceLock, Weak};
+use std::sync::{mpsc, Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use taskmesh_contract::{
-    ClassPolicy, ManualClock, MemoryOvercommitPolicy, OverflowPolicy, PermitWaker, ResourceBudget,
-    SettlementWaker, TaskClass, TaskSpec,
+    ClassPolicy, ExecutionPhase, ManualClock, MemoryOvercommitPolicy, MemoryPermitMode,
+    OverflowPolicy, PermitWaker, ResourceBudget, SettlementWaker, TaskClass, TaskSpec,
 };
 use taskmesh_engine::{
-    AdmissionDecision, ClaimOutcome, Governor, PermitId, PolicySet, ReleaseOutcome,
-    ResolvedCapability, TerminalReason, Ticket,
+    AdmissionDecision, AdvanceOutcome, ClaimOutcome, Governor, LeaseToken, PermitId, PolicySet,
+    ReleaseOutcome, ResolvedCapability, TerminalReason, Ticket,
 };
 
 /// A waker that re-enters the governor from its destructor — the exact shape a
@@ -147,6 +147,19 @@ fn with_deadline<F: FnOnce() + Send + 'static>(what: &str, body: F) {
         Err(mpsc::RecvTimeoutError::Disconnected) => {
             panic!("{what} worker disconnected without reporting its outcome")
         }
+    }
+}
+
+fn assert_panic_message<T>(outcome: std::thread::Result<T>, expected: &str) {
+    let Err(payload) = outcome else {
+        panic!("expected host panic: {expected}");
+    };
+    if let Some(actual) = payload.downcast_ref::<&str>() {
+        assert_eq!(*actual, expected);
+    } else if let Some(actual) = payload.downcast_ref::<String>() {
+        assert_eq!(actual, expected);
+    } else {
+        panic!("host panic had an unexpected payload type; expected: {expected}");
     }
 }
 
@@ -531,6 +544,257 @@ impl Drop for DropPanickingWaker {
         self.dropped.fetch_add(1, Ordering::SeqCst);
         panic!("final host reference destructor failed");
     }
+}
+
+#[test]
+fn accounting_fault_wakes_every_waiter_even_when_multiple_waker_drops_panic() {
+    let governor = Governor::new(
+        PolicySet::new(
+            ResourceBudget::new().memory_units(1).memory_unit_scale(1),
+            BTreeMap::from([(
+                TaskClass::new("c"),
+                ClassPolicy::new()
+                    .max_inflight(3)
+                    .max_queue_depth(2)
+                    .memory_units(1)
+                    .memory_permit_mode(MemoryPermitMode::Measured)
+                    .memory_overcommit_policy(MemoryOvercommitPolicy::Queue)
+                    .overflow_policy(OverflowPolicy::QueueWithinDepth),
+            )]),
+        ),
+        Arc::new(ManualClock::new(0)),
+    )
+    .expect("valid measured policy");
+    let holder = match governor.admit(&spec("holder")) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("holder must admit: {other:?}"),
+    };
+    let woke = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let mut tickets = Vec::new();
+    for operation in ["waiter-1", "waiter-2"] {
+        let waker: Arc<dyn PermitWaker> = Arc::new(DropPanickingWaker {
+            woke: Arc::clone(&woke),
+            dropped: Arc::clone(&dropped),
+        });
+        let ticket = match governor.admit_waitable(&spec(operation), waker) {
+            AdmissionDecision::Queued { ticket } => ticket,
+            other => panic!("waiter must queue: {other:?}"),
+        };
+        tickets.push(ticket);
+    }
+
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        governor.reconcile_memory_at(holder, u64::from(u32::MAX) + 1, 1)
+    }));
+    assert_panic_message(panic, "final host reference destructor failed");
+    assert_eq!(woke.load(Ordering::SeqCst), 2);
+    assert_eq!(dropped.load(Ordering::SeqCst), 2);
+    for ticket in tickets {
+        assert_eq!(
+            governor.claim(ticket),
+            ClaimOutcome::Terminal(TerminalReason::AccountingFault)
+        );
+    }
+    assert_eq!(governor.snapshot().classes[&TaskClass::new("c")].queued, 0);
+    assert_eq!(governor.release(holder), ReleaseOutcome::Released);
+    assert_eq!(governor.snapshot().conservation_violation(), None);
+}
+
+#[test]
+fn immediate_grant_drop_panic_refunds_undelivered_permit() {
+    let governor = single_slot_governor();
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let drops = Arc::new(AtomicUsize::new(0));
+    let waker: Arc<dyn PermitWaker> = Arc::new(DropPanickingWaker {
+        woke: Arc::clone(&wakes),
+        dropped: Arc::clone(&drops),
+    });
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        governor.admit_resolved(
+            &spec("undelivered"),
+            ResolvedCapability::Ungated,
+            Some(waker),
+        )
+    }));
+    assert_panic_message(panic, "final host reference destructor failed");
+    assert_eq!(wakes.load(Ordering::SeqCst), 0);
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    assert!(governor.permit_ledgers().is_empty());
+    assert_eq!(
+        governor.snapshot().classes[&TaskClass::new("c")].inflight,
+        0
+    );
+    assert_eq!(governor.snapshot().conservation_violation(), None);
+    let AdmissionDecision::Admitted { permit_id } = governor.admit(&spec("successor")) else {
+        panic!("the single slot must be available after compensation")
+    };
+    assert_eq!(governor.release(permit_id), ReleaseOutcome::Released);
+}
+
+struct LeasingDropPanickingWaker {
+    governor: Weak<Governor>,
+    token: Arc<Mutex<Option<LeaseToken>>>,
+}
+
+impl PermitWaker for LeasingDropPanickingWaker {
+    fn wake(&self) {}
+}
+
+impl Drop for LeasingDropPanickingWaker {
+    fn drop(&mut self) {
+        let governor = self.governor.upgrade().expect("governor alive");
+        let permit_id = governor.permit_ledgers()[0].permit_id;
+        let AdvanceOutcome::Leased(token) =
+            governor.advance_phase(permit_id, ExecutionPhase::Running)
+        else {
+            panic!("reentrant callback must take the lease")
+        };
+        *self.token.lock().unwrap() = Some(token);
+        panic!("host callback failed after taking custody");
+    }
+}
+
+#[test]
+fn immediate_grant_panic_does_not_refund_a_reentrantly_leased_worker() {
+    let governor = single_slot_governor();
+    let token = Arc::new(Mutex::new(None));
+    let waker: Arc<dyn PermitWaker> = Arc::new(LeasingDropPanickingWaker {
+        governor: Arc::downgrade(&governor),
+        token: Arc::clone(&token),
+    });
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        governor.admit_resolved(&spec("leased"), ResolvedCapability::Ungated, Some(waker))
+    }));
+    assert_panic_message(panic, "host callback failed after taking custody");
+    assert_eq!(
+        governor.snapshot().classes[&TaskClass::new("c")].inflight,
+        1
+    );
+    let held = token.lock().unwrap().take().expect("callback took custody");
+    assert_eq!(governor.release_leased(held), ReleaseOutcome::Released);
+    assert_eq!(governor.snapshot().conservation_violation(), None);
+}
+
+#[test]
+fn claim_panic_does_not_refund_a_reentrantly_leased_worker() {
+    let governor = single_slot_governor();
+    let holder = match governor.admit(&spec("holder")) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("holder must admit: {other:?}"),
+    };
+    let token = Arc::new(Mutex::new(None));
+    let waker: Arc<dyn PermitWaker> = Arc::new(LeasingDropPanickingWaker {
+        governor: Arc::downgrade(&governor),
+        token: Arc::clone(&token),
+    });
+    let ticket = match governor.admit_waitable(&spec("queued"), waker) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("waiter must queue: {other:?}"),
+    };
+    let follower = match governor.admit(&spec("follower")) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("follower must queue: {other:?}"),
+    };
+    assert_eq!(governor.release(holder), ReleaseOutcome::Released);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| governor.claim(ticket)));
+    assert_panic_message(panic, "host callback failed after taking custody");
+    assert_eq!(
+        governor.snapshot().classes[&TaskClass::new("c")].inflight,
+        1
+    );
+    assert_eq!(
+        governor.ticket_status(ticket),
+        ClaimOutcome::Terminal(TerminalReason::ClaimDeliveryFailed)
+    );
+    assert_eq!(governor.ticket_status(follower), ClaimOutcome::Pending);
+    let held = token.lock().unwrap().take().expect("callback took custody");
+    assert_eq!(governor.release_leased(held), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(follower_permit) = governor.claim(follower) else {
+        panic!("follower promotes only after worker release")
+    };
+    assert_eq!(governor.release(follower_permit), ReleaseOutcome::Released);
+    assert_eq!(governor.snapshot().conservation_violation(), None);
+}
+
+struct LeasingAbandonWaker {
+    governor: Weak<Governor>,
+    ticket: Arc<Mutex<Option<Ticket>>>,
+    token: Arc<Mutex<Option<LeaseToken>>>,
+    outcome: Arc<Mutex<Option<taskmesh_engine::AbandonOutcome>>>,
+}
+
+impl PermitWaker for LeasingAbandonWaker {
+    fn wake(&self) {}
+}
+
+impl Drop for LeasingAbandonWaker {
+    fn drop(&mut self) {
+        let governor = self.governor.upgrade().expect("governor alive");
+        let permit_id = governor.permit_ledgers()[0].permit_id;
+        let AdvanceOutcome::Leased(token) =
+            governor.advance_phase(permit_id, ExecutionPhase::Running)
+        else {
+            panic!("reentrant callback must take the lease")
+        };
+        *self.token.lock().unwrap() = Some(token);
+        let ticket = self
+            .ticket
+            .lock()
+            .unwrap()
+            .expect("ticket stored before claim");
+        *self.outcome.lock().unwrap() = Some(governor.abandon(ticket));
+    }
+}
+
+#[test]
+fn reentrant_abandon_cannot_refund_a_leased_promoted_permit() {
+    let governor = single_slot_governor();
+    let holder = match governor.admit(&spec("holder")) {
+        AdmissionDecision::Admitted { permit_id } => permit_id,
+        other => panic!("holder must admit: {other:?}"),
+    };
+    let ticket_slot = Arc::new(Mutex::new(None));
+    let token = Arc::new(Mutex::new(None));
+    let outcome = Arc::new(Mutex::new(None));
+    let waker: Arc<dyn PermitWaker> = Arc::new(LeasingAbandonWaker {
+        governor: Arc::downgrade(&governor),
+        ticket: Arc::clone(&ticket_slot),
+        token: Arc::clone(&token),
+        outcome: Arc::clone(&outcome),
+    });
+    let ticket = match governor.admit_waitable(&spec("queued"), waker) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("waiter must queue: {other:?}"),
+    };
+    *ticket_slot.lock().unwrap() = Some(ticket);
+    let follower = match governor.admit(&spec("follower")) {
+        AdmissionDecision::Queued { ticket } => ticket,
+        other => panic!("follower must queue: {other:?}"),
+    };
+    assert_eq!(governor.release(holder), ReleaseOutcome::Released);
+    assert_eq!(
+        governor.claim(ticket),
+        ClaimOutcome::Ready(governor.permit_ledgers()[0].permit_id)
+    );
+    assert_eq!(
+        *outcome.lock().unwrap(),
+        Some(taskmesh_engine::AbandonOutcome::HeldByLease {
+            phase: ExecutionPhase::Running
+        })
+    );
+    assert_eq!(governor.ticket_status(follower), ClaimOutcome::Pending);
+    assert_eq!(
+        governor.snapshot().classes[&TaskClass::new("c")].inflight,
+        1
+    );
+    let held = token.lock().unwrap().take().expect("callback took custody");
+    assert_eq!(governor.release_leased(held), ReleaseOutcome::Released);
+    let ClaimOutcome::Ready(follower_permit) = governor.claim(follower) else {
+        panic!("follower promotes only after worker release")
+    };
+    assert_eq!(governor.release(follower_permit), ReleaseOutcome::Released);
+    assert_eq!(governor.snapshot().conservation_violation(), None);
 }
 
 #[test]

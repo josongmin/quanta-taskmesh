@@ -81,6 +81,11 @@ impl Governor {
                     )));
                 }
             }
+            if class_policy.fairness == (FairnessPolicy::DeficitRoundRobin { quantum: 0 }) {
+                return Err(violation(format!(
+                    "class {class} declares DeficitRoundRobin quantum 0; quantum must be >= 1"
+                )));
+            }
 
             if class_policy.memory_overcommit_policy == MemoryOvercommitPolicy::Queue
                 && class_policy.max_queue_depth == 0

@@ -1282,6 +1282,72 @@ def test_platform_scope_requires_every_applicable_gate_and_keeps_exclusions() ->
     assert excluded == []
 
 
+@pytest.mark.parametrize(
+    ("field", "malformed"),
+    [
+        ("mode", []),
+        ("mode", {}),
+        ("mode", None),
+        ("mode", 4),
+        ("skipped_gate_ids", [{}]),
+        ("skipped_gate_ids", [[]]),
+        ("skipped_gate_ids", [None]),
+        ("skipped_gate_ids", [1]),
+        ("skipped_gate_ids", ["fmt-check", 0]),
+        ("skipped_gate_ids", [""]),
+    ],
+)
+def test_local_receipt_rejects_malformed_selection_without_raising(
+    field: str, malformed: object,
+) -> None:
+    from tools.gates import run
+
+    source = {"head": "a" * 40, "tree": "b" * 40, "paths_digest": "c" * 64, "dirty": False}
+    value = {
+        "schema_version": 3,
+        "selection": {
+            "mode": "id", "selected_gate_ids": ["fmt-check"], "skipped_gate_ids": [],
+        },
+        "platform": "macos",
+        "source": source,
+        "source_after": source,
+        "source_problems": [],
+        "qualified": True,
+        "required_not_run": [],
+        "required_not_passed": [],
+        "platform_scope": {"qualified": True, "excluded_required_gates": []},
+        "results": [{"id": "fmt-check", "status": "PASS", "exit_code": 0}],
+    }
+    assert run.local_receipt_problems(value, source, {"fmt-check"}, {}, "macos") == []
+    value["selection"][field] = malformed
+    problems = run.local_receipt_problems(value, source, {"fmt-check"}, {}, "macos")
+    label = "selection mode" if field == "mode" else "skipped gate ids"
+    assert any(label in problem for problem in problems), problems
+
+
+@pytest.mark.parametrize("profile", [[], {}, 4, None])
+def test_receipt_cli_rejects_non_string_profile(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], profile: object,
+) -> None:
+    from tools.gates import run
+
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(json.dumps({"profile": profile}), encoding="utf-8")
+    assert run.main(["--validate-receipt", str(receipt)]) == 1
+    assert "local receipt INVALID: unknown profile" in capsys.readouterr().err
+
+
+def test_receipt_cli_rejects_invalid_utf8(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from tools.gates import run
+
+    receipt = tmp_path / "receipt.json"
+    receipt.write_bytes(b"\xff")
+    assert run.main(["--validate-receipt", str(receipt)]) == 1
+    assert "local receipt INVALID:" in capsys.readouterr().err
+
+
 def test_local_receipt_is_exact_source_bound() -> None:
     run = importlib.util.spec_from_file_location("gates_run", REPO / "tools" / "gates" / "run.py")
     assert run and run.loader

@@ -313,6 +313,28 @@ impl Governor {
             )
         };
         if let Some(payload) = self.apply_effects(effects) {
+            // The final notifier may have panicked in Drop after an immediate
+            // grant. The caller has not received the permit ID, so returning
+            // this panic without compensation would orphan every charge.
+            if let AdmissionDecision::Admitted { permit_id } = decision {
+                let mut compensation = TransitionEffects::default();
+                {
+                    let mut state = self.state.lock();
+                    let now = state.commit_time(sampled);
+                    // A reentrant host callback may already have advanced the
+                    // permit and taken its lease. Only undispatched custody can
+                    // be compensated here; never refund a running worker.
+                    if state.release_with_proof(permit_id, None, &mut compensation)
+                        == ReleaseOutcome::Released
+                    {
+                        compensation.absorb(self.promote(&mut state, now));
+                    }
+                }
+                // Finish all follow-up notifications; retain the original host
+                // panic even if a later callback also fails.
+                let secondary = self.drain_effects_captured(compensation, sampled);
+                drop(secondary);
+            }
             std::panic::resume_unwind(payload);
         }
         decision
@@ -333,12 +355,17 @@ impl Governor {
         let sampled = self.sample_clock_ms();
         let (permit_id, effects) = {
             let mut state = self.state.lock();
-            state.commit_time(sampled);
+            let now = state.commit_time(sampled);
             match state.tickets.get(&ticket).cloned() {
                 Some(TicketState::Granted(permit_id)) => {
                     let Some(record) = state.permits.get_mut(&permit_id) else {
                         return ClaimOutcome::Terminal(TerminalReason::Released);
                     };
+                    // The claimant is alive at this transition. Refresh the
+                    // lease before retiring the final host waker outside the
+                    // lock: its Drop may re-enter a leak sweep before claim
+                    // returns to take the second lock.
+                    record.ledger.last_touched_ms = record.ledger.last_touched_ms.max(now);
                     let mut effects = TransitionEffects::default();
                     if let Some(waker) = record.claim_waker.take() {
                         effects.retire.push(waker);
@@ -355,13 +382,18 @@ impl Governor {
                     state.forget_terminal_ticket(ticket);
                     return ClaimOutcome::Terminal(reason);
                 }
+                Some(TicketState::Faulted) => {
+                    state.forget_terminal_ticket(ticket);
+                    return ClaimOutcome::Terminal(TerminalReason::AccountingFault);
+                }
                 None => return ClaimOutcome::Invalid,
             }
         };
 
         if let Some(payload) = self.apply_effects(effects) {
-            // The caller never received custody. Compensate every charged
-            // ledger before propagating the host panic.
+            // The caller never received custody. Refund only a permit still
+            // reserved for dispatch: a reentrant host callback may already
+            // have leased it to a worker before panicking.
             let mut compensation = TransitionEffects::default();
             {
                 let mut state = self.state.lock();
@@ -370,12 +402,33 @@ impl Governor {
                 // claim is still in the transient state, it necessarily owns
                 // `permit_id`; abandon/reap remove or terminalize it instead.
                 if matches!(state.tickets.get(&ticket), Some(TicketState::Claiming(_))) {
-                    state.unwind(
+                    match state.release_with_proof_reason(
                         permit_id,
+                        None,
                         TerminalReason::ClaimDeliveryFailed,
                         &mut compensation,
-                    );
-                    compensation.absorb(self.promote(&mut state, now));
+                    ) {
+                        ReleaseOutcome::Released => {
+                            compensation.absorb(self.promote(&mut state, now));
+                        }
+                        ReleaseOutcome::HeldByLease { .. } => {
+                            // The worker has physical custody. Retire only the
+                            // failed caller ticket; keep every capacity charge
+                            // until that worker releases its lease token.
+                            if let Some(record) = state.permits.get_mut(&permit_id) {
+                                record.pending_ticket = None;
+                            }
+                            state.record_terminal_ticket(
+                                ticket,
+                                TerminalReason::ClaimDeliveryFailed,
+                            );
+                        }
+                        ReleaseOutcome::UnknownPermit => {
+                            // A reentrant callback may have completed the
+                            // worker and removed the permit already.
+                            state.record_terminal_ticket(ticket, TerminalReason::Released);
+                        }
+                    }
                 }
             }
             let compensation_panic = self.drain_effects_captured(compensation, sampled);
@@ -402,6 +455,10 @@ impl Governor {
                 state.forget_terminal_ticket(ticket);
                 ClaimOutcome::Terminal(reason)
             }
+            Some(TicketState::Faulted) => {
+                state.forget_terminal_ticket(ticket);
+                ClaimOutcome::Terminal(TerminalReason::AccountingFault)
+            }
             Some(TicketState::Granted(_) | TicketState::Queued { .. }) => ClaimOutcome::Pending,
             None => ClaimOutcome::Invalid,
         }
@@ -420,12 +477,14 @@ impl Governor {
             Some(TicketState::Granted(permit_id)) => ClaimOutcome::Ready(*permit_id),
             Some(TicketState::Queued { .. } | TicketState::Claiming(_)) => ClaimOutcome::Pending,
             Some(TicketState::Terminal(reason)) => ClaimOutcome::Terminal(reason.clone()),
+            Some(TicketState::Faulted) => ClaimOutcome::Terminal(TerminalReason::AccountingFault),
             None => ClaimOutcome::Invalid,
         }
     }
 
-    /// Abandon a queued/promoted ticket (e.g. on acquire timeout). Releases the
-    /// permit if the ticket had already been promoted.
+    /// Abandon a queued/promoted ticket (e.g. on acquire timeout). A promoted
+    /// permit is released only while dispatch still owns it; an already leased
+    /// worker retains its capacity and reports [`AbandonOutcome::HeldByLease`].
     pub fn abandon(&self, ticket: Ticket) -> AbandonOutcome {
         let sampled = self.sample_clock_ms();
         let mut effects = TransitionEffects::default();
@@ -434,31 +493,51 @@ impl Governor {
             let now = state.commit_time(sampled);
             match state.tickets.get(&ticket).cloned() {
                 Some(TicketState::Granted(permit_id) | TicketState::Claiming(permit_id)) => {
-                    state.unwind(permit_id, TerminalReason::Abandoned, &mut effects);
-                    // The abandoning waiter is the one that asked; it does not
-                    // need to be told, and it will not claim.
-                    state.forget_terminal_ticket(ticket);
-                    let pass = self.promote(&mut state, now);
-                    effects.absorb(pass);
-                    AbandonOutcome::Abandoned
+                    match state.release_with_proof_reason(
+                        permit_id,
+                        None,
+                        TerminalReason::Abandoned,
+                        &mut effects,
+                    ) {
+                        ReleaseOutcome::Released => {
+                            // The abandoning waiter is the one that asked; it
+                            // does not need to be told, and it will not claim.
+                            state.forget_terminal_ticket(ticket);
+                            effects.absorb(self.promote(&mut state, now));
+                            AbandonOutcome::Abandoned
+                        }
+                        ReleaseOutcome::HeldByLease { phase } => {
+                            AbandonOutcome::HeldByLease { phase }
+                        }
+                        ReleaseOutcome::UnknownPermit => {
+                            state.tickets.remove(&ticket);
+                            AbandonOutcome::Invalid
+                        }
+                    }
                 }
                 Some(TicketState::Queued { class }) => {
                     let mut released_guard = None;
-                    if let Some(cstate) = state.classes.get_mut(&class) {
-                        if let Some(pos) = cstate.queue.iter().position(|r| r.ticket == ticket) {
-                            let request = cstate.queue.remove(pos).expect("position just found");
-                            if matches!(request.scope, taskmesh_contract::TaskScope::Child { .. }) {
-                                released_guard = Some((
-                                    request.root_operation_id.clone(),
-                                    request.target_stage.clone(),
-                                ));
-                            }
-                            // The removed request owns a host `Arc`. Hand it to
-                            // the effect list; dropping it here would run host
-                            // code under this mutex.
-                            if let Some(waker) = request.waker {
-                                effects.retire.push(waker);
-                            }
+                    let position = state.classes.get(&class).and_then(|cstate| {
+                        cstate
+                            .queue
+                            .iter()
+                            .position(|request| request.ticket == ticket)
+                    });
+                    if let Some(pos) = position {
+                        let request = state
+                            .remove_pending(&class, pos)
+                            .expect("position just found");
+                        if matches!(request.scope, taskmesh_contract::TaskScope::Child { .. }) {
+                            released_guard = Some((
+                                request.root_operation_id.clone(),
+                                request.target_stage.clone(),
+                            ));
+                        }
+                        // The removed request owns a host `Arc`. Hand it to
+                        // the effect list; dropping it here would run host
+                        // code under this mutex.
+                        if let Some(waker) = request.waker {
+                            effects.retire.push(waker);
                         }
                     }
                     state.tickets.remove(&ticket);
@@ -477,7 +556,7 @@ impl Governor {
                     effects.absorb(pass);
                     AbandonOutcome::Abandoned
                 }
-                Some(TicketState::Terminal(_)) => {
+                Some(TicketState::Terminal(_) | TicketState::Faulted) => {
                     state.forget_terminal_ticket(ticket);
                     AbandonOutcome::TerminalDiscarded
                 }
@@ -594,7 +673,7 @@ impl Governor {
                 break;
             };
             let class = selection.class;
-            let Some(head) = state.class_mut(&class).queue.remove(selection.queue_index) else {
+            let Some(head) = state.remove_pending(&class, selection.queue_index) else {
                 break;
             };
             let policy = self
@@ -659,17 +738,53 @@ impl Governor {
         effects
     }
 
+    /// Fail-stop a queue after an accounting fault. Preserve exact ticket
+    /// answers until each waiter claims or abandons, even beyond the ordinary
+    /// terminal-ring limit, and retire host references outside the lock.
+    fn terminalize_queued_for_accounting_fault(
+        &self,
+        state: &mut GovernedState,
+        effects: &mut TransitionEffects,
+    ) {
+        let classes: Vec<TaskClass> = state.classes.keys().cloned().collect();
+        for class in classes {
+            let mut removed_any = false;
+            while let Some(request) = state.remove_pending(&class, 0) {
+                removed_any = true;
+                if matches!(request.scope, taskmesh_contract::TaskScope::Child { .. }) {
+                    state.vacate_recursion_guard(&request.root_operation_id, &request.target_stage);
+                }
+                state.tickets.insert(request.ticket, TicketState::Faulted);
+                if let Some(waker) = request.waker {
+                    effects.wake.push(waker);
+                }
+            }
+            if removed_any {
+                let policy = self
+                    .policy
+                    .class(&class)
+                    .expect("queued class belongs to the validated policy");
+                fairness::on_unserved_removed(state, &class, policy);
+            }
+        }
+        state.promotion_pending = false;
+    }
+
     fn terminalize_wait_cycle(
         &self,
         state: &mut GovernedState,
         effects: &mut TransitionEffects,
     ) -> CycleTerminalization {
         let candidate = state.classes.iter().find_map(|(class, cstate)| {
+            if cstate.queued_awaited_children.is_empty() {
+                return None;
+            }
             let policy = self.policy.class(class)?;
             cstate
                 .queue
                 .iter()
                 .enumerate()
+                .filter(|(_, request)| cstate.queued_awaited_children.contains(&request.seq_no))
                 .find_map(|(index, request)| {
                     match admission::pending::assess_pending(
                         state,
@@ -688,7 +803,7 @@ impl Governor {
         let Some((class, index, witness)) = candidate else {
             return CycleTerminalization::None;
         };
-        let Some(request) = state.class_mut(&class).queue.remove(index) else {
+        let Some(request) = state.remove_pending(&class, index) else {
             return CycleTerminalization::None;
         };
         let policy = self

@@ -31,6 +31,153 @@ def wait_gone(pid: int) -> None:
     assert gone(pid), f"child {pid} survived cleanup"
 
 
+def test_transient_system_error_retries_environment_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "registry"
+    directory.mkdir(mode=0o700)
+    actual = psutil.Process(os.getpid())
+
+    class TransientProcess:
+        pid = actual.pid
+        reads = 0
+
+        def environ(self):
+            self.reads += 1
+            if self.reads == 1:
+                raise SystemError("transient macOS environ failure")
+            return actual.environ()
+
+        def status(self):
+            return actual.status()
+
+    observed = TransientProcess()
+    monkeypatch.setattr(acquisition.psutil, "process_iter", lambda *_: iter([observed]))
+    incomplete, diagnostics = acquisition._cleanup(directory, "a" * 32, root_owner=True)
+    assert observed.reads == 2
+    assert not incomplete, diagnostics
+    assert diagnostics == []
+
+
+def test_persistent_system_error_fails_closed_and_keeps_scanning_owned_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "registry"
+    directory.mkdir(mode=0o700)
+    call = "a" * 32
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env={
+            **os.environ,
+            acquisition.OWNER_DIRECTORY: str(directory),
+            acquisition.OWNER_CALL: call,
+        },
+    )
+
+    class UnreadableProcess:
+        pid = os.getpid()
+        reads = 0
+
+        def environ(self):
+            self.reads += 1
+            raise SystemError("persistent macOS environ failure")
+
+    unreadable = UnreadableProcess()
+    monkeypatch.setattr(
+        acquisition.psutil,
+        "process_iter",
+        lambda *_: iter([unreadable, psutil.Process(child.pid)]),
+    )
+    try:
+        incomplete, diagnostics = acquisition._cleanup(directory, call, root_owner=True)
+        assert unreadable.reads == 2
+        assert incomplete
+        assert any("owner environment unavailable" in item for item in diagnostics)
+        assert any("owned descendant group killed" in item for item in diagnostics)
+        wait_gone(child.pid)
+    finally:
+        if not gone(child.pid):
+            os.killpg(child.pid, signal.SIGKILL)
+        child.wait(timeout=3)
+
+
+def test_persistent_environment_error_returns_typed_incomplete_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class UnreadableProcess:
+        pid = os.getpid()
+
+        def environ(self):
+            raise SystemError("persistent macOS environ failure")
+
+    monkeypatch.setattr(
+        acquisition.psutil,
+        "process_iter",
+        lambda *_: iter([UnreadableProcess()]),
+    )
+    result = acquisition.run_acquisition(
+        [sys.executable, "-c", "print('completed')"], cwd=tmp_path, timeout_seconds=3
+    )
+    assert result.returncode is None
+    assert result.aborted_early
+    assert not result.timed_out
+    assert "owner environment unavailable" in result.stderr
+    assert result.stdout == "completed\n"
+    assert acquisition.execution_record(result, 3)["aborted_early"] is True
+
+
+def test_registered_process_observation_error_does_not_skip_other_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "registry"
+    directory.mkdir(mode=0o700)
+    call = "a" * 32
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env={
+            **os.environ,
+            acquisition.OWNER_DIRECTORY: str(directory),
+            acquisition.OWNER_CALL: call,
+        },
+    )
+    actual = psutil.Process(child.pid)
+    (directory / f"{call}.json").write_text(
+        json.dumps(
+            {"call": call, "parent": None, "pid": child.pid, "created": actual.create_time()}
+        )
+    )
+    original_process = acquisition.psutil.Process
+
+    class UnreadableRegisteredProcess:
+        def create_time(self):
+            raise SystemError("registered process observation failure")
+
+    monkeypatch.setattr(
+        acquisition.psutil,
+        "Process",
+        lambda pid: UnreadableRegisteredProcess() if pid == child.pid else original_process(pid),
+    )
+    monkeypatch.setattr(acquisition.psutil, "process_iter", lambda *_: iter([actual]))
+    try:
+        incomplete, diagnostics = acquisition._cleanup(directory, call, root_owner=True)
+        monkeypatch.setattr(acquisition.psutil, "Process", original_process)
+        assert incomplete
+        assert any("owner cleanup failed" in item for item in diagnostics)
+        assert any("owned descendant group killed" in item for item in diagnostics)
+        wait_gone(child.pid)
+    finally:
+        monkeypatch.setattr(acquisition.psutil, "Process", original_process)
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=3)
+
+
 @pytest.mark.parametrize("value", [True, 0, -1, float("nan"), float("inf")])
 def test_deadline_rejects_nonpositive_nonfinite_and_boolean(tmp_path: Path, value) -> None:
     with pytest.raises(ValueError, match="positive and finite"):

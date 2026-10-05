@@ -161,6 +161,104 @@ def test_special_validator_uses_only_digest_checked_snapshot(
 
 
 @pytest.mark.parametrize(
+    "drift", [None, "content", "identity_content", "head", "tree", "dirty", "lock", "rustc"]
+)
+def test_current_source_is_rechecked_after_validator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, drift: str | None
+) -> None:
+    directory = receipt_directory(tmp_path)
+    fields = {
+        "identity_content": "source_content_sha256",
+        "head": "source_head",
+        "tree": "source_tree",
+        "dirty": "source_dirty",
+        "lock": "lock_sha256",
+        "rustc": "rustc",
+    }
+    identity = {"features": [], **{field: "original" for field in fields.values()}}
+    receipt = json.loads((directory / "receipt.json").read_bytes())
+    receipt["start_identity"] = identity
+    receipt["end_identity"] = identity
+    (directory / "receipt.json").write_text(json.dumps(receipt))
+    monkeypatch.setattr(host_perf, "validate_identity", lambda _identity: None)
+    monkeypatch.setattr(host_perf, "validate_resource_artifact", lambda _data, _pid: None)
+    current = dict(identity)
+    digest = [receipt["source_content_sha256"]]
+    monkeypatch.setattr(host_special_run, "source_content_sha256", lambda: digest[0])
+    monkeypatch.setattr(host_perf, "local_identity", lambda *_args: current)
+
+    def checked(_command: list[str], **_kwargs: object) -> SupervisedProcess:
+        if drift == "content":
+            digest[0] = "b" * 64
+        elif drift is not None:
+            current[fields[drift]] = "changed"
+        return SupervisedProcess(0, "valid", "", False, None)
+
+    monkeypatch.setattr(host_special_run, "run_acquisition", checked)
+    if drift is None:
+        assert (
+            host_special_run.verify_receipt(directory, require_current_source=True)["status"]
+            == "complete"
+        )
+    else:
+        with pytest.raises(host_perf.ReceiptError, match="current"):
+            host_special_run.verify_receipt(directory, require_current_source=True)
+
+
+@pytest.mark.parametrize("drift", [False, True])
+def test_retained_validator_source_write_is_detected_in_a_real_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, drift: bool
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    owner = source / "owner.rs"
+    owner.write_text("original source\n")
+    (source / "Cargo.lock").write_text("lock fixture\n")
+    for argv in (
+        ["git", "init", "-q"],
+        ["git", "add", "owner.rs", "Cargo.lock"],
+        ["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+         "commit", "-qm", "fixture"],
+    ):
+        host_perf.metadata_output(argv, cwd=source)
+    monkeypatch.setattr(host_perf, "REPO", source)
+    monkeypatch.setattr(host_perf, "host_environment", lambda: {})
+    monkeypatch.setattr(host_perf, "build_environment", lambda: {})
+    monkeypatch.setattr(host_perf, "validate_identity", lambda _identity: None)
+    monkeypatch.setattr(host_perf, "validate_resource_artifact", lambda _data, _pid: None)
+    directory = tmp_path / "receipt"
+    directory.mkdir()
+    receipt_directory(directory)
+    scenario = b'{"topology": {}}'
+    (directory / "scenario").write_bytes(scenario)
+    validator = (
+        "#!/usr/bin/env python3\nimport pathlib\n"
+        + (f"pathlib.Path({str(owner)!r}).write_text('changed source\\n')\n" if drift else "")
+    ).encode()
+    (directory / "validator").write_bytes(validator)
+    identity = host_perf.local_identity({"topology": {}}, [])
+    receipt = json.loads((directory / "receipt.json").read_bytes())
+    receipt.update(
+        scenario_sha256=host_perf.sha256(scenario),
+        validator_sha256=host_perf.sha256(validator),
+        start_identity=identity,
+        end_identity=identity,
+        source_content_sha256=host_special_run.source_content_sha256(),
+    )
+    (directory / "receipt.json").write_text(json.dumps(receipt))
+    if drift:
+        with pytest.raises(host_perf.ReceiptError, match="current checkout differs"):
+            host_special_run.verify_receipt(directory, require_current_source=True)
+        assert owner.read_text() == "changed source\n"
+    else:
+        assert (
+            host_special_run.verify_receipt(directory, require_current_source=True)["status"]
+            == "complete"
+        )
+        assert owner.read_text() == "original source\n"
+
+
+@pytest.mark.parametrize(
     "returncode,timed_out,signum,aborted",
     [
         (0, True, None, False),

@@ -65,11 +65,54 @@ impl GovernedState {
     pub fn has_operation_identity(&self, root_operation_id: &str, operation: &str) -> bool {
         self.permits_for_operation(root_operation_id, operation)
             .is_some()
-            || self.classes.values().any(|class| {
-                class.queue.iter().any(|request| {
-                    request.root_operation_id == root_operation_id && request.operation == operation
-                })
-            })
+            || self
+                .queued_operation_identities
+                .get(root_operation_id)
+                .is_some_and(|operations| operations.contains(operation))
+    }
+
+    /// Every queue mutation passes through these methods so identity and
+    /// same-domain arrival indexes remain in lockstep with the deque.
+    pub fn enqueue(&mut self, mut request: super::PendingRequest) {
+        self.next_queue_order = self
+            .next_queue_order
+            .checked_add(1)
+            .expect("u64 identity allocation exhausts before u128 queue order");
+        request.queue_order = self.next_queue_order;
+        let operations = self
+            .queued_operation_identities
+            .entry(request.root_operation_id.clone())
+            .or_default();
+        let inserted = operations.insert(request.operation.clone());
+        debug_assert!(inserted, "queued operation identity must be unique");
+        let class = self.class_mut(&request.class);
+        class.index_pending(&request);
+        class.queue.push_back(request);
+    }
+
+    pub fn remove_pending(
+        &mut self,
+        class: &TaskClass,
+        index: usize,
+    ) -> Option<super::PendingRequest> {
+        let cstate = self.classes.get_mut(class)?;
+        let request = cstate.queue.remove(index)?;
+        cstate.unindex_pending(&request);
+        if let Some(operations) = self
+            .queued_operation_identities
+            .get_mut(&request.root_operation_id)
+        {
+            let removed = operations.remove(&request.operation);
+            debug_assert!(
+                removed,
+                "removed request must have a queued identity index entry"
+            );
+            if operations.is_empty() {
+                self.queued_operation_identities
+                    .remove(&request.root_operation_id);
+            }
+        }
+        Some(request)
     }
 
     /// Commit a granted permit: bump inflight, global held, capability
@@ -213,6 +256,18 @@ impl GovernedState {
         proof: Option<u64>,
         effects: &mut TransitionEffects,
     ) -> ReleaseOutcome {
+        self.release_with_proof_reason(permit_id, proof, TerminalReason::Released, effects)
+    }
+
+    /// The same custody fence for a caller ticket whose terminal reason is
+    /// more specific than an ordinary release.
+    pub fn release_with_proof_reason(
+        &mut self,
+        permit_id: PermitId,
+        proof: Option<u64>,
+        reason: TerminalReason,
+        effects: &mut TransitionEffects,
+    ) -> ReleaseOutcome {
         let Some(record) = self.permits.get(&permit_id) else {
             return ReleaseOutcome::UnknownPermit;
         };
@@ -221,7 +276,7 @@ impl GovernedState {
                 phase: record.phase,
             };
         }
-        match self.unwind(permit_id, TerminalReason::Released, effects) {
+        match self.unwind(permit_id, reason, effects) {
             Some(_) => ReleaseOutcome::Released,
             // The record was found a moment ago under the same lock.
             None => ReleaseOutcome::UnknownPermit,
@@ -257,7 +312,10 @@ impl GovernedState {
         if let Some(seq) = self.terminal_index.remove(&ticket) {
             self.terminal_order.remove(&seq);
         }
-        if matches!(self.tickets.get(&ticket), Some(TicketState::Terminal(_))) {
+        if matches!(
+            self.tickets.get(&ticket),
+            Some(TicketState::Terminal(_) | TicketState::Faulted)
+        ) {
             self.tickets.remove(&ticket);
         }
     }

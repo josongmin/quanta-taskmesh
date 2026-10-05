@@ -305,6 +305,8 @@ fn wait_chain_exclusively_holds(total_held: u128, held_by_chain: u128) -> bool {
 }
 
 /// Whether a request has an earlier same-domain predecessor in its class queue.
+/// Test-only linear oracle for the indexed production lookup.
+#[cfg(test)]
 pub fn queued_behind_index(
     queue: &std::collections::VecDeque<PendingRequest>,
     index: usize,

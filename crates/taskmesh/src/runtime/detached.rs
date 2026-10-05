@@ -1,8 +1,8 @@
 //! Detached synchronous worker settlement and caller response.
 
 use super::{
-    oneshot, panic, AssertUnwindSafe, BlockingJobV1, CancellationToken, Duration, ExecutionLease,
-    ExecutionPhase, GovernorError, Instant, RunError,
+    finalize_released_response, oneshot, panic, AssertUnwindSafe, BlockingJobV1, CancellationToken,
+    Duration, ExecutionLease, ExecutionPhase, GovernorError, Instant, RunError,
 };
 
 /// What a detached worker sends back when it finishes.
@@ -122,8 +122,7 @@ pub(super) async fn await_detached<T, E>(
         () = expiry, if run_budget.is_some() => Err(RunError::Governor(GovernorError::DeadlineExceeded)),
         received = &mut done_rx => match received {
             Ok(outcome) => {
-                let expired = response_by.is_some_and(|deadline| outcome.completed_at >= deadline)
-                    || run_budget.is_some_and(|budget| {
+                let run_expired = run_budget.is_some_and(|budget| {
                     outcome
                         .started_at
                         .checked_add(budget)
@@ -132,11 +131,12 @@ pub(super) async fn await_detached<T, E>(
                 let DetachedOutcome { result, lease, .. } = outcome;
                 // Release fence: drop custody before the caller is answered.
                 drop(lease);
-                if expired {
+                let result = if run_expired {
                     Err(RunError::Governor(GovernorError::DeadlineExceeded))
                 } else {
                     result
-                }
+                };
+                finalize_released_response(result, cancel.as_ref(), response_by)
             }
             Err(_) => Err(RunError::Governor(GovernorError::JobAbandoned {
                 context: context.into(),

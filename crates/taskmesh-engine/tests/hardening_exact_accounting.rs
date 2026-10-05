@@ -309,6 +309,149 @@ fn an_unconvertible_measurement_is_reported_not_silently_zeroed() {
         g.snapshot().classes[&TaskClass::new("c")].memory_units_held,
         before
     );
-    assert_oracle_agrees(&g);
+    assert_eq!(g.snapshot().conservation_violation(), None);
+    assert_eq!(
+        g.accounting_fault(),
+        Some("measured memory exceeds the unit domain")
+    );
+    assert!(matches!(
+        try_admit(&g, "c", "second"),
+        AdmissionDecision::Rejected(AdmissionVerdict::RuntimeUnavailable)
+    ));
     assert_eq!(g.release(permit), ReleaseOutcome::Released);
+    assert!(matches!(
+        try_admit(&g, "c", "after-release"),
+        AdmissionDecision::Rejected(AdmissionVerdict::RuntimeUnavailable)
+    ));
+}
+
+#[test]
+fn unrepresentable_measurement_stops_queued_promotion_even_after_release() {
+    use taskmesh_contract::{MemoryOvercommitPolicy, OverflowPolicy};
+    use taskmesh_engine::{ClaimOutcome, ReconcileOutcome};
+
+    let g = gov(
+        ResourceBudget::new().memory_units(1).memory_unit_scale(1),
+        vec![
+            (
+                "measured",
+                ClassPolicy::new()
+                    .max_inflight(2)
+                    .memory_units(1)
+                    .memory_permit_mode(MemoryPermitMode::Measured),
+            ),
+            (
+                "waiter",
+                ClassPolicy::new()
+                    .max_inflight(2)
+                    .max_queue_depth(2)
+                    .memory_units(1)
+                    .memory_overcommit_policy(MemoryOvercommitPolicy::Queue)
+                    .overflow_policy(OverflowPolicy::QueueWithinDepth),
+            ),
+        ],
+    );
+    let holder = admit(&g, "measured", "holder");
+    let AdmissionDecision::Queued { ticket } = try_admit(&g, "waiter", "waiter") else {
+        panic!("memory contention must queue the waiter");
+    };
+    let AdmissionDecision::Queued { ticket: abandoned } = try_admit(&g, "waiter", "abandoned")
+    else {
+        panic!("memory contention must queue a second waiter");
+    };
+    assert!(matches!(
+        g.reconcile_memory_at(holder, u64::from(u32::MAX) + 1, 1),
+        ReconcileOutcome::ConversionFailed(_)
+    ));
+    assert_eq!(
+        g.ticket_status(ticket),
+        ClaimOutcome::Terminal(taskmesh_engine::TerminalReason::AccountingFault)
+    );
+    assert_eq!(
+        g.ticket_status(abandoned),
+        ClaimOutcome::Terminal(taskmesh_engine::TerminalReason::AccountingFault)
+    );
+    assert_eq!(g.snapshot().classes[&TaskClass::new("waiter")].queued, 0);
+    assert!(matches!(
+        try_admit(&g, "waiter", "after-fault"),
+        AdmissionDecision::Rejected(AdmissionVerdict::RuntimeUnavailable)
+    ));
+    assert_eq!(g.release(holder), ReleaseOutcome::Released);
+    assert_eq!(
+        g.claim(ticket),
+        ClaimOutcome::Terminal(taskmesh_engine::TerminalReason::AccountingFault)
+    );
+    assert_eq!(
+        g.abandon(abandoned),
+        taskmesh_engine::AbandonOutcome::TerminalDiscarded
+    );
+    assert_eq!(g.snapshot().conservation_violation(), None);
+    assert_eq!(g.abandon(ticket), taskmesh_engine::AbandonOutcome::Invalid);
+    assert_eq!(g.ticket_status(abandoned), ClaimOutcome::Invalid);
+}
+
+#[test]
+fn faulted_queue_larger_than_terminal_ring_retains_exact_ticket_answers() {
+    use taskmesh_contract::{MemoryOvercommitPolicy, OverflowPolicy};
+    use taskmesh_engine::{ClaimOutcome, ReconcileOutcome, TerminalReason, MAX_TERMINAL_TICKETS};
+
+    let depth = MAX_TERMINAL_TICKETS + 1;
+    let g = gov(
+        ResourceBudget::new().memory_units(1).memory_unit_scale(1),
+        vec![
+            (
+                "measured",
+                ClassPolicy::new()
+                    .max_inflight(1)
+                    .memory_units(1)
+                    .memory_permit_mode(MemoryPermitMode::Measured),
+            ),
+            (
+                "waiter",
+                ClassPolicy::new()
+                    .max_inflight(1)
+                    .max_queue_depth(u32::try_from(depth).unwrap())
+                    .memory_units(1)
+                    .memory_overcommit_policy(MemoryOvercommitPolicy::Queue)
+                    .overflow_policy(OverflowPolicy::QueueWithinDepth),
+            ),
+        ],
+    );
+    let holder = admit(&g, "measured", "holder");
+    let tickets: Vec<_> = (0..depth)
+        .map(
+            |index| match try_admit(&g, "waiter", &format!("waiter-{index}")) {
+                AdmissionDecision::Queued { ticket } => ticket,
+                other => panic!("waiter {index} must queue: {other:?}"),
+            },
+        )
+        .collect();
+
+    for epoch in [1, 2] {
+        assert!(matches!(
+            g.reconcile_memory_at(holder, u64::from(u32::MAX) + 1, epoch),
+            ReconcileOutcome::ConversionFailed(_)
+        ));
+        assert_eq!(g.snapshot().classes[&TaskClass::new("waiter")].queued, 0);
+        assert_eq!(g.retained_terminal_tickets(), 0);
+        for ticket in [tickets[0], tickets[depth - 1]] {
+            assert_eq!(
+                g.ticket_status(ticket),
+                ClaimOutcome::Terminal(TerminalReason::AccountingFault)
+            );
+        }
+    }
+    assert_eq!(
+        g.claim(tickets[0]),
+        ClaimOutcome::Terminal(TerminalReason::AccountingFault)
+    );
+    for ticket in &tickets[1..] {
+        assert_eq!(
+            g.abandon(*ticket),
+            taskmesh_engine::AbandonOutcome::TerminalDiscarded
+        );
+    }
+    assert_eq!(g.ticket_status(tickets[depth - 1]), ClaimOutcome::Invalid);
+    assert_eq!(g.release(holder), ReleaseOutcome::Released);
+    assert_eq!(g.snapshot().conservation_violation(), None);
 }

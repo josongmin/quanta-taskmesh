@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -26,6 +25,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from tools.qualification.receipt import source_identity  # noqa: E402
+from tools.release.execution import run_release_command, settled_exit_code  # noqa: E402
 from tools.release.semver import sha256  # noqa: E402
 
 
@@ -192,12 +192,15 @@ def nonvacuous_output(row: dict, stdout: bytes, stderr: bytes) -> bool:
 def run_one(root: Path, output: Path, row: dict) -> dict:
     argv = test_command(row)
     try:
-        process = subprocess.run(argv, cwd=root, capture_output=True, check=False, timeout=900)
-        code, stdout, stderr, timed_out = process.returncode, process.stdout, process.stderr, False
-    except subprocess.TimeoutExpired as exc:
-        code, stdout, stderr, timed_out = None, exc.stdout or b"", exc.stderr or b"", True
+        process = run_release_command(argv, cwd=root, timeout_seconds=900)
+        code, stdout, stderr = settled_exit_code(process), process.stdout, process.stderr
+        timed_out = process.timed_out
+        interrupted = process.interrupted_by_signal
+        aborted_early = process.aborted_early
     except OSError as exc:
         code, stdout, stderr, timed_out = None, b"", str(exc).encode(), False
+        interrupted = None
+        aborted_early = False
     prefix = output / row["id"]
     out_path, err_path = prefix.with_suffix(".stdout.log"), prefix.with_suffix(".stderr.log")
     out_path.write_bytes(stdout)
@@ -210,6 +213,8 @@ def run_one(root: Path, output: Path, row: dict) -> dict:
         "test_source": raw_identity(root, source_path),
         "exit_code": code,
         "timed_out": timed_out,
+        "interrupted_by_signal": interrupted,
+        "aborted_early": aborted_early,
         "selected": 1,
         "executed": 1 if nonvacuous else 0,
         "status": "PASS" if code == 0 and not timed_out and nonvacuous else "FAIL",
@@ -234,13 +239,24 @@ def produce(out: Path) -> int:
     if not out.is_relative_to((REPO / "target").resolve()):
         raise ValueError("finding proof output must be under target/")
     out.mkdir(parents=True, exist_ok=True)
-    rows = [run_one(REPO, out, row) for row in spec["witnesses"]]
+    rows = []
+    for witness in spec["witnesses"]:
+        row = run_one(REPO, out, witness)
+        rows.append(row)
+        if row["interrupted_by_signal"] is not None:
+            # Child cleanup consumes the signal; do not launch the remaining
+            # witnesses after the caller cancelled acquisition.
+            break
     after = source_identity()
     stable = before["paths_digest"] == after["paths_digest"] and after["dirty"] is False
     manifest = {
         "schema_version": 1,
         "producer": "taskmesh-finding-proof-v1",
-        "status": "PASS" if stable and all(row["status"] == "PASS" for row in rows) else "FAIL",
+        "status": "PASS"
+        if stable
+        and len(rows) == len(spec["witnesses"])
+        and all(row["status"] == "PASS" for row in rows)
+        else "FAIL",
         "source": before,
         "source_after": {
             field: after[field] for field in ("head", "tree", "paths_digest", "dirty")

@@ -216,6 +216,20 @@ def test_semver_exit_100_is_reported_findings_but_101_is_tool_failure(tmp_path: 
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "value"), [("interrupted_by_signal", 15), ("aborted_early", True)]
+)
+def test_semver_manifest_rejects_incomplete_execution_metadata(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    policy, source, manifest = semver_fixture(tmp_path)
+    manifest["results"][0][field] = value
+    assert any(
+        "did not finish" in reason
+        for reason in receipt.semver_problems(tmp_path, manifest, source, policy)
+    )
+
+
 def test_human_adjudication_maps_every_exit_100_to_raw_and_changelog(tmp_path: Path) -> None:
     policy, source, manifest = semver_fixture(tmp_path)
     value = json.loads(receipt.ADJUDICATION.read_text())
@@ -592,8 +606,7 @@ def test_release_iai_rederives_ir_from_current_and_old_raw_outputs(
     # Refresh file identities to isolate the semantic check from digest drift.
     if old:
         comparison["old_artifacts"] = [
-            receipt.iai_gate._artifact(store / path, store)
-            for path in comparison["old_outputs"]
+            receipt.iai_gate._artifact(store / path, store) for path in comparison["old_outputs"]
         ]
     else:
         baseline["artifacts"] = receipt.iai_gate.baseline_artifacts(store)
@@ -607,9 +620,9 @@ def test_release_iai_rejects_old_raw_output_shared_by_cases(tmp_path: Path) -> N
     summaries = sorted((tmp_path / "target/iai").rglob("summary.json"))
     first = json.loads(summaries[0].read_text())
     second = json.loads(summaries[1].read_text())
-    second["callgrind_summary"]["callgrind_run"]["segments"][0]["baseline"] = (
-        first["callgrind_summary"]["callgrind_run"]["segments"][0]["baseline"]
-    )
+    second["callgrind_summary"]["callgrind_run"]["segments"][0]["baseline"] = first[
+        "callgrind_summary"
+    ]["callgrind_run"]["segments"][0]["baseline"]
     summaries[1].write_text(json.dumps(second))
     problems = receipt.iai_raw_problems(tmp_path, baseline, comparison, output_ref, line)
     assert any("summary case/comparison/raw-output inventory is incomplete" in p for p in problems)
@@ -738,6 +751,8 @@ def test_finding_manifest_binds_all_23_nonvacuous_raw_witnesses(tmp_path: Path) 
     for mutation, expected in (
         (lambda x: x["results"][0].update(executed=0), "exactly once"),
         (lambda x: x["results"][0].update(status="PASS", exit_code=None), "exactly once"),
+        (lambda x: x["results"][0].update(interrupted_by_signal=15), "exactly once"),
+        (lambda x: x["results"][0].update(aborted_early=True), "exactly once"),
         (lambda x: x["results"][0]["stdout"].update(sha256="0" * 64), "raw digest"),
         (lambda x: x["results"][0].update(test_source=None), "test source digest"),
         (lambda x: x["results"][0].update(command=["true"]), "command differs"),

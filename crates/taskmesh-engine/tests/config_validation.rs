@@ -92,6 +92,29 @@ fn class_memory_over_global_budget_fails() {
 }
 
 #[test]
+fn drr_quantum_zero_is_rejected_instead_of_normalized() {
+    let zero = policy(
+        ResourceBudget::new().cpu_units(4),
+        vec![(
+            "c",
+            ClassPolicy::new().fairness(FairnessPolicy::DeficitRoundRobin { quantum: 0 }),
+        )],
+    );
+    assert_policy_violation(
+        &zero,
+        "class c declares DeficitRoundRobin quantum 0; quantum must be >= 1",
+    );
+    let one = policy(
+        ResourceBudget::new().cpu_units(4),
+        vec![(
+            "c",
+            ClassPolicy::new().fairness(FairnessPolicy::DeficitRoundRobin { quantum: 1 }),
+        )],
+    );
+    assert_eq!(Governor::validate_policy(&one), Ok(()));
+}
+
+#[test]
 fn per_request_limit_overflow_fails() {
     let p = policy(
         ResourceBudget::new()

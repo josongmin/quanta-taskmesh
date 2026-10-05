@@ -48,8 +48,13 @@ def test_baseline_is_the_immutable_020_release_commit() -> None:
     )
     assert result.stdout.startswith(baseline + " release: 0.2.0")
     assert policy["candidate_version"] == "0.3.0"
-    assert policy["version_decision"] == "PENDING"
-    assert policy["version_reviewer"] is None
+    decision = policy["version_decision"]
+    reviewer = policy["version_reviewer"]
+    assert decision in {"PENDING", "APPROVED"}
+    if decision == "PENDING":
+        assert reviewer is None
+    else:
+        assert isinstance(reviewer, str) and reviewer.strip()
     assert (
         semver.workspace_version(
             subprocess.run(
@@ -253,7 +258,7 @@ def test_human_adjudication_maps_every_exit_100_to_raw_and_changelog(tmp_path: P
     value.update(
         {
             "source_sha": source["head"],
-            "reviewer": "release-reviewer",
+            "reviewer": "release reviewer",
             "decision": "APPROVED",
             "all_tool_findings_reviewed": True,
         }
@@ -312,6 +317,14 @@ def test_human_adjudication_maps_every_exit_100_to_raw_and_changelog(tmp_path: P
                 tmp_path, bad, source["head"], policy["baseline_sha"], manifest
             )
         ), expected
+
+
+@pytest.mark.parametrize("reviewer", ["", " \t ", 7, [7], {"name": "release reviewer"}])
+def test_human_adjudication_rejects_non_reviewer_values(reviewer: object) -> None:
+    value = json.loads(receipt.ADJUDICATION.read_text())
+    value.update(source_sha="a" * 40, decision="APPROVED", reviewer=reviewer)
+    reasons = receipt.adjudication_problems(REPO, value, "a" * 40, value["baseline_sha"])
+    assert "human adjudication approval/reviewer missing" in reasons
 
 
 def test_23_findings_link_once_and_unverified_tickets_stay_open() -> None:
@@ -856,6 +869,42 @@ def test_full_release_validator_rejects_malformed_candidate_version_without_thro
     verdict = receipt.evaluate(value, root=tmp_path, current=None)
     assert verdict["status"] == "NOT_QUALIFIED"
     assert any("candidate version" in reason for reason in verdict["reasons"])
+
+
+@pytest.mark.parametrize(
+    ("decision", "reviewer", "reject_reviewer"),
+    [
+        ("PENDING", None, True),
+        ("UNKNOWN", "release reviewer", True),
+        ("APPROVED", None, True),
+        ("APPROVED", "", True),
+        ("APPROVED", " \t ", True),
+        ("APPROVED", 7, True),
+        ("APPROVED", [7], True),
+        ("APPROVED", {"name": "release reviewer"}, True),
+        ("APPROVED", "release reviewer", False),
+    ],
+)
+def test_full_release_validator_checks_version_approval_reviewer(
+    tmp_path: Path,
+    decision: str,
+    reviewer: object,
+    reject_reviewer: bool,
+) -> None:
+    policy = json.loads(receipt.POLICY.read_text())
+    policy.update(version_decision=decision, version_reviewer=reviewer)
+    disk = tmp_path / "tools/release/release-policy.json"
+    disk.parent.mkdir(parents=True)
+    disk.write_text(json.dumps(policy))
+    (tmp_path / "Cargo.toml").write_text('[workspace.package]\nversion = "0.3.0"\n')
+    value = {
+        "schema_version": 1,
+        "source": {"dirty": False},
+        "policy": receipt.identity(tmp_path, "tools/release/release-policy.json"),
+    }
+    verdict = receipt.evaluate(value, root=tmp_path, current=None)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert ("version decision/reviewer missing" in verdict["reasons"]) is reject_reviewer
 
 
 @pytest.mark.parametrize("failed_check", ["workflow_dispatch", "main_ref", "source_clean"])

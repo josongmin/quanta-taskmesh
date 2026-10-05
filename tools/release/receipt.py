@@ -445,6 +445,10 @@ def finding_proof_problems(
     return reasons
 
 
+def _has_reviewer(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 def adjudication_problems(
     root: Path,
     value: object,
@@ -461,7 +465,7 @@ def adjudication_problems(
         reasons.append("human adjudication schema/baseline mismatch")
     if value.get("source_sha") != source_sha:
         reasons.append("human adjudication is not bound to candidate SHA")
-    if value.get("decision") != "APPROVED" or not value.get("reviewer"):
+    if value.get("decision") != "APPROVED" or not _has_reviewer(value.get("reviewer")):
         reasons.append("human adjudication approval/reviewer missing")
     if actor is not None and value.get("reviewer") != actor:
         reasons.append("human adjudication reviewer differs from hosted release actor")
@@ -751,7 +755,9 @@ def evaluate(value: object, *, root: Path = REPO, current: dict | None = None) -
             or current_parts[2] != 0
         ):
             reasons.append("candidate version is not a monotonic 0.x minor release")
-    if policy.get("version_decision") != "APPROVED" or not policy.get("version_reviewer"):
+    if policy.get("version_decision") != "APPROVED" or not _has_reviewer(
+        policy.get("version_reviewer")
+    ):
         reasons.append("version decision/reviewer missing")
     if value.get("baseline_sha") != policy.get("baseline_sha"):
         reasons.append("release baseline SHA mismatch")

@@ -27,6 +27,8 @@ async fn composite_child_failure_keeps_keyed_reduce_and_governance() {
         .validate_against(&scenario)
         .is_err_and(|error| error.contains("capability catalog")));
 
+    check_success_raw_population(&scenario, &raw);
+
     raw.checksum += 1;
     assert!(raw
         .validate_against(&scenario)
@@ -152,4 +154,114 @@ fn composite_preflight_rejects_unsupported_failure_key_and_body_bound() {
     assert!(scenario
         .validate()
         .is_err_and(|error| error.contains("parent timeout must fit settlement window")));
+}
+
+fn reject_raw_edit<T: serde::Serialize + serde::de::DeserializeOwned>(
+    raw: &T,
+    pointer: &str,
+    value: serde_json::Value,
+    expected: &str,
+    validate: impl Fn(&T) -> Result<(), String>,
+) {
+    let mut document = serde_json::to_value(raw).expect("serialize valid raw");
+    *document.pointer_mut(pointer).expect("existing raw field") = value;
+    let restored: T = serde_json::from_value(document).expect("retain typed invalid raw");
+    assert!(
+        validate(&restored).is_err_and(|error| error.contains(expected)),
+        "{pointer} must reject independently with {expected}"
+    );
+}
+
+#[test]
+fn composite_failure_raw_rejects_identity_population_and_parent_time_independently() {
+    use taskmesh_bench::composite_host::{CompositeFailureRaw, CompositePartialChild};
+    use taskmesh_bench::host_load::ClassCounters;
+    use taskmesh_bench::host_scenarios::HostPath;
+
+    let scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");
+    let topology = scenario.resolved_topology().expect("resolved fixture");
+    // A retained failure can precede child submission. Empty event histories
+    // keep the population and parent-time witnesses independent of child time.
+    let raw = CompositeFailureRaw {
+        schema_version: 1,
+        status: "invalid".into(),
+        mode: "caller_orchestrated_composite".into(),
+        scenario_id: scenario.id.clone(),
+        reason: "parent failed before child submission".into(),
+        parent_submitted_ns: 10,
+        observed_ns: 20,
+        children: [HostPath::Io, HostPath::Blocking, HostPath::Cpu]
+            .into_iter()
+            .enumerate()
+            .map(|(index, path)| CompositePartialChild {
+                key: (index + 1) as u8,
+                path,
+                submitted_ns: None,
+                body_started_ns: None,
+                body_finished_ns: None,
+                response_ns: None,
+            })
+            .collect(),
+        root_attribution_cleared: true,
+        class_counters: scenario
+            .classes
+            .iter()
+            .map(|class| (class.name.clone(), ClassCounters::default()))
+            .collect(),
+        final_capabilities: topology
+            .capability_limits
+            .keys()
+            .map(|pool| (pool.clone(), 0))
+            .collect(),
+        drain_ok: true,
+        conservation_ok: true,
+    };
+    raw.validate_against(&scenario)
+        .expect("valid retained failure before child submission");
+    let restored: CompositeFailureRaw =
+        serde_json::from_slice(&serde_json::to_vec(&raw).unwrap()).unwrap();
+    restored
+        .validate_against(&scenario)
+        .expect("valid failure JSON round trip");
+
+    let identity = "invalid composite failure identity or population";
+    let mut extra_child = raw.children.clone();
+    extra_child.push(raw.children[0].clone());
+    for (pointer, value) in [
+        ("/schema_version", serde_json::json!(2)),
+        ("/status", serde_json::json!("complete")),
+        ("/mode", serde_json::json!("other")),
+        ("/scenario_id", serde_json::json!("other")),
+        ("/reason", serde_json::json!("")),
+        ("/children", serde_json::json!(extra_child)),
+        ("/children", serde_json::json!(&raw.children[..2])),
+        ("/parent_submitted_ns", serde_json::json!(21)),
+    ] {
+        reject_raw_edit(&raw, pointer, value, identity, |value| {
+            value.validate_against(&scenario)
+        });
+    }
+
+    let mut equal_parent_time = raw.clone();
+    equal_parent_time.observed_ns = equal_parent_time.parent_submitted_ns;
+    equal_parent_time
+        .validate_against(&scenario)
+        .expect("inclusive parent observation boundary");
+}
+
+fn check_success_raw_population(
+    scenario: &CompositeScenario,
+    raw: &taskmesh_bench::composite_host::CompositeRaw,
+) {
+    let mut extra_child = raw.children.clone();
+    extra_child.push(raw.children[0].clone());
+    for children in [raw.children[..2].to_vec(), extra_child] {
+        reject_raw_edit(
+            raw,
+            "/children",
+            serde_json::json!(children),
+            "identity, population or parent time differs",
+            |value| value.validate_against(scenario),
+        );
+    }
 }

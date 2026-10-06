@@ -89,6 +89,162 @@ def test_discovery_cancellation_does_not_start_mutant_campaign(monkeypatch, tmp_
     assert calls == [["discover"]]
 
 
+@pytest.mark.parametrize(
+    ("failure", "expected_reason"),
+    [
+        ({"timed_out": True}, "discovery timed out"),
+        ({"exit_code": 7}, "discovery exited 7"),
+        ({"signal": 9, "exit_code": None}, "discovery terminated by signal 9"),
+        ({"aborted_early": True}, "discovery cleanup was incomplete"),
+        ({"stdout": "not json"}, "discovery listing invalid"),
+        ({"stdout": "[]"}, "discovery listing invalid"),
+        (
+            {"stdout": '[{"name":"m1"},{"name":"m1"}]'},
+            "discovery listing invalid",
+        ),
+    ],
+)
+def test_failed_discovery_never_starts_generated_campaign(
+    monkeypatch, tmp_path: Path, failure: dict[str, object], expected_reason: str
+) -> None:
+    calls: list[list[str]] = []
+    discovery_fields = {
+        "interrupted_by_signal": None,
+        "timed_out": False,
+        "exit_code": 0,
+        "signal": None,
+        "aborted_early": False,
+        "stdout": '[{"name":"m1"}]',
+    }
+    discovery_fields.update(failure)
+    discovery = SimpleNamespace(**discovery_fields)
+
+    def execute(argv, **_kwargs):
+        calls.append(argv)
+        return discovery
+
+    monkeypatch.setattr(gm, "execute", execute)
+    observed_discovery, campaign = gm.execute_campaign_after_discovery(
+        ["discover"],
+        ["mutants"],
+        source=tmp_path,
+        environment={},
+        discovery_timeout=1,
+        campaign_timeout=2,
+    )
+    assert observed_discovery is discovery
+    assert campaign is None
+    assert calls == [["discover"]]
+    assert expected_reason in gm.discovery_failure_reason(discovery)
+
+
+def test_successful_discovery_starts_generated_campaign_once(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    discovery = SimpleNamespace(
+        interrupted_by_signal=None,
+        timed_out=False,
+        exit_code=0,
+        signal=None,
+        aborted_early=False,
+        stdout='[{"name":"m1"}]',
+    )
+    result = object()
+
+    def execute(argv, **_kwargs):
+        calls.append(argv)
+        return discovery if argv == ["discover"] else result
+
+    monkeypatch.setattr(gm, "execute", execute)
+    observed_discovery, campaign = gm.execute_campaign_after_discovery(
+        ["discover"],
+        ["mutants"],
+        source=tmp_path,
+        environment={},
+        discovery_timeout=1,
+        campaign_timeout=2,
+    )
+    assert observed_discovery is discovery
+    assert campaign is result
+    assert calls == [["discover"], ["mutants"]]
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason", "envelope_status", "envelope_exit_code"),
+    [
+        ({"timed_out": True}, "discovery timed out", "TIMEOUT", 1),
+        ({"exit_code": 7}, "discovery exited 7", "FAIL", 7),
+        (
+            {"signal": 9, "exit_code": None},
+            "discovery terminated by signal 9",
+            "FAIL",
+            137,
+        ),
+        ({"aborted_early": True}, "discovery cleanup was incomplete", "FAIL", 1),
+        ({"stdout": "not json"}, "discovery listing invalid", "FAIL", 1),
+    ],
+)
+def test_failed_discovery_receipt_retains_raw_and_actual_reason(
+    monkeypatch,
+    tmp_path: Path,
+    failure: dict[str, object],
+    reason: str,
+    envelope_status: str,
+    envelope_exit_code: int,
+) -> None:
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    source = tmp_path / "source"
+    source.mkdir()
+    cleaned = []
+    campaign = SimpleNamespace(
+        root=tmp_path / "isolation",
+        source=source,
+        source_before="stable",
+        source_after=lambda _repo: "stable",
+        identity=lambda: {"source_before_sha256": "stable"},
+        cleanup=lambda: cleaned.append(True),
+    )
+    discovery_fields = {
+        "interrupted_by_signal": None,
+        "timed_out": False,
+        "exit_code": 0,
+        "signal": None,
+        "aborted_early": False,
+        "stdout": '[{"name":"m1"}]',
+        "stderr": "discovery diagnostic",
+        "started_at": "start",
+        "finished_at": "finish",
+        "duration_s": 1.0,
+    }
+    discovery_fields.update(failure)
+    discovery = SimpleNamespace(**discovery_fields)
+    monkeypatch.setattr(gm, "prepare_output_dir", lambda _repo, _path: output_dir)
+    monkeypatch.setattr(gm, "create_isolated_campaign", lambda _repo: campaign)
+    monkeypatch.setattr(
+        gm, "execute_campaign_after_discovery", lambda *_args, **_kwargs: (discovery, None)
+    )
+    monkeypatch.setattr(gm, "tool_identity", lambda _source: [])
+    monkeypatch.setattr(
+        gm,
+        "evidence_envelope",
+        lambda **kwargs: {"result": {"status": kwargs["status"], "exit_code": kwargs["exit_code"]}},
+    )
+
+    assert gm.main(["--output-dir", str(output_dir)]) == 1
+    receipt = json.loads((output_dir / "receipt.generated-mutations.json").read_text())
+    envelope = json.loads((output_dir / "evidence-envelope.json").read_text())
+    assert reason in receipt["parse_error"]
+    assert receipt["status"] == "FAIL"
+    assert receipt["discovery_process"]["timed_out"] is discovery.timed_out
+    assert receipt["discovery_process"]["exit_code"] == discovery.exit_code
+    assert receipt["discovery_process"]["aborted_early"] is discovery.aborted_early
+    assert (output_dir / "raw/unfiltered-mutants.json").read_text() == discovery.stdout
+    assert (output_dir / "raw/unfiltered-mutants.stderr.log").read_text() == discovery.stderr
+    assert envelope["result"]["status"] == envelope_status
+    assert envelope["result"]["exit_code"] == envelope_exit_code
+    assert cleaned == [True]
+
+
 def test_exact_generated_denominator_and_non_green_categories(tmp_path: Path) -> None:
     root = tmp_path / "mutants.out"
     write_outcomes(
@@ -324,9 +480,7 @@ def test_generated_command_allows_explicit_per_mutant_timeout() -> None:
 
 
 def test_nextest_test_backstop_preempts_the_generated_mutant_timeout() -> None:
-    config = gm.tomllib.loads(
-        (REPO / ".config/nextest.toml").read_text(encoding="utf-8")
-    )
+    config = gm.tomllib.loads((REPO / ".config/nextest.toml").read_text(encoding="utf-8"))
     slow_timeout = config["profile"]["default"]["slow-timeout"]
     match = re.fullmatch(r"(\d+)s", slow_timeout["period"])
     assert match is not None

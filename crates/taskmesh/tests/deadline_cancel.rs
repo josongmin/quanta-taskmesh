@@ -246,7 +246,9 @@ async fn absolute_deadline_is_one_budget_across_queue_and_execution_v1() {
             panic!("absolute deadline queue precondition failed: {missing:?}; caller={caller:?}");
         }
     };
-    let release_at = response_by - Duration::from_secs(1);
+    let release_at = response_by
+        .checked_sub(Duration::from_secs(1))
+        .expect("submission boundary includes the one-second queue hold");
     assert!(
         queued_at < release_at,
         "queued submission must be observed before the release midpoint"

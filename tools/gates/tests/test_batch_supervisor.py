@@ -8,11 +8,101 @@ import signal
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[3]
+
+
+def _mock_linux_group_observations(monkeypatch, observations):
+    from tools import process_supervisor as supervisor
+
+    observed = iter(observations)
+    current = {}
+    original_read = Path.read_bytes
+
+    @contextmanager
+    def scan(_path):
+        current.clear()
+        entries = []
+        for pid, (birth, pgid, state, threads) in next(observed).items():
+            fields = [b"0"] * 20
+            fields[0] = state.encode("ascii")
+            fields[2] = str(pgid).encode("ascii")
+            fields[17] = str(threads).encode("ascii")
+            fields[19] = str(birth).encode("ascii")
+            path = f"/proc/{pid}"
+            current[f"{path}/stat"] = f"{pid} (fixture) ".encode() + b" ".join(fields)
+            entries.append(SimpleNamespace(name=str(pid), path=path))
+        yield entries
+
+    monkeypatch.setattr(supervisor.os, "scandir", scan)
+    monkeypatch.setattr(
+        Path, "read_bytes", lambda path: current.get(str(path)) or original_read(path)
+    )
+    monkeypatch.setattr(supervisor, "_group_snapshot", supervisor._linux_group_snapshot)
+    calls = []
+    monkeypatch.setattr(
+        supervisor, "_kill_owned_group", lambda pgid: (calls.append(pgid) or "killed", "")
+    )
+    monkeypatch.setattr(supervisor, "_await_killed_group_quiescence", lambda _pgid: (True, ""))
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("state", "threads", "expected"),
+    [
+        ("Z", 2, "killed"),
+        ("X", 2, "killed"),
+        ("x", 2, "killed"),
+        ("Z", 1, "quiescent"),
+        ("Z", 0, "unknown"),
+        ("Z", -1, "unknown"),
+        ("Z", "unavailable", "unknown"),
+    ],
+)
+def test_linux_zombie_leader_does_not_hide_live_or_unobserved_threads(
+    monkeypatch: pytest.MonkeyPatch, state: str, threads, expected: str
+) -> None:
+    from tools import process_supervisor as supervisor
+
+    leader, child = 20001, 20002
+    members = {leader: (11, leader, "Z", 1), child: (12, leader, state, threads)}
+    calls = _mock_linux_group_observations(monkeypatch, [members, members])
+    assert supervisor._retire_owned_group(leader)[0] == expected
+    assert calls == ([] if expected == "quiescent" else [leader])
+
+
+@pytest.mark.parametrize(("before_threads", "after_threads"), [(2, 1), (1, 2)])
+def test_linux_thread_count_is_liveness_not_process_identity(
+    monkeypatch: pytest.MonkeyPatch, before_threads: int, after_threads: int
+) -> None:
+    from tools import process_supervisor as supervisor
+
+    leader, child = 20001, 20002
+    before = {leader: (11, leader, "Z", 1), child: (12, leader, "Z", before_threads)}
+    after = {leader: (11, leader, "Z", 1), child: (12, leader, "Z", after_threads)}
+    calls = _mock_linux_group_observations(monkeypatch, [before, after])
+    expected = "quiescent" if after_threads == 1 else "killed"
+    assert supervisor._retire_owned_group(leader) == (expected, "")
+    assert calls == ([] if after_threads == 1 else [leader])
+
+
+@pytest.mark.parametrize(("before_threads", "after_threads"), [(2, 1), (1, 2)])
+def test_linux_held_leader_must_have_no_remaining_worker_threads(
+    monkeypatch: pytest.MonkeyPatch, before_threads: int, after_threads: int
+) -> None:
+    from tools import process_supervisor as supervisor
+
+    leader = 20001
+    before = {leader: (11, leader, "Z", before_threads)}
+    after = {leader: (11, leader, "Z", after_threads)}
+    calls = _mock_linux_group_observations(monkeypatch, [before, after])
+    assert supervisor._retire_owned_group(leader)[0] == "unknown"
+    assert calls == [leader]
 
 
 @pytest.mark.parametrize("mode", ["single", "batch"])
@@ -129,8 +219,12 @@ def test_member_scheduling_state_does_not_change_process_identity(
     from tools import process_supervisor as supervisor
 
     leader, child = 20001, 20002
-    before = {leader: (11, leader, leader_state), child: (12, leader, before_state)}
-    after = {leader: (11, leader, leader_state), child: (12, leader, after_state)}
+
+    def identity(birth, state):
+        return (birth, leader, state, 1) if isinstance(state, str) else (birth, leader, state)
+
+    before = {leader: identity(11, leader_state), child: identity(12, before_state)}
+    after = {leader: identity(11, leader_state), child: identity(12, after_state)}
     observed = iter([before, after])
     calls = []
     monkeypatch.setattr(supervisor, "_group_snapshot", lambda _pgid: next(observed))
@@ -153,14 +247,14 @@ def test_scheduling_state_repair_preserves_group_and_exited_leader_requirements(
     from tools import process_supervisor as supervisor
 
     leader, child = 20001, 20002
-    before = {leader: (11, leader, "Z"), child: (12, leader, "R")}
-    after = {leader: (11, leader, "Z"), child: (12, leader, "S")}
+    before = {leader: (11, leader, "Z", 1), child: (12, leader, "R", 1)}
+    after = {leader: (11, leader, "Z", 1), child: (12, leader, "S", 1)}
     if changed == "child_group":
-        after[child] = (12, leader + 1, "S")
+        after[child] = (12, leader + 1, "S", 1)
     elif changed == "leader_before":
-        before[leader] = (11, leader, "R")
+        before[leader] = (11, leader, "R", 1)
     else:
-        after[leader] = (11, leader, "R")
+        after[leader] = (11, leader, "R", 1)
     observed = iter([before, after])
     calls = []
     monkeypatch.setattr(supervisor, "_group_snapshot", lambda _pgid: next(observed))

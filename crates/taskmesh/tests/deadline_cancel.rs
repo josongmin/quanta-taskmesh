@@ -462,22 +462,35 @@ async fn absolute_deadline_rejects_non_cancellable_cpu_work_v1() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn requested_stack_absolute_deadline_holds_permit_during_long_poll_v1() {
+    const STARTUP_HORIZON: Duration = Duration::from_secs(2);
     let rt = rt(CancellationPolicy::CooperativeWithDeadline);
     let spec = TaskSpec::base(TaskClass::new("c"), SubstrateHint::LargeStackCapability)
         .operation("requested-stack-long-poll")
         .stack_size_bytes(2 * 1024 * 1024);
-    let poll_started = Arc::new(AtomicBool::new(false));
-    let worker_poll_started = Arc::clone(&poll_started);
-    let options = SubmitOptions::unbounded()
-        .with_absolute_deadline(std::time::Instant::now() + Duration::from_millis(30));
+    let (first_poll_tx, first_poll_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
     let submission = tokio::spawn({
         let rt = rt.clone();
         async move {
+            // Spawn queue time is not part of this first-poll fixture. The
+            // absolute deadline still covers acquisition and worker startup.
+            let response_by = std::time::Instant::now() + STARTUP_HORIZON;
+            let options = SubmitOptions::unbounded().with_absolute_deadline(response_by);
             rt.run_async_with_requested_stack_with(spec, options, move || {
+                let mut first_poll_tx = Some(first_poll_tx);
                 std::future::poll_fn(move |_| {
-                    worker_poll_started.store(true, Ordering::SeqCst);
-                    // nosemgrep: taskmesh-test-thread-sleep -- reason: the poll must overrun the absolute deadline by wall-clock time; that overrun is the property under test.
-                    std::thread::sleep(Duration::from_millis(120));
+                    let started_at = std::time::Instant::now();
+                    first_poll_tx
+                        .take()
+                        .expect("first poll occurs once")
+                        .send((response_by, started_at))
+                        .expect("first-poll observer is still waiting");
+                    // The owned worker is intentionally stuck in one poll
+                    // across the boundary. Dropping the sender or reaching
+                    // HANG releases it on every failed assertion path.
+                    release_rx
+                        .recv_timeout(HANG)
+                        .expect("test releases the long poll before HANG");
                     std::task::Poll::Ready(Ok::<(), ()>(()))
                 })
             })
@@ -485,34 +498,40 @@ async fn requested_stack_absolute_deadline_holds_permit_during_long_poll_v1() {
         }
     });
 
-    bounded(
-        "requested_stack_absolute_deadline_holds_permit_during_long_poll_v1: the worker never started polling",
-        async {
-            while !poll_started.load(Ordering::SeqCst) {
-                tokio::task::yield_now().await;
-            }
-        },
-    )
-    .await;
-    tokio::time::sleep(Duration::from_millis(60)).await;
-    assert_eq!(
-        rt.snapshot().classes[&TaskClass::new("c")].inflight,
-        1,
-        "a long synchronous poll must retain its permit after the deadline instant"
+    let (response_by, started_at) = match tokio::time::timeout(HANG, first_poll_rx).await {
+        Ok(Ok(observation)) => observation,
+        start => {
+            drop(release_tx);
+            let caller = tokio::time::timeout(HANG, submission).await;
+            panic!("requested-stack first-poll precondition failed: {start:?}; caller={caller:?}");
+        }
+    };
+    assert!(
+        started_at < response_by,
+        "requested-stack first poll must precede its absolute deadline"
     );
-
-    let error = submission
+    tokio::time::sleep_until(tokio::time::Instant::from_std(response_by)).await;
+    assert!(std::time::Instant::now() >= response_by);
+    let error = bounded("requested-stack caller before poll release", submission)
         .await
         .expect("submission task joins")
-        .expect_err("completion after the absolute deadline must fail closed");
+        .expect_err("the caller must see the absolute deadline while the poll remains held");
     assert!(matches!(
         error,
         RunError::Governor(GovernorError::DeadlineExceeded)
     ));
-    // D10: the deadline answer is sent *before* the owned runtime is torn
-    // down, and the lease travels with the teardown. So the caller can hold
-    // the error while the worker is still charged for a moment; the contract
-    // is that it drains, not that it is already zero.
+    // D10: a terminal caller reply does not release the worker's lease. The
+    // blocked poll still owns capacity until the test opens its release gate.
+    let snapshot = rt.snapshot();
+    assert_eq!(
+        snapshot.classes[&TaskClass::new("c")].inflight,
+        1,
+        "a blocked first poll must retain its permit after the deadline instant"
+    );
+    assert_eq!(snapshot.conservation_violation(), None);
+    release_tx
+        .send(())
+        .expect("worker still awaits poll release");
     assert_drains(&rt, "c", "requested-stack deadline teardown").await;
 }
 

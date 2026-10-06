@@ -357,10 +357,28 @@ def terminal_failure_written(raw_parent: Path) -> bool:
     """Stop once cargo-mutants has recorded an outcome that forbids PASS."""
     raw = raw_parent / "mutants.out"
     return any(
-        (raw / f"{category}.txt").is_file()
-        and (raw / f"{category}.txt").stat().st_size > 0
+        (raw / f"{category}.txt").is_file() and (raw / f"{category}.txt").stat().st_size > 0
         for category in ("missed", "timeout")
     )
+
+
+def discovery_failure_reason(discovery: ProcessResult) -> str | None:
+    """Reject an unusable unfiltered plan before starting the costly campaign."""
+    if discovery.interrupted_by_signal is not None:
+        return f"campaign interrupted during discovery by signal {discovery.interrupted_by_signal}"
+    if discovery.timed_out:
+        return "cargo-mutants unfiltered discovery timed out"
+    if discovery.aborted_early:
+        return "cargo-mutants unfiltered discovery cleanup was incomplete"
+    if discovery.signal is not None:
+        return f"cargo-mutants unfiltered discovery terminated by signal {discovery.signal}"
+    if discovery.exit_code != 0:
+        return f"cargo-mutants unfiltered discovery exited {discovery.exit_code}"
+    try:
+        parse_unfiltered_listing(discovery.stdout)
+    except ValueError as error:
+        return f"cargo-mutants unfiltered discovery listing invalid: {error}"
+    return None
 
 
 def execute_campaign_after_discovery(
@@ -373,14 +391,14 @@ def execute_campaign_after_discovery(
     campaign_timeout: int,
     raw_parent: Path | None = None,
 ) -> tuple[ProcessResult, ProcessResult | None]:
-    """Never launch the expensive campaign after discovery cancellation."""
+    """Launch the expensive campaign only with a complete valid discovery."""
     discovery = execute(
         discovery_argv,
         cwd=source,
         env=environment,
         timeout_seconds=discovery_timeout,
     )
-    if discovery.interrupted_by_signal is not None:
+    if discovery_failure_reason(discovery) is not None:
         return discovery, None
     result = execute(
         campaign_argv,
@@ -456,8 +474,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if result is None:
                 raise ValueError(
-                    f"campaign interrupted during discovery by signal "
-                    f"{discovery.interrupted_by_signal}"
+                    discovery_failure_reason(discovery) or "discovery did not launch campaign"
                 )
             if result.interrupted_by_signal is not None:
                 raise ValueError(f"campaign interrupted by signal {result.interrupted_by_signal}")
@@ -467,8 +484,6 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("cargo-mutants campaign timed out")
             if result.signal is not None:
                 raise ValueError(f"cargo-mutants terminated by signal {result.signal}")
-            if discovery.timed_out or discovery.signal is not None or discovery.exit_code != 0:
-                raise ValueError("cargo-mutants unfiltered discovery did not complete successfully")
             outcomes = parse_outcomes(raw_destination)
             planned_mutants, baseline_sha256 = planned_baseline_identity(raw_destination)
             excluded = excluded_mutants(
@@ -522,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
                 "signal": discovery.signal,
                 "timed_out": discovery.timed_out,
                 "interrupted_by_signal": discovery.interrupted_by_signal,
+                "aborted_early": discovery.aborted_early,
                 "duration_s": discovery.duration_s,
             },
             "status": semantic_status,
@@ -549,14 +565,21 @@ def main(argv: list[str] | None = None) -> int:
             if result is not None
             else None
         )
-        envelope_status = "TIMEOUT" if result is not None and result.timed_out else semantic_status
-        envelope_exit_code = (
-            128 + interrupted_by_signal
-            if interrupted_by_signal is not None
-            else result.exit_code
-            if result is not None
-            else 1
+        envelope_status = (
+            "TIMEOUT"
+            if (result is not None and result.timed_out) or (result is None and discovery.timed_out)
+            else semantic_status
         )
+        if interrupted_by_signal is not None:
+            envelope_exit_code = 128 + interrupted_by_signal
+        elif result is not None:
+            envelope_exit_code = result.exit_code
+        elif discovery.signal is not None:
+            envelope_exit_code = 128 + discovery.signal
+        elif discovery.exit_code not in (None, 0):
+            envelope_exit_code = discovery.exit_code
+        else:
+            envelope_exit_code = 1
         envelope = evidence_envelope(
             repo=REPO,
             campaign=campaign,

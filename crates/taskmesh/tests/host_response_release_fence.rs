@@ -7,6 +7,9 @@ use taskmesh::ext::PermitWaker;
 use taskmesh::*;
 
 const STACK: u64 = 2 * 1024 * 1024;
+// The setup horizon is shared by late and on-time controls. The late oracle
+// is the observed callback crossing this boundary, not a relative sleep ratio.
+const RESPONSE_HORIZON: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug)]
 enum Path {
@@ -19,17 +22,70 @@ enum Path {
 
 struct SlowWake {
     delay: Duration,
+    hold_until: Option<Instant>,
     started: Mutex<Option<Instant>>,
+    finished: Mutex<Option<Instant>>,
+    finish_signal: tokio::sync::Notify,
     cancel_after: Option<CancellationToken>,
+}
+
+impl SlowWake {
+    fn new(
+        delay: Duration,
+        hold_until: Option<Instant>,
+        cancel_after: Option<CancellationToken>,
+    ) -> Self {
+        Self {
+            delay,
+            hold_until,
+            started: Mutex::new(None),
+            finished: Mutex::new(None),
+            finish_signal: tokio::sync::Notify::new(),
+            cancel_after,
+        }
+    }
+
+    async fn wait_finished(&self) {
+        tokio::time::timeout(Duration::from_secs(5), self.finish_signal.notified())
+            .await
+            .expect("release callback finishes");
+    }
+
+    fn assert_crossed(&self, response_by: Instant) {
+        let started = self
+            .started
+            .lock()
+            .expect("wake timestamp lock")
+            .expect("wake called");
+        let finished = self
+            .finished
+            .lock()
+            .expect("wake timestamp lock")
+            .expect("wake finished");
+        assert!(started < response_by, "callback begins before the boundary");
+        assert!(finished >= response_by, "callback crosses the boundary");
+    }
 }
 
 impl PermitWaker for SlowWake {
     fn wake(&self) {
         *self.started.lock().expect("wake timestamp lock") = Some(Instant::now());
-        std::thread::sleep(self.delay);
+        if let Some(boundary) = self.hold_until {
+            loop {
+                let remaining = boundary.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                std::thread::sleep(remaining);
+            }
+        } else {
+            std::thread::sleep(self.delay);
+        }
         if let Some(token) = &self.cancel_after {
             token.cancel();
         }
+        *self.finished.lock().expect("wake timestamp lock") = Some(Instant::now());
+        self.finish_signal.notify_one();
     }
 }
 
@@ -55,13 +111,15 @@ fn runtime() -> TokioRuntime {
         .expect("release-fence runtime")
 }
 
-async fn exercise(path: Path, delay: Duration, budget: Duration, expect_deadline: bool) {
+async fn exercise(path: Path, expect_deadline: bool) {
     let rt = runtime();
-    let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel::<Instant>();
     let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
-    let response_by = Instant::now() + budget;
     let submitted_rt = rt.clone();
     let submission = tokio::spawn(async move {
+        // Spawn queue time is not part of this fixture's release-fence oracle.
+        // Absolute caller deadlines still cover acquisition/worker dispatch.
+        let response_by = Instant::now() + RESPONSE_HORIZON;
         let class = TaskClass::new("release-fence");
         match path {
             Path::Io => {
@@ -70,7 +128,7 @@ async fn exercise(path: Path, delay: Duration, budget: Duration, expect_deadline
                         TaskSpec::io(class).operation("running"),
                         SubmitOptions::unbounded().with_absolute_deadline(response_by),
                         async move {
-                            started_tx.send(()).expect("test waits for start");
+                            started_tx.send(response_by).expect("test waits for start");
                             release_rx.await.expect("test releases work");
                             Ok::<_, ()>(7)
                         },
@@ -88,7 +146,7 @@ async fn exercise(path: Path, delay: Duration, budget: Duration, expect_deadline
                         SubmitOptions::unbounded(),
                         response_by,
                         move || {
-                            started_tx.send(()).expect("test waits for start");
+                            started_tx.send(response_by).expect("test waits for start");
                             release_rx.blocking_recv().expect("test releases work");
                             Ok::<_, ()>(7)
                         },
@@ -102,7 +160,7 @@ async fn exercise(path: Path, delay: Duration, budget: Duration, expect_deadline
                         SubmitOptions::unbounded(),
                         response_by,
                         move || {
-                            started_tx.send(()).expect("test waits for start");
+                            started_tx.send(response_by).expect("test waits for start");
                             release_rx.blocking_recv().expect("test releases work");
                             Ok::<_, ()>(7)
                         },
@@ -117,7 +175,7 @@ async fn exercise(path: Path, delay: Duration, budget: Duration, expect_deadline
                             .stack_size_bytes(STACK),
                         SubmitOptions::unbounded().with_absolute_deadline(response_by),
                         move || async move {
-                            started_tx.send(()).expect("test waits for start");
+                            started_tx.send(response_by).expect("test waits for start");
                             release_rx.await.expect("test releases work");
                             Ok::<_, ()>(7)
                         },
@@ -126,15 +184,18 @@ async fn exercise(path: Path, delay: Duration, budget: Duration, expect_deadline
             }
         }
     });
-    tokio::time::timeout(Duration::from_secs(5), started_rx)
-        .await
-        .expect("work starts")
-        .expect("start signal");
-    let wake = Arc::new(SlowWake {
-        delay,
-        started: Mutex::new(None),
-        cancel_after: None,
-    });
+    let response_by = match tokio::time::timeout(Duration::from_secs(5), started_rx).await {
+        Ok(Ok(boundary)) => boundary,
+        start => {
+            let caller = tokio::time::timeout(Duration::from_secs(5), submission).await;
+            panic!("{path:?}: worker-start precondition failed: {start:?}; caller={caller:?}");
+        }
+    };
+    let wake = Arc::new(SlowWake::new(
+        Duration::ZERO,
+        expect_deadline.then_some(response_by),
+        None,
+    ));
     let waiting = TaskSpec::io(TaskClass::new("release-fence")).operation("waiting");
     let ticket = match rt.governor().admit_waitable(&waiting, wake.clone()) {
         taskmesh::ext::AdmissionDecision::Queued { ticket } => ticket,
@@ -145,6 +206,9 @@ async fn exercise(path: Path, delay: Duration, budget: Duration, expect_deadline
         .await
         .expect("caller response")
         .expect("submission task");
+    // A terminal caller timer may win before a detached callback returns.
+    // Observe callback completion separately before claiming fence evidence.
+    wake.wait_finished().await;
     if expect_deadline {
         assert!(
             matches!(
@@ -153,14 +217,7 @@ async fn exercise(path: Path, delay: Duration, budget: Duration, expect_deadline
             ),
             "{path:?}: {result:?}"
         );
-        assert!(
-            wake.started
-                .lock()
-                .expect("wake timestamp lock")
-                .expect("wake called")
-                < response_by,
-            "{path:?}: release callback must begin before the deadline"
-        );
+        wake.assert_crossed(response_by);
     } else {
         assert_eq!(result.expect("on-time response"), 7);
     }
@@ -187,13 +244,7 @@ async fn release_callback_cannot_turn_late_responses_into_success() {
         Path::Cpu,
         Path::RequestedStackAsync,
     ] {
-        exercise(
-            path,
-            Duration::from_millis(200),
-            Duration::from_millis(100),
-            true,
-        )
-        .await;
+        exercise(path, true).await;
     }
 }
 
@@ -206,19 +257,19 @@ async fn on_time_release_still_returns_the_value() {
         Path::Cpu,
         Path::RequestedStackAsync,
     ] {
-        exercise(path, Duration::ZERO, Duration::from_secs(2), false).await;
+        exercise(path, false).await;
     }
 }
 
-async fn exercise_local(delay: Duration, budget: Duration, expect_deadline: bool) {
+async fn exercise_local(expect_deadline: bool) {
     let rt = runtime();
-    let wake = Arc::new(SlowWake {
-        delay,
-        started: Mutex::new(None),
-        cancel_after: None,
-    });
+    let response_by = Instant::now() + RESPONSE_HORIZON;
+    let wake = Arc::new(SlowWake::new(
+        Duration::ZERO,
+        expect_deadline.then_some(response_by),
+        None,
+    ));
     let ticket = Arc::new(Mutex::new(None));
-    let response_by = Instant::now() + budget;
     let work_rt = rt.clone();
     let work_wake = Arc::clone(&wake);
     let work_ticket = Arc::clone(&ticket);
@@ -240,18 +291,13 @@ async fn exercise_local(delay: Duration, budget: Duration, expect_deadline: bool
             },
         )
         .await;
+    wake.wait_finished().await;
     if expect_deadline {
         assert!(matches!(
             result,
             Err(RunError::Governor(GovernorError::DeadlineExceeded))
         ));
-        assert!(
-            wake.started
-                .lock()
-                .expect("wake timestamp lock")
-                .expect("wake called")
-                < response_by
-        );
+        wake.assert_crossed(response_by);
     } else {
         assert_eq!(result.expect("on-time local response"), 7);
     }
@@ -278,18 +324,14 @@ async fn exercise_local(delay: Duration, budget: Duration, expect_deadline: bool
 
 #[tokio::test(flavor = "current_thread")]
 async fn local_release_callback_obeys_response_deadline_and_on_time_control() {
-    exercise_local(Duration::from_millis(200), Duration::from_millis(100), true).await;
-    exercise_local(Duration::ZERO, Duration::from_secs(2), false).await;
+    exercise_local(true).await;
+    exercise_local(false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn run_for_counts_worker_time_without_the_release_callback() {
     let rt = runtime();
-    let wake = Arc::new(SlowWake {
-        delay: Duration::from_millis(200),
-        started: Mutex::new(None),
-        cancel_after: None,
-    });
+    let wake = Arc::new(SlowWake::new(Duration::from_millis(200), None, None));
     let ticket = Arc::new(Mutex::new(None));
     let work_rt = rt.clone();
     let work_wake = Arc::clone(&wake);
@@ -335,16 +377,16 @@ async fn late_task_error_becomes_deadline_and_cancel_wins_the_tie() {
     for cancel_during_release in [false, true] {
         let rt = runtime();
         let token = CancellationToken::new();
-        let wake = Arc::new(SlowWake {
-            delay: Duration::from_millis(200),
-            started: Mutex::new(None),
-            cancel_after: cancel_during_release.then(|| token.clone()),
-        });
+        let response_by = Instant::now() + RESPONSE_HORIZON;
+        let wake = Arc::new(SlowWake::new(
+            Duration::ZERO,
+            Some(response_by),
+            cancel_during_release.then(|| token.clone()),
+        ));
         let ticket = Arc::new(Mutex::new(None));
         let work_rt = rt.clone();
         let work_wake = Arc::clone(&wake);
         let work_ticket = Arc::clone(&ticket);
-        let response_by = Instant::now() + Duration::from_millis(100);
         let mut options = SubmitOptions::unbounded().with_absolute_deadline(response_by);
         if cancel_during_release {
             options = options.with_cancel(token);
@@ -365,13 +407,8 @@ async fn late_task_error_becomes_deadline_and_cancel_wins_the_tie() {
                 },
             )
             .await;
-        assert!(
-            wake.started
-                .lock()
-                .expect("wake timestamp lock")
-                .expect("wake called")
-                < response_by
-        );
+        wake.wait_finished().await;
+        wake.assert_crossed(response_by);
         if cancel_during_release {
             assert!(matches!(
                 result,

@@ -176,6 +176,7 @@ async fn requested_stack_async_runtime_honors_cooperative_deadline_v1() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn absolute_deadline_is_one_budget_across_queue_and_execution_v1() {
+    const STARTUP_HORIZON: Duration = Duration::from_secs(2);
     let rt = single_slot_deadline_rt();
     let spec = TaskSpec::io(TaskClass::new("c")).operation("absolute-deadline");
     let occupied = match rt
@@ -185,37 +186,120 @@ async fn absolute_deadline_is_one_budget_across_queue_and_execution_v1() {
         AdmissionDecision::Admitted { permit_id } => permit_id,
         other => panic!("expected occupied permit, got {other:?}"),
     };
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
     let releaser = tokio::spawn({
         let rt = rt.clone();
         async move {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            assert_eq!(rt.governor().release(occupied), ReleaseOutcome::Released);
+            // A dropped controller still releases the occupied permit.
+            let controller_abandoned = release_rx.await.is_err();
+            let released_at = std::time::Instant::now();
+            (
+                released_at,
+                rt.governor().release(occupied),
+                controller_abandoned,
+            )
         }
     });
-    let started = Arc::new(AtomicBool::new(false));
-    let worker_started = Arc::clone(&started);
-    let options = SubmitOptions::unbounded()
-        .with_absolute_deadline(std::time::Instant::now() + Duration::from_millis(250));
-
-    let error = rt
-        .run_io_with(spec, options, async move {
-            worker_started.store(true, Ordering::SeqCst);
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            Ok::<(), ()>(())
-        })
+    let (boundary_tx, boundary_rx) = tokio::sync::oneshot::channel();
+    let (first_poll_tx, first_poll_rx) = tokio::sync::oneshot::channel();
+    let mut submission = tokio::spawn({
+        let rt = rt.clone();
+        async move {
+            let response_by = std::time::Instant::now() + STARTUP_HORIZON;
+            boundary_tx
+                .send(response_by)
+                .expect("queue observer waits for the submission boundary");
+            let options = SubmitOptions::unbounded().with_absolute_deadline(response_by);
+            rt.run_io_with(spec, options, async move {
+                let started_at = std::time::Instant::now();
+                first_poll_tx
+                    .send(started_at)
+                    .expect("first-poll observer is still waiting");
+                // If a wrong implementation rebases a full two-second budget
+                // after the queue, this completes before that new budget ends.
+                tokio::time::sleep_until(tokio::time::Instant::from_std(
+                    response_by + Duration::from_millis(500),
+                ))
+                .await;
+                Ok::<(), ()>(())
+            })
+            .await
+        }
+    });
+    let response_by = bounded("absolute submission boundary", boundary_rx)
         .await
-        .expect_err("queue wait and execution must share one absolute deadline");
-
-    releaser.await.expect("permit releaser completes");
+        .expect("submission starts before its absolute deadline");
+    let queued_at = match tokio::time::timeout(HANG, async {
+        loop {
+            if rt.snapshot().classes[&TaskClass::new("c")].queued == 1 {
+                break std::time::Instant::now();
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    {
+        Ok(observed) => observed,
+        missing => {
+            drop(release_tx);
+            let caller = tokio::time::timeout(HANG, &mut submission).await;
+            panic!("absolute deadline queue precondition failed: {missing:?}; caller={caller:?}");
+        }
+    };
+    let release_at = response_by - Duration::from_secs(1);
     assert!(
-        started.load(Ordering::SeqCst),
-        "work must start after admission"
+        queued_at < release_at,
+        "queued submission must be observed before the release midpoint"
     );
+    tokio::time::sleep_until(tokio::time::Instant::from_std(release_at)).await;
+    assert!(
+        std::time::Instant::now() < response_by,
+        "occupied permit must be released before the absolute deadline"
+    );
+    release_tx.send(()).expect("permit releaser still waits");
+    let (released_at, released, controller_abandoned) =
+        bounded("occupied permit release", releaser)
+            .await
+            .expect("permit releaser joins");
+    assert_eq!(released, ReleaseOutcome::Released);
+    assert!(
+        !controller_abandoned,
+        "permit controller must signal release"
+    );
+    assert!(
+        released_at < response_by,
+        "queue promotion precedes the deadline"
+    );
+    let started_at = match tokio::time::timeout(HANG, first_poll_rx).await {
+        Ok(Ok(started_at)) => started_at,
+        start => {
+            let caller = tokio::time::timeout(HANG, &mut submission).await;
+            panic!(
+                "absolute deadline first-poll precondition failed: {start:?}; caller={caller:?}"
+            );
+        }
+    };
+    assert!(
+        released_at <= started_at && started_at < response_by,
+        "user work must start after queue promotion and before the shared deadline"
+    );
+    let error = bounded(
+        "shared absolute deadline across queue and execution",
+        submission,
+    )
+    .await
+    .expect("submission task joins")
+    .expect_err("queue wait and execution must share one absolute deadline");
+    let answered_at = std::time::Instant::now();
     assert!(matches!(
         error,
         RunError::Governor(GovernorError::DeadlineExceeded)
     ));
-    assert_eq!(rt.snapshot().classes[&TaskClass::new("c")].inflight, 0);
+    assert!(
+        answered_at >= response_by,
+        "caller must not receive DeadlineExceeded before the absolute boundary"
+    );
+    assert_drains(&rt, "c", "shared absolute deadline").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -299,10 +383,11 @@ async fn an_acquire_timeout_under_a_far_absolute_deadline_stays_an_acquisition_t
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn requested_stack_absolute_deadline_drops_owned_root_v1() {
-    struct DropSignal(Arc<AtomicBool>);
+    const STARTUP_HORIZON: Duration = Duration::from_secs(2);
+    struct DropSignal(Arc<tokio::sync::Notify>);
     impl Drop for DropSignal {
         fn drop(&mut self) {
-            self.0.store(true, Ordering::SeqCst);
+            self.0.notify_one();
         }
     }
 
@@ -310,33 +395,47 @@ async fn requested_stack_absolute_deadline_drops_owned_root_v1() {
     let spec = TaskSpec::base(TaskClass::new("c"), SubstrateHint::LargeStackCapability)
         .operation("requested-stack-absolute-deadline")
         .stack_size_bytes(2 * 1024 * 1024);
-    let dropped = Arc::new(AtomicBool::new(false));
-    let drop_state = Arc::clone(&dropped);
-    let options = SubmitOptions::unbounded()
-        .with_absolute_deadline(std::time::Instant::now() + Duration::from_millis(50));
-
-    let error = rt
-        .run_async_with_requested_stack_with(spec, options, move || {
-            let signal = DropSignal(drop_state);
-            async move {
-                let _signal = signal;
+    let (first_poll_tx, first_poll_rx) = tokio::sync::oneshot::channel();
+    let dropped = Arc::new(tokio::sync::Notify::new());
+    let submission = tokio::spawn({
+        let rt = rt.clone();
+        let dropped = Arc::clone(&dropped);
+        async move {
+            let response_by = std::time::Instant::now() + STARTUP_HORIZON;
+            let options = SubmitOptions::unbounded().with_absolute_deadline(response_by);
+            rt.run_async_with_requested_stack_with(spec, options, move || async move {
+                let _signal = DropSignal(dropped);
+                let started_at = std::time::Instant::now();
+                first_poll_tx
+                    .send((response_by, started_at))
+                    .expect("first-poll observer is still waiting");
                 std::future::pending::<Result<(), ()>>().await
-            }
-        })
+            })
+            .await
+        }
+    });
+    let (response_by, started_at) = match tokio::time::timeout(HANG, first_poll_rx).await {
+        Ok(Ok(observation)) => observation,
+        start => {
+            let caller = tokio::time::timeout(HANG, submission).await;
+            panic!(
+                "requested-stack root first-poll precondition failed: {start:?}; caller={caller:?}"
+            );
+        }
+    };
+    assert!(
+        started_at < response_by,
+        "owned root must be polled before its absolute deadline"
+    );
+    let error = bounded("requested-stack caller after absolute deadline", submission)
         .await
+        .expect("submission task joins")
         .expect_err("absolute deadline must cancel the owned requested-stack root");
-
     assert!(matches!(
         error,
         RunError::Governor(GovernorError::DeadlineExceeded)
     ));
-    for _ in 0..50 {
-        if dropped.load(Ordering::SeqCst) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    assert!(dropped.load(Ordering::SeqCst));
+    bounded("requested-stack owned root drop", dropped.notified()).await;
     // Same separation as the relative case: the caller has its answer; the
     // worker releases custody when its owned runtime has finished tearing down.
     assert_drains(&rt, "c", "requested-stack absolute deadline").await;

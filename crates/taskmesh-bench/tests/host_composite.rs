@@ -99,18 +99,55 @@ async fn composite_timeout_retains_typed_invalid_raw_and_settlement_observation(
 }
 
 #[test]
+fn composite_preflight_rejects_version_and_class_alias_independently() {
+    let fixture = CompositeScenario::from_json(FIXTURE).expect("valid composite fixture");
+    fixture.validate().expect("valid direct composite scenario");
+    assert_eq!(fixture.fail_child_key, Some(2));
+
+    let rejects = |scenario: &CompositeScenario| {
+        let expected = "invalid composite version, class split or failure key";
+        assert!(scenario
+            .validate()
+            .is_err_and(|error| error.contains(expected)));
+        let json = serde_json::to_vec(scenario).expect("serialize composite scenario");
+        assert!(CompositeScenario::from_json(&json).is_err_and(|error| error.contains(expected)));
+    };
+
+    let mut unsupported_version = fixture.clone();
+    unsupported_version.schema_version = 2;
+    rejects(&unsupported_version); // Class split and failure key remain valid.
+
+    let mut aliased_classes = fixture;
+    aliased_classes.child_class = aliased_classes.parent_class.clone();
+    rejects(&aliased_classes); // Version and failure key remain valid.
+}
+
+#[test]
 fn composite_preflight_rejects_unsupported_failure_key_and_body_bound() {
     let mut scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");
+    scenario.fail_child_key = Some(0);
+    assert!(scenario
+        .validate()
+        .is_err_and(|error| error.contains("failure key")));
     scenario.fail_child_key = Some(4);
     assert!(scenario
         .validate()
         .is_err_and(|error| error.contains("failure key")));
     scenario.fail_child_key = Some(2);
+    scenario.validate().expect("registered child key is valid");
     scenario.cpu_iterations = 100_000_001;
     assert!(scenario
         .validate()
         .is_err_and(|error| error.contains("cpu work exceeds fixture bound")));
     scenario.cpu_iterations = 1_000;
+    scenario.parent_timeout_ms = Some(0);
+    assert!(scenario
+        .validate()
+        .is_err_and(|error| error.contains("parent timeout must fit settlement window")));
+    scenario.parent_timeout_ms = Some(scenario.settlement_ms);
+    scenario
+        .validate()
+        .expect("inclusive settlement timeout is valid");
     scenario.parent_timeout_ms = Some(scenario.settlement_ms + 1);
     assert!(scenario
         .validate()

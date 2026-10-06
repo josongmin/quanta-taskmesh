@@ -524,10 +524,16 @@ async fn requested_stack_async_runtime_honors_cooperative_cancel_v1() {
         .operation("requested-stack-cancel")
         .stack_size_bytes(2 * 1024 * 1024);
     let opts = SubmitOptions::unbounded().with_cancel(token.clone());
+    let (worker_polled_tx, worker_polled_rx) = tokio::sync::oneshot::channel();
     let worker = tokio::spawn({
         let rt = rt.clone();
         async move {
-            rt.run_async_with_requested_stack_with(spec, opts, || async {
+            rt.run_async_with_requested_stack_with(spec, opts, move || async move {
+                // The signal fires only when the owned runtime polls user work,
+                // after the admitted permit has crossed the execution handoff.
+                worker_polled_tx
+                    .send(())
+                    .expect("first-poll observer must still be waiting");
                 std::future::pending::<Result<(), ()>>().await
             })
             .await
@@ -546,16 +552,30 @@ async fn requested_stack_async_runtime_honors_cooperative_cancel_v1() {
         },
     )
     .await;
+    bounded(
+        "requested_stack_async_runtime_honors_cooperative_cancel_v1: the owned root was never polled",
+        worker_polled_rx,
+    )
+    .await
+    .expect("owned root first-poll signal must arrive");
+    assert_eq!(
+        rt.snapshot().classes[&TaskClass::new("c")].inflight,
+        1,
+        "a first-polled requested-stack root must still hold its permit"
+    );
     token.cancel();
-    let error = worker
-        .await
-        .expect("caller task must complete")
-        .expect_err("requested-stack async cancellation must stop the owned root");
+    let error = bounded(
+        "requested_stack_async_runtime_honors_cooperative_cancel_v1: the caller did not finish after cancellation",
+        worker,
+    )
+    .await
+    .expect("caller task must complete")
+    .expect_err("requested-stack async cancellation must stop the owned root");
 
-    assert!(matches!(
-        error,
-        RunError::Governor(GovernorError::Cancelled)
-    ));
+    assert!(
+        matches!(&error, RunError::Governor(GovernorError::Cancelled)),
+        "requested-stack async cancellation returned {error:?}"
+    );
     // As for the deadline: the terminal reply precedes the owned runtime's
     // teardown (D10), so drain rather than assert an instant zero.
     assert_drains(&rt, "c", "requested-stack cancel teardown").await;

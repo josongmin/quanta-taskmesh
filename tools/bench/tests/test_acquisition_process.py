@@ -32,6 +32,25 @@ def wait_gone(pid: int) -> None:
     assert gone(pid), f"child {pid} survived cleanup"
 
 
+def atomic_pid_marker_source() -> str:
+    """Publish a child PID only after its entire marker is written."""
+    return (
+        "marker=Path(os.environ['MARKER']); "
+        "staged=marker.with_name(marker.name+'.staged'); "
+        "staged.write_text(str(os.getpid())); staged.replace(marker); "
+    )
+
+
+def wait_pid_marker(marker: Path) -> int:
+    deadline = time.monotonic() + 3
+    while not marker.is_file() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert marker.is_file(), f"child did not publish {marker}"
+    content = marker.read_text()
+    assert content.isdecimal(), f"invalid child PID marker: {content!r}"
+    return int(content)
+
+
 def owned_child(directory: Path, call: str) -> subprocess.Popen:
     child = subprocess.Popen(
         [
@@ -213,17 +232,30 @@ def test_termination_grace_rejects_invalid_values_before_launch(tmp_path: Path, 
 
 
 def test_hung_child_retains_partial_output_and_deadline(tmp_path: Path) -> None:
+    marker = tmp_path / "hung-child.pid"
     pids = []
-    started = time.monotonic()
+    ready_at = []
+
+    def on_started(process) -> None:
+        pids.append(process.pid)
+        assert wait_pid_marker(marker) == process.pid
+        ready_at.append(time.monotonic())
+
     result = acquisition.run_acquisition(
-        [sys.executable, "-c", "import time; print('partial', flush=True); time.sleep(60)"],
+        [
+            sys.executable,
+            "-c",
+            "import os,time; from pathlib import Path; print('partial', flush=True); "
+            f"{atomic_pid_marker_source()}time.sleep(60)",
+        ],
         cwd=tmp_path,
         timeout_seconds=0.2,
-        on_started=lambda process: pids.append(process.pid),
+        env={**os.environ, "MARKER": str(marker)},
+        on_started=on_started,
     )
     assert result.timed_out and result.returncode != 0
     assert result.stdout == "partial\n"
-    assert time.monotonic() - started < 3
+    assert time.monotonic() - ready_at[0] < 3
     wait_gone(pids[0])
 
 
@@ -267,22 +299,35 @@ def test_regular_file_stdin_does_not_block_capture(tmp_path: Path) -> None:
 
 def test_closed_pipe_survivor_is_killed_and_cannot_turn_leader_exit_green(tmp_path: Path) -> None:
     marker = tmp_path / "survivor.pid"
+    child_pids = []
+
+    def on_started(_process) -> None:
+        child_pid = wait_pid_marker(marker)
+        assert not gone(child_pid), f"child {child_pid} exited before leader"
+        child_pids.append(child_pid)
+
     leader = (
-        "import subprocess,sys,time\n"
+        "import select,subprocess,sys\n"
         "child=subprocess.Popen([sys.executable,'-c',\"import os,time; "
-        "from pathlib import Path; Path(os.environ['MARKER']).write_text(str(os.getpid())); "
-        'time.sleep(60)"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n'
-        "time.sleep(.2)\n"
+        f"from pathlib import Path; {atomic_pid_marker_source()}"
+        "print('READY:'+str(os.getpid()),flush=True); time.sleep(60)\"],"
+        "stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)\n"
+        "ready,_,_=select.select([child.stdout],[],[],3)\n"
+        "if not ready: raise RuntimeError('child readiness absent')\n"
+        "if child.stdout.readline()!=('READY:'+str(child.pid)+'\\n').encode(): "
+        "raise RuntimeError('child readiness invalid')\n"
+        "child.stdout.close()\n"
     )
     result = acquisition.run_acquisition(
         [sys.executable, "-c", leader],
         cwd=tmp_path,
         timeout_seconds=3,
         env={**os.environ, "MARKER": str(marker)},
+        on_started=on_started,
     )
-    assert result.returncode != 0 or result.aborted_early
-    assert marker.exists()
-    wait_gone(int(marker.read_text()))
+    assert not result.timed_out
+    assert result.aborted_early and result.returncode != 0
+    wait_gone(child_pids[0])
 
 
 def test_nested_helper_session_survives_collector_exit_but_is_owned(tmp_path: Path) -> None:
@@ -294,7 +339,7 @@ def test_nested_helper_session_survives_collector_exit_but_is_owned(tmp_path: Pa
         "from acquisition_process import run_acquisition\n"
         "from pathlib import Path\n"
         "run_acquisition([sys.executable,'-c',\"import os,time; from pathlib import Path; "
-        "Path(os.environ['MARKER']).write_text(str(os.getpid())); time.sleep(60)\"], "
+        f"{atomic_pid_marker_source()}time.sleep(60)\"], "
         "cwd=Path.cwd(),timeout_seconds=60)\n"
     )
     leader = (
@@ -304,6 +349,8 @@ def test_nested_helper_session_survives_collector_exit_but_is_owned(tmp_path: Pa
         "until=time.monotonic()+3\n"
         "while not os.path.exists(os.environ['MARKER']) and time.monotonic()<until:\n"
         "    time.sleep(.01)\n"
+        "if not os.path.exists(os.environ['MARKER']): "
+        "raise RuntimeError('child readiness absent')\n"
     )
     result = acquisition.run_acquisition(
         [sys.executable, "-c", leader],
@@ -311,9 +358,8 @@ def test_nested_helper_session_survives_collector_exit_but_is_owned(tmp_path: Pa
         timeout_seconds=5,
         env={**os.environ, "MARKER": str(marker)},
     )
-    assert marker.exists(), result.stderr
     assert result.aborted_early and result.returncode != 0
-    wait_gone(int(marker.read_text()))
+    wait_gone(wait_pid_marker(marker))
 
 
 @pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
@@ -326,7 +372,7 @@ def test_signal_accounts_for_child_cleanup(tmp_path: Path, signum: int) -> None:
         "from pathlib import Path\n"
         "result=run_acquisition([sys.executable,'-c',\"import os,signal; from pathlib import Path; "
         "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
-        "Path(os.environ['MARKER']).write_text(str(os.getpid())); signal.pause()\"],"
+        f"{atomic_pid_marker_source()}signal.pause()\"],"
         "cwd=Path.cwd(),timeout_seconds=60)\n"
         "print(json.dumps(execution_record(result,60)))\n"
     )
@@ -338,24 +384,22 @@ def test_signal_accounts_for_child_cleanup(tmp_path: Path, signum: int) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
+    child_pid = None
     try:
-        deadline = time.monotonic() + 5
-        while not marker.exists() and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert marker.exists()
+        child_pid = wait_pid_marker(marker)
         process.send_signal(signum)
         stdout, stderr = process.communicate(timeout=5)
         assert process.returncode == 0, stderr
         record = json.loads(stdout)
         assert record["interrupted_by_signal"] == signum
         assert record["returncode"] != 0
-        wait_gone(int(marker.read_text()))
+        wait_gone(child_pid)
     finally:
         if process.poll() is None:
             process.kill()
             process.wait(timeout=3)
-        if marker.exists() and not gone(int(marker.read_text())):
-            os.kill(int(marker.read_text()), signal.SIGKILL)
+        if child_pid is not None and not gone(child_pid):
+            os.kill(child_pid, signal.SIGKILL)
 
 
 def test_nested_timeout_kills_registered_child_after_collector_is_killed(tmp_path: Path) -> None:
@@ -367,7 +411,7 @@ def test_nested_timeout_kills_registered_child_after_collector_is_killed(tmp_pat
         "from pathlib import Path\n"
         "run_acquisition([sys.executable,'-c',\"import os,signal; from pathlib import Path; "
         "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
-        "Path(os.environ['MARKER']).write_text(str(os.getpid())); signal.pause()\"],"
+        f"{atomic_pid_marker_source()}signal.pause()\"],"
         "cwd=Path.cwd(),timeout_seconds=60)\n"
     )
     leader = (
@@ -380,10 +424,10 @@ def test_nested_timeout_kills_registered_child_after_collector_is_killed(tmp_pat
         cwd=tmp_path,
         timeout_seconds=0.5,
         env={**os.environ, "MARKER": str(marker)},
+        on_started=lambda _process: wait_pid_marker(marker),
     )
-    assert marker.exists(), result.stderr
     assert result.timed_out and result.returncode != 0
-    wait_gone(int(marker.read_text()))
+    wait_gone(wait_pid_marker(marker))
 
 
 @pytest.mark.parametrize(
@@ -485,7 +529,7 @@ def test_root_cleanup_owns_nested_session_even_after_parent_graph_corruption(
         "\\nwhile not path.exists() and time.monotonic()<until: time.sleep(.01)"
         "\\nrecord=json.loads(path.read_text()); record['parent']=[]; "
         "path.write_text(json.dumps(record)); "
-        "Path(os.environ['MARKER']).write_text(str(os.getpid())); time.sleep(60)\"],"
+        f"{atomic_pid_marker_source()}time.sleep(60)\"],"
         "cwd=Path.cwd(),timeout_seconds=60)\n"
     )
     leader = (
@@ -495,6 +539,8 @@ def test_root_cleanup_owns_nested_session_even_after_parent_graph_corruption(
         "until=time.monotonic()+3\n"
         "while not os.path.exists(os.environ['MARKER']) and time.monotonic()<until:\n"
         "    time.sleep(.01)\n"
+        "if not os.path.exists(os.environ['MARKER']): "
+        "raise RuntimeError('child readiness absent')\n"
     )
     result = acquisition.run_acquisition(
         [sys.executable, "-c", leader],
@@ -502,10 +548,9 @@ def test_root_cleanup_owns_nested_session_even_after_parent_graph_corruption(
         timeout_seconds=5,
         env={**os.environ, "MARKER": str(marker)},
     )
-    assert marker.exists(), result.stderr
     assert result.aborted_early and result.returncode != 0
     assert "invalid owner parent identity" in result.stderr
-    wait_gone(int(marker.read_text()))
+    wait_gone(wait_pid_marker(marker))
     receipt = acquisition.execution_record(result, 5)
     assert receipt["aborted_early"] and receipt["returncode"] != 0
 

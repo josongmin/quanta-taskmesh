@@ -602,3 +602,234 @@ async fn producer_and_sampler_failures_return_bounded_invalid_raw() {
         assert!(matches!(decoded.status, HostRunStatus::Invalid { .. }));
     }
 }
+
+#[test]
+fn raw_record_dispositions_reject_conflicting_activity() {
+    let reject = |case: &str, record: RawHostRecord, expected: &str| {
+        assert_eq!(
+            CallerCounts::from_records(&[record]).unwrap_err(),
+            expected,
+            "{case}"
+        );
+    };
+    let quiet = row(0, CallerDisposition::NotSubmitted);
+    CallerCounts::from_records(std::slice::from_ref(&quiet)).unwrap();
+    type RecordChange = fn(&mut RawHostRecord);
+    let changes: [(&str, RecordChange); 3] = [
+        ("start", |r: &mut RawHostRecord| r.body_started_ns = Some(0)),
+        ("response", |r: &mut RawHostRecord| {
+            r.caller_response_ns = Some(1)
+        }),
+        ("drop", |r: &mut RawHostRecord| r.caller_drop_ns = Some(1)),
+    ];
+    for (case, change) in changes {
+        let mut invalid = quiet.clone();
+        change(&mut invalid);
+        reject(case, invalid, "row 0: not-submitted offer has activity");
+    }
+    let responded = row(
+        0,
+        CallerDisposition::Responded {
+            outcome: ResponseOutcome::Rejected {
+                verdict: AdmissionVerdict::CpuSaturated {
+                    retry_after_ms: None,
+                },
+            },
+        },
+    );
+    CallerCounts::from_records(std::slice::from_ref(&responded)).unwrap();
+    let mut missing_response = responded.clone();
+    missing_response.caller_response_ns = None;
+    reject(
+        "missing response",
+        missing_response,
+        "row 0: invalid responded timestamps",
+    );
+    let mut response_with_drop = responded;
+    response_with_drop.caller_drop_ns = Some(1);
+    reject(
+        "responded and dropped",
+        response_with_drop,
+        "row 0: invalid responded timestamps",
+    );
+    let dropped = row(0, CallerDisposition::CallerDropped);
+    CallerCounts::from_records(std::slice::from_ref(&dropped)).unwrap();
+    let mut missing_drop = dropped;
+    missing_drop.caller_drop_ns = None;
+    reject(
+        "missing drop",
+        missing_drop,
+        "row 0: invalid drop timestamps",
+    );
+    let waiting = row(0, CallerDisposition::Waiting);
+    CallerCounts::from_records(std::slice::from_ref(&waiting)).unwrap();
+    let mut waiting_with_response = waiting.clone();
+    waiting_with_response.caller_response_ns = Some(1);
+    reject(
+        "waiting with response",
+        waiting_with_response,
+        "row 0: invalid outstanding timestamps",
+    );
+    let mut waiting_with_drop = waiting;
+    waiting_with_drop.caller_drop_ns = Some(1);
+    reject(
+        "waiting with drop",
+        waiting_with_drop,
+        "row 0: invalid outstanding timestamps",
+    );
+}
+
+#[test]
+fn raw_host_snapshots_and_admission_reject_inconsistent_fields() {
+    use taskmesh_bench::host_load::{SampledClass, SnapshotSample};
+    let mut declaration = valid_scenario();
+    declaration["load"]["snapshot_ms"] = json!(5);
+    let scenario = HostScenario::from_json(&serde_json::to_vec(&declaration).unwrap()).unwrap();
+    let capabilities: BTreeMap<_, _> = scenario
+        .resolved_topology()
+        .unwrap()
+        .capability_limits
+        .keys()
+        .cloned()
+        .map(|key| (key, 0))
+        .collect();
+    let records = vec![row(0, CallerDisposition::NotSubmitted)];
+    let settlement = CallerCounts::from_records(&records).unwrap();
+    let cut = CallerCounts::at_cut(&records, 10_000_000).unwrap();
+    let sample = |intended_ns| SnapshotSample {
+        intended_ns,
+        observed_ns: intended_ns,
+        classes: BTreeMap::from([(
+            "c".into(),
+            SampledClass {
+                inflight: 0,
+                queued: 0,
+                accepted: 0,
+                running: 0,
+                cpu_units_held: "0".into(),
+                memory_units_held: "0".into(),
+            },
+        )]),
+        capabilities: capabilities.clone(),
+        conservation_ok: true,
+    };
+    let good = RawHostRun {
+        schema_version: HOST_RAW_VERSION,
+        status: HostRunStatus::Complete,
+        scenario_id: scenario.id.clone(),
+        injection_window_ns: 10_000_000,
+        interval_ns: 1_000_000,
+        snapshot_cadence_ns: 5_000_000,
+        snapshots: vec![sample(0), sample(5_000_000)],
+        cut,
+        settlement,
+        records,
+        class_counters: BTreeMap::from([("c".into(), ClassCounters::default())]),
+        final_capabilities: capabilities,
+        drain_ok: true,
+        conservation_ok: true,
+    };
+    good.validate_against(&scenario).unwrap();
+    let mut wrong_intended = good.clone();
+    wrong_intended.snapshots[1].intended_ns += 1;
+    assert_eq!(
+        wrong_intended.validate().unwrap_err(),
+        "snapshot sample 1 is invalid"
+    );
+    let mut early_observation = good.clone();
+    early_observation.snapshots[1].observed_ns = 0;
+    assert_eq!(
+        early_observation.validate().unwrap_err(),
+        "snapshot sample 1 is invalid"
+    );
+    let mut false_sample_conservation = good.clone();
+    false_sample_conservation.snapshots[0].conservation_ok = false;
+    assert_eq!(
+        false_sample_conservation.validate().unwrap_err(),
+        "snapshot sample 0 is invalid"
+    );
+    for field in ["cpu", "memory"] {
+        let mut wrong_gauge = good.clone();
+        let gauge = wrong_gauge.snapshots[0].classes.get_mut("c").unwrap();
+        match field {
+            "cpu" => gauge.cpu_units_held = "invalid".into(),
+            "memory" => gauge.memory_units_held = "invalid".into(),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            wrong_gauge.validate_against(&scenario).unwrap_err(),
+            "snapshot 0: invalid class gauges",
+            "{field}"
+        );
+    }
+    let mut missing_started_counter = good;
+    // A started body may be retained in the row even when the ledger lies.
+    let record = &mut missing_started_counter.records[0];
+    record.disposition = CallerDisposition::Responded {
+        outcome: ResponseOutcome::Success,
+    };
+    record.submitted_ns = Some(0);
+    record.body_started_ns = Some(0);
+    record.body_finished_ns = Some(1);
+    record.caller_response_ns = Some(1);
+    missing_started_counter.settlement =
+        CallerCounts::from_records(&missing_started_counter.records).unwrap();
+    missing_started_counter.cut =
+        CallerCounts::at_cut(&missing_started_counter.records, 10_000_000).unwrap();
+    let counters = missing_started_counter.class_counters.get_mut("c").unwrap();
+    counters.admitted = 1;
+    counters.terminated = 1;
+    assert_eq!(
+        missing_started_counter
+            .validate_against(&scenario)
+            .unwrap_err(),
+        "class c: counters differ from raw rows"
+    );
+}
+
+#[test]
+fn raw_host_window_rejects_zero_and_nondivisible_dimensions() {
+    let scenario =
+        HostScenario::from_json(&serde_json::to_vec(&valid_scenario()).unwrap()).unwrap();
+    let final_capabilities = scenario
+        .resolved_topology()
+        .unwrap()
+        .capability_limits
+        .keys()
+        .cloned()
+        .map(|pool| (pool, 0))
+        .collect();
+    let good = RawHostRun {
+        schema_version: HOST_RAW_VERSION,
+        status: HostRunStatus::Complete,
+        scenario_id: scenario.id,
+        injection_window_ns: 10_000_000,
+        interval_ns: 1_000_000,
+        snapshot_cadence_ns: 0,
+        snapshots: Vec::new(),
+        cut: CallerCounts::default(),
+        settlement: CallerCounts::default(),
+        records: Vec::new(),
+        class_counters: BTreeMap::from([("c".into(), ClassCounters::default())]),
+        final_capabilities,
+        drain_ok: true,
+        conservation_ok: true,
+    };
+    good.validate()
+        .expect("empty raw ledger is internally coherent");
+
+    let mut zero_window = good.clone();
+    zero_window.injection_window_ns = 0;
+    assert_eq!(
+        zero_window.validate().unwrap_err(),
+        "invalid raw host schema/window"
+    );
+
+    let mut nondivisible_window = good;
+    nondivisible_window.injection_window_ns = 11_000_000;
+    nondivisible_window.interval_ns = 2_000_000;
+    assert_eq!(
+        nondivisible_window.validate().unwrap_err(),
+        "invalid raw host schema/window"
+    );
+}

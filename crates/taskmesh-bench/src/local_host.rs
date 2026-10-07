@@ -248,6 +248,8 @@ impl LocalHostRun {
                             if start < submit || finish < start || response < finish {
                                 return Err(format!("local row {id}: impossible body order"));
                             }
+                            *started_by_class.entry(&row.class).or_default() += 1;
+                            continue;
                         }
                         Some(ResponseOutcome::Rejected { .. }) => {
                             if row.body_started_ns.is_some() || row.body_finished_ns.is_some() {
@@ -337,12 +339,7 @@ async fn run_inner(
     }
     tokio::time::sleep(Duration::from_millis(scenario.load.warmup_ms)).await;
     let baseline = runtime.snapshot();
-    if baseline.conservation_violation().is_some()
-        || baseline
-            .classes
-            .values()
-            .any(|class| class.inflight != 0 || class.queued != 0)
-    {
+    if !crate::host_load::warmup_snapshot_settled(&baseline) {
         return Err("local warmup did not settle".into());
     }
     let rows: Rc<Vec<RefCell<LocalRecord>>> = Rc::new(

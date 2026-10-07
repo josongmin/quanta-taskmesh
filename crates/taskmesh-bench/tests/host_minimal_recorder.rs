@@ -159,3 +159,163 @@ async fn minimal_recorder_rejects_snapshot_sampling_before_timing() {
         |error| error.contains("minimal recorder control requires Snapshot sampling off")
     ));
 }
+
+fn fixed_minimal_raw(scenario: &HostScenario) -> MinimalHostRun {
+    use std::collections::BTreeMap;
+    use taskmesh_bench::host_load::{ClassCounters, HostRunStatus};
+    use taskmesh_bench::minimal_host::{MinimalCounts, MinimalRecord, MINIMAL_HOST_VERSION};
+    let capabilities = scenario
+        .resolved_topology()
+        .unwrap()
+        .capability_limits
+        .keys()
+        .cloned()
+        .map(|key| (key, 0))
+        .collect();
+    MinimalHostRun {
+        schema_version: MINIMAL_HOST_VERSION,
+        status: HostRunStatus::Complete,
+        scenario_id: scenario.id.clone(),
+        injection_window_ns: scenario.load.injection_ms * 1_000_000,
+        recorder_mode: "minimal".into(),
+        response_latency_available: false,
+        counts: MinimalCounts {
+            intended: 3,
+            submitted: 1,
+            not_submitted: 2,
+            responded: 1,
+            caller_dropped: 0,
+            unanswered_at_settlement: 0,
+        },
+        completed_callers: 1,
+        outstanding_final: 0,
+        max_producer_lag_ns: Some(0),
+        records: scenario
+            .offers
+            .iter()
+            .enumerate()
+            .map(|(id, offer)| MinimalRecord {
+                id,
+                intended_ns: offer.send_time_ns,
+                observed_ns: Some(offer.send_time_ns),
+                submitted_ns: (id == 0).then_some(offer.send_time_ns),
+                disposition: if id == 0 {
+                    MinimalDisposition::Success
+                } else {
+                    MinimalDisposition::NotSubmitted
+                },
+            })
+            .collect(),
+        class_counters: BTreeMap::from([(
+            "c".into(),
+            ClassCounters {
+                admitted: 1,
+                started: 1,
+                terminated: 1,
+                inflight: 0,
+                queued: 0,
+            },
+        )]),
+        final_capabilities: capabilities,
+        drain_ok: true,
+        conservation_ok: true,
+    }
+}
+
+#[test]
+fn minimal_validator_independently_rejects_ledger_and_settlement_fields() {
+    let scenario = scenario();
+    let good = fixed_minimal_raw(&scenario);
+    good.validate_against(&scenario).unwrap();
+    let expect = |case: &str, raw: MinimalHostRun, error: &str| {
+        assert_eq!(
+            raw.validate_against(&scenario).unwrap_err(),
+            error,
+            "{case}"
+        );
+    };
+    let header = "minimal host scenario or mode differs";
+    let mut wrong_schema = good.clone();
+    wrong_schema.schema_version += 1;
+    expect("schema", wrong_schema, header);
+    let mut wrong_window = good.clone();
+    wrong_window.injection_window_ns += 1;
+    expect("window", wrong_window, header);
+    let mut wrong_mode = good.clone();
+    wrong_mode.recorder_mode = "other".into();
+    expect("mode", wrong_mode, header);
+    let mut wrong_snapshot_scenario = scenario.clone();
+    wrong_snapshot_scenario.load.snapshot_ms = 10;
+    assert_eq!(
+        good.validate_against(&wrong_snapshot_scenario).unwrap_err(),
+        header
+    );
+    let settlement = "minimal host conservation or settlement failed";
+    let mut wrong_completed = good.clone();
+    wrong_completed.completed_callers += 1;
+    expect("completed", wrong_completed, settlement);
+    let mut unanswered = good.clone();
+    unanswered.records[0].disposition = MinimalDisposition::UnansweredAtSettlement;
+    unanswered.counts.responded = 0;
+    unanswered.counts.unanswered_at_settlement = 1;
+    unanswered.completed_callers = 0;
+    expect("unanswered", unanswered, settlement);
+    let mut outstanding = good.clone();
+    outstanding.outstanding_final = 1;
+    expect("outstanding", outstanding, settlement);
+    let mut wrong_lag = good.clone();
+    wrong_lag.max_producer_lag_ns = Some(1);
+    expect("lag", wrong_lag, settlement);
+    let mut undrained = good.clone();
+    undrained.drain_ok = false;
+    expect("drain", undrained, settlement);
+    let mut unconserved = good.clone();
+    unconserved.conservation_ok = false;
+    expect("conservation", unconserved, settlement);
+    let ledger = "minimal host final governor ledger differs";
+    let mut started_below_success = good.clone();
+    started_below_success
+        .class_counters
+        .get_mut("c")
+        .unwrap()
+        .started = 0;
+    expect("started lower bound", started_below_success, ledger);
+    let mut started_above_admitted = good.clone();
+    started_above_admitted
+        .class_counters
+        .get_mut("c")
+        .unwrap()
+        .started = 2;
+    expect("started upper bound", started_above_admitted, ledger);
+    let mut terminated_above_admitted = good.clone();
+    terminated_above_admitted
+        .class_counters
+        .get_mut("c")
+        .unwrap()
+        .terminated = 2;
+    expect("termination", terminated_above_admitted, ledger);
+    let mut inflight = good.clone();
+    inflight.class_counters.get_mut("c").unwrap().inflight = 1;
+    expect("inflight", inflight, ledger);
+    let mut queued = good.clone();
+    queued.class_counters.get_mut("c").unwrap().queued = 1;
+    expect("queued", queued, ledger);
+    let mut extra_class = good.clone();
+    extra_class
+        .class_counters
+        .insert("ghost".into(), Default::default());
+    expect("extra class", extra_class, ledger);
+    let mut replaced_class = good.clone();
+    let counters = replaced_class.class_counters.remove("c").unwrap();
+    replaced_class
+        .class_counters
+        .insert("ghost".into(), counters);
+    expect("missing class", replaced_class, ledger);
+    let mut held_capacity = good;
+    *held_capacity
+        .final_capabilities
+        .values_mut()
+        .next()
+        .unwrap() = 1;
+    expect("held capacity", held_capacity, ledger);
+}

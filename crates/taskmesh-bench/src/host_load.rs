@@ -11,14 +11,30 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use taskmesh::{
-    AdmissionVerdict, RunError, Runtime, RuntimeConfig, SubmitOptions, SubstrateHint, TaskClass,
-    TaskSpec, TokioRuntime,
+    AdmissionVerdict, RunError, Runtime, RuntimeConfig, Snapshot, SubmitOptions, SubstrateHint,
+    TaskClass, TaskSpec, TokioRuntime,
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::host_scenarios::{HostBody, HostOffer, HostPath, HostScenario};
 
 pub const HOST_RAW_VERSION: u32 = 2;
+
+pub(crate) fn warmup_snapshot_settled(snapshot: &Snapshot) -> bool {
+    snapshot.conservation_violation().is_none()
+        && snapshot
+            .classes
+            .values()
+            .all(|class| class.inflight == 0 && class.queued == 0)
+}
+
+pub(crate) fn warmup_snapshot_capacity_settled(snapshot: &Snapshot) -> bool {
+    warmup_snapshot_settled(snapshot)
+        && snapshot
+            .capabilities
+            .values()
+            .all(|usage| usage.in_use == 0)
+}
 
 /// Installed facts from the actual measured runtime, outside the timed span.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -1020,16 +1036,7 @@ pub(crate) async fn run_host_window(
     }
     let resolved_topology = ResolvedHostTopology::from_runtime(runtime);
     let baseline = runtime.snapshot();
-    if baseline.conservation_violation().is_some()
-        || baseline
-            .classes
-            .values()
-            .any(|class| class.inflight != 0 || class.queued != 0)
-        || baseline
-            .capabilities
-            .values()
-            .any(|usage| usage.in_use != 0)
-    {
+    if !warmup_snapshot_capacity_settled(&baseline) {
         return Err("warmup did not settle to zero owned capacity".into());
     }
     let slots: Vec<Slot> = scenario
@@ -1320,4 +1327,69 @@ pub(crate) async fn run_host_window(
     // persists it before reporting the validation error, so failed runs are
     // inspectable instead of disappearing behind an Err.
     Ok((run, resolved_topology))
+}
+
+#[cfg(test)]
+mod warmup_settlement_tests {
+    use super::{warmup_snapshot_capacity_settled, warmup_snapshot_settled};
+    use taskmesh::{CapabilityUsage, ClassSnapshot, Snapshot, TaskClass};
+
+    #[test]
+    fn settled_history_is_allowed_and_each_live_axis_rejects() {
+        let class = TaskClass::new("io");
+        let mut settled = Snapshot::default();
+        settled.classes.insert(
+            class.clone(),
+            ClassSnapshot {
+                admitted_total: 1,
+                started_total: 1,
+                terminated_total: 1,
+                ..ClassSnapshot::default()
+            },
+        );
+        settled.capabilities.insert(
+            "io-capacity".into(),
+            CapabilityUsage {
+                in_use: 0,
+                limit: 1,
+            },
+        );
+        assert_eq!(settled.conservation_violation(), None);
+        assert!(warmup_snapshot_settled(&settled));
+        assert!(warmup_snapshot_capacity_settled(&settled));
+
+        let mut held = settled.clone();
+        held.capabilities
+            .get_mut("io-capacity")
+            .expect("capability")
+            .in_use = 1;
+        assert_eq!(held.conservation_violation(), None);
+        assert!(warmup_snapshot_settled(&held));
+        assert!(!warmup_snapshot_capacity_settled(&held));
+
+        let mut unconserved = settled.clone();
+        unconserved
+            .classes
+            .get_mut(&class)
+            .expect("class")
+            .terminated_total = 0;
+        assert!(unconserved.conservation_violation().is_some());
+        assert!(!warmup_snapshot_settled(&unconserved));
+        assert!(!warmup_snapshot_capacity_settled(&unconserved));
+
+        let mut queued = settled.clone();
+        queued.classes.get_mut(&class).expect("class").queued = 1;
+        assert_eq!(queued.conservation_violation(), None);
+        assert!(!warmup_snapshot_settled(&queued));
+        assert!(!warmup_snapshot_capacity_settled(&queued));
+
+        let mut accepted = settled.clone();
+        let counters = accepted.classes.get_mut(&class).expect("class");
+        counters.admitted_total = 2;
+        counters.inflight = 1;
+        counters.accepted = 1;
+        assert_eq!(accepted.conservation_violation(), None);
+        assert!(!warmup_snapshot_settled(&accepted));
+        assert!(!warmup_snapshot_capacity_settled(&accepted));
+    }
 }

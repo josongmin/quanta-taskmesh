@@ -466,12 +466,7 @@ struct ParentResult {
 }
 
 fn validate_warmup_snapshot(snapshot: &Snapshot) -> Result<(), String> {
-    if snapshot.conservation_violation().is_some()
-        || snapshot
-            .classes
-            .values()
-            .any(|class| class.inflight != 0 || class.queued != 0)
-    {
+    if !crate::host_load::warmup_snapshot_settled(snapshot) {
         return Err("composite warmup did not settle".into());
     }
     Ok(())

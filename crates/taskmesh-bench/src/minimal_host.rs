@@ -265,16 +265,7 @@ pub async fn run_minimal_host_scenario(
     let topology = ResolvedHostTopology::from_runtime(&runtime);
     warmup_runtime(scenario, &runtime).await?;
     let baseline = runtime.snapshot();
-    if baseline.conservation_violation().is_some()
-        || baseline
-            .classes
-            .values()
-            .any(|class| class.inflight != 0 || class.queued != 0)
-        || baseline
-            .capabilities
-            .values()
-            .any(|usage| usage.in_use != 0)
-    {
+    if !crate::host_load::warmup_snapshot_capacity_settled(&baseline) {
         return Err("minimal recorder warmup did not settle".into());
     }
     let slots: Vec<_> = (0..scenario.offers.len())

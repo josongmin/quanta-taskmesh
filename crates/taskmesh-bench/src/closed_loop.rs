@@ -223,16 +223,7 @@ impl ClosedLoopRun {
 }
 
 fn validate_warmup_snapshot(snapshot: &Snapshot) -> Result<(), String> {
-    if snapshot.conservation_violation().is_some()
-        || snapshot
-            .classes
-            .values()
-            .any(|class| class.inflight != 0 || class.queued != 0)
-        || snapshot
-            .capabilities
-            .values()
-            .any(|usage| usage.in_use != 0)
-    {
+    if !crate::host_load::warmup_snapshot_capacity_settled(snapshot) {
         return Err("closed-loop warmup did not settle".into());
     }
     Ok(())

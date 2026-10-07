@@ -89,6 +89,15 @@ fn generator_raw_validation_rejects_each_independent_corruption() {
         wrong_submitted.validate_against(&scenario).unwrap_err(),
         settlement
     );
+    let mut wrong_submitted_and_completed = not_submitted.clone();
+    wrong_submitted_and_completed.submitted += 1;
+    wrong_submitted_and_completed.completed = wrong_submitted_and_completed.submitted;
+    assert_eq!(
+        wrong_submitted_and_completed
+            .validate_against(&scenario)
+            .unwrap_err(),
+        settlement
+    );
     let mut wrong_not_submitted = not_submitted.clone();
     wrong_not_submitted.not_submitted += 1;
     assert_eq!(

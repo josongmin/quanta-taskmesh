@@ -78,6 +78,15 @@ async fn minimal_recorder_conserves_intended_and_terminal_rows_without_latencies
     assert!(false_ledger
         .validate_against(&scenario)
         .is_err_and(|error| error.contains("minimal host final governor ledger differs")));
+    let mut coherent_false_ledger = raw.clone();
+    let counters = coherent_false_ledger.class_counters.get_mut("c").unwrap();
+    counters.admitted = 99;
+    counters.started = 99;
+    counters.terminated = 99;
+    assert_eq!(
+        coherent_false_ledger.validate_against(&scenario),
+        Err("minimal host final governor ledger differs".into())
+    );
     let mut missing_capabilities = raw.clone();
     missing_capabilities.final_capabilities.clear();
     assert!(missing_capabilities

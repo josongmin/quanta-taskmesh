@@ -72,6 +72,19 @@ async fn local_raw_rejects_independently_wrong_identity_and_coherent_empty_popul
         .validate_against(&scenario)
         .is_err_and(|error| error.contains("local row 0: offer identity differs")));
 
+    let mut coherent_wrong_counter = raw.clone();
+    let counters = coherent_wrong_counter
+        .class_counters
+        .get_mut("local")
+        .unwrap();
+    counters.started = 3;
+    counters.admitted = 3;
+    counters.terminated = 3;
+    assert_eq!(
+        coherent_wrong_counter.validate_against(&scenario),
+        Err("local class local: counters differ from rows".into())
+    );
+
     let mut wrong_counter = raw;
     wrong_counter
         .class_counters

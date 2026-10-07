@@ -15,7 +15,8 @@ from the queue. PR #28 also implements fail-closed ownership classification for
 disappearing procfs entries; unrelated or confirmed vanished tasks do not falsely
 invalidate the held-group observation. PR #28 candidate `18a6a447` clean macOS
 CI16 and synthetic merge `7b1560ea` hosted CI16 passed, with independently
-validated raw receipts. Actual `e503b6c` main CI was pending at reconciliation.
+validated raw receipts. Actual `e503b6c` main hosted CI16 also passed; its
+receipt was replay-validated in an isolated native checkout on 2026-10-07.
 This documentation/release-authority overlay needs its own final clean-source
 CI16, hosted merge/main CI and one complete Linux full23 (CI + nightly union) receipt. Preserve raw
 identity lists/outcomes, source tuple, producer envelopes, IAI baseline continuity

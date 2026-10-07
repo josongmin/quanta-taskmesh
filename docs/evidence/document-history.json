@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_head": "2123a462764a3d6445fd536a1e5a5f99d019425e",
-  "scope": "deleted-historical-inputs-not-current-qualification",
+  "scope": "retired-or-compressed-historical-inputs-not-current-qualification",
   "documents": [
     {
       "path": "docs/audits/2026-09-16-sep16-hardening.md",
@@ -507,6 +507,104 @@
       "path": "tools/pm/tests/test_packet_contract.py",
       "sha256": "73fa0e2e21e869c5a0716700b87440e1a392206ea6cd95244b9a21658c05dbec",
       "successor": "tools/pm/tests/test_ticket_map.py"
+    },
+    {
+      "path": "docs/adr/0007-sep-25-implementation-closure.md",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "c99088b413f8e70c15b5a708a2d5f44fdbb59b4af8de292ed6d51228adacfcf1",
+      "disposition": "deleted",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "tools/pm/MUTATION-VALIDATION.md",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "aa35ed0a4e52353c728267e12b40fe17342efa5e55d4704ef954d0bca1b43f61",
+      "disposition": "deleted",
+      "successor": "docs/adr/0006-source-bound-verification-authority.md"
+    },
+    {
+      "path": "docs/adr/0003-sep-16-hardening-contracts.md",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "2b31bc5fbc47cbef05276d879e91c47f11a2d9465cce2ef04a138cb6aff9af5c",
+      "disposition": "compressed",
+      "successor": "docs/adr/0003-sep-16-hardening-contracts.md"
+    },
+    {
+      "path": "docs/adr/9000-benchmark-strategy.md",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "6ef1a82dd0d2de10c19799fd648dde63bbef609c9401c7ee3728ba9d47b3b24f",
+      "disposition": "compressed",
+      "successor": "docs/adr/9000-benchmark-strategy.md"
+    },
+    {
+      "path": "docs/remaining-work.md",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "28115cd7aed892476a753456a98a639adc3ebdf9a4fdedbf89adce62a9297419",
+      "disposition": "compressed",
+      "successor": "docs/remaining-work.md"
+    },
+    {
+      "path": "docs/evidence/sep16/README.md",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "2baa7891e5a81a3f34e132d5cee22df1d829f1bf4a2dbf9294cd6a407c32cd74",
+      "disposition": "deleted",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/evidence/sep16/local-2026-09-19.gates.json",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "4762e3c09f6338f9a5cebd2dbc2c935ae3fc192fc554ff38533c211ccbc39369",
+      "disposition": "deleted",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/evidence/sep16/local-2026-09-19.json",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "2edd659105b77e6fda34a90aae1ea418fc8dddddc177433ed77fdb20f011f6a5",
+      "disposition": "deleted",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/evidence/sep16/local-2026-09-19.mutations.json",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "2427380285c22ddcb169f5f2f15bae92f20bc85b3590615daa793e4522d82585",
+      "disposition": "deleted",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/evidence/sep22/README.md",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "31cfee80977777cb5b6a62009a3463822ef20f5851fac05bdd51e29b9b290ffc",
+      "disposition": "deleted",
+      "successor": "docs/adr/0006-source-bound-verification-authority.md"
+    },
+    {
+      "path": "docs/evidence/sep22/T08-LINUX-CONTAINER-LADDER-2026-09-23.json",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "9c6a4dd9668366ec38784a692533fb23e976e5e3f49dfdc3c487663fa40bee74",
+      "disposition": "deleted",
+      "successor": "docs/adr/0006-source-bound-verification-authority.md"
+    },
+    {
+      "path": "docs/evidence/sep22/T08-MACOS-LADDER-2026-09-23.json",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "97755c75dc681171f40ce4e427be99e51d1a77d6290ff70973ca0b2f0826f3b2",
+      "disposition": "deleted",
+      "successor": "docs/adr/0006-source-bound-verification-authority.md"
+    },
+    {
+      "path": "docs/evidence/sep22/T08-MACOS-RUST192-LADDER-2026-09-23.json",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "7a7c41f69e45dfbd8e945fe065a555e2564ad1137369f0a404474a65358ed2e1",
+      "disposition": "deleted",
+      "successor": "docs/adr/0006-source-bound-verification-authority.md"
+    },
+    {
+      "path": "docs/benchmarks/host-series.md",
+      "source_head": "0cb5ba2692624f7e01571c0f625dfbf5777872ec",
+      "sha256": "e13bfd2405b19b0e5410c62679c070963150cccdd5ddb943d925f48373c80ea6",
+      "disposition": "compressed",
+      "successor": "docs/benchmarks/host-series.md"
     }
   ]
 }

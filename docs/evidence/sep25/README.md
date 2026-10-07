@@ -7,7 +7,7 @@ K 51 / P 34 / G 19 selection baseline. MAPPED means static provenance, not PASS.
 
 `just test-architecture` runs both validators. Source-bound proof is owned by
 [ADR 0006](../../adr/0006-source-bound-verification-authority.md), implementation
-by [ADR 0007](../../adr/0007-sep-25-implementation-closure.md), and unfinished
+by [ADR 0008](../../adr/0008-audit-implementation-record.md), and unfinished
 work by [remaining work](../../remaining-work.md). The relocated scenario path
 changes static input identities; historical receipts remain unmodified.
 

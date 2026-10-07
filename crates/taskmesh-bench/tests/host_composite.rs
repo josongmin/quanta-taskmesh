@@ -131,7 +131,10 @@ async fn composite_preflight_failure_displays_reason_and_propagates_writer_error
     assert_eq!(format!("{failure}"), failure.reason);
     let erased: &dyn std::error::Error = &failure;
     assert_eq!(erased.to_string(), failure.reason);
-    assert!(std::fmt::write(&mut RejectWrites, format_args!("{failure}")).is_err());
+    assert_eq!(
+        std::fmt::write(&mut RejectWrites, format_args!("{failure}")),
+        Err(std::fmt::Error)
+    );
 }
 
 #[test]

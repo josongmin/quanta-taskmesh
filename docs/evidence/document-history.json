@@ -1,0 +1,512 @@
+{
+  "schema_version": 1,
+  "source_head": "2123a462764a3d6445fd536a1e5a5f99d019425e",
+  "scope": "deleted-historical-inputs-not-current-qualification",
+  "documents": [
+    {
+      "path": "docs/audits/2026-09-16-sep16-hardening.md",
+      "sha256": "197c5215140707268bf6e4c5891604dcf6c2e6d0420b08d3f64620a0716ab946",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/audits/2026-09-26-result-trust-integration.md",
+      "sha256": "e9425036692062d944d61148b1a93e6e94782e4331f997fd4a913ad4ed12a246",
+      "successor": "docs/adr/0009-runtime-and-evidence-hardening.md"
+    },
+    {
+      "path": "docs/audits/2026-09-27-acquisition-ownership.md",
+      "sha256": "005b844561a913a183e040d424b92338e096aaf7c720cf22cb48075e0b22705e",
+      "successor": "docs/adr/0009-runtime-and-evidence-hardening.md"
+    },
+    {
+      "path": "docs/audits/2026-09-27-benchmark-ingress-custody.md",
+      "sha256": "8d77db936e9a0908a12c8cddd8adebe7ec0cc414d1a7d4b7718568e79f7342a2",
+      "successor": "docs/adr/0009-runtime-and-evidence-hardening.md"
+    },
+    {
+      "path": "docs/audits/2026-10-03-current-source-final.md",
+      "sha256": "dee5deed006165cc2ad73707f64f979c4b2dba4108773b1ad7cbeb921e486e44",
+      "successor": "docs/adr/0009-runtime-and-evidence-hardening.md"
+    },
+    {
+      "path": "docs/audits/2026-10-03-semver-technical-review.md",
+      "sha256": "2b22815496b8abc6430a05f2a03af8a36e96e03fbde2714460d6c51c8a167bf6",
+      "successor": "docs/adr/0009-runtime-and-evidence-hardening.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/QUALITY-AND-SCOPE.md",
+      "sha256": "cd04c75fa5d594f6080d93bb738a8da1e5707885b8d3ea2dff6d108cc8b1d907",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/README.md",
+      "sha256": "07f5db8bda261d17524581348590663337ca91ae7e8c76ef04a8a2a08d365a02",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-001-substrate-waiters-bypass-bounded-admission.md",
+      "sha256": "87c749d821eeac40897372242275e7aa14e23406d6c5fa7c088c7a4ba5f32a90",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-002-blocking-runfor-deadline-is-inert.md",
+      "sha256": "3a4d79b3c39b17eedc1be86f4252a41533e7e242b38460528a5a65686625548f",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-003-invalid-topology-panics.md",
+      "sha256": "49cf0f3679bcda6cae118eaefad81302afed57faa401b02f535e9b581788bbe6",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-004-policyset-default-inventory-bypass.md",
+      "sha256": "2948a360d4172ca76a8599ff9b4e2d616bb0e52011d556c8fcc993e34dc481c3",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-005-memory-release-policy-not-enforced.md",
+      "sha256": "ca35f05e1fa3658ad18c03a6d5a9e05dd91b8c992fd189fe31d3165c92ee6bf2",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-006-local-gates-not-enforced-by-ci.md",
+      "sha256": "ff87f439af11c66517ad821423f7c2de3c9cef70293d433813dc82f96ae77900",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-007-dependency-advisories.md",
+      "sha256": "9cf47401fbff1f09b1857547cf7162ccec8043112bdbf63bce5e559391e762fa",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-008-resource-counter-saturation.md",
+      "sha256": "1265a99f1caca19aabba1d40471728d267a7badb07f5c098524f26cd3c9223d3",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-009-stage-activity-does-not-touch-leak-lease.md",
+      "sha256": "482ad69bbd49bd9d4c5c5833c55ca5666758cd912268e97a823423185d261216",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-010-leak-sweep-leaves-dead-claim.md",
+      "sha256": "3bb417dee72f514c806827d6a27eed32454e79a0096ec9b64822d91cdeb84164",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-011-estimated-reconcile-undoes-stage-release.md",
+      "sha256": "558083e4ef0e2027db9f80b1f8185d0254b9f3b3fbd9ce7d94ca46eb7bb7b7fa",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-012-drr-unbounded-work-under-lock.md",
+      "sha256": "0f1873ad50934a26f05bc698c2a81fb526fee503ccdedb6065f1597427b8cc5d",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-013-wfq-zero-increment.md",
+      "sha256": "09bc7209a19fe55b5e7e3d29d88821337cbba9052c35cc694670c6780a32c9ee",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-014-wfq-cancelled-service-debt.md",
+      "sha256": "8e3997aa72a3f3db5571965a6816df8f17ad133675b584d23bd2de8dc8c49c54",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-015-requested-stack-completion-before-release.md",
+      "sha256": "8e79f1764ad4eb6eae5af2c94b2ff55676129bf58547c495ad51fc7bdd528516",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-016-architecture-checker-false-green.md",
+      "sha256": "2bfb836fd655c0d10b224c7b3003d45d1ae180d3f7061664ccf611281d5ad370",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-017-semgrep-test-enrollment-gap.md",
+      "sha256": "214961b0f1b991e983dae053fe4f8f7221e1d91c0e968e75517c9b8d9e1fa28e",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-018-benchmarks-skip-intended-work.md",
+      "sha256": "bb20e35b54d32a3cc92d08473a20dee1a6e5c5433bb504cfa30c6eb5cf810ec6",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-019-benchmark-workflow-swallowed-failures.md",
+      "sha256": "cd0ba41af7b91f6789321ade101039019c5436bb5340a38cf4af1f23b5297c08",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-020-iai-proof-config-and-baseline-mismatch.md",
+      "sha256": "bbc99968e798db2e973bc30d23775bd4d8ed5683ed23e1d037f7deffc43c89ca",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-021-developer-toolchain-floor.md",
+      "sha256": "3b07079028a6821ca51b1536af67cb51dd655e198d0b72f9a6dfb4e481f81a35",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-022-cpu-relative-deadline-starts-after-spawn.md",
+      "sha256": "78a8fc0dd5a28cfc24a93869ecb197f5b6b12580ab0a7d0f30c512e555e72cea",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-023-stack-dispatch-bypasses-capability.md",
+      "sha256": "9ef97f5a4a28ca206d05cd7fff2b8ca13f33d92ecea572958f89eae35178563e",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-024-requested-stack-shutdown-delays-deadline.md",
+      "sha256": "d5a5759f3fdc0fd4f1ef1aaff374533af2d2f531add5836872ad08ee87ce4658",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-025-prompt-manager-real-target-drift.md",
+      "sha256": "cfbe72151934fbd9df8da70bfa49624fe5d5b24251bf409a557d256891d13e0a",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-026-lease-timestamp-before-state-commit.md",
+      "sha256": "59d41ec6ae67cdd962d9f510d9325bace3421317d665cce396242076ff368a3e",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-027-invalid-trace-times-not-rejected.md",
+      "sha256": "13dd5c17a07356be37c38a0aa5426a0f8a03dbc43beaaa1b413c41f81bd2fd85",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-028-mmpp-crosses-phases-with-old-rate.md",
+      "sha256": "4050005c0cc6e3d2167a1b3b176c2b8c2fa8088d5ae0ef597a54823ab97b2d23",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-029-open-loop-double-corrects-latency.md",
+      "sha256": "32d3d63a41fa5543a53e3c3ac3fdd2ae308f692cd17dbcf9cc6bcef83b2d45d4",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-030-waker-destructor-under-governor-lock.md",
+      "sha256": "9069273609aca6ab15d2519cfa0c6a6adbfecf5a7ca754866560bea67eae329c",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-031-class-nul-panics-thread-construction.md",
+      "sha256": "30d8775fb691f4675d4d1d4e98b7b46a147b4e951a0416c4f88e2ebf912a157c",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-032-acquire-timeout-ignores-admission-lock-wait.md",
+      "sha256": "bdfb71a63f253b0415c19ec4b967928cce1db154ca21b2130616cddecb6db897",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-033-test-quality-refers-to-missing-gates.md",
+      "sha256": "2e009609c264f3e0f7ba0563e438c5c397018c4438b55d450a9853141afa11f9",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-034-iai-input-teardown-in-measurement.md",
+      "sha256": "3e996da071d94427fc148a643986dac344ebfc36c555de81bb0714f6fcecce4f",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-035-pm-template-path-collapses-to-basename.md",
+      "sha256": "4fc6b71be7d75a847ac6f82bf81367b35bae69f1c5a36bc2123f4921210b56df",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-036-contention-bench-iteration-denominator.md",
+      "sha256": "88567a7290c234643004d96edd17c94c56dedf75409171edd94a350133323a30",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-037-drr-idle-credit-accumulation.md",
+      "sha256": "e97f5525b8cded096b8bb2ecf7444f89fdb65d44f96693e6066fd20d345f0856",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-038-allocation-gate-malformed-number-passes.md",
+      "sha256": "ce599de91e0f7d56609935a3b5af6f39f4e8ba4d08036e07470b050636e659a1",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-039-pm-duplicate-target-key-hides-output.md",
+      "sha256": "53a69acfd2a6e8ca4fc99481154126070f70e08a5efd9481b678e0b8f624754a",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/TM16-040-mixed-soak-discards-all-run-errors.md",
+      "sha256": "8b94d28c1c9c93d166a146be5f68ca8f6c37662653390111098ae28d5075c21c",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/allocation-gate-input.sh",
+      "sha256": "eca135f10a1adc8b2eef7409d4bb9589da163cebd52f81f3e7fbd8c01c73befb",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/pm-duplicate-target/KEEP.md",
+      "sha256": "1d9e9bdc4ffd505aa2ee64c024f8bece1a280d14e5b47807529fe12e8668effe",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/pm-duplicate-target/sources/body.md",
+      "sha256": "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/pm-duplicate-target/targets.yaml",
+      "sha256": "c7b9a6f402f1ef7fad7809e2908d44d987234c07947fc24ad4f25c2d65c73d4f",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/pm-duplicate-target/templates/demo.j2",
+      "sha256": "0b1526e2df264b988867d0347e0f5ade4bbbeb8060f96bea39b270d9d76a130f",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/pm-nested-template/WRONG.md",
+      "sha256": "071a7023cbe1e4fcdfefefde74fd39332336724a2db15baa6c3b4e64850e41c9",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/pm-nested-template/sources/body.md",
+      "sha256": "abee1734a3e993d722f120ccfff341ea2e620249d892fbdedf2903931b6adb76",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/pm-nested-template/targets.yaml",
+      "sha256": "25c167ff335fb1af1b65e27aac2301c94811bf2d0ea20b046b7eb32b1eaced41",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/pm-nested-template/templates/demo.j2",
+      "sha256": "6cbb4cb5d4b750aa443f50de486a54a2056fdbb1a09a48fb16674ce100d732d8",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/pm-nested-template/templates/nested/demo.j2",
+      "sha256": "d839f0e056501b77068057cb56c5e6864e112b5a610f8e3e3df0ba7c718dd9c8",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/repro/Cargo.lock",
+      "sha256": "617b5703eeb715aedaae784fe5006ca65400cf5038211d46eab593832ae17052",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/repro/Cargo.toml",
+      "sha256": "7590328b4cf229eb6c48b027b36ec260b13e2a9f1384dc9074b1a50ffb8122ff",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/repro/build.rs",
+      "sha256": "44ae17fc95ab9654fd7868bc7fe2a33a0297ed741a7ededa3672c703351f237a",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/repro/src/lib.rs",
+      "sha256": "d33b0ca9b17ee57ae8bfa4f9604f95ac458c1f52ec4c17824b00e5ad11907fd4",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/repro-bench/Cargo.lock",
+      "sha256": "1f7479a2455fc0125d3a0723d16068c6cb043a3b0362493b6d56faaec068493f",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/repro-bench/Cargo.toml",
+      "sha256": "113a3272c6256b09c1c0bacfb24ecc16b311e24f696522fc339ab851e59debd9",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/repro-bench/build.rs",
+      "sha256": "245a3d1befb81e202284c4ae528ebcdc3cdc9d13548ce8df663d9c05d8815ddf",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/repro-bench/src/lib.rs",
+      "sha256": "6752c9edeb3c765d40be6a72aa2fdd35a0706b3e2f9ae920767cc7cb362b3b59",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-16-general/tickets/evidence/verification.md",
+      "sha256": "984cff147ba7df7c25221d9aa9316236430fc0e212e358105549be700eeab049",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/execution.md",
+      "sha256": "94469102bd636934ca9b64be1491637897a0413ba8efed1dab5d1174468a70d4",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/findings.md",
+      "sha256": "9ad7ddf10d4f5d0470b23fead592e5220971ed302ae9f961d3bfebec11b28351",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/prompts/00-orchestrator.md",
+      "sha256": "972843f31eba4745b9997867797a5e90b526a29d533b524856f0927ec4bf089d",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/prompts/10-contract-c01.md",
+      "sha256": "b8be18e44a60f17d97315bfec67cf3f38d56cd888c57b80ea9bf7b371d2e05c1",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/prompts/20-engine-core.md",
+      "sha256": "e20dd0c90058d02816874a88ff7593fad550644d3c5fcb2e435b9d6b7f99be81",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/prompts/30-proof-envelope-v01.md",
+      "sha256": "cc266f9ba6f646fbfb3f68701ff35498afc0cb8716d6dee04800d6053d68b25e",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/prompts/40-host-runtime.md",
+      "sha256": "69fbbeec2a4c3f1f21e2827f05ab2b5494009ac9aceb908c36a0d9eb2737c638",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/prompts/50-mutation-v02.md",
+      "sha256": "c435105a2b93754e64020d7dbe77d02397e4cbb31ade027ff10a38714528c61f",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/prompts/60-concurrency-v03.md",
+      "sha256": "df9ba5c545f3cb78f2e21084042d58ef9e2c0ce778fb85301c0fb55865b50f27",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/prompts/70-release-r01.md",
+      "sha256": "ad56fa69bf3d25d928ac36e706651b12f739f35da5ab8ee38867f61d515562f4",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/prompts/README.md",
+      "sha256": "5a02998fd8d54c2179a566a5e671a5a85054700e9be37c96a8066d97c1504be8",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/README.md",
+      "sha256": "7ca2a5755b61ca07b30d88dc126ff39c8fe4139f8582bf28133d0bf7b6405a72",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/SEP21-C01-task-plan-contract.md",
+      "sha256": "bd1c62a797ed0d6a1fde63cb0e7f6cc9f4af2cd9242394bdecc38932237e76a6",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/SEP21-E01-capability-authority.md",
+      "sha256": "bbcde4878229d0a7393dc58e30124081c6c192dd4da1291e20e80151a81e0daf",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/SEP21-E02-effect-custody.md",
+      "sha256": "caddec645f3b6c5409501002b8fbefae83fc7ae4cdcec8bfefe65118b975ed3d",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/SEP21-E03-memory-epoch.md",
+      "sha256": "e560132547417d3f69cac9b77fde811c85d3e290abd34d0175a6143cd76e8144",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/SEP21-E04-pending-resolver.md",
+      "sha256": "cc37e2ef3e62e8af75d418206db2f9ba745fc8c4a69bc3e0c49fd68551b35a6b",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/SEP21-H01-validated-dispatch-plan.md",
+      "sha256": "2e8c44ed48327935680f07720ce7d7ed22676179a5677fc66a8463ed2e1d77dd",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/SEP21-H02-acquisition-arbiter.md",
+      "sha256": "27841100b46a4a3070d6b0b2b9ebb93ba7e93aae1e4cdc65b2cac0c902890958",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/SEP21-H03-executor-domain.md",
+      "sha256": "6dbec306898147fa806bb8b1e9a840f9a5076259b8d0a2b1c8bb543349e9694f",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/SEP21-R01-release-qualification.md",
+      "sha256": "97bf0874493f1559073842d3b1dba78141bbe7392eed7fbebc3a9b041c742e7b",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/SEP21-V01-trusted-evidence-envelope.md",
+      "sha256": "932f8a7ede1c4ba52eab811179e74d33e99dccde2f938deea042c6dd911f03ce",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/SEP21-V02-mutation-evidence.md",
+      "sha256": "fdf733e1f33e30f9d087be66a5d9a43beeb425b3fda71e8c9da32444c6c0a174",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/SEP21-V03-fuzz-model-evidence.md",
+      "sha256": "914a797e538ab91b358e6fdcb2ac7529cde5dbf56c9e2f3748e8ef03aa70737b",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/plan.json",
+      "sha256": "4c538bb57184e279e2cafeff2efd8ceccfffba92ac4f19b145dd2cc8d03d60f1",
+      "successor": "docs/evidence/sep21/ticket-map.json"
+    },
+    {
+      "path": "docs/bugbash/sep-21/tickets/validate_plan.py",
+      "sha256": "1e3ab51f2beed65385c81b44de4217a78d3fb05b6f57e33153c31a393a8bb1b8",
+      "successor": "docs/evidence/sep21/validate_ticket_map.py"
+    },
+    {
+      "path": "docs/evidence/sep16/EXCEPTIONS.md",
+      "sha256": "6a3154f67049bb32b61d6b96a6eccf4be5361253db9efdef7df786e1d6c2ff8b",
+      "successor": "docs/adr/0008-audit-implementation-record.md"
+    },
+    {
+      "path": "docs/misc/tmp-engine-checklist-sep-25.md",
+      "sha256": "392f2b8aa14ffc3611852d0e2905bb55d4bdbedbab33e35e5a23f67137c7c10a",
+      "successor": "docs/evidence/sep25/scenarios.md"
+    },
+    {
+      "path": "docs/plans/2026-10-03-current-source-remediation.md",
+      "sha256": "182b74cee7d60d350bdec0c49630f2f4073600e4be45b4b3efd6d27c85b2c57c",
+      "successor": "docs/remaining-work.md"
+    },
+    {
+      "path": "docs/plans/2026-10-04-audit-structural-remediation.md",
+      "sha256": "263152abf950c738e3f45e12cfd2acc9c3024588deadce4a414777b8161d4e45",
+      "successor": "docs/remaining-work.md"
+    },
+    {
+      "path": "docs/ssot/README.md",
+      "sha256": "a37d982ba9ce1b87e2914acc4805eb453e067f5329c94a01fe4400694b668ad8",
+      "successor": "docs/README.md"
+    },
+    {
+      "path": "docs/ssot/engine-status-v1.md",
+      "sha256": "247e7f62b524280a0bfb098e9f74eab1fa03436f94119d801defe8bd705125ee",
+      "successor": "docs/adr/0009-runtime-and-evidence-hardening.md"
+    },
+    {
+      "path": "docs/taskmesh-sota-audit-checklist.md",
+      "sha256": "396d42564463df550891953f2492d2b87318adfe607a594a75f8c066b3ab0827",
+      "successor": "docs/adr/0006-source-bound-verification-authority.md"
+    },
+    {
+      "path": "tools/pm/tests/test_packet_contract.py",
+      "sha256": "73fa0e2e21e869c5a0716700b87440e1a392206ea6cd95244b9a21658c05dbec",
+      "successor": "tools/pm/tests/test_ticket_map.py"
+    }
+  ]
+}

@@ -16,7 +16,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 MANIFEST = ROOT / "scenario-evidence.json"
 PLAN = ROOT / "ticket-map.json"
-CHECKLIST = REPO / "docs/misc/tmp-engine-checklist-sep-25.md"
+CHECKLIST = REPO / "docs/evidence/sep25/scenarios.md"
 VALID_STATUS = {"MAPPED", "OPEN", "NOT_RUN", "OUT_OF_SCOPE"}
 VALID_ORIGIN = {"K", "P", "G"}
 NIGHTLY_GATES = {
@@ -286,7 +286,7 @@ def main() -> None:
             fail(f"{scenario}: owner {row['owner_ticket']!r} != {expected_owner!r}")
         if row["origin"] == "K" and row["owner_ticket"] is not None:
             fail(f"{scenario}: baseline K row must not claim an implementation owner")
-        if row["contract"] != f"docs/misc/tmp-engine-checklist-sep-25.md::{scenario}":
+        if row["contract"] != f"docs/evidence/sep25/scenarios.md::{scenario}":
             fail(f"{scenario}: contract anchor drift")
         if not isinstance(row["oracle"], str) or not row["oracle"].strip():
             fail(f"{scenario}: empty independent oracle")

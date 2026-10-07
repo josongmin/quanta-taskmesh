@@ -2,7 +2,7 @@
 
 `taskmesh`는 분석 시스템과 서비스 런타임을 위한 governed execution control-plane이다.
 현재 구현·검증·소비자 적용·release 상태와 각 권한 문서의 경로는
-[operating kernel](docs/ssot/README.md)에 정리한다.
+[문서 인덱스](docs/README.md)에 정리한다.
 
 핵심 원칙:
 
@@ -117,8 +117,8 @@ dirty checkout 전체를 의도적으로 진단해야 할 때만
 현재 테스트망이 compiler-generated 변경 전체를 잡는지 감사하는 final-candidate proof다. 수천 개
 변이를 격리 실행하므로 일상 수정이나 focused 재검증에서는 실행하지 않는다.
 구현·증명·운영을 함께 재감사할 때는
-[Taskmesh SOTA Audit Checklist](docs/taskmesh-sota-audit-checklist.md)의 `M/R/D` 판정과
-증거 ledger를 사용한다.
+[ADR 0006](docs/adr/0006-source-bound-verification-authority.md)의 source·증거 범위와
+[미완료 작업](docs/remaining-work.md)을 기준으로 판정한다.
 
 ## 외부 사용 가이드 (Rust)
 
@@ -541,7 +541,7 @@ lease를 돌려준다 — 그 뒤로는 `release_leased(token)`만 permit을 끝
 
 문서:
 
-1. [Current-source audit and remediation plan](docs/plans/2026-10-03-current-source-remediation.md)
+1. [Remaining work](docs/remaining-work.md)
 2. [Library Spec](docs/taskmesh-library-spec.md)
 3. [External Interface](docs/taskmesh-external-interface.md)
 4. [Accepted ADR index](docs/adr/README.md)

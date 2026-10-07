@@ -16,7 +16,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SPEC = REPO / "tools/release/finding-proof-spec.json"
-PLAN = REPO / "docs/bugbash/sep-21/tickets/plan.json"
+PLAN = REPO / "docs/evidence/sep21/ticket-map.json"
 IDS = [f"TM21-{number:03d}" for number in range(1, 24)]
 RUST_TEST = re.compile(r"(?m)^\s*(?:async\s+)?fn\s+([A-Za-z_][A-Za-z_0-9]*)\s*\(")
 PYTEST = re.compile(r"(?m)^def\s+(test_[A-Za-z_0-9]+)\s*\(")
@@ -27,22 +27,15 @@ if str(REPO) not in sys.path:
 from tools.qualification.receipt import source_identity  # noqa: E402
 from tools.release.execution import run_release_command, settled_exit_code  # noqa: E402
 from tools.release.semver import sha256  # noqa: E402
+from tools.release.ticket_map import ticket_rows  # noqa: E402
 
 
 def expected_tickets(plan: object) -> dict[str, str]:
-    if not isinstance(plan, dict) or not isinstance(plan.get("tickets"), list):
-        raise ValueError("finding ticket plan missing")
-    mapping: dict[str, str] = {}
-    for ticket in plan["tickets"]:
-        if not isinstance(ticket, dict) or not isinstance(ticket.get("findings"), list):
-            raise ValueError("finding ticket plan malformed")
-        for finding in ticket["findings"]:
-            if not isinstance(finding, str) or finding in mapping:
-                raise ValueError("duplicate or malformed finding in ticket plan")
-            mapping[finding] = ticket.get("id")
-    if sorted(mapping) != IDS:
-        raise ValueError("ticket plan does not map exactly 23 findings")
-    return mapping
+    return {
+        finding: ticket["id"]
+        for ticket in ticket_rows(plan)
+        for finding in ticket["findings"]
+    }
 
 
 def test_command(witness: dict) -> list[str]:

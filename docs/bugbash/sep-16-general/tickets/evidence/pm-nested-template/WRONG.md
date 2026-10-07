@@ -1,3 +1,0 @@
-WRONG TEMPLATE
-source body
-

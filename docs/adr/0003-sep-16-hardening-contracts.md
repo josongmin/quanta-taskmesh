@@ -5,7 +5,7 @@
 - 결정자: Song Min
 - 선행: [0001 — Feature-sliced 헥사고날 아키텍처](0001-hexagonal-feature-sliced-architecture.md), [0002 — DRR proportional ring](0002-drr-proportional-fairness.md)
 - 원본 계획: Git history before the 2026-10-03 plan cleanup.
-- 원본 감사: [Sep-16 general audit](../bugbash/sep-16-general/tickets/README.md)
+- 원본 감사: [Sep-16 general audit](0008-audit-implementation-record.md)
 - 후속 결정: [0005 — 실행 권한·응답·custody](0005-sep-25-execution-response-and-custody.md)는
   Sep-25 라이브러리의 `CompleteBy` caller-response fence와 executor preflight를 명시한다.
   아래 Sep-21 후보 절의 release 승인을 소급 확정하지 않는다.
@@ -16,7 +16,7 @@
 않은 계약**의 증상이었다. 같은 질문에 코드의 두 지점이 서로 다르게 답하고 있었다는
 뜻이다. 아래 결정들은 그 질문들을 하나씩 닫는다. 각 항목은 선택·근거·거부한
 대안·소비자 영향 순서로 기록한다. D01–D12는 최초 구현에서, D13–D16과 D05/D08/D09/D10의
-개정은 구현 직후 실행한 3-track 적대적 감사([AUDIT-2026-09-16](../audits/2026-09-16-sep16-hardening.md))에서
+개정은 구현 직후 실행한 3-track 적대적 감사([AUDIT-2026-09-16](0008-audit-implementation-record.md))에서
 확정했다. D17은 마무리 검증에서 예외 대장에 남아 있던 shutdown 계약(H16-012-A07)을 닫으며 추가했다.
 
 이 ADR은 구현된 계약을 기술한다. 계획 문서의 `PROPOSED`와 달리 여기 적힌 것은

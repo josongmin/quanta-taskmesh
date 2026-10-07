@@ -1,0 +1,199 @@
+{
+  "schema_version": 2,
+  "scope": "historical-implementation-and-release-input",
+  "history_source": "2123a462764a3d6445fd536a1e5a5f99d019425e",
+  "tickets": [
+    {
+      "id": "SEP21-C01",
+      "file": "docs/adr/0008-audit-implementation-record.md",
+      "findings": [
+        "TM21-010"
+      ],
+      "acceptance_ids": [
+        "SEP21-C01-A01",
+        "SEP21-C01-A02",
+        "SEP21-C01-A03",
+        "SEP21-C01-A04",
+        "SEP21-C01-A05",
+        "SEP21-C01-A06",
+        "SEP21-C01-A07"
+      ]
+    },
+    {
+      "id": "SEP21-E01",
+      "file": "docs/adr/0008-audit-implementation-record.md",
+      "findings": [
+        "TM21-008"
+      ],
+      "acceptance_ids": [
+        "SEP21-E01-A01",
+        "SEP21-E01-A02",
+        "SEP21-E01-A03",
+        "SEP21-E01-A04",
+        "SEP21-E01-A05"
+      ]
+    },
+    {
+      "id": "SEP21-E02",
+      "file": "docs/adr/0008-audit-implementation-record.md",
+      "findings": [
+        "TM21-004"
+      ],
+      "acceptance_ids": [
+        "SEP21-E02-A01",
+        "SEP21-E02-A02",
+        "SEP21-E02-A03",
+        "SEP21-E02-A04",
+        "SEP21-E02-A05"
+      ]
+    },
+    {
+      "id": "SEP21-E03",
+      "file": "docs/adr/0008-audit-implementation-record.md",
+      "findings": [
+        "TM21-016"
+      ],
+      "acceptance_ids": [
+        "SEP21-E03-A01",
+        "SEP21-E03-A02",
+        "SEP21-E03-A03",
+        "SEP21-E03-A04",
+        "SEP21-E03-A05",
+        "SEP21-E03-A06"
+      ]
+    },
+    {
+      "id": "SEP21-E04",
+      "file": "docs/adr/0008-audit-implementation-record.md",
+      "findings": [
+        "TM21-001",
+        "TM21-002",
+        "TM21-009",
+        "TM21-023"
+      ],
+      "acceptance_ids": [
+        "SEP21-E04-A01",
+        "SEP21-E04-A02",
+        "SEP21-E04-A03",
+        "SEP21-E04-A04",
+        "SEP21-E04-A05",
+        "SEP21-E04-A06",
+        "SEP21-E04-A07",
+        "SEP21-E04-A08"
+      ]
+    },
+    {
+      "id": "SEP21-H01",
+      "file": "docs/adr/0008-audit-implementation-record.md",
+      "findings": [
+        "TM21-007"
+      ],
+      "acceptance_ids": [
+        "SEP21-H01-A01",
+        "SEP21-H01-A02",
+        "SEP21-H01-A03",
+        "SEP21-H01-A04",
+        "SEP21-H01-A05"
+      ]
+    },
+    {
+      "id": "SEP21-H02",
+      "file": "docs/adr/0008-audit-implementation-record.md",
+      "findings": [
+        "TM21-005",
+        "TM21-006",
+        "TM21-019"
+      ],
+      "acceptance_ids": [
+        "SEP21-H02-A01",
+        "SEP21-H02-A02",
+        "SEP21-H02-A03",
+        "SEP21-H02-A04",
+        "SEP21-H02-A05",
+        "SEP21-H02-A06"
+      ]
+    },
+    {
+      "id": "SEP21-H03",
+      "file": "docs/adr/0008-audit-implementation-record.md",
+      "findings": [
+        "TM21-003",
+        "TM21-015",
+        "TM21-020"
+      ],
+      "acceptance_ids": [
+        "SEP21-H03-A01",
+        "SEP21-H03-A02",
+        "SEP21-H03-A03",
+        "SEP21-H03-A04",
+        "SEP21-H03-A05",
+        "SEP21-H03-A06"
+      ]
+    },
+    {
+      "id": "SEP21-V01",
+      "file": "docs/adr/0008-audit-implementation-record.md",
+      "findings": [
+        "TM21-011",
+        "TM21-014",
+        "TM21-022"
+      ],
+      "acceptance_ids": [
+        "SEP21-V01-A01",
+        "SEP21-V01-A02",
+        "SEP21-V01-A03",
+        "SEP21-V01-A04",
+        "SEP21-V01-A05",
+        "SEP21-V01-A06",
+        "SEP21-V01-A07"
+      ]
+    },
+    {
+      "id": "SEP21-V02",
+      "file": "docs/adr/0008-audit-implementation-record.md",
+      "findings": [
+        "TM21-012",
+        "TM21-017"
+      ],
+      "acceptance_ids": [
+        "SEP21-V02-A01",
+        "SEP21-V02-A02",
+        "SEP21-V02-A03",
+        "SEP21-V02-A04",
+        "SEP21-V02-A05",
+        "SEP21-V02-A06"
+      ]
+    },
+    {
+      "id": "SEP21-V03",
+      "file": "docs/adr/0008-audit-implementation-record.md",
+      "findings": [
+        "TM21-018",
+        "TM21-021"
+      ],
+      "acceptance_ids": [
+        "SEP21-V03-A01",
+        "SEP21-V03-A02",
+        "SEP21-V03-A03",
+        "SEP21-V03-A04",
+        "SEP21-V03-A05",
+        "SEP21-V03-A06"
+      ]
+    },
+    {
+      "id": "SEP21-R01",
+      "file": "docs/adr/0008-audit-implementation-record.md",
+      "findings": [
+        "TM21-013"
+      ],
+      "acceptance_ids": [
+        "SEP21-R01-A01",
+        "SEP21-R01-A02",
+        "SEP21-R01-A03",
+        "SEP21-R01-A04",
+        "SEP21-R01-A05",
+        "SEP21-R01-A06"
+      ]
+    }
+  ]
+}

@@ -64,7 +64,7 @@ qualification remain separate decisions.
   pool has a global bound.
 - Deployment owners must check deadline, context, and shared-executor assumptions
   at their actual call sites; see the
-  [current consumer adoption plan](../plans/2026-10-03-current-source-remediation.md).
+  [current consumer adoption plan](../remaining-work.md).
 - Exact API behavior and error variants remain in the
   [library spec](../taskmesh-library-spec.md) and
   [external interface](../taskmesh-external-interface.md).

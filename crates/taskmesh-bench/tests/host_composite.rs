@@ -5,7 +5,10 @@ const FIXTURE: &[u8] = include_bytes!("../../../tools/bench/scenarios/h6-composi
 
 #[tokio::test]
 async fn composite_child_failure_keeps_keyed_reduce_and_governance() {
-    let scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");
+    let mut scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");
+    let mut unused = scenario.classes[0].clone();
+    unused.name = "unused".into();
+    scenario.classes.push(unused);
     let (mut raw, topology) = run_composite_with_topology(&scenario)
         .await
         .expect("composite diagnostic run");
@@ -28,6 +31,7 @@ async fn composite_child_failure_keeps_keyed_reduce_and_governance() {
         .is_err_and(|error| error.contains("capability catalog")));
 
     check_success_raw_population(&scenario, &raw);
+    check_success_raw_contract(&scenario, &raw);
 
     raw.checksum += 1;
     assert!(raw
@@ -464,5 +468,205 @@ fn check_success_raw_population(
             "identity, population or parent time differs",
             |value| value.validate_against(scenario),
         );
+    }
+}
+
+fn check_success_raw_contract(
+    scenario: &CompositeScenario,
+    raw: &taskmesh_bench::composite_host::CompositeRaw,
+) {
+    use taskmesh_bench::composite_host::CompositeRaw;
+    use taskmesh_bench::host_scenarios::HostPath;
+
+    raw.validate_against(scenario).expect("valid success raw");
+    let reject = |base: &CompositeRaw, pointer: &str, value: serde_json::Value, expected: &str| {
+        reject_raw_edit(base, pointer, value, expected, |candidate| {
+            candidate.validate_against(scenario)
+        });
+    };
+    let identity = "composite raw identity, population or parent time differs";
+    for (field, value) in [
+        ("schema_version", serde_json::json!(2)),
+        ("mode", serde_json::json!("other")),
+        ("scenario_id", serde_json::json!("other")),
+    ] {
+        reject(raw, &format!("/{field}"), value, identity);
+    }
+
+    // Normalize time so every one-field corruption reaches its own bound,
+    // regardless of the timings of the one real diagnostic run above.
+    let mut timed = raw.clone();
+    timed.parent_submitted_ns = 10;
+    timed.parent_response_ns = 40;
+    timed.reduce_started_ns = 30;
+    timed.reduce_finished_ns = 35;
+    for row in &mut timed.children {
+        row.submitted_ns = 10;
+        row.body_started_ns = Some(15);
+        row.body_finished_ns = Some(20);
+        row.response_ns = 25;
+    }
+    timed
+        .validate_against(scenario)
+        .expect("valid normalized times");
+    for (field, value) in [
+        ("parent_submitted_ns", serde_json::json!(41)),
+        ("reduce_started_ns", serde_json::json!(36)),
+        ("reduce_finished_ns", serde_json::json!(41)),
+    ] {
+        reject(&timed, &format!("/{field}"), value, identity);
+    }
+    let mut inclusive = timed.clone();
+    inclusive.parent_response_ns = 30;
+    inclusive.reduce_finished_ns = 30;
+    for row in &mut inclusive.children {
+        row.body_started_ns = Some(10);
+        row.body_finished_ns = Some(10);
+        row.response_ns = 30;
+    }
+    inclusive
+        .validate_against(scenario)
+        .expect("equal declaration boundaries are valid");
+    let mut simultaneous = timed.clone();
+    simultaneous.parent_response_ns = 10;
+    simultaneous.reduce_started_ns = 10;
+    simultaneous.reduce_finished_ns = 10;
+    for row in &mut simultaneous.children {
+        row.body_started_ns = Some(10);
+        row.body_finished_ns = Some(10);
+        row.response_ns = 10;
+    }
+    simultaneous
+        .validate_against(scenario)
+        .expect("all parent, child and reduce events may share the inclusive boundary");
+
+    for index in 0..3 {
+        let expected = format!("composite child {}: invalid attribution or time", index + 1);
+        reject(
+            &timed,
+            &format!("/children/{index}/key"),
+            serde_json::json!(0),
+            &expected,
+        );
+        let other_path = if timed.children[index].path == HostPath::Io {
+            HostPath::Blocking
+        } else {
+            HostPath::Io
+        };
+        reject(
+            &timed,
+            &format!("/children/{index}/path"),
+            serde_json::json!(other_path),
+            &expected,
+        );
+        for (field, value) in [
+            ("submitted_ns", serde_json::json!(9)),
+            ("body_started_ns", serde_json::json!(9)),
+            ("body_finished_ns", serde_json::json!(14)),
+            ("response_ns", serde_json::json!(19)),
+            ("response_ns", serde_json::json!(31)),
+            ("body_started_ns", serde_json::json!(null)),
+            ("body_finished_ns", serde_json::json!(null)),
+        ] {
+            reject(
+                &timed,
+                &format!("/children/{index}/{field}"),
+                value,
+                &expected,
+            );
+        }
+    }
+
+    let failure = "composite child 2: failure outcome differs";
+    reject(
+        raw,
+        "/children/1/outcome",
+        serde_json::json!(ResponseOutcome::Success),
+        failure,
+    );
+    reject(raw, "/children/1/value", serde_json::json!(2), failure);
+    for index in [0, 2] {
+        let expected = format!("composite child {}: success outcome differs", index + 1);
+        reject(
+            raw,
+            &format!("/children/{index}/outcome"),
+            serde_json::json!(ResponseOutcome::TaskError),
+            &expected,
+        );
+        reject(
+            raw,
+            &format!("/children/{index}/value"),
+            serde_json::json!(null),
+            &expected,
+        );
+        reject(
+            raw,
+            &format!("/children/{index}/value"),
+            serde_json::json!(index + 2),
+            &expected,
+        );
+    }
+    reject(
+        raw,
+        "/reduced_keys",
+        serde_json::json!([1, 2]),
+        "caller-owned keyed reduction differs",
+    );
+
+    let unsettled = "composite governance did not settle";
+    for field in ["root_attribution_cleared", "drain_ok", "conservation_ok"] {
+        reject(
+            raw,
+            &format!("/{field}"),
+            serde_json::json!(false),
+            unsettled,
+        );
+    }
+    let topology = scenario.resolved_topology().expect("resolved scenario");
+    let pool = topology
+        .capability_limits
+        .iter()
+        .find(|(_, limit)| **limit > 0)
+        .expect("registered pool with capacity")
+        .0;
+    let mut held = raw.clone();
+    *held.final_capabilities.get_mut(pool).unwrap() = 1;
+    assert!(held
+        .validate_against(scenario)
+        .is_err_and(|error| error == unsettled));
+
+    let mut missing = raw.clone();
+    missing.class_counters.remove("child");
+    assert!(missing
+        .validate_against(scenario)
+        .is_err_and(|error| error == unsettled));
+    let mut renamed = raw.clone();
+    let child = renamed.class_counters.remove("child").unwrap();
+    renamed.class_counters.insert("unknown".into(), child);
+    assert!(renamed
+        .validate_against(scenario)
+        .is_err_and(|error| error == "composite class child missing"));
+    for (name, expected_count) in [("parent", 1), ("child", 3), ("unused", 0)] {
+        let expected = format!("composite class {name} counters differ");
+        for field in ["admitted", "started", "terminated"] {
+            reject(
+                raw,
+                &format!("/class_counters/{name}/{field}"),
+                serde_json::json!(if expected_count == 0 {
+                    1
+                } else {
+                    expected_count - 1
+                }),
+                &expected,
+            );
+        }
+        for field in ["inflight", "queued"] {
+            reject(
+                raw,
+                &format!("/class_counters/{name}/{field}"),
+                serde_json::json!(1),
+                &expected,
+            );
+        }
     }
 }

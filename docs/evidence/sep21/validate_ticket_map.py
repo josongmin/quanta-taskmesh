@@ -23,10 +23,15 @@ def main() -> None:
             raise ValueError(f"{row['id']}: historical evidence section missing")
         if status == "IMPLEMENTED_UNQUALIFIED":
             unqualified.append(row["id"])
+    recorded_unqualified = [
+        row["id"] for row in rows if row["closure_status"] == "IMPLEMENTED_UNQUALIFIED"
+    ]
     print(
         "SEP-21 map PASS: tickets=12 findings=23 "
         f"acceptance={sum(len(row['acceptance_ids']) for row in rows)} "
-        f"historically_unqualified={','.join(unqualified)} source=not_qualified"
+        f"historically_unqualified={','.join(unqualified)} "
+        f"recorded_closure_unqualified={','.join(recorded_unqualified)} "
+        "source=not_qualified"
     )
 
 

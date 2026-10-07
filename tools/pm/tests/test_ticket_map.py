@@ -61,7 +61,16 @@ def test_same_23_findings_swapped_between_tickets_rejects_historical_drift() -> 
 
 
 @pytest.mark.parametrize(
-    "case", ["old_schema", "duplicate_id", "missing_finding", "path_escape", "acceptance_gap"]
+    "case",
+    [
+        "old_schema",
+        "duplicate_id",
+        "missing_finding",
+        "path_escape",
+        "acceptance_gap",
+        "unknown_status",
+        "malformed_status",
+    ],
 )
 def test_invalid_map_rejects(case: str) -> None:
     plan = deepcopy(current_map())
@@ -74,10 +83,34 @@ def test_invalid_map_rejects(case: str) -> None:
         row["findings"] = []
     elif case == "path_escape":
         row["file"] = "docs/adr/../../../outside.md"
-    else:
+    elif case == "acceptance_gap":
         row["acceptance_ids"].pop(0)
+    elif case == "unknown_status":
+        row["closure_status"] = "APPROVED"
+    else:
+        row["closure_status"] = []
     with pytest.raises(ValueError):
         ticket_map.ticket_rows(plan)
+
+
+def test_release_checkpoint_can_advance_without_rewriting_historical_status() -> None:
+    plan = current_map()
+    for row in plan["tickets"]:
+        if row["id"] in {"SEP21-V01", "SEP21-V02"}:
+            assert ticket_map.adr_evidence(REPO, row)[0] == "IMPLEMENTED_UNQUALIFIED"
+            row["closure_status"] = "HOSTED_QUALIFIED"
+    reasons: list[str] = []
+    graph = receipt.closure_report(REPO, plan, reasons)
+    assert not reasons
+    assert {row["ticket"] for row in graph if row["status"] == "HOSTED_QUALIFIED"} == {
+        "SEP21-V01",
+        "SEP21-V02",
+    }
+    assert all(
+        ticket_map.adr_evidence(REPO, row)[0] == "IMPLEMENTED_UNQUALIFIED"
+        for row in plan["tickets"]
+        if row["id"] in {"SEP21-V01", "SEP21-V02"}
+    )
 
 
 @pytest.mark.parametrize(
@@ -139,3 +172,21 @@ def test_adr_symlink_cannot_replace_historical_evidence(tmp_path: Path) -> None:
     target.symlink_to(REPO / row["file"])
     with pytest.raises(ValueError, match="symlinked"):
         ticket_map.adr_evidence(tmp_path, row)
+
+
+def test_internal_parent_symlink_cannot_close_a_ticket_without_identity(tmp_path: Path) -> None:
+    plan = current_map()
+    relocated = tmp_path / "docs/relocated"
+    relocated.mkdir(parents=True)
+    for name in {row["file"] for row in plan["tickets"]}:
+        (relocated / Path(name).name).write_bytes((REPO / name).read_bytes())
+    (tmp_path / "docs/adr").symlink_to("relocated", target_is_directory=True)
+    with pytest.raises(ValueError, match="parent directory is symlinked"):
+        ticket_map.adr_evidence(tmp_path, plan["tickets"][0])
+    reasons: list[str] = []
+    graph = receipt.closure_report(tmp_path, plan, reasons)
+    assert len(graph) == 12
+    assert all(row["ticket_artifact"] is None for row in graph)
+    assert all(row["status"] == "MISSING" for row in graph)
+    assert all(row["evidence_section"] is False for row in graph)
+    assert sum("identity unavailable" in reason for reason in reasons) == 12

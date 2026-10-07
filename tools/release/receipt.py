@@ -307,12 +307,15 @@ def closure_report(root: Path, plan: object, reasons: list[str]) -> list[dict]:
         ticket_id, path = ticket["id"], ticket["file"]
         file_id = identity(root, path)
         try:
-            status, evidence = ticket_map.adr_evidence(root, ticket)
+            if file_id is None:
+                raise ValueError("ADR artifact missing or unsafe; identity unavailable")
+            historical_status, evidence = ticket_map.adr_evidence(root, ticket)
+            status = ticket["closure_status"]
         except (OSError, UnicodeError, ValueError) as error:
             reasons.append(f"ticket {ticket_id} ADR evidence invalid: {error}")
-            status, evidence = "MISSING", False
-        # This is a historical lifecycle value. Current release authority is
-        # checked by the exact-source ordinary receipt and finding proof below.
+            historical_status, status, evidence = "MISSING", "MISSING", False
+        # Lifecycle metadata does not qualify or block current release proof.
+        # The ordinary exact-source receipt and finding proof remain required.
         if ticket_id != "SEP21-R01" and not evidence:
             reasons.append(f"upstream ticket {ticket_id} has no closure/producer evidence section")
         closure.append(
@@ -320,6 +323,7 @@ def closure_report(root: Path, plan: object, reasons: list[str]) -> list[dict]:
                 "ticket": ticket_id,
                 "findings": ticket["findings"],
                 "status": status,
+                "historical_status": historical_status,
                 "ticket_artifact": file_id,
                 "evidence_section": evidence,
             }

@@ -390,7 +390,9 @@ Staged rollout (per consumer, in this order):
 - [ ] Pre-flight the configuration the consumer will run, fail-closed, before
       any traffic: `TopologyConfig::validate()`, then `Builder::build()` — a
       policy the engine rejects (`GovernorError::PolicyViolation`,
-      `InvalidTopology`, `ExecutorDeclaresFewerWorkers`) must be fixed here.
+      `InvalidTopology`, including `ExecutorWorkerCountMismatch`,
+      `ExecutorSubmissionMayBlock` or unknown executor domain/worker count)
+      must be fixed here.
 - [ ] Inventory diff, old vs new, from `Runtime::snapshot()` at idle:
       `schema_version` (1 → 2), the `substrates` set, and `capabilities`
       (every registered pool with its `limit`; `0` means ungated). A pool the

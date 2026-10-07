@@ -24,34 +24,45 @@ Sources kept in lockstep (drift fails CI):
 Adding a substrate is an explicit, reviewed change to all three. Registration
 rejects duplicates and any non-`AuthorityOnly` record without a capability pool.
 
+The host additionally registers `physical.shared_blocking`, `physical.cpu`, and
+`physical.dedicated` as `CompetingExecution` records. These worker domains are
+finite and nonzero, separate from the five built-in role pools above. Their
+registration and limits are owned by `crates/taskmesh/src/builder.rs` and
+`crates/taskmesh-contract/src/topology.rs`. No per-engine executor fleet follows
+from registering another semantic capability.
+
 ## Inventory backs the runtime (not just snapshot metadata)
 
 The registered inventory is authoritative for *which* worker gates exist, not
 merely descriptive:
 
-- the host declares one capability-pool **limit** per registered substrate
-  whose pool is topology-sized `> 0` (`PolicySet::with_capability_limits`, set
-  by `Builder::build`); the engine refuses a limit for a pool no substrate
-  provides, and a pool absent from the inventory is ungated;
+- each executing pool has explicit capacity authority
+  (`PolicySet::with_capability_limits`, installed by `Builder::build`). Legacy
+  built-in role slots `0` retain explicit-unbounded role authority; CPU and
+  host physical domains have finite resolved limits. Unknown capability names
+  reject; a missing executing-pool authority is never upgraded to ungated;
 - occupancy is accounted **inside the engine**, in the same admission
   transition as class inflight and the resource budget. There is no host-side
-  semaphore: a request that cannot have a worker is queued under its own
-  class's overflow policy or shed, never parked in a queue that policy cannot
-  see (this replaced the former `SubstrateGates`);
+  semaphore: a request that cannot acquire Taskmesh submission capacity is
+  queued under its class's overflow policy or shed (this replaced the former
+  `SubstrateGates`). Accepted descriptors are adapter declarations, not worker
+  availability measurements. Adapter-internal waiting and ambient shared-pool
+  occupancy remain outside the Governor's queue authority;
 - the hint→pool mapping is the contract's `SubstrateHint::capability_pool()`,
-  resolved once per submission into a `ResolvedExecutionPlan` (a stack request
+  resolved once per host submission into a `ValidatedDispatchPlan` (a stack request
   resolves to `large_stack` whichever blocking-family hint carried it), and
   frozen onto the pending record at intake;
 - topology (`blocking_threads`, `large_stack_slots`, `local_runtime_slots`,
-  `maintenance_workers`, resolved CPU workers) supplies the **slot count**,
+  `maintenance_workers`, resolved CPU workers and `physical_domains`) supplies the **slot count**,
   validated by `TopologyConfig::validate` before anything is sized and with
   detected parallelism read once per build; the inventory supplies
   **existence + kind + capability pool**. The two compose:
   inventory ∩ topology = the live limit set, visible as `Snapshot::capabilities`.
 
 So `SubstrateRecord.kind` / `capability_pool` are governance authority (snapshot,
-validation, *and* gate derivation), and a `0` slot count means "unlimited" for an
-existing pool — distinct from a pool that does not exist at all.
+validation, *and* gate derivation). A legacy role's `0` removes only that role
+limit; shared blocking, CPU and dedicated work still consume their finite
+physical domain. `CpuMode::Fixed(0)` and `PhysicalDomainMode::Fixed(0)` reject.
 
 ## Structural no-go ratchet
 
@@ -69,12 +80,14 @@ than intersecting it with a hardcoded crate list first. These invariants hold:
    is the blocking pool by definition and is governed by the `blocking` /
    `large_stack` / `maintenance` capability gates). Neither is reachable
    without an execution lease. Rayon plugs into the same `CpuExecutor` port.
-2. **No unbounded competing queue.** Every queueable class declares
-   `max_queue_depth > 0` (enforced by `validate_policy`); overflow past it is
-   `QueueFull`, never unbounded growth. Proven by `overload_stability` bench
-   (`max_queue_observed <= max_queue_depth`).
-3. **No engine-specific pool.** Substrates are the fixed allowlist above; the
-   engine never grows per-engine pools.
+2. **Bounded Taskmesh pending queues.** Every queueable class declares
+   `max_queue_depth > 0` (enforced by `validate_policy`). A full class queue
+   rejects with `MemorySaturated`, `SubstrateSaturated`, or `QueueFull`, according
+   to the blocker. `admission_queue` regressions cover the typed refusals;
+   `overload_stability` checks `max_queue_observed <= max_queue_depth`. These
+   bounds do not measure adapter-internal or ambient shared-pool waiting.
+3. **No engine-specific pool.** The engine owns governance state, not executor
+   implementations. Registered capability additions do not create worker pools.
 4. **Fail-closed admission.** Unknown/disabled classes reject; no config-side
    default-admit escape hatch.
 5. **Deterministic reduce.** No fan-out stage ships without a complete

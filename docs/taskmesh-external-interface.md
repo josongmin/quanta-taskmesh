@@ -95,7 +95,8 @@ let out = runtime
      CompleteBy는 ZERO로 가려지지 않는다. 경합 시 우선순위는 cancel → absolute deadline
      → relative timeout이며 equality는 expired다. permit handoff 직전에 같은 arbiter를 재검사하고
      거절된 permit은 work closure 생성 없이 반환한다.
-   - `RunFor`는 worker 자신의 시작 시각 기준이다(inline executor 포함). 완료 시각이 budget을 넘긴 결과는
+   - `RunFor`는 worker 자신의 시작 시각 기준이다. inline executor는 설치 시 거절한다.
+     완료 시각이 budget을 넘긴 결과는
      `Ok`가 아니라 `DeadlineExceeded`다. `run_blocking`의 `RunFor`는 caller 대기만 제한하며 시작된 동기
      작업을 중단하지 않는다.
    - **응답과 custody는 다른 사건이다.** caller future drop·deadline·cancel은 caller의 대기를 끝낼 뿐이며,
@@ -111,10 +112,12 @@ let out = runtime
      충돌하지 않으며 release/advance/claim/abandon은 typed negative outcome과 side-effect 0을 보장한다.
      local ID 공간이 소진되면 admission은 `IdentityExhausted`로 거절되고 counter를 wrap/reuse하지 않는다.
 6. substrate hint는 run path와 일치해야 한다(불일치 → `SubstrateMismatch`). requested-stack 크기는
-   모든 sync/async 경로에서 admission 전에 단일 validator로 판정된다. topology slot은 실제 동시성
-   상한(`0`=무제한)이며 capability 점유는 class inflight·resource budget과 **같은** admission 결정이다:
-   admission 앞에 별도 대기 큐가 없으므로, 풀이 가득 차면 비-queueing 클래스는 즉시 `SubstrateSaturated`로
-   shed되고 queueing 클래스는 자기 `max_queue_depth` 안에서 기다린다. `stack_size_bytes`가 있는
+   모든 sync/async 경로에서 admission 전에 단일 validator로 판정된다. legacy role slot의 `0`은
+   해당 role gate 생략이며 CPU와 physical worker domain은 유한한 resolved 상한을 유지한다.
+   capability 점유는 class inflight·resource budget과 **같은** admission 결정이다:
+   admission 앞에 별도 대기 큐가 없다. capability가 primary blocker이면 비-queueing 클래스는
+   `SubstrateSaturated`로 shed되고 queueing 클래스는 자기 `max_queue_depth` 안에서 기다린다.
+   class inflight도 포화이면 class가 primary blocker로 우선한다. `stack_size_bytes`가 있는
    blocking-family 제출은 hint와 무관하게 `large_stack` pool을 소비한다. topology는 `Builder::build`에서
    검증되며(inverted worker window·과대 slot count → `GovernorError::InvalidTopology`) panic하지 않는다.
    SEP-21 host는 `physical.shared_blocking`/`physical.cpu`/`physical.dedicated`에 유한한

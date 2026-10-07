@@ -17,7 +17,8 @@
         "SEP21-C01-A05",
         "SEP21-C01-A06",
         "SEP21-C01-A07"
-      ]
+      ],
+      "closure_status": "LOCALLY_VERIFIED"
     },
     {
       "id": "SEP21-E01",
@@ -31,7 +32,8 @@
         "SEP21-E01-A03",
         "SEP21-E01-A04",
         "SEP21-E01-A05"
-      ]
+      ],
+      "closure_status": "LOCALLY_VERIFIED"
     },
     {
       "id": "SEP21-E02",
@@ -45,7 +47,8 @@
         "SEP21-E02-A03",
         "SEP21-E02-A04",
         "SEP21-E02-A05"
-      ]
+      ],
+      "closure_status": "LOCALLY_VERIFIED"
     },
     {
       "id": "SEP21-E03",
@@ -60,7 +63,8 @@
         "SEP21-E03-A04",
         "SEP21-E03-A05",
         "SEP21-E03-A06"
-      ]
+      ],
+      "closure_status": "LOCALLY_VERIFIED"
     },
     {
       "id": "SEP21-E04",
@@ -80,7 +84,8 @@
         "SEP21-E04-A06",
         "SEP21-E04-A07",
         "SEP21-E04-A08"
-      ]
+      ],
+      "closure_status": "LOCALLY_VERIFIED"
     },
     {
       "id": "SEP21-H01",
@@ -94,7 +99,8 @@
         "SEP21-H01-A03",
         "SEP21-H01-A04",
         "SEP21-H01-A05"
-      ]
+      ],
+      "closure_status": "LOCALLY_VERIFIED"
     },
     {
       "id": "SEP21-H02",
@@ -111,7 +117,8 @@
         "SEP21-H02-A04",
         "SEP21-H02-A05",
         "SEP21-H02-A06"
-      ]
+      ],
+      "closure_status": "LOCALLY_VERIFIED"
     },
     {
       "id": "SEP21-H03",
@@ -128,7 +135,8 @@
         "SEP21-H03-A04",
         "SEP21-H03-A05",
         "SEP21-H03-A06"
-      ]
+      ],
+      "closure_status": "LOCALLY_VERIFIED"
     },
     {
       "id": "SEP21-V01",
@@ -146,7 +154,8 @@
         "SEP21-V01-A05",
         "SEP21-V01-A06",
         "SEP21-V01-A07"
-      ]
+      ],
+      "closure_status": "IMPLEMENTED_UNQUALIFIED"
     },
     {
       "id": "SEP21-V02",
@@ -162,7 +171,8 @@
         "SEP21-V02-A04",
         "SEP21-V02-A05",
         "SEP21-V02-A06"
-      ]
+      ],
+      "closure_status": "IMPLEMENTED_UNQUALIFIED"
     },
     {
       "id": "SEP21-V03",
@@ -178,7 +188,8 @@
         "SEP21-V03-A04",
         "SEP21-V03-A05",
         "SEP21-V03-A06"
-      ]
+      ],
+      "closure_status": "LOCALLY_VERIFIED"
     },
     {
       "id": "SEP21-R01",
@@ -193,7 +204,8 @@
         "SEP21-R01-A04",
         "SEP21-R01-A05",
         "SEP21-R01-A06"
-      ]
+      ],
+      "closure_status": "IMPLEMENTED_UNQUALIFIED"
     }
   ]
 }

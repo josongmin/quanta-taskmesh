@@ -21,6 +21,9 @@ This documentation/release-authority overlay needs its own final clean-source
 CI16, hosted merge/main CI and one complete Linux full23 (CI + nightly union) receipt. Preserve raw
 identity lists/outcomes, source tuple, producer envelopes, IAI baseline continuity
 and every failed attempt. The historical V01/V02 ticket states remain unqualified.
+Recorded `closure_status` values are checkpoint metadata, not the evaluator's
+current qualification authority. Editing tracked checkpoints changes source
+identity and requires new proof; exact-source execution owns the current verdict.
 
 The `e5c209ce` campaign stopped early with a composite key/path miss (359 Caught,
 64 Unviable, one Missed; 424 completed of 2,653 selected, from 2,665 unfiltered
@@ -43,6 +46,13 @@ request under AGENTS.md. This document cleanup provides no campaign authorizatio
 Moving the Sep-21 input to schema-2 `docs/evidence/sep21/ticket-map.json` invalidates
 old finding/release input identities. Regenerate them on final clean source.
 
+The documentation owner's 2026-10-07 artifact check in the original checkout found
+the canonical macOS gate receipt and semver manifest at
+`f2808d379b743fc5eaa7e295987c906dd7bc2957`, not its reviewed `e503b6c7` source.
+Those canonical local paths do not include alternate archives or remote receipts.
+The independently preserved E503 CI16 and 584 candidate CI16 receipts above remain
+source-specific; neither proves this subsequent source overlay.
+
 ## T2 — Human compatibility and release decision
 
 **Owner: Taskmesh release owner and human reviewer.** Rerun pinned
@@ -63,7 +73,8 @@ retains the technical surfaces; [release checklist](release-checklist.md) owns p
 **Owner: B00/performance.** Register consumer SLO, completion floor, precision/MDE,
 rate grid and representative/privacy-safe H7 trace before repeated matched
 quiet-host baseline/candidate acquisition. Retain failed attempts, provenance,
-sampler distortion and headroom. Equivalent peer comparison and independent
+sampler distortion and headroom. This code/document recheck supplies no qualifying
+B00 series for its source. Equivalent peer comparison and independent
 rerun require their own evidence. No qualifying B00 series/verdict is recorded.
 [ADR 9000](adr/9000-benchmark-strategy.md) owns protocol. Linux instruction-count
 control/injected-regression and longitudinal recovery measurements cannot be

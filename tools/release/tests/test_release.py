@@ -359,6 +359,33 @@ def test_23_findings_keep_historical_open_states_without_blocking_current_proof(
     assert reasons
 
 
+def test_manual_hosted_closure_status_cannot_waive_missing_current_proof(tmp_path: Path) -> None:
+    plan = json.loads(receipt.PLAN.read_text())
+    for row in plan["tickets"]:
+        if row["id"] in {"SEP21-V01", "SEP21-V02"}:
+            row["closure_status"] = "HOSTED_QUALIFIED"
+    map_path = tmp_path / "docs/evidence/sep21/ticket-map.json"
+    map_path.parent.mkdir(parents=True)
+    map_path.write_text(json.dumps(plan), encoding="utf-8")
+    adr = tmp_path / plan["tickets"][0]["file"]
+    adr.parent.mkdir(parents=True)
+    adr.write_bytes((REPO / plan["tickets"][0]["file"]).read_bytes())
+    reasons: list[str] = []
+    closure = receipt.closure_report(tmp_path, plan, reasons)
+    assert reasons == []
+    assert {row["ticket"]: row["status"] for row in closure}["SEP21-V02"] == ("HOSTED_QUALIFIED")
+    value = {
+        "schema_version": 1,
+        "source": {"dirty": False},
+        "plan": receipt.identity(tmp_path, "docs/evidence/sep21/ticket-map.json"),
+        "closure": closure,
+    }
+    verdict = receipt.evaluate(value, root=tmp_path, current=None)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert "ordinary exact-source qualification is NOT_RUN" in verdict["reasons"]
+    assert any("finding proof manifest" in reason for reason in verdict["reasons"])
+
+
 def test_missing_release_evidence_is_never_qualified() -> None:
     verdict = receipt.evaluate({"schema_version": 1, "source": {"dirty": False}}, current=None)
     assert verdict["status"] == "NOT_QUALIFIED"

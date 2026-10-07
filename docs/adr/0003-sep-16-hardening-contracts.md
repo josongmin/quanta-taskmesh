@@ -19,9 +19,10 @@
 개정은 구현 직후 실행한 3-track 적대적 감사([AUDIT-2026-09-16](0008-audit-implementation-record.md))에서
 확정했다. D17은 마무리 검증에서 예외 대장에 남아 있던 shutdown 계약(H16-012-A07)을 닫으며 추가했다.
 
-이 ADR은 구현된 계약을 기술한다. 계획 문서의 `PROPOSED`와 달리 여기 적힌 것은
-`crates/` 안에 존재하고 regression test가 붙어 있다. 검증 범위는 이 문서 마지막
-절에 명시한다.
+이 ADR은 Sep-16 결정과 후속 개정을 기록한다. 현재 계약은 ADR 0004–0006 및
+[0009](0009-runtime-and-evidence-hardening.md)의 개정을 함께 따른다. 아래 과거
+실행 수치와 소비자 개수는 당시 관측이며 현재 소스의 검증 결과가 아니다.
+[0008](0008-audit-implementation-record.md)은 현재 구현·회귀 테스트 연결을 보관한다.
 
 ---
 
@@ -46,7 +47,10 @@
 `max_queue_depth`를 선언한다. queueing 클래스의 bounded 대기 후 만료는 기존대로
 `SubstratePoolTimedOut`이다.
 
-**`0`의 의미는 재해석하지 않았다.** topology slot count `0`은 계속 "제한 없음"이다.
+**`0`의 범위.** legacy role slot의 `0`은 해당 role gate 생략을 뜻한다. CPU는
+resolved worker count로 제한하며, host의 physical domain은 항상 유한하다.
+`CpuMode::Fixed(0)`과 `PhysicalDomainMode::Fixed(0)`은 typed error로 거절한다.
+role gate가 없어도 실제 blocking/CPU/dedicated 실행의 physical limit은 유지된다.
 
 ---
 
@@ -114,31 +118,35 @@ worker가 동시에 실행됐다 (TM16-023). `BackgroundOnly`도 같은 분기�
 
 ---
 
-## D05 — adapter는 자신이 보장하는 것만 선언한다
+## D05 — adapter 선언은 build 시 검증하고 한 번 동결한다
 
-**선택.** `CpuExecutor`에 default-구현된 `capabilities()`를 추가했다. 기본값은
-[`ExecutorCapabilities::legacy`] — submit이 blocking일 수 있고, worker 수 미상,
-pool을 ambient 사용자와 공유. host는 adapter가 선언한 것 이상을 가정하지 않는다.
+**현재 계약.** `CpuExecutor::capabilities()`의 default는 여전히
+`ExecutorCapabilities::legacy()`이므로 기존 trait 구현은 컴파일 가능하다. 그러나
+`Builder::build`는 `nonblocking_submit = false`, physical domain 미상, worker 수
+미상을 각각 typed error로 거절한다. domain은 `physical.shared_blocking` 또는
+`physical.cpu`여야 하고, `declared_workers`는 해당 domain의 resolved worker 수와
+정확히 같아야 한다. 작거나 큰 선언 모두 `ExecutorWorkerCountMismatch`다.
 
-**근거.** inline executor(= `spawn`이 작업 완료 후 반환)는 합법이며, 그 경우
-"spawn 반환 후 타이머 시작"은 의미가 없다 (TM16-022). 여러 Runtime이 하나의
-`Arc<dyn CpuExecutor>`를 공유하면 각자 *자기* 제출만 제한한다 — 공유 pool 전체에
-단일 budget이 있는 척하지 않는다.
+검증된 descriptor는 runtime에 동결해 preflight, dispatch, 관측이 함께 사용한다.
+dispatch 중 adapter를 다시 조회하지 않는다. 기본 `BlockingPoolCpuExecutor`도
+유한한 shared-blocking domain과 Taskmesh submission bound를 선언한다.
 
-**명시적 한계.** managed pool 밖의 ambient Tokio/Rayon 작업은 taskmesh가 제한하지
-않는다. 그렇게 문서화했고 test로 고정했다.
+**개정 근거.** Sep-16에는 inline/unknown 선언을 허용했고 worker 수가 CPU gate보다
+작은지만 검사했다. SEP-21 이후에는 불완전하거나 불일치하는 descriptor와
+`nonblocking_submit = false` 선언을 설치 시 거절한다.
 
-**개정 (감사 A2-P0-2).** 최초 구현에서 `capabilities()`는 아무도 읽지 않는 선언이었다.
-지금은 load-bearing이다: `Builder::build`는 adapter의 `declared_workers`가 topology가
-resolve한 `cpu` gate보다 작으면 `TopologyError::ExecutorDeclaresFewerWorkers`로
-거절한다 — gate가 pool보다 넓으면 pool이 동시에 실행할 수 없는 작업을 admit하고, 그
-불일치는 "설명되지 않는 queueing"으로만 나타나기 때문이다. `RayonCpuExecutor`는 pool의
-실제 thread 수와 exclusivity(`with_pool`은 shared)를 선언하고,
-`BlockingPoolCpuExecutor`는 worker 수를 *unknown*으로 남긴다(unknown은 "fewer"가
-아니므로 거절되지 않지만 보장으로 승격되지도 않는다). `TokioRuntime::executor_capabilities()`가
-선언을 노출한다. `nonblocking_submit`은 동작을 바꾸지 않는다 — host는 모든 adapter에
-대해 worker 자신의 시작 시각을 기준으로 삼으므로 inline adapter도 같은 규칙으로 안전하다;
-이 필드는 operator가 읽는 선언이다.
+**한계.** descriptor는 adapter의 선언이며 내부 큐나 실제 worker 가용성을 측정하지
+않는다. Taskmesh는 자신의 동시 제출 수를 제한한다. adapter 내부 실행 대기와 ambient
+Tokio/Rayon pool 점유는 adapter 및 해당 pool의 책임이다. shared pool의 declared count는
+Taskmesh의 admission bound이며, ambient 사용자나 서로 다른 Governor를 공유하지 않는
+Runtime 전체를 제한하지 않는다. `exclusive_pool`은 그 구분을 관측 가능하게 남긴다.
+
+구현: [Builder](../../crates/taskmesh/src/builder.rs),
+[executor contract](../../crates/taskmesh-contract/src/ports.rs).
+회귀: [executor protocol](../../crates/taskmesh/tests/hardening_executor_protocol.rs)의
+`the_validated_executor_descriptor_is_frozen_for_every_runtime_use`,
+[deadline custody](../../crates/taskmesh/tests/hardening_deadline_custody.rs)의
+`an_inline_executor_is_rejected_before_any_submission`.
 
 ---
 
@@ -532,20 +540,20 @@ mutation 9(`close-admission-*`, `drain-*`, `lease-return-does-not-wake-the-drain
 
 ---
 
-## 소비자 표면 inventory
+## Sep-16 소비자 표면 inventory와 후속 호환성 입력
 
-breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위해 in-repo 소비자를
-열거했다. **외부 소비자는 UNKNOWN이다** — 이 저장소 밖에서 이 API를 쓰는 코드는
-조회하지 않았고, 조회할 권한도 이번 작업 범위에 없다.
+아래 소비자 개수는 Sep-16 inventory이며 현재 개수로 재사용하지 않는다. 현재
+호환성 입력은 ADR 0009와 `tools/release/adjudication.json`이다. 이번 저장소 대조는
+외부 소비자 실행 상태를 검증하지 않는다.
 
 | 표면 | in-repo 소비자 | 이번 변경의 영향 |
 |---|---|---|
 | `Builder` 기본 경로 (default CPU executor) | `crates/taskmesh/tests/**`, `crates/taskmesh/examples/quickstart.rs` | 없음. topology 검증이 추가되었으나 유효한 설정의 동작은 동일 |
 | `Builder` + `rayon` feature | `crates/taskmesh-rayon/tests/rayon_smoke.rs` | 없음. worker 수는 이제 builder가 한 번 resolve해 공유 |
 | 직접 `Governor` (via `taskmesh::ext`) | `crates/taskmesh-engine/tests/**`, `crates/taskmesh-bench/**` | **breaking**: `claim` → `ClaimOutcome`, `release_stage_memory` → `StageReleaseOutcome`, snapshot 폭/필드 |
-| custom `CpuExecutor` | `taskmesh-rayon`, host 기본 adapter, 6개 test adapter | additive: `capabilities()`는 default 구현이 있으므로 기존 impl은 그대로 컴파일된다. **단**, `declared_workers`를 선언하는 adapter가 topology의 `cpu` gate보다 작으면 `build()`가 거절한다 (D05 개정) |
+| custom `CpuExecutor` | `taskmesh-rayon`, host 기본 adapter, 당시 6개 test adapter | trait default는 유지되지만 legacy/inline/unknown descriptor는 build 거절. worker 수는 physical domain과 정확히 일치해야 한다 (현재 D05). |
 | `SubmitOptions::deadline` on non-`CooperativeWithDeadline` class | `deadline_cancel.rs` (test 1건) | **breaking**: `DeadlineUnsupported`로 거절 (D14). 이전에는 무시 |
-| `TokioRuntime::drain` / `Governor::close_admission` | 없음 (신규) | additive (D17). `RuntimeUnavailable`을 accounting fault로만 해석하던 코드는 `admission_closed()`도 봐야 한다 |
+| `TokioRuntime::drain` / `Governor::close_admission` | 당시 신규; 현재 `hardening_drain.rs`, benchmark host 경로 | additive (D17). `RuntimeUnavailable`을 accounting fault로만 해석하던 코드는 `admission_closed()`도 봐야 한다 |
 | `TaskScope::Child` exhaustive pattern | engine `composite` 2곳 | **breaking** (D12 개정): `parent_awaits: bool` 추가 — `TaskScope::Child { parent_stage, .. }`로 쓴다; serde는 default |
 | `GovernorError` match arms | host tests 10곳 | additive (`non_exhaustive`): `DeadlineUnsupported`, `LeaseReclaimed`, `WorkerUnavailable`, `WorkerPanicked`, `JobAbandoned`; worker 실패가 더 이상 `PolicyViolation`이 아니다 |
 | `Governor::release` | engine/bench tests 145곳 | **breaking**: `ReleaseOutcome` (`#[must_use]`); 통계상 statement-form 호출은 `assert_eq!(…, Released)`로 바뀌었다. D14 개정: dispatch된 permit은 `HeldByLease`를 답한다 — `advance_phase`를 쓰는 embedder는 `Leased(token)`을 보관하고 `release_leased(token)`으로 끝낸다 |
@@ -557,7 +565,11 @@ breaking 결정(D01/D02/D06/D10)이 무엇을 건드리는지 확정하기 위�
 `PolicySet`의 substrate registry는 public field에서 accessor로 바뀌었다. in-repo
 소비자는 `builder.rs` 한 곳뿐이었다.
 
-## 검증 범위
+## Sep-16 역사적 검증 범위
+
+아래 결과와 denominator는 당시 기록이다. 이번 소스 대조나 이후 HEAD의
+mutation/model/TSan/MSRV qualification을 의미하지 않는다. 현재 실행 범위는
+ADR 0009의 verification boundary와 source-bound receipt로 판단한다.
 
 - 위 계약들은 각각 regression test를 가진다:
   `crates/taskmesh-engine/tests/hardening_*.rs`,

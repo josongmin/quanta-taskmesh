@@ -21,6 +21,7 @@ TICKETS = {
     "SEP21-R01",
 }
 STATUSES = {"LOCALLY_VERIFIED", "IMPLEMENTED_UNQUALIFIED"}
+CLOSURE_STATUSES = {*STATUSES, "HOSTED_QUALIFIED"}
 # Original 2123a462 finding ownership is historical data, not a mutable
 # interpretation of the new map. A 23-ID aggregate check alone misses swaps.
 HISTORICAL_FINDINGS = {
@@ -69,6 +70,9 @@ def ticket_rows(plan: object) -> list[dict]:
         ticket_id, document = row.get("id"), row.get("file")
         if not isinstance(ticket_id, str) or ticket_id not in TICKETS:
             raise ValueError("ticket map has unknown ticket ID")
+        closure_status = row.get("closure_status")
+        if not isinstance(closure_status, str) or closure_status not in CLOSURE_STATUSES:
+            raise ValueError(f"{ticket_id}: invalid release closure status")
         if not isinstance(document, str):
             raise ValueError(f"{ticket_id}: ADR path missing")
         path = Path(document)
@@ -117,6 +121,12 @@ def adr_evidence(root: Path, row: dict) -> tuple[str, bool]:
     path = root / row["file"]
     if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
         raise ValueError(f"{row['id']}: ADR escapes repository or is symlinked")
+    if any(
+        parent.is_symlink()
+        for parent in path.parents
+        if parent != root and parent.is_relative_to(root)
+    ):
+        raise ValueError(f"{row['id']}: ADR parent directory is symlinked")
     text = path.read_text(encoding="utf-8")
     sections = re.findall(
         rf"^## {re.escape(row['id'])} — [^\n]+\n(.*?)(?=^## |\Z)",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import signal
@@ -50,6 +51,95 @@ def _mock_linux_group_observations(monkeypatch, observations):
     )
     monkeypatch.setattr(supervisor, "_await_killed_group_quiescence", lambda _pgid: (True, ""))
     return calls
+
+
+@pytest.mark.parametrize("stat_errno", [errno.ENOENT, errno.ESRCH])
+@pytest.mark.parametrize("membership", ["absent", "foreign", "owned", "unavailable"])
+def test_linux_stat_disappearance_requires_kernel_group_classification(
+    monkeypatch: pytest.MonkeyPatch, stat_errno: int, membership: str
+) -> None:
+    from tools import process_supervisor as supervisor
+
+    leader, candidate = 20001, 20002
+    members = {leader: (11, leader, "Z", 1), candidate: (12, leader, "Z", 2)}
+    kills = _mock_linux_group_observations(monkeypatch, [members, members])
+    original_read = Path.read_bytes
+    probes = []
+
+    def read_stat(path):
+        if str(path) == f"/proc/{candidate}/stat":
+            raise OSError(stat_errno, "fixture proc stat disappeared")
+        return original_read(path)
+
+    def getpgid(pid):
+        probes.append(pid)
+        assert pid == candidate
+        if membership == "absent":
+            raise ProcessLookupError(errno.ESRCH, "fixture process disappeared")
+        if membership == "unavailable":
+            raise PermissionError(errno.EPERM, "fixture membership unavailable")
+        return leader if membership == "owned" else leader + 1
+
+    monkeypatch.setattr(Path, "read_bytes", read_stat)
+    monkeypatch.setattr(supervisor.os, "getpgid", getpgid)
+    verdict, detail = supervisor._retire_owned_group(leader)
+    if membership in ("absent", "foreign"):
+        assert (verdict, detail) == ("quiescent", "")
+        assert probes == [candidate, candidate]
+        assert not kills
+    else:
+        assert verdict == "unknown" and "custody unavailable" in detail
+        assert probes == [candidate]
+        assert kills == [leader]
+
+
+@pytest.mark.parametrize("stat_errno", [errno.ENOENT, errno.ESRCH])
+def test_linux_held_leader_stat_disappearance_remains_incomplete(
+    monkeypatch: pytest.MonkeyPatch, stat_errno: int
+) -> None:
+    from tools import process_supervisor as supervisor
+
+    leader = 20001
+    members = {leader: (11, leader, "Z", 1)}
+    kills = _mock_linux_group_observations(monkeypatch, [members, members])
+
+    def read_stat(_path):
+        raise OSError(stat_errno, "fixture held leader unavailable")
+
+    def unexpected_probe(_pid):
+        pytest.fail("the held original leader cannot be classified as foreign or absent")
+
+    monkeypatch.setattr(Path, "read_bytes", read_stat)
+    monkeypatch.setattr(supervisor.os, "getpgid", unexpected_probe)
+    verdict, detail = supervisor._retire_owned_group(leader)
+    assert verdict == "unknown" and "custody unavailable" in detail
+    assert kills == [leader]
+
+
+@pytest.mark.parametrize("stat_errno", [errno.EACCES, errno.EIO])
+def test_linux_non_disappearance_stat_errors_remain_incomplete(
+    monkeypatch: pytest.MonkeyPatch, stat_errno: int
+) -> None:
+    from tools import process_supervisor as supervisor
+
+    leader, candidate = 20001, 20002
+    members = {leader: (11, leader, "Z", 1), candidate: (12, leader, "Z", 2)}
+    kills = _mock_linux_group_observations(monkeypatch, [members])
+    original_read = Path.read_bytes
+
+    def read_stat(path):
+        if str(path) == f"/proc/{candidate}/stat":
+            raise OSError(stat_errno, "fixture process stat unavailable")
+        return original_read(path)
+
+    def unexpected_probe(_pid):
+        pytest.fail("a non-disappearance stat error cannot be suppressed")
+
+    monkeypatch.setattr(Path, "read_bytes", read_stat)
+    monkeypatch.setattr(supervisor.os, "getpgid", unexpected_probe)
+    verdict, detail = supervisor._retire_owned_group(leader)
+    assert verdict == "unknown" and "custody unavailable" in detail
+    assert kills == [leader]
 
 
 @pytest.mark.parametrize(

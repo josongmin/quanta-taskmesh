@@ -32,6 +32,12 @@ Its stat state is quiescent only with a positive observed thread count of one;
 zero, missing or invalid counts leave custody unproved. Thread count is mutable
 liveness evidence, not process identity, and is read with state in the same stat
 observation before the original group leader is reaped.
+Linux procfs directory enumeration is not a group-membership snapshot. A
+non-leader stat read that fails with ENOENT or ESRCH may be omitted only when
+the kernel's PGID lookup identifies another group or reports that the PID no
+longer exists. An unreadable owned member, an unreadable held leader, or any
+other inspection error leaves custody unproved. This classification does not
+replace the two complete observations or the thread-count liveness check.
 
 1. The 104-scenario inventory is the oracle index. Its K 51 / P 34 / G 19
    baseline and the 104-row manifest describe static target, case, oracle,

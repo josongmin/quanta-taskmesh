@@ -100,7 +100,8 @@ def test_linux_held_leader_stat_disappearance_remains_incomplete(
     from tools import process_supervisor as supervisor
 
     leader = 20001
-    kills = _mock_linux_group_observations(monkeypatch, [{leader: (11, leader, "Z", 1)}])
+    members = {leader: (11, leader, "Z", 1)}
+    kills = _mock_linux_group_observations(monkeypatch, [members, members])
 
     def read_stat(_path):
         raise OSError(stat_errno, "fixture held leader unavailable")

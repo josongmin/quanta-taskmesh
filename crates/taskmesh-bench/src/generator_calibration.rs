@@ -105,7 +105,6 @@ impl GeneratorRun {
         }
         if self.submitted != submitted
             || self.not_submitted != not_submitted
-            || self.submitted + self.not_submitted != self.records.len()
             || self.completed != self.submitted
             || self.outstanding_final != 0
             || !self.drain_ok

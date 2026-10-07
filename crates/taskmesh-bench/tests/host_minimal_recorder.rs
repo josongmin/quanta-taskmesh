@@ -32,12 +32,19 @@ fn scenario() -> HostScenario {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn minimal_recorder_conserves_intended_and_terminal_rows_without_latencies() {
     let scenario = scenario();
+    assert_eq!(scenario.id, "minimal-recorder-contract");
+    assert_eq!(scenario.offers.len(), 3);
     let (raw, topology) = run_minimal_host_scenario(&scenario, None).await.unwrap();
     raw.validate_against(&scenario).unwrap();
+    assert_eq!(raw.scenario_id, "minimal-recorder-contract");
     assert_eq!(raw.records.len(), scenario.offers.len());
     assert_eq!(
         raw.counts.intended,
         raw.counts.submitted + raw.counts.not_submitted
+    );
+    assert_eq!(
+        raw.counts.submitted,
+        raw.counts.responded + raw.counts.caller_dropped + raw.counts.unanswered_at_settlement
     );
     assert_eq!(
         raw.completed_callers,
@@ -87,6 +94,37 @@ async fn minimal_recorder_conserves_intended_and_terminal_rows_without_latencies
     assert!(wrong_id
         .validate_against(&scenario)
         .is_err_and(|error| error.contains("minimal row 0: offer identity differs")));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn minimal_recorder_rejects_independently_wrong_identity_and_coherent_empty_population() {
+    let scenario = scenario();
+    assert_eq!(scenario.id, "minimal-recorder-contract");
+    assert_eq!(scenario.offers.len(), 3);
+    let (raw, _) = run_minimal_host_scenario(&scenario, None).await.unwrap();
+    raw.validate_against(&scenario).unwrap();
+
+    let mut wrong_scenario = raw.clone();
+    wrong_scenario.scenario_id = "different-scenario".into();
+
+    let mut missing_population = raw;
+    missing_population.records.clear();
+    missing_population.counts = Default::default();
+    missing_population.completed_callers = 0;
+    missing_population.max_producer_lag_ns = None;
+    for counters in missing_population.class_counters.values_mut() {
+        *counters = Default::default();
+    }
+    assert_eq!(
+        (
+            wrong_scenario.validate_against(&scenario),
+            missing_population.validate_against(&scenario),
+        ),
+        (
+            Err("minimal host scenario or mode differs".into()),
+            Err("minimal host scenario or mode differs".into()),
+        ),
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

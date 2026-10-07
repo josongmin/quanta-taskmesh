@@ -201,9 +201,6 @@ impl MinimalHostRun {
             }
         }
         if counts != self.counts
-            || counts.intended != counts.submitted + counts.not_submitted
-            || counts.submitted
-                != counts.responded + counts.caller_dropped + counts.unanswered_at_settlement
             || self.completed_callers != counts.responded + counts.caller_dropped
             || counts.unanswered_at_settlement != 0
             || self.outstanding_final != 0

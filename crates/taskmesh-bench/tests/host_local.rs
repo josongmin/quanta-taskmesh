@@ -6,10 +6,13 @@ const FIXTURE: &[u8] = include_bytes!("../../../tools/bench/scenarios/h4-local-s
 #[tokio::test(flavor = "current_thread")]
 async fn caller_affine_non_send_fixture_keeps_bounded_raw_rows() {
     let scenario = LocalHostScenario::from_json(FIXTURE).expect("local fixture");
+    assert_eq!(scenario.id, "h4-caller-affine-local-smoke-v3");
+    assert_eq!(scenario.offers.len(), 2);
     let (mut raw, topology) = run_local_host_with_topology(&scenario)
         .await
         .expect("local diagnostic run");
     raw.validate_against(&scenario).expect("local raw parity");
+    assert_eq!(raw.scenario_id, "h4-caller-affine-local-smoke-v3");
     assert_eq!(raw.records.len(), 2);
     assert!(raw
         .records
@@ -32,6 +35,52 @@ async fn caller_affine_non_send_fixture_keeps_bounded_raw_rows() {
     assert!(raw
         .validate_against(&scenario)
         .is_err_and(|error| error.contains("success lacks body finish")));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn local_raw_rejects_independently_wrong_identity_and_coherent_empty_population() {
+    let scenario = LocalHostScenario::from_json(FIXTURE).expect("local fixture");
+    assert_eq!(scenario.id, "h4-caller-affine-local-smoke-v3");
+    assert_eq!(scenario.offers.len(), 2);
+    let (raw, _) = run_local_host_with_topology(&scenario)
+        .await
+        .expect("local diagnostic run");
+    raw.validate_against(&scenario).expect("local raw parity");
+
+    let mut wrong_scenario = raw.clone();
+    wrong_scenario.scenario_id = "different-scenario".into();
+
+    let mut missing_population = raw.clone();
+    missing_population.records.clear();
+    for counters in missing_population.class_counters.values_mut() {
+        *counters = Default::default();
+    }
+    assert_eq!(
+        (
+            wrong_scenario.validate_against(&scenario),
+            missing_population.validate_against(&scenario),
+        ),
+        (
+            Err("local raw identity or population differs".into()),
+            Err("local raw identity or population differs".into()),
+        ),
+    );
+
+    let mut wrong_row = raw.clone();
+    wrong_row.records[0].id = 1;
+    assert!(wrong_row
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("local row 0: offer identity differs")));
+
+    let mut wrong_counter = raw;
+    wrong_counter
+        .class_counters
+        .get_mut("local")
+        .unwrap()
+        .started += 1;
+    assert!(wrong_counter
+        .validate_against(&scenario)
+        .is_err_and(|error| error.contains("local class local: counters differ from rows")));
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -1,124 +1,43 @@
-# Taskmesh remaining work after the 2026-10-03 source audit
+# Taskmesh remaining work — source snapshot 2026-10-07
 
-Evidence snapshot on 2026-10-06 before PR #19's final publication. Later
-verdicts belong to receipts for their exact source. [The 2026-10-03 audit](../audits/2026-10-03-current-source-final.md)
-and its `aadfa07`/PR #9 receipts are historical, source-bound evidence.
-Implementation, CI, release qualification, performance, consumer acceptance and
-activation have separate owners and verdicts.
+This is an operational snapshot for clean Taskmesh `main@e5c209ce853fa1f02028478100ce0a61368cc632` (tree `acee80d957f63f4fdf8934e477d085a13155ca87`, 537 paths). A later source needs its own CI, producer evidence and qualification. The [2026-10-03 audit](../audits/2026-10-03-current-source-final.md) and earlier receipts remain historical.
 
-## Source and evidence
+## Delivered source and current verdict
 
-- Taskmesh `main@27609dd0210d06c7b2b72682ad5d4b4bab119271` includes PRs
-  #12–18. Its actual-main CircleCI `ci` profile passed 16/16 gates. Each PR
-  and main receipt applies only to the source identity it records.
-- A successor custody repair is on PR #19. Dirty patch `f118b7ab` over
-  `80ee68c` passed 209 focused cases on each of macOS and Linux. Committed
-  candidate `24509a9f7f865a24158f5169833ef8d2cc75391c` then passed its
-  clean macOS `ci` profile 16/16, including
-  Python 1418/1418, and the exact-head receipt validated. Hosted CI, PR merge
-  and actual-main proof are pending. This candidate receipt cannot qualify a
-  later main SHA or this document's eventual commit.
-- The last full 23-gate run on actual `main@27609dd` was interrupted after
-  22 PASS; generated mutation was incomplete (330/2653). Verdict:
-  `NOT_QUALIFIED`. Run the full profile afresh on one clean, final source.
-  Historical gates and producer outputs cannot be combined across SHAs.
-- Taskmesh is a library. Consumer qualification, deployment and activation
-  need separate downstream evidence and owner decisions.
+- PRs #12–26 are normally merged on `main`. PRs #19–26 added process/custody, generated discovery, cancellation, Linux thread, and composite/deadline test repairs. Current owner source is the authority for API behavior; historical plans do not reopen implemented code.
+- Actual-main hosted CircleCI passed the required 16-gate `ci` profile; its Linux receipt was independently validated on exact `e5c209ce` (Rust 742/742, including bench 130; Python 1450/1450, excluded 0). CI16 is a merge check, not release qualification.
+- Full attempt 16 on clean `e5c209ce` ended `NOT_QUALIFIED`: 22 PASS, `mutants-generated` FAIL. Fresh discovery selected 2,653 of 2,665 mutants (12 regex exclusions). Structured raw contains 359 Caught, 64 Unviable, one Missed, baseline Success; it stopped early after the miss. The miss is `crates/taskmesh-bench/src/composite_host.rs:229`, `||`→`&&` in `CompositeFailureRaw::validate_against`. The per-child **key or path** check has no independent invalid-key/path witness that catches this mutation. The 424 classified outcomes are a partial diagnostic, not a passing denominator.
+- Full16 terminal archive reports `canonical receipt source identity differs from frozen source` because its helper compares the receipt's four-field `source_after` object with the full frozen `source` object. The actual receipt's four identity fields match clean `e5c209ce`; the canonical failure is the generated mutation miss. Repair the ignored archival helper/schema comparison separately, preserve full16 raw, and never turn this into a PASS claim.
 
-## T1 — Final-source CI and full qualification
+## T1 — Close the reachable composite failure oracle, then qualify final source
 
-**Owner:** Taskmesh. Finish PR #19's hosted CI, then freeze and verify
-the actual merged-main SHA, tree and clean checkout. Run the required 23-gate
-CI plus nightly union on that exact Linux source, including curated/generated
-mutation, modelcheck, TSan, fuzz, coverage and Linux IAI. Retain complete raw outputs and
-the canonical qualification receipt. A bounded 16-gate CI pass is a merge check,
-not full qualification; a partial mutation run is diagnostic only. Human release
-adjudication and the final release receipt remain separate in T2.
+**Owner: Taskmesh.** On an isolated branch, construct a valid retained `CompositeFailureRaw` with a deterministic scenario and three resolved child paths, then independently corrupt only one child key and only one child path. Each must fail validation for the intended reason while all other fields remain valid. A positive serialized round trip should pass. Prove the focused regression RED against the exact old validator/mutant and GREEN with the new oracle; keep the production guard `||` intact unless source evidence finds a production defect. Check adjacent identity/population/time guards only for reachable uncovered branches, without broad implementation-mirror tests.
 
-**Stop:** dirty or changed source, required FAIL/NOT_RUN/SKIPPED, incomplete
-generated mutations, or a receipt bound to another SHA.
+After normal commit, current-source CI16, hosted PR CI, merge and actual-main refreeze, run one fresh canonical 23-gate Linux qualification (CI + explicit high-cost nightly union) on that exact clean main. Retain complete raw lists/outcomes, producer envelopes, source tuple, IAI baseline continuity and receipt. Every required gate must PASS; interrupted or partial mutation results cannot be composed with other attempts. The current request authorizes one-time qualification work and repair reruns, not a recurring schedule.
 
-## T2 — Proposed 0.3 compatibility and finding adjudication, human decision pending
+## T2 — Release evidence and human compatibility decision
 
-**Owner:** Taskmesh release. Version 0.3 remains a technical proposal pending
-human approval. The unreleased API includes typed Rayon
-`try_new/try_from_topology` in place of the removed panic constructors;
-the current public/wire/behavior surface also needs final-source review.
-
-1. Rerun pinned `cargo-semver-checks 0.50.0` for all four public crates against
-   immutable 0.2.0 baseline `39bee682d7daa1efaf1c10993ba6221fd0a90871`.
-   Run the 23 finding-proof witnesses on the same final source.
-2. The actual `main@27609dd` semver output is `REPORTED`, with 25 raw
-   locators across four crates; finding proof is 23/23 PASS. These are
-   historical for any successor. The proposal has 17 pending compatibility
-   decisions, four unreviewed crate outputs and no human approval. Rebind
-   locators and raw hashes to the final source without carrying over an
-   approval.
-3. Have the release reviewer decide Rust API, facade, wire and behavioral
-   breaks against the raw output and CHANGELOG anchors. The release receipt
-   requires that adjudication and the same-source 23-gate proof.
-
-**Stop:** missing raw output, unmapped finding, changed source, or pending
-reviewer decision. A semver tool result does not approve compatibility.
+**Owner: Taskmesh release and human reviewer.** On `e5c209ce`, pinned `cargo-semver-checks 0.50.0` against immutable 0.2.0 baseline `39bee682d7daa1efaf1c10993ba6221fd0a90871` produced four `REPORTED` crate outputs. Finding proof is 23/23 PASS. The source/raw-bound draft maps 25 locators, but all 17 compatibility dispositions are `PENDING`, all four crate-output reviews are false, reviewer is null and proposed 0.3 remains a human decision. These reports become historical after the next code merge; rerun and rebind on final main before release review. A tool report or AI-prepared index is not approval. Final release receipt additionally requires same-source full23 qualification.
 
 ## T3 — Measured host performance
 
-**Owner:** Taskmesh benchmark and consumer owners. The source includes a
-hash-bound producer-lag validator; its focused tests do not establish host
-performance. [ADR 9000](../adr/9000-benchmark-strategy.md) owns the protocol.
-
-1. Register B00 consumer SLOs, completion floor, precision/MDE, rate grid,
-   representative trace and per-rate control budgets before measurement.
-2. On a quiet host, collect repeated matched baseline/candidate attempts,
-   failed attempts, raw provenance, sampler distortion and resource headroom.
-3. Admit only the complete sealed series. Report SLO-goodput, completion,
-   latency populations and run-level uncertainty. B00 and a qualifying series
-   are still pending; no performance verdict is claimed.
+**B00 performance owner:** Register consumer SLO, completion floor, precision/MDE, rate grid and representative trace before collecting repeated matched quiet-host baseline/candidate series. Retain failed runs, provenance, sampler distortion and headroom. No qualifying B00 series or verdict exists. [ADR 9000](../adr/9000-benchmark-strategy.md) owns the measurement protocol.
 
 ## T4 — High-cost proof operation
 
-**Owner:** Taskmesh operations. `nightly` names an explicit high-cost profile,
-not a cron schedule. This request authorized one-time final qualification work
-including mutation testing and repair reruns. No recurring schedule was requested.
-A future schedule, if requested, needs its own runner budget, concurrency, retention,
-alerts and receipt authority; a CI-only run cannot satisfy full release proof.
+`nightly` is an explicit one-time profile. No recurring schedule was requested.
+Runner admission, owned writer custody, unchanged gate budgets and exclusions,
+raw retention and exact-source receipts remain required for each attempt.
 
 ## T5 — Semantica consumer integration
 
-**Owner:** Semantica deployment owner, with Taskmesh paired proof. Taskmesh
-provides `run_blocking_response_by`/`run_cpu_response_by` for an absolute
-acquisition-to-caller-response boundary. Synchronous `CompleteBy` rejects,
-and a started worker keeps its lease until termination.
+**Semantica consumer owner:** Draft PR #301 at `1e18857d63725cc6da58e03502ae3e1e445366d1` pins Taskmesh `e5c209ce`. An exact private snapshot passed selected SDK 1, runtime 5 and parser 1 checks; SDK and parser each filtered 451 tests. This is seven selected checks, not whole-SDK or product qualification. Hosted GitHub Actions 11/11 jobs did not execute because of billing admission; Circle reported a zero-start task-information failure with cause unknown. Do not label hosted code RED or PASS. After the final Taskmesh merge, update all consumer manifest/lockfile pins together
+and rerun the selected paired rails on that exact dependency. Retain source digest,
+actual QBC execution root and raw outcome identity. Keep synchronous `CompleteBy`
+rejection and the acquisition-to-response deadline / started-worker lease distinction.
+Resolve hosted admission and record D1–D9 applicability and evidence for actual
+consumer boundaries. The consumer owner decides acceptance and activation separately.
 
-The observed Semantica branch `codex/taskmesh-main276-consumer-cfg-boundary`
-at `423882f6e31817013b6ae9cacc25954ecd2d1cc1` (base
-`4324e2a6143c9c301ec4d1b12c0683424faf013b`) is pushed as draft PR #301.
-It pins Taskmesh `27609dd`.
-On exact source snapshot `0063c7439ab2ff8e275cd92fec3c89ec3516b2669dd4216d3971d3ea5029f251`,
-focused SDK 1, runtime 5 and parser 1 checks passed. SDK and parser each
-filtered 451 tests; runtime ran its whole five-test target. These results do
-not establish whole-SDK or final-source paired qualification. The original shared source was untouched.
-Its 11 GitHub Actions jobs did not start because of a billing/spending-limit
-block; the CircleCI state has not supplied a passing result.
+## Release and activation boundary
 
-After the Taskmesh main SHA is frozen, update the consumer manifest and
-lockfile together, retain source/reason and root identity, and test the selected
-blocking/stack path, expiry, queue/grant/start races, held worker, caller drop,
-panic, drain and successor capacity. Keep a negative synchronous
-`CompleteBy` test. Record D1–D9 applicability and proof for actual ingress,
-planner/wire, handle, custody, Tokio/executor and serialization boundaries.
-The consumer owner decides acceptance and activation separately. Billing
-admission must be resolved before hosted checks can establish executed proof.
-
-## Historical scope
-
-- The `aadfa07` local/hosted 16-gate results and PR #9 links in the
-  [2026-10-03 audit](../audits/2026-10-03-current-source-final.md) remain
-  historical evidence. They do not qualify current or future source.
-- M1 validator, S1 facade errors, S3 Rayon constructor repair, response
-  boundary and subsequent queue/custody repairs are implementation work.
-  Source presence and focused checks do not close T1–T5.
-- Sep-21 plan, tickets and packets remain at their source-bound paths because
-  finding proof and release receipts consume their exact bytes. The relevant
-  decisions remain in [ADR 0003–0007](../adr/README.md) and
-  [ADR 9000](../adr/9000-benchmark-strategy.md).
+Implementation, CI16, full23, compatibility review, B00 and consumer acceptance have separate verdicts. No version/tag/release, deployment or activation is approved by this snapshot. [Release checklist](../release-checklist.md) retains the source-bound final receipt and human decision requirements.

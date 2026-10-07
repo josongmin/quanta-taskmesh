@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use taskmesh::{Runtime, TaskClass};
 
 use crate::host_load::{
-    classify_response, execute, pace_offer, since, warmup_runtime, ClassCounters, HostHarnessFault,
-    HostRunStatus, OutstandingGuard, ProducerDecision, ResolvedHostTopology, ResponseOutcome,
+    classify_response, execute, pace_offer, remaining_injection_window, since, warmup_runtime,
+    ClassCounters, HostHarnessFault, HostRunStatus, OutstandingGuard, ProducerDecision,
+    ResolvedHostTopology, ResponseOutcome,
 };
 use crate::host_scenarios::HostScenario;
 
@@ -329,7 +330,7 @@ pub async fn run_minimal_host_scenario(
                 slot.disposition.store(outcome as u8, Ordering::Release);
             }));
         }
-        if let Some(delay) = (origin + injection).checked_duration_since(Instant::now()) {
+        if let Some(delay) = remaining_injection_window(injection, origin.elapsed()) {
             std::thread::sleep(delay);
         }
         let _ = producer_tx.send(jobs);

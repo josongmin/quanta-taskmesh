@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use taskmesh::{CancellationToken, Runtime, SubmitOptions, TaskClass, TaskSpec};
 
 use crate::host_load::{
-    classify_response, since, snapshot_sample, ClassCounters, ResolvedHostTopology,
-    ResponseOutcome, SnapshotSample,
+    classify_response, remaining_injection_window, since, snapshot_sample, ClassCounters,
+    ResolvedHostTopology, ResponseOutcome, SnapshotSample,
 };
 use crate::host_scenarios::{
     HostBody, HostClass, HostLoadEnvelope, HostOffer, HostPath, HostScenario, HostTopology,
@@ -477,10 +477,10 @@ async fn run_inner(
             active.set(active.get() - 1);
         }));
     }
-    tokio::time::sleep_until(tokio::time::Instant::from_std(
-        origin + Duration::from_nanos(cut_ns),
-    ))
-    .await;
+    if let Some(delay) = remaining_injection_window(Duration::from_nanos(cut_ns), origin.elapsed())
+    {
+        tokio::time::sleep(delay).await;
+    }
     let mut issues = Vec::new();
     let snapshots = if let Some(sampler) = sampler {
         match sampler.await {

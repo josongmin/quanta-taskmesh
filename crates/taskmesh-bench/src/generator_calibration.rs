@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use taskmesh::Runtime;
 
 use crate::host_load::{
-    pace_offer, since, warmup_runtime, HostHarnessFault, HostRunStatus, ProducerDecision,
-    ResolvedHostTopology,
+    pace_offer, remaining_injection_window, since, warmup_runtime, HostHarnessFault, HostRunStatus,
+    ProducerDecision, ResolvedHostTopology,
 };
 use crate::host_scenarios::HostScenario;
 
@@ -215,7 +215,7 @@ pub async fn run_generator_control_with_topology(
                 }
             }
         }
-        if let Some(delay) = (origin + injection).checked_duration_since(Instant::now()) {
+        if let Some(delay) = remaining_injection_window(injection, origin.elapsed()) {
             std::thread::sleep(delay);
         }
         let _ = producer_tx.send(jobs);

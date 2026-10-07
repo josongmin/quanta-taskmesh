@@ -178,8 +178,21 @@ def _linux_group_snapshot(pgid: int) -> dict[int, tuple[int, int, str, int]]:
                 continue
             try:
                 stat = (Path(entry.path) / "stat").read_bytes()
-            except FileNotFoundError:
-                continue
+            except OSError as error:
+                pid = int(entry.name)
+                if error.errno not in (errno.ENOENT, errno.ESRCH) or pid == pgid:
+                    raise
+                # Procfs can retain a directory entry after an unrelated task
+                # disappears. Classify that PID through the kernel before
+                # omitting it; an unreadable owned member may still have live
+                # worker threads and must leave custody unproved.
+                try:
+                    member_pgid = os.getpgid(pid)
+                except ProcessLookupError:
+                    continue
+                if member_pgid != pgid:
+                    continue
+                raise
             tail = stat[stat.rfind(b")") + 2 :].split()
             if len(tail) < 20:
                 raise OSError("process stat identity unavailable")

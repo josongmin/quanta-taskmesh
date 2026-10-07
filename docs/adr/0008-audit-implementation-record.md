@@ -3,7 +3,7 @@
 - Status: Accepted as repository implementation history; no release approval
 - Date: 2026-10-07
 - Consolidation source: `2123a462764a3d6445fd536a1e5a5f99d019425e`
-- Replaces: Sep-16 finding tickets and Sep-21 tickets/execution packets. Original
+- Replaces: Sep-16 finding tickets, Sep-21 packets, and ADR 0007 BG25 closure. Original
   paths and byte digests are recorded in [document history](../evidence/document-history.json).
 
 ## Decision
@@ -96,6 +96,35 @@ remain N/A unless those components are introduced. Its Linux IAI, human rollback
 approval and consumer adoption exceptions survive in the remaining-work list.
 Speculative quality candidates without a current counterexample are not promoted
 to active defects.
+
+## BG25 implementation map
+
+BG25-001–012 are implemented repository boundaries. Their original ticket
+narratives are archived at Git `cbf9764f08eb9f307f3ee5a51bad5e5dabeaf4a6`.
+The 104-scenario inventory (K 51 / P 34 / G 19) and `MAPPED` status describe
+static ownership and selectors; they do not attest execution or current CI.
+ADR 0004–0006 and 9000 own the contracts; remaining work owns qualification
+and consumer adoption. ADR 0007's completed table is consolidated here.
+
+| Ticket | Implemented repository boundary | Durable authority |
+|---|---|---|
+| BG25-001 | Separated trust, identity, deadline, executor, and proof decisions. | 0004–0006; D1–D9 deployment review remains open. |
+| BG25-002 | Added bounded strict task/config bytes ingress without silently tightening raw DTO Serde. | 0004; deployed bytes ingress remains an owner decision. |
+| BG25-003 | Made wire/version/error behavior explicit for consumers. | 0004; downstream compatibility and migration remain open. |
+| BG25-004 | Bound opaque permit/ticket authority to its Governor; foreign same-sequence handles and exhaustion reject. | 0004. |
+| BG25-005 | Froze one validated executor descriptor across preflight, dispatch, and exposed topology; missing Tokio context rejects before work. | 0005. |
+| BG25-006 | Separated caller response, deadline, worker cleanup, lease release, and one-way drain. The later H12/H31 fixtures cover the corrected pre-drain custody order. | 0005; no dropped-caller response or post-drain admission is inferred. |
+| BG25-007 | Kept stages/reduce as metadata and child/fan-out lifetime with the caller unless explicitly awaited or governed. | 0005; no implicit reducer execution. |
+| BG25-008 | Reserved semantic and physical capacity in one Governor transition; covered blocker precedence and exact boundary values. | 0005; cross-runtime bounds require shared authority. |
+| BG25-009 | Added bounded queue, fairness, waker, cancellation, and drain-history oracles without a scheduler rewrite. | 0005; bounded histories do not enumerate every interleaving. |
+| BG25-010 | Added combined memory-ledger and release-history oracles. | 0005; no production defect was inferred solely from missing coverage. |
+| BG25-011 | Separated deterministic simulator accounting from public-host response/custody evidence. | 9000; H28's small host/simulator case is not performance qualification. |
+| BG25-012 | Mapped K 51 / P 34 / G 19 scenarios to versioned selectors and exact-source proof roles. | 0006; final clean HEAD CI receipt remains required. |
+
+The per-scenario ownership and executable selectors remain in
+[ticket-map.json](../evidence/sep25/ticket-map.json) and
+[scenario-evidence.json](../evidence/sep25/scenario-evidence.json). These are
+static evidence inventories, not duplicate implementation tickets.
 
 ## SEP21-C01 — Validated plan and neutral provenance
 

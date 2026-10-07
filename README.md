@@ -549,5 +549,5 @@ lease를 돌려준다 — 그 뒤로는 `release_leased(token)`만 permit을 끝
 2. [Library Spec](docs/taskmesh-library-spec.md)
 3. [External Interface](docs/taskmesh-external-interface.md)
 4. [Accepted ADR index](docs/adr/README.md)
-5. [Completed implementation decisions](docs/adr/0007-sep-25-implementation-closure.md)
+5. [Completed implementation decisions](docs/adr/0008-audit-implementation-record.md)
 6. [Source-bound evidence inventory](docs/evidence/sep25/README.md)

@@ -271,7 +271,7 @@ These are normal local-filesystem/process checks, not capture-volume limits,
 deadlines for stalled kernel/network regular-file I/O or a hostile-writer sandbox.
 
 Finite-run validation checks settlement and residual ownership. The completed
-[B07 owner-local diagnostic](../adr/9000-benchmark-strategy.md#2026-09-27-code-audit-disposition)
+[B07 owner-local diagnostic](../adr/9000-benchmark-strategy.md#recovery-diagnostics)
 adds same-host repeated cycles, exact capacity-return checkpoints and successful
 normal-work canaries after recovery. It reuses existing validators and custody;
 short smoke belongs in ordinary tests, longer stress remains local opt-in.
@@ -339,13 +339,8 @@ Rust cycle-relative clocks are not subtracted from controller monotonic timestam
 A successful functional diagnostic always keeps `performance=UNQUALIFIED`.
 The ten-minute fixture includes idle between finite bursts; it does not claim sustained
 saturation or production soak duration. No extra gate or automatic ten-minute CI run
-is added. Owner-local closure and actual execution receipts are recorded in
-[B07](../adr/9000-benchmark-strategy.md#2026-09-27-code-audit-disposition).
-
-
-B07 owner-local checkpoint (2026-09-27): H2 completed 1,000 cycles over 600.003s;
-H5 completed three cycles. Both report functional PASS and UNQUALIFIED performance.
-Their retained local bundles are under `bench-results/receipts/owner-b07-61d4e47/`;
-source identities and proof limits are recorded in ADR 9000. Two interrupted studies
-remain invalid and are excluded from the successful study population. Current-source
-CI and optimized measurement qualification remain separate open work.
+is added. [ADR 9000](../adr/9000-benchmark-strategy.md#recovery-diagnostics)
+owns recovery interpretation. Historical owner checkpoints and local receipt
+locators remain in the original Git revision recorded by
+[document history](../evidence/document-history.json); they do not qualify a
+later source or optimized performance series.

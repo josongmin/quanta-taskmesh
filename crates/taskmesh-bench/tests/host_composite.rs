@@ -172,17 +172,17 @@ fn reject_raw_edit<T: serde::Serialize + serde::de::DeserializeOwned>(
     );
 }
 
-#[test]
-fn composite_failure_raw_rejects_identity_population_and_parent_time_independently() {
+fn retained_failure_before_submission(
+    scenario: &CompositeScenario,
+) -> taskmesh_bench::composite_host::CompositeFailureRaw {
     use taskmesh_bench::composite_host::{CompositeFailureRaw, CompositePartialChild};
     use taskmesh_bench::host_load::ClassCounters;
     use taskmesh_bench::host_scenarios::HostPath;
 
-    let scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");
     let topology = scenario.resolved_topology().expect("resolved fixture");
     // A retained failure can precede child submission. Empty event histories
     // keep the population and parent-time witnesses independent of child time.
-    let raw = CompositeFailureRaw {
+    CompositeFailureRaw {
         schema_version: 1,
         status: "invalid".into(),
         mode: "caller_orchestrated_composite".into(),
@@ -215,7 +215,15 @@ fn composite_failure_raw_rejects_identity_population_and_parent_time_independent
             .collect(),
         drain_ok: true,
         conservation_ok: true,
-    };
+    }
+}
+
+#[test]
+fn composite_failure_raw_rejects_identity_population_and_parent_time_independently() {
+    use taskmesh_bench::composite_host::CompositeFailureRaw;
+
+    let scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");
+    let raw = retained_failure_before_submission(&scenario);
     raw.validate_against(&scenario)
         .expect("valid retained failure before child submission");
     let restored: CompositeFailureRaw =
@@ -247,6 +255,199 @@ fn composite_failure_raw_rejects_identity_population_and_parent_time_independent
     equal_parent_time
         .validate_against(&scenario)
         .expect("inclusive parent observation boundary");
+}
+
+#[test]
+fn composite_failure_raw_rejects_child_key_and_path_independently() {
+    use taskmesh_bench::host_scenarios::HostPath;
+
+    let scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");
+    let raw = retained_failure_before_submission(&scenario);
+    raw.validate_against(&scenario)
+        .expect("valid child catalog");
+    for index in 0..raw.children.len() {
+        let expected = format!("composite failure child {index}: key or path differs");
+        // Every row keeps its valid path when only its key is corrupted.
+        for key in [0, raw.children[(index + 1) % 3].key] {
+            reject_raw_edit(
+                &raw,
+                &format!("/children/{index}/key"),
+                serde_json::json!(key),
+                &expected,
+                |value| value.validate_against(&scenario),
+            );
+        }
+        // A different registered path is still invalid for this keyed child.
+        for path in [HostPath::Io, HostPath::Blocking, HostPath::Cpu] {
+            if path != raw.children[index].path {
+                reject_raw_edit(
+                    &raw,
+                    &format!("/children/{index}/path"),
+                    serde_json::json!(path),
+                    &expected,
+                    |value| value.validate_against(&scenario),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn composite_failure_raw_checks_partial_event_order_and_inclusive_times() {
+    let scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");
+    let raw = retained_failure_before_submission(&scenario);
+    // Structural projections exercise timestamp prerequisites independently;
+    // the async timeout test above owns actual producer/counter settlement.
+    let histories = [
+        [None, None, None, None],
+        [Some(10), None, None, None],
+        [Some(10), None, None, Some(20)], // Rejected before body start.
+        [Some(10), Some(12), None, None],
+        [Some(10), Some(12), None, Some(20)], // Response does not prove finish.
+        [Some(10), Some(12), Some(15), None],
+        [Some(10), Some(12), Some(15), Some(20)],
+        [Some(10); 4],
+        [Some(20); 4],
+    ];
+    for history in histories {
+        let mut partial = raw.clone();
+        for row in &mut partial.children {
+            [
+                row.submitted_ns,
+                row.body_started_ns,
+                row.body_finished_ns,
+                row.response_ns,
+            ] = history;
+        }
+        partial
+            .validate_against(&scenario)
+            .expect("valid partial history and inclusive observation boundaries");
+    }
+
+    for index in 0..raw.children.len() {
+        let expected = format!("composite failure child {index}: time differs");
+        let mut complete = raw.clone();
+        let row = &mut complete.children[index];
+        row.submitted_ns = Some(11);
+        row.body_started_ns = Some(13);
+        row.body_finished_ns = Some(15);
+        row.response_ns = Some(17);
+        complete
+            .validate_against(&scenario)
+            .expect("ordered history");
+        for (field, before_previous) in [
+            ("submitted_ns", 9),
+            ("body_started_ns", 10),
+            ("body_finished_ns", 12),
+        ] {
+            for time in [before_previous, 21] {
+                reject_raw_edit(
+                    &complete,
+                    &format!("/children/{index}/{field}"),
+                    serde_json::json!(time),
+                    &expected,
+                    |value| value.validate_against(&scenario),
+                );
+            }
+        }
+        // An unfinished worker is valid after caller response; isolate the
+        // response-time witness from body-finish ordering.
+        complete.children[index].body_finished_ns = None;
+        complete
+            .validate_against(&scenario)
+            .expect("caller responded while body remained unfinished");
+        for time in [12, 21] {
+            reject_raw_edit(
+                &complete,
+                &format!("/children/{index}/response_ns"),
+                serde_json::json!(time),
+                &expected,
+                |value| value.validate_against(&scenario),
+            );
+        }
+        let expected = format!("composite failure child {index}: event order differs");
+        for history in [
+            [None, Some(12), None, None],
+            [None, None, Some(15), None],
+            [None, None, None, Some(20)],
+            [Some(10), None, Some(15), None],
+        ] {
+            let mut invalid = raw.clone();
+            let row = &mut invalid.children[index];
+            [
+                row.submitted_ns,
+                row.body_started_ns,
+                row.body_finished_ns,
+                row.response_ns,
+            ] = history;
+            assert!(invalid
+                .validate_against(&scenario)
+                .is_err_and(|error| error == expected));
+        }
+    }
+}
+
+#[test]
+fn composite_failure_raw_checks_class_inventory_and_counter_bounds_independently() {
+    let mut scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");
+    let mut unused = scenario.classes[0].clone();
+    unused.name = "unused".into();
+    scenario.classes.push(unused);
+    let raw = retained_failure_before_submission(&scenario);
+    raw.validate_against(&scenario)
+        .expect("registered unused class has no admissions");
+
+    let mut settled = raw.clone();
+    settled.reason = "parent failed after child execution".into();
+    for row in &mut settled.children {
+        row.submitted_ns = Some(10);
+        row.body_started_ns = Some(12);
+        row.body_finished_ns = Some(15);
+        row.response_ns = Some(20);
+    }
+    for (name, maximum) in [("parent", 1), ("child", 3), ("unused", 0)] {
+        let counters = settled.class_counters.get_mut(name).unwrap();
+        counters.admitted = maximum;
+        counters.started = maximum;
+        counters.terminated = maximum;
+    }
+    settled
+        .validate_against(&scenario)
+        .expect("inclusive class bounds with complete child histories");
+    for (name, maximum) in [("parent", 1), ("child", 3), ("unused", 0)] {
+        let expected = format!("composite failure class {name} counters differ");
+        for field in ["admitted", "started", "terminated"] {
+            reject_raw_edit(
+                &settled,
+                &format!("/class_counters/{name}/{field}"),
+                serde_json::json!(maximum + 1),
+                &expected,
+                |value| value.validate_against(&scenario),
+            );
+        }
+        // Keep catalog size unchanged so the missing-name guard is exercised.
+        let mut renamed = raw.clone();
+        let counters = renamed.class_counters.remove(name).unwrap();
+        renamed
+            .class_counters
+            .insert("unregistered".into(), counters);
+        assert!(renamed
+            .validate_against(&scenario)
+            .is_err_and(|error| error == format!("composite failure class {name} missing")));
+    }
+    for extra in [false, true] {
+        let mut wrong_population = raw.clone();
+        if extra {
+            wrong_population
+                .class_counters
+                .insert("unregistered".into(), Default::default());
+        } else {
+            wrong_population.class_counters.remove("unused");
+        }
+        assert!(wrong_population
+            .validate_against(&scenario)
+            .is_err_and(|error| error == "composite failure governance inventory differs"));
+    }
 }
 
 fn check_success_raw_population(

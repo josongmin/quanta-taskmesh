@@ -300,6 +300,60 @@ fn pure_producer_cap_and_lag_have_exact_boundary() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn complete_raw_binds_scenario_identity_and_path() {
+    let scenario =
+        HostScenario::from_json(&serde_json::to_vec(&valid_scenario()).unwrap()).unwrap();
+    let good = run_host_scenario_with_fault(&scenario, None)
+        .await
+        .expect("diagnostic run retains raw evidence");
+    good.validate_against(&scenario).expect("matching raw run");
+    assert_eq!(good.records.len(), 1);
+
+    let mut wrong_scenario = good.clone();
+    wrong_scenario.scenario_id = "different-scenario".into();
+    wrong_scenario
+        .validate()
+        .expect("internally coherent raw run");
+    assert_eq!(
+        wrong_scenario.validate_against(&scenario).unwrap_err(),
+        "raw scenario identity or offer population differs"
+    );
+
+    let mut wrong_path = good;
+    wrong_path.records[0].path = HostPath::Blocking;
+    wrong_path.validate().expect("internally coherent raw run");
+    assert_eq!(
+        wrong_path.validate_against(&scenario).unwrap_err(),
+        "row 0: offer identity differs from scenario"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn complete_raw_binds_offer_population() {
+    let scenario =
+        HostScenario::from_json(&serde_json::to_vec(&valid_scenario()).unwrap()).unwrap();
+    let good = run_host_scenario_with_fault(&scenario, None)
+        .await
+        .expect("diagnostic run retains raw evidence");
+    good.validate_against(&scenario).expect("matching raw run");
+    assert_eq!(good.records.len(), 1);
+
+    let mut missing_offer = good;
+    missing_offer.records.clear();
+    missing_offer.settlement = CallerCounts::from_records(&missing_offer.records).unwrap();
+    missing_offer.cut =
+        CallerCounts::at_cut(&missing_offer.records, missing_offer.injection_window_ns).unwrap();
+    *missing_offer.class_counters.get_mut("c").unwrap() = ClassCounters::default();
+    missing_offer
+        .validate()
+        .expect("internally coherent raw run");
+    assert_eq!(
+        missing_offer.validate_against(&scenario).unwrap_err(),
+        "raw scenario identity or offer population differs"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn complete_raw_rejects_failed_settlement_and_retained_ownership() {
     let mut scenario =
         HostScenario::from_json(&serde_json::to_vec(&valid_scenario()).unwrap()).unwrap();
@@ -308,6 +362,69 @@ async fn complete_raw_rejects_failed_settlement_and_retained_ownership() {
         .await
         .expect("diagnostic run retains raw evidence");
     good.validate_against(&scenario).expect("settled baseline");
+    assert_eq!(good.snapshots.len(), 2);
+
+    let mut wrong_schema = good.clone();
+    wrong_schema.schema_version = HOST_RAW_VERSION + 1;
+    let expected = "invalid raw host schema/window";
+    assert_eq!(wrong_schema.validate().unwrap_err(), expected);
+    assert_eq!(
+        wrong_schema.validate_against(&scenario).unwrap_err(),
+        expected
+    );
+
+    let mut missing_snapshot = good.clone();
+    missing_snapshot.snapshots.pop();
+    let expected = "snapshot cadence/sample population differs";
+    assert_eq!(missing_snapshot.validate().unwrap_err(), expected);
+    assert_eq!(
+        missing_snapshot.validate_against(&scenario).unwrap_err(),
+        expected
+    );
+
+    let mut extra_snapshot_class = good.clone();
+    let sample = &mut extra_snapshot_class.snapshots[0];
+    sample
+        .classes
+        .insert("ghost".into(), sample.classes["c"].clone());
+    extra_snapshot_class
+        .validate()
+        .expect("snapshot class catalog is scenario-bound");
+    assert_eq!(
+        extra_snapshot_class
+            .validate_against(&scenario)
+            .unwrap_err(),
+        "snapshot 0: class catalog differs"
+    );
+
+    let mut invalid_snapshot_gauge = good.clone();
+    let class = invalid_snapshot_gauge.snapshots[0]
+        .classes
+        .get_mut("c")
+        .unwrap();
+    class.accepted = class.inflight + 1;
+    invalid_snapshot_gauge
+        .validate()
+        .expect("snapshot class gauges are scenario-bound");
+    assert_eq!(
+        invalid_snapshot_gauge
+            .validate_against(&scenario)
+            .unwrap_err(),
+        "snapshot 0: invalid class gauges"
+    );
+
+    let mut extra_counter_class = good.clone();
+    extra_counter_class
+        .class_counters
+        .insert("ghost".into(), ClassCounters::default());
+    extra_counter_class
+        .validate()
+        .expect("class counter catalog is scenario-bound");
+    assert_eq!(
+        extra_counter_class.validate_against(&scenario).unwrap_err(),
+        "class counter population differs from scenario"
+    );
+
     for case in [
         "drain",
         "conservation",

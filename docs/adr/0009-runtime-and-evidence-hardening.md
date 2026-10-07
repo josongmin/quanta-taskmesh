@@ -3,6 +3,7 @@
 - Status: Accepted as implemented repository contracts; qualification is separate
 - Date: 2026-10-07
 - Reviewed source: `e503b6c74c39209bbbafb31f8619e85122a6e714`
+- Later consolidation source: `0cb5ba2692624f7e01571c0f625dfbf5777872ec`; historical results below retain their original scope
 - Cleanup baseline and archived narratives: `2123a462764a3d6445fd536a1e5a5f99d019425e`
 - Amends: [0003](0003-sep-16-hardening-contracts.md),
   [0005](0005-sep-25-execution-response-and-custody.md),
@@ -32,6 +33,8 @@ source. Exact old narratives are bound in [document history](../evidence/documen
 | PRs #12–27 proof repairs | Process/producer custody, generated discovery, requested-stack cancellation and admitted-deadline fixtures have independent oracles. PR #27 adds child-key-only and child-path-only failure witnesses, partial event/time guards, success-raw field witnesses and observable warmup invariants. `crates/taskmesh-bench/tests/host_composite.rs`, `crates/taskmesh-bench/src/composite_host.rs`. |
 | PR #28 procfs race | A disappearing directory entry is omitted only if the PID is confirmed gone or outside the owned group. Held leader, owned member and unreadable ownership remain incomplete. `tools/process_supervisor.py`; independent observations in `tools/gates/tests/test_batch_supervisor.py`. |
 | Oct-7 ADR input migration | Release closure requires a safe, digest-bound ADR artifact before reading its section. An internal parent symlink cannot supply closure with `ticket_artifact = null`. The map retains mutable release checkpoint status separately from immutable historical ticket status. `tools/release/receipt.py`, `tools/release/ticket_map.py`. |
+| PR #29 release authority | Per-ticket finding/acceptance assignments are immutable. Historical and checkpoint lifecycle do not gate the current verdict; exact-source ordinary/finding proof and human approval do. Safe ADR identity remains required. `tools/release/ticket_map.py`, `tools/release/receipt.py`. |
+| PRs #30–31 bench oracles | One explicit bench target keeps validated module membership; raw population rejection witnesses are independent. Removed derived redundant guards do not weaken the owning raw contract. `tools/gates/bench_suite.py`, `crates/taskmesh-bench/tests`. |
 
 ## Current source and regression owners
 
@@ -107,10 +110,11 @@ four test threads; these are focused debug-profile results:
 
 Architecture/map validation, prompt check, gate inventory, affected Python Ruff
 and Semgrep passed. The 101 deleted-input dispositions match their original Git
-bytes and successors; all six Sep-16/Sep-22 raw JSON artifacts remain byte-identical.
+bytes and successors; all six Sep-16/Sep-22 raw JSON artifacts were byte-identical
+at that consolidation and are now archived by original Git source and digest.
 These owner results do not replace final clean-source CI, full23, human release
-adjudication or consumer acceptance. Current canonical local artifact observations
-are recorded in the remaining-work list with their historical source identities.
+adjudication or consumer acceptance. Superseded local artifact observations remain
+in the original remaining-work revision in the Git/digest catalog.
 
 [Remaining work](../remaining-work.md) separates final-source proof, human
 compatibility, measured performance and consumer acceptance. The source-bound

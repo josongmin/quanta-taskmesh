@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SCENARIO = re.compile(r"\b([ABHD])(\d{2})(?:[–-]([ABHD])(\d{2}))?\b")
 LINK = re.compile(r"\[[^]]+\]\(([^)]+)\)")
-ADR = (ROOT / "../../adr/0007-sep-25-implementation-closure.md").resolve()
+ADR = (ROOT / "../../adr/0008-audit-implementation-record.md").resolve()
 MODES = {
     "decision",
     "conditional-implementation",

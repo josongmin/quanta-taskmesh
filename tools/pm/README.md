@@ -81,3 +81,18 @@ The design follows the official guidance current on 2026-09-23:
 
 Prompt files guide agent behavior; they are not an enforcement boundary for runtime, security,
 or release policy. Those remain owned by code, hooks, and verification gates.
+
+## Ordinary verification
+
+Use the smallest owner scope: `dev-rust-fast <crate> [consumer-crate ...]` for Rust
+logic, `dev-rust-tests` for test-only changes, or
+`dev-python-fast <changed.py> <owner-tests>` for Python. Shared tooling requires
+its consumer suites; `dev` and `verify-macos-ci` cover ordinary cross-owner/CI
+feedback. Required commands are owned by `Justfile` and the gate inventory.
+
+AGENTS.md requires explicit authorization in the current request for mutation
+campaigns or mutation-bearing nightly/final release qualification. A changed
+test or inventory does not itself authorize a campaign. Focused/cached mutation
+diagnostics retain their selected source and raw denominator; they cannot supply
+complete qualification. The retired mutation cadence document is archived in
+the Git/digest catalog, with current proof policy in ADR 0006.

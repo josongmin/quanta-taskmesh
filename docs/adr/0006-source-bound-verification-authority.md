@@ -3,7 +3,7 @@
 - Status: Accepted for current local verification policy
 - Date: 2026-09-25
 - Source: [Sep-25 scenario inventory](../evidence/sep25/scenarios.md),
-  [BG25 implementation map](0007-sep-25-implementation-closure.md),
+  [BG25 implementation map](0008-audit-implementation-record.md),
   and `Justfile` / `tools/gates/{inventory,required}.json`
 
 ## Context
@@ -54,8 +54,10 @@ replace the two complete observations or the thread-count liveness check.
 4. Gate membership and commands remain in `tools/gates/required.json`,
    `tools/gates/inventory.json`, and `Justfile`; the scenario manifest is a
    selected-case provenance map, not a second gate inventory.
-5. Historic receipts remain under `docs/evidence`; superseded plan text remains
-   in Git history. A new source or tool revision needs a new receipt, and a
+5. Retired receipts, measurements and superseded text remain in Git history,
+   bound by original source and byte digest in the document catalog. Active
+   static maps/validators remain under `docs/evidence`. A new source or tool
+   revision needs a new receipt, and a
    consumer path dependency needs an exact dependency identity before it can
    support source attribution.
 6. `local` and `dev` are diagnostic feedback scopes; `ci` is the 16-gate
@@ -95,17 +97,17 @@ replace the two complete observations or the thread-count liveness check.
 
 | Removed planning packet | Durable decision or evidence | Open authority |
 |---|---|---|
-| Jun-4 startup and Sep-16 hardening | ADR 0001–0003; ADR 0008 and receipts under `docs/evidence/sep16` | Current plan and release checklist |
-| Sep-22 test optimization and Sep-24 CI stages | This ADR; historical measurement JSON under `docs/evidence/sep22` | New exact-source receipt for later commits |
-| S25/BG25 implementation | ADR 0004–0007; 104-case static mapping under `docs/evidence/sep25` | D1–D9 adoption, performance and release in current plan |
-| B04/B07 benchmark packets | ADR 9000 for measurement and completed diagnostic boundaries | Measured admission and qualified series in current plan |
+| Jun-4 startup and Sep-16 hardening | ADR 0001–0003; ADR 0008; original receipts in Git/digest catalog | Remaining work and release checklist |
+| Sep-22 test optimization and Sep-24 CI stages | This ADR; original measurements in Git/digest catalog | New exact-source receipt for later commits |
+| S25/BG25 implementation | ADR 0004–0006 and 0008; 104-case static mapping under `docs/evidence/sep25` | D1–D9 adoption, performance and release in remaining work |
+| B04/B07 benchmark packets | ADR 9000 for measurement and completed diagnostic boundaries | Measured admission and qualified series in remaining work |
 | SEP-27 SDK proposals | No unimplemented proposal was promoted to an ADR | Adopted facade error exports and Rayon constructor change in the current source; further DX work needs a concrete consumer contract |
 
 ## Consequences
 
 The [release checklist](../release-checklist.md) remains the operational
-procedure. W5 release qualification and external deployment adoption remain
-open in the [current plan](../remaining-work.md).
+procedure. Release qualification and external deployment adoption remain
+open in [remaining work](../remaining-work.md).
 The [scenario manifest](../evidence/sep25/scenario-evidence.json) and validators
 remain executable static evidence, even after old plans are removed.
 

@@ -6,7 +6,33 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 publish = false
+autotests = false
 description = "Benchmark harness for taskmesh (heavy dev-deps isolated here). See docs/adr/9000."
+
+# Every integration source remains a separate module in the single linked test
+# binary. The static target catalog checks this list against tests/*.rs and the
+# exact module declarations in tests/bench_suite.rs.
+[package.metadata.taskmesh_bench_suite]
+target = "bench_suite"
+members = [
+    "artifact_publish.rs",
+    "fairness_property.rs",
+    "hellgate.rs",
+    "host_closed_loop.rs",
+    "host_composite.rs",
+    "host_generator_calibration.rs",
+    "host_load_accounting.rs",
+    "host_load_integration.rs",
+    "host_local.rs",
+    "host_minimal_recorder.rs",
+    "host_simulator_comparison.rs",
+    "host_stability_integration.rs",
+    "inferno.rs",
+]
+
+[[test]]
+name = "bench_suite"
+path = "tests/bench_suite.rs"
 
 [dependencies]
 taskmesh-contract = { workspace = true }

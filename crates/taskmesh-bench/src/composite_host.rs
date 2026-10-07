@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use taskmesh::{
-    DeterministicReducePolicy, RunError, Runtime, SubstrateHint, TaskClass, TaskSpec, TaskStage,
+    DeterministicReducePolicy, RunError, Runtime, Snapshot, SubstrateHint, TaskClass, TaskSpec,
+    TaskStage,
 };
 
 use crate::host_load::{
@@ -464,6 +465,18 @@ struct ParentResult {
     checksum: u64,
 }
 
+fn validate_warmup_snapshot(snapshot: &Snapshot) -> Result<(), String> {
+    if snapshot.conservation_violation().is_some()
+        || snapshot
+            .classes
+            .values()
+            .any(|class| class.inflight != 0 || class.queued != 0)
+    {
+        return Err("composite warmup did not settle".into());
+    }
+    Ok(())
+}
+
 pub async fn run_composite_with_topology(
     scenario: &CompositeScenario,
 ) -> Result<(CompositeRaw, ResolvedHostTopology), CompositeRunFailure> {
@@ -477,16 +490,7 @@ pub async fn run_composite_with_topology(
         .await
         .map_err(CompositeRunFailure::early)?;
     let baseline = runtime.snapshot();
-    if baseline.conservation_violation().is_some()
-        || baseline
-            .classes
-            .values()
-            .any(|class| class.inflight != 0 || class.queued != 0)
-    {
-        return Err(CompositeRunFailure::early(
-            "composite warmup did not settle".into(),
-        ));
-    }
+    validate_warmup_snapshot(&baseline).map_err(CompositeRunFailure::early)?;
     let origin = Instant::now();
     let parent_submitted_ns = since(origin);
     let root_id = format!("h6-{}", scenario.id);
@@ -722,4 +726,49 @@ pub async fn run_composite_with_topology(
         },
         topology,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_warmup_snapshot, CompositeScenario};
+    use taskmesh::{Runtime, TaskClass};
+
+    #[test]
+    fn warmup_snapshot_requires_conservation_and_zero_live_gauges() {
+        let scenario = CompositeScenario::from_json(include_bytes!(
+            "../../../tools/bench/scenarios/h6-composite-smoke.json"
+        ))
+        .expect("fixture");
+        let runtime = scenario.host_shape().build_runtime().expect("runtime");
+        let mut settled = runtime.snapshot();
+        let class = TaskClass::new(scenario.child_class);
+        let child = settled.classes.get_mut(&class).expect("registered class");
+        child.admitted_total = 1;
+        child.started_total = 1;
+        child.terminated_total = 1;
+        assert_eq!(settled.conservation_violation(), None);
+        validate_warmup_snapshot(&settled).expect("finished warmup work is settled");
+
+        let rejects = |snapshot| {
+            assert!(validate_warmup_snapshot(snapshot)
+                .is_err_and(|error| error == "composite warmup did not settle"));
+        };
+        let mut wrong = settled.clone();
+        wrong.classes.get_mut(&class).unwrap().terminated_total = 0;
+        assert!(wrong.conservation_violation().is_some());
+        rejects(&wrong);
+
+        let mut accepted = settled.clone();
+        let child = accepted.classes.get_mut(&class).unwrap();
+        child.admitted_total = 2;
+        child.inflight = 1;
+        child.accepted = 1;
+        assert_eq!(accepted.conservation_violation(), None);
+        rejects(&accepted);
+
+        let mut queued = settled;
+        queued.classes.get_mut(&class).unwrap().queued = 1;
+        assert_eq!(queued.conservation_violation(), None);
+        rejects(&queued);
+    }
 }

@@ -65,6 +65,9 @@ async fn composite_timeout_retains_typed_invalid_raw_and_settlement_observation(
     let failure = run_composite_with_topology(&scenario)
         .await
         .expect_err("parent must time out before delayed child bodies complete");
+    assert_eq!(failure.to_string(), failure.reason);
+    let erased: &dyn std::error::Error = &failure;
+    assert_eq!(erased.to_string(), failure.reason);
     assert!(
         failure.reason.contains("exceeded settlement bound"),
         "{}",
@@ -101,6 +104,36 @@ async fn composite_timeout_retains_typed_invalid_raw_and_settlement_observation(
     assert_eq!(
         *failure.topology.expect("failure topology must be retained"),
         scenario.resolved_topology().expect("scenario topology")
+    );
+}
+
+#[tokio::test]
+async fn composite_preflight_failure_displays_reason_and_propagates_writer_error() {
+    struct RejectWrites;
+
+    impl std::fmt::Write for RejectWrites {
+        fn write_str(&mut self, _: &str) -> std::fmt::Result {
+            Err(std::fmt::Error)
+        }
+    }
+
+    let mut scenario = CompositeScenario::from_json(FIXTURE).expect("composite fixture");
+    scenario.schema_version += 1;
+    let failure = run_composite_with_topology(&scenario)
+        .await
+        .expect_err("invalid version must fail before runtime construction");
+    assert_eq!(
+        failure.reason,
+        "invalid composite version, class split or failure key"
+    );
+    assert!(failure.raw.is_none());
+    assert!(failure.topology.is_none());
+    assert_eq!(format!("{failure}"), failure.reason);
+    let erased: &dyn std::error::Error = &failure;
+    assert_eq!(erased.to_string(), failure.reason);
+    assert_eq!(
+        std::fmt::write(&mut RejectWrites, format_args!("{failure}")),
+        Err(std::fmt::Error)
     );
 }
 

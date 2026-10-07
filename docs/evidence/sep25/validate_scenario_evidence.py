@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
+from tools.gates.bench_suite import selected_case as selected_bench_suite_case  # noqa: E402
+
 MANIFEST = ROOT / "scenario-evidence.json"
 PLAN = ROOT / "ticket-map.json"
 CHECKLIST = REPO / "docs/evidence/sep25/scenarios.md"
@@ -318,6 +320,10 @@ def main() -> None:
                         f"{scenario}: MAPPED target/case is absent, ignored, or not selected: "
                         f"{case_target}::{case_name}"
                     )
+                # The bench source is now a module of one explicit integration
+                # target. A physical function alone no longer proves that Cargo
+                # selects it; the exact suite inventory must include its file.
+                selected_bench_suite_case(REPO, case_target, case_name)
                 if row["feature"] == "rayon" and (
                     not recipe_executes_test(
                         rayon_recipe,

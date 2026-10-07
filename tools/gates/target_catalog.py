@@ -8,6 +8,10 @@ import json
 import subprocess
 from pathlib import Path
 
+from tools.gates.bench_suite import PACKAGE as BENCH_PACKAGE
+from tools.gates.bench_suite import SUITE as BENCH_SUITE
+from tools.gates.bench_suite import check_cargo_targets as check_bench_suite_targets
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.9/3.10 tooling floor
@@ -118,6 +122,13 @@ def filesystem_target_problems(packages: list[dict], root: Path) -> list[str]:
             problems.append(f"{package['name']}: cannot inspect target manifest: {exc}")
             continue
         package_root = manifest.parent
+        bench_suite_valid = False
+        if package["name"] == BENCH_PACKAGE:
+            try:
+                check_bench_suite_targets(root, package)
+                bench_suite_valid = True
+            except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+                problems.append(f"{BENCH_PACKAGE}: {exc}")
         for directory, kind in (
             ("tests", "test"), ("benches", "bench"),
             ("examples", "example"), ("src/bin", "bin"),
@@ -132,6 +143,10 @@ def filesystem_target_problems(packages: list[dict], root: Path) -> list[str]:
                 for path in (package_root / directory).glob("*/main.rs")
                 if path.is_file()
             )
+            if bench_suite_valid and directory == "tests":
+                # The exact physical member set and byte-for-byte module list
+                # were checked above. Only the aggregator is a Cargo target.
+                discovered = {(package_root / "tests" / BENCH_SUITE).absolute()}
             metadata_paths = {
                 Path(target["src_path"]).absolute()
                 for target in package.get("targets", [])

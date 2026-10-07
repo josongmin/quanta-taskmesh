@@ -637,6 +637,12 @@ pub(crate) fn since(origin: Instant) -> u64 {
     u64::try_from(origin.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
+/// Remaining time in a finite injection window, given one monotonic observation.
+/// The cut itself is independent of how long the producer's offer loop took.
+pub(crate) fn remaining_injection_window(window: Duration, elapsed: Duration) -> Option<Duration> {
+    window.checked_sub(elapsed)
+}
+
 /// The only wall-clock pacing and cap decision used by host and null-work
 /// controls. The absolute intended time remains the authority for both.
 pub(crate) fn pace_offer(
@@ -1180,8 +1186,7 @@ pub(crate) async fn run_host_window(
                 }
             }));
         }
-        let cut = origin + injection;
-        if let Some(delay) = cut.checked_duration_since(Instant::now()) {
+        if let Some(delay) = remaining_injection_window(injection, origin.elapsed()) {
             std::thread::sleep(delay);
         }
         let _ = producer_tx.send(jobs);
@@ -1391,5 +1396,28 @@ mod warmup_settlement_tests {
         assert_eq!(accepted.conservation_violation(), None);
         assert!(!warmup_snapshot_settled(&accepted));
         assert!(!warmup_snapshot_capacity_settled(&accepted));
+    }
+}
+
+#[cfg(test)]
+mod injection_window_tests {
+    use super::remaining_injection_window;
+    use std::time::Duration;
+
+    #[test]
+    fn finite_window_remaining_duration_has_before_equal_and_after_boundaries() {
+        let window = Duration::from_millis(10);
+        assert_eq!(
+            remaining_injection_window(window, Duration::from_millis(2)),
+            Some(Duration::from_millis(8))
+        );
+        assert_eq!(
+            remaining_injection_window(window, window),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(
+            remaining_injection_window(window, Duration::from_millis(11)),
+            None
+        );
     }
 }

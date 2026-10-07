@@ -2,7 +2,7 @@
 
 `taskmesh`는 분석 시스템과 서비스 런타임을 위한 governed execution control-plane이다.
 현재 구현·검증·소비자 적용·release 상태와 각 권한 문서의 경로는
-[operating kernel](docs/ssot/README.md)에 정리한다.
+[문서 인덱스](docs/README.md)에 정리한다.
 
 핵심 원칙:
 
@@ -117,8 +117,8 @@ dirty checkout 전체를 의도적으로 진단해야 할 때만
 현재 테스트망이 compiler-generated 변경 전체를 잡는지 감사하는 final-candidate proof다. 수천 개
 변이를 격리 실행하므로 일상 수정이나 focused 재검증에서는 실행하지 않는다.
 구현·증명·운영을 함께 재감사할 때는
-[Taskmesh SOTA Audit Checklist](docs/taskmesh-sota-audit-checklist.md)의 `M/R/D` 판정과
-증거 ledger를 사용한다.
+[ADR 0006](docs/adr/0006-source-bound-verification-authority.md)의 source·증거 범위와
+[미완료 작업](docs/remaining-work.md)을 기준으로 판정한다.
 
 ## 외부 사용 가이드 (Rust)
 
@@ -429,7 +429,7 @@ let report = gov.reap_leaks();                       // LeakDetecting 클래스�
 let _ = report;
 ```
 
-`features = ["rayon"]`만 켜면 `run_cpu`의 기본 executor가 공유 rayon 풀로 **자동
+`features = ["rayon"]`만 켜면 `run_cpu`의 기본 executor가 runtime 소유 Rayon 풀로 **자동
 와이어링**된다(추가 코드 불필요). 풀을 직접 만들어 주입하려면 같은 feature 아래
 `taskmesh::ext::RayonCpuExecutor`를 쓴다 — `taskmesh-rayon`을 직접 의존할 필요는 없다:
 
@@ -491,12 +491,16 @@ lease를 돌려준다 — 그 뒤로는 `release_leased(token)`만 permit을 끝
    `run_cpu`=`SharedCpuExecutor`, `run_local`=`LocalRuntime`. 불일치는 `SubstrateMismatch`로 reject.
 2. **topology slot은 실제 capability-pool 상한이며, admission과 같은 결정이다.** `blocking_threads`/
    `large_stack_slots`/`local_runtime_slots`/`maintenance_workers` 및 topology-sized CPU 풀은 해당
-   substrate 동시성을 제한한다. `0 = 무제한`. capability 점유는 class inflight·resource budget과
-   **하나의** admission transition에서 결정되므로 admission 앞에 별도 대기 큐가 없다: 풀이 가득 차면
-   비-queueing 클래스는 즉시 `SubstrateSaturated`로 shed되고, queueing 클래스는 자기 `max_queue_depth`
-   안에서 기다리다 만료 시 `SubstratePoolTimedOut`(거버너 큐 대기 `PermitAcquireTimedOut`와 구분).
+   role 동시성을 제한한다. legacy role slot의 `0`은 해당 role gate 생략이다. CPU는 resolved
+   worker 수로 제한하며 physical shared-blocking/CPU/dedicated domain은 항상 유한하다.
+   capability 점유는 class inflight·resource budget과
+   **하나의** admission transition에서 결정되므로 admission 앞에 별도 대기 큐가 없다. capability가
+   primary blocker이면 비-queueing 클래스는 `SubstrateSaturated`로 shed되고, queueing 클래스는 자기
+   `max_queue_depth` 안에서 기다리다 만료 시 `SubstratePoolTimedOut`을 받는다. class inflight도 포화이면
+   class가 우선하며 큐 대기 만료는 `PermitAcquireTimedOut`이다.
    `stack_size_bytes`가 있는 blocking-family 제출은 hint와 무관하게 `large_stack` pool을 소비한다.
-   `Blocking`/`LargeStack`/`Background`는 blocking executor를 공유하되 capability pool은 별도다.
+   stack 요청이 없는 blocking-family 작업은 Tokio blocking executor를 공유한다. explicit stack
+   요청은 dedicated thread에서 실행하며 role pool과 실제 physical domain을 함께 소비한다.
 3. **fan-out reduce는 admission에서 강제된다.** reduce policy 없는 fan-out stage는 `MalformedTask`.
    0-stage spec과 stage별 class 불일치도 `MalformedTask`로 reject.
 4. **fairness는 tier 단위 discipline이다.** 한 tier(best-effort 여부) 안의 클래스는 같은 discipline을
@@ -514,7 +518,7 @@ lease를 돌려준다 — 그 뒤로는 `release_leased(token)`만 permit을 끝
    중단되지 않고 charged 상태로 끝까지 실행된다 — caller의 대기만 끝난다). `CooperativeWithDeadline`는 추가로
    `SubmitOptions::deadline`을 발효(→`GovernorError::DeadlineExceeded`); 다른 정책의 클래스에 deadline을
    주면 `DeadlineUnsupported`로 거절된다(무시하지 않는다).
-   `RunFor`는 worker 자신의 시작 시각을 기준으로 하며(inline executor 포함) 완료 시각이 budget을
+   `RunFor`는 worker 자신의 시작 시각을 기준으로 하며 완료 시각이 budget을
    넘긴 결과는 `Ok`로 보고되지 않는다. `run_blocking`의 `RunFor`는 caller의 대기만 제한한다.
    worker 실패는 `WorkerPanicked`/`WorkerUnavailable`/`JobAbandoned`로 구분된다.
 6. **`LeakDetecting` 클래스만 leak sweep으로 회수**되며, 그중에서도 executor에 도달하지 않은
@@ -525,10 +529,10 @@ lease를 돌려준다 — 그 뒤로는 `release_leased(token)`만 permit을 끝
 7. **정책 검증은 fail-closed다.** 불가능한 budget·mixed-tier fairness·잘못된 memory scaling·disabled
    클래스로의 `DegradeToLight`·스스로 다시 degrade하는 fallback으로의 `DegradeToLight`(degrade는 한
    hop이며 체인·순환은 거부) 등은 `Builder::build`/`Governor::new`에서 거부되며 런타임 admit로
-   미루지 않는다. `CpuExecutor`가 `declared_workers`를 선언하면 topology가 resolve한 `cpu` gate보다
-   작을 수 없다(`TopologyError::ExecutorDeclaresFewerWorkers`) — gate와 pool은 한 답에서 나온다.
-   `runtime.executor_capabilities()`가 adapter의 선언(worker 수·exclusive 여부·non-blocking submit)을
-   노출한다.
+   미루지 않는다. `CpuExecutor`의 legacy/inline submit, worker 수 미상, physical domain 미상은
+   설치 시 typed reject된다. `declared_workers`는 해당 physical domain의 resolved worker 수와
+   정확히 같아야 한다(`TopologyError::ExecutorWorkerCountMismatch`). build에서 한 번 검증·동결한
+   descriptor를 dispatch와 `runtime.executor_capabilities()`가 함께 사용한다.
 8. **child→root 귀속:** `child_of(root, immediate_parent_operation, parent_stage)`는 root와
    직접 parent identity를 함께 보존한다. `operation(name)`은 root를 재설정하지 않는다.
    동일 root의 중복 active operation은 typed reject되며, parent lookup은 문자열 stage scan이 아닌
@@ -541,7 +545,7 @@ lease를 돌려준다 — 그 뒤로는 `release_leased(token)`만 permit을 끝
 
 문서:
 
-1. [Current-source audit and remediation plan](docs/plans/2026-10-03-current-source-remediation.md)
+1. [Remaining work](docs/remaining-work.md)
 2. [Library Spec](docs/taskmesh-library-spec.md)
 3. [External Interface](docs/taskmesh-external-interface.md)
 4. [Accepted ADR index](docs/adr/README.md)

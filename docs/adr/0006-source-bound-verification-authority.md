@@ -2,7 +2,7 @@
 
 - Status: Accepted for current local verification policy
 - Date: 2026-09-25
-- Source: [Sep-25 scenario inventory](../misc/tmp-engine-checklist-sep-25.md),
+- Source: [Sep-25 scenario inventory](../evidence/sep25/scenarios.md),
   [BG25 implementation map](0007-sep-25-implementation-closure.md),
   and `Justfile` / `tools/gates/{inventory,required}.json`
 
@@ -95,7 +95,7 @@ replace the two complete observations or the thread-count liveness check.
 
 | Removed planning packet | Durable decision or evidence | Open authority |
 |---|---|---|
-| Jun-4 startup and Sep-16 hardening | ADR 0001–0003; Sep-16 audit and receipts under `docs/audits` and `docs/evidence/sep16` | Current plan and release checklist |
+| Jun-4 startup and Sep-16 hardening | ADR 0001–0003; ADR 0008 and receipts under `docs/evidence/sep16` | Current plan and release checklist |
 | Sep-22 test optimization and Sep-24 CI stages | This ADR; historical measurement JSON under `docs/evidence/sep22` | New exact-source receipt for later commits |
 | S25/BG25 implementation | ADR 0004–0007; 104-case static mapping under `docs/evidence/sep25` | D1–D9 adoption, performance and release in current plan |
 | B04/B07 benchmark packets | ADR 9000 for measurement and completed diagnostic boundaries | Measured admission and qualified series in current plan |
@@ -105,6 +105,24 @@ replace the two complete observations or the thread-count liveness check.
 
 The [release checklist](../release-checklist.md) remains the operational
 procedure. W5 release qualification and external deployment adoption remain
-open in the [current plan](../plans/2026-10-03-current-source-remediation.md).
+open in the [current plan](../remaining-work.md).
 The [scenario manifest](../evidence/sep25/scenario-evidence.json) and validators
 remain executable static evidence, even after old plans are removed.
+
+## Document authority and audit scope
+
+Completed ticket/audit narratives are compressed into ADR 0008–0009. One
+remaining-work list owns unfinished implementation, proof, compatibility and
+consumer work. Current API/wire and release/measurement procedures retain their
+own contracts; navigation does not copy source/CI snapshots. Deleted inputs are
+bound to their original Git commit and byte digests in
+[document history](../evidence/document-history.json).
+
+Normal reviews freeze source/dirty ownership, inspect reachable owner and caller
+paths, separate a reproduced defect from a coverage gap, and run the smallest
+meaningful owner check. Unknown classes/handles/ingress reject; capacity and
+worker custody require exact transition evidence. Static maps, filtered tests,
+historical receipts and partial campaigns retain their denominators. Required
+checks not executed are NOT_RUN. Human compatibility and consumer activation
+are separately owned. Mutation/final qualification runs require explicit current
+request authorization under AGENTS.md; an old packet command is not authorization.

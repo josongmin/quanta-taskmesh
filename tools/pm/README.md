@@ -65,10 +65,10 @@ present. Imported startup files must be inventoried, with no import cycles. Budg
 positive integers. This check covers the listed repository startup surfaces and Cursor rules;
 it does not inspect personal instructions or prove what an installed agent actually loaded.
 
-The on-demand SEP-21 packet pack is checked separately by
-`uv run python docs/bugbash/sep-21/tickets/validate_plan.py --structure-only`: assigned acceptance
-coverage, producer signals, local links, and direct shell-block `just` recipe names. It does
-not enforce write ownership or qualify source, runtime behavior, or agent instruction following.
+The retired SEP-21 packet pack is represented by schema-2 historical ownership
+and per-ticket ADR sections. `uv run python docs/evidence/sep21/validate_ticket_map.py`
+checks exact ticket/finding/acceptance identity and historical evidence sections.
+It does not execute campaign commands or qualify current source.
 
 The design follows the official guidance current on 2026-09-23:
 

@@ -46,7 +46,7 @@ Snapshot schema versioning does not version every other public enum.
   different contract and needs compatibility review.
 - The library's choices above are accepted; migration approval and deployed
   consumer qualification are recorded in the
-  [current consumer adoption plan](../plans/2026-10-03-current-source-remediation.md).
+  [current consumer adoption plan](../remaining-work.md).
 - The exact public fields, validation limits, and error variants belong to the
   [library spec](../taskmesh-library-spec.md) and
   [external interface](../taskmesh-external-interface.md). This ADR records why
@@ -55,6 +55,6 @@ Snapshot schema versioning does not version every other public enum.
 ## Evidence boundary
 
 The [BG25 implementation map](0007-sep-25-implementation-closure.md) and
-[104-scenario inventory](../misc/tmp-engine-checklist-sep-25.md)
+[104-scenario inventory](../evidence/sep25/scenarios.md)
 retain the compressed implementation history and candidate fixtures. Their static mapping
 does not certify an external deployment or a later source revision.

@@ -327,7 +327,7 @@ def test_human_adjudication_rejects_non_reviewer_values(reviewer: object) -> Non
     assert "human adjudication approval/reviewer missing" in reasons
 
 
-def test_23_findings_link_once_and_unverified_tickets_stay_open() -> None:
+def test_23_findings_keep_historical_open_states_without_blocking_current_proof() -> None:
     plan = json.loads(receipt.PLAN.read_text())
     reasons: list[str] = []
     graph = receipt.closure_report(REPO, plan, reasons)
@@ -335,12 +335,55 @@ def test_23_findings_link_once_and_unverified_tickets_stay_open() -> None:
     assert sorted(f for entry in graph for f in entry["findings"]) == [
         f"TM21-{n:03d}" for n in range(1, 24)
     ]
-    assert any("SEP21-V02" in reason and "not verified" in reason for reason in reasons)
+    assert {row["ticket"]: row["status"] for row in graph}["SEP21-V02"] == (
+        "IMPLEMENTED_UNQUALIFIED"
+    )
+    assert reasons == []
+    # Historical state alone neither qualifies nor blocks current-source proof.
+    value = {
+        "schema_version": 1,
+        "source": {"dirty": False},
+        "plan": receipt.identity(REPO, "docs/evidence/sep21/ticket-map.json"),
+        "closure": graph,
+    }
+    verdict = receipt.evaluate(value, current=None)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any(
+        "ordinary exact-source qualification is NOT_RUN" in reason for reason in verdict["reasons"]
+    )
+    assert any("finding proof manifest missing" in reason for reason in verdict["reasons"])
     bad = deepcopy(plan)
     bad["tickets"][0]["findings"] = [[]]
     reasons = []
     receipt.closure_report(REPO, bad, reasons)
     assert reasons
+
+
+def test_manual_hosted_closure_status_cannot_waive_missing_current_proof(tmp_path: Path) -> None:
+    plan = json.loads(receipt.PLAN.read_text())
+    for row in plan["tickets"]:
+        if row["id"] in {"SEP21-V01", "SEP21-V02"}:
+            row["closure_status"] = "HOSTED_QUALIFIED"
+    map_path = tmp_path / "docs/evidence/sep21/ticket-map.json"
+    map_path.parent.mkdir(parents=True)
+    map_path.write_text(json.dumps(plan), encoding="utf-8")
+    adr = tmp_path / plan["tickets"][0]["file"]
+    adr.parent.mkdir(parents=True)
+    adr.write_bytes((REPO / plan["tickets"][0]["file"]).read_bytes())
+    reasons: list[str] = []
+    closure = receipt.closure_report(tmp_path, plan, reasons)
+    assert reasons == []
+    assert {row["ticket"]: row["status"] for row in closure}["SEP21-V02"] == ("HOSTED_QUALIFIED")
+    value = {
+        "schema_version": 1,
+        "source": {"dirty": False},
+        "plan": receipt.identity(tmp_path, "docs/evidence/sep21/ticket-map.json"),
+        "closure": closure,
+    }
+    verdict = receipt.evaluate(value, root=tmp_path, current=None)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert "ordinary exact-source qualification is NOT_RUN" in verdict["reasons"]
+    assert any("finding proof manifest" in reason for reason in verdict["reasons"])
 
 
 def test_missing_release_evidence_is_never_qualified() -> None:
@@ -720,7 +763,7 @@ def finding_fixture(tmp_path: Path) -> tuple[dict, dict, dict, dict]:
     required = json.loads((REPO / "tools/gates/required.json").read_text())
     for name, original in (
         ("tools/release/finding-proof-spec.json", finding_proof.SPEC),
-        ("docs/bugbash/sep-21/tickets/plan.json", finding_proof.PLAN),
+        ("docs/evidence/sep21/ticket-map.json", finding_proof.PLAN),
         ("tools/gates/required.json", REPO / "tools/gates/required.json"),
     ):
         path = tmp_path / name
@@ -765,13 +808,144 @@ def finding_fixture(tmp_path: Path) -> tuple[dict, dict, dict, dict]:
         "source": source,
         "source_after": dict(source),
         "spec": receipt.identity(tmp_path, "tools/release/finding-proof-spec.json"),
-        "plan": receipt.identity(tmp_path, "docs/bugbash/sep-21/tickets/plan.json"),
+        "plan": receipt.identity(tmp_path, "docs/evidence/sep21/ticket-map.json"),
         "results": rows,
     }
     ordinary = {
         "gates": {"results": [{"id": gate, "status": "PASS"} for gate in required["required"]]}
     }
     return manifest, spec, plan, ordinary
+
+
+def test_historical_open_states_do_not_override_current_release_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Synthetic evaluator fixture; no real human decision or gate is produced."""
+
+    def save(path: str, payload: object) -> dict:
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload), encoding="utf-8")
+        return receipt.identity(tmp_path, path)
+
+    manifest, _, plan, ordinary = finding_fixture(tmp_path)
+    source = manifest["source"]
+    (tmp_path / "Cargo.toml").write_bytes((REPO / "Cargo.toml").read_bytes())
+    adr_path = tmp_path / plan["tickets"][0]["file"]
+    adr_path.parent.mkdir(parents=True, exist_ok=True)
+    adr_path.write_bytes((REPO / plan["tickets"][0]["file"]).read_bytes())
+    policy = json.loads(receipt.POLICY.read_text())
+    policy.update(version_decision="APPROVED", version_reviewer="synthetic-test-reviewer")
+    policy_ref = save("tools/release/release-policy.json", policy)
+    required = json.loads(receipt.REQUIRED.read_text())
+    required_ref = save("tools/release/release-required.json", required)
+    ordinary_payload = {
+        "source": source,
+        **ordinary,
+        "generated_mutation_sweep": {"status": "PASS"},
+    }
+    ordinary_ref = save("target/qualification/local-receipt.json", ordinary_payload)
+    template_ref = save("tools/release/adjudication.json", {"fixture": True})
+    adjudication_ref = save("target/release/input/synthetic.json", {"fixture": True})
+    semver_ref = save("target/release/semver/semver-manifest.json", {"fixture": True})
+    finding_ref = save("target/release/finding-proof/finding-proof-manifest.json", manifest)
+    raw_refs = {
+        name: save(
+            path,
+            {"cargo_llvm_cov": {"version": "synthetic"}}
+            if name == "coverage_summary"
+            else {"fixture": True},
+        )
+        for name, path in required["required_raw_artifacts"].items()
+    }
+    closure_reasons: list[str] = []
+    closure = receipt.closure_report(tmp_path, plan, closure_reasons)
+    assert closure_reasons == []
+    assert {row["ticket"]: row["status"] for row in closure}["SEP21-V01"] == (
+        "IMPLEMENTED_UNQUALIFIED"
+    )
+    validated: list[Path] = []
+
+    def qualified_ordinary(path: Path, required: bool, *, current: dict, artifact_root: Path):
+        assert required is True and current == source and artifact_root == tmp_path
+        validated.append(path)
+        return 0, []
+
+    monkeypatch.setattr(receipt.ordinary, "validate", qualified_ordinary)
+    monkeypatch.setattr(receipt, "semver_problems", lambda *args: [])
+    monkeypatch.setattr(receipt, "adjudication_problems", lambda *args: [])
+    monkeypatch.setattr(receipt, "iai_raw_problems", lambda *args: [])
+    monkeypatch.setattr(receipt, "metric_report", lambda *args: {"synthetic": "measured"})
+    value = {
+        "schema_version": 1,
+        "source": source,
+        "source_after": dict(source),
+        "policy": policy_ref,
+        "required": required_ref,
+        "baseline_sha": policy["baseline_sha"],
+        "candidate_sha": source["head"],
+        "release_type": policy["release_type"],
+        "attestation": {
+            "kind": "local-release",
+            "eligible": True,
+            "checks": {name: True for name in receipt.LOCAL_RELEASE_CHECKS},
+        },
+        "ordinary_receipt": ordinary_ref,
+        "semver_manifest": semver_ref,
+        "adjudication_template": template_ref,
+        "adjudication": adjudication_ref,
+        "plan": receipt.identity(tmp_path, "docs/evidence/sep21/ticket-map.json"),
+        "closure": closure,
+        "finding_spec": receipt.identity(tmp_path, "tools/release/finding-proof-spec.json"),
+        "finding_manifest": finding_ref,
+        "raw_artifacts": raw_refs,
+        "coverage": {"synthetic": "measured"},
+        "coverage_scope": {
+            "command": receipt.COVERAGE_COMMAND,
+            "feature_scope": "workspace default features",
+            "test_scope": "workspace all-targets excluding bench and doc-examples",
+            "source_sha": source["head"],
+        },
+        "policy_decision_required": (
+            "generated REPORTED vs ordinary quality PASS must be adjudicated without waiver"
+        ),
+        "downstream_states": receipt.DOWNSTREAM_STATES.copy(),
+    }
+    assert receipt.evaluate(value, root=tmp_path, current=source) == {
+        "status": "QUALIFIED",
+        "reasons": [],
+    }
+    assert validated == [tmp_path / "target/qualification/local-receipt.json"]
+
+    missing_ordinary = deepcopy(value)
+    missing_ordinary["ordinary_receipt"] = None
+    verdict = receipt.evaluate(missing_ordinary, root=tmp_path, current=source)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert "ordinary exact-source qualification is NOT_RUN" in verdict["reasons"]
+
+    stale_ordinary = deepcopy(value)
+    stale_ordinary["ordinary_receipt"] = save(
+        "target/qualification/local-receipt.json",
+        {
+            "source": {**source, "head": "d" * 40},
+            **ordinary,
+            "generated_mutation_sweep": {"status": "PASS"},
+        },
+    )
+    verdict = receipt.evaluate(stale_ordinary, root=tmp_path, current=source)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert "ordinary receipt is not the exact release source" in verdict["reasons"]
+
+    save("target/qualification/local-receipt.json", ordinary_payload)
+    stale_finding = deepcopy(value)
+    stale_finding["finding_manifest"] = save(
+        "target/release/finding-proof/finding-proof-manifest.json",
+        {**manifest, "source": {**source, "head": "d" * 40}},
+    )
+    verdict = receipt.evaluate(stale_finding, root=tmp_path, current=source)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert "finding proof source differs from release source" in verdict["reasons"]
+    assert not any("ordinary receipt" in reason for reason in verdict["reasons"])
 
 
 def test_finding_manifest_binds_all_23_nonvacuous_raw_witnesses(tmp_path: Path) -> None:
@@ -787,6 +961,10 @@ def test_finding_manifest_binds_all_23_nonvacuous_raw_witnesses(tmp_path: Path) 
         (lambda x: x["results"][0].update(test_source=None), "test source digest"),
         (lambda x: x["results"][0].update(command=["true"]), "command differs"),
         (lambda x: x["source"].update(head="d" * 40), "source differs"),
+        (
+            lambda x: x["plan"].update(path="docs/bugbash/sep-21/tickets/plan.json"),
+            "plan digest differs from tracked input",
+        ),
         (lambda x: x["results"].pop(), "exactly 23"),
     ):
         bad = deepcopy(manifest)

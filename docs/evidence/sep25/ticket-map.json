@@ -3,7 +3,7 @@
   "status": "EVIDENCE_ONLY",
   "audit_head": "76559c483bdd1d6b0b5226f7c5b5591b919afae9",
   "audit_tree": "215a968630e9f0675bfd1e42f0919bd2047bded2",
-  "checklist": "../../misc/tmp-engine-checklist-sep-25.md",
+  "checklist": "scenarios.md",
   "tickets": [
     {
       "id": "BG25-001",

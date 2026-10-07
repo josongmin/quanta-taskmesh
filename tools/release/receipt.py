@@ -20,7 +20,7 @@ REPO = Path(__file__).resolve().parents[2]
 POLICY = REPO / "tools/release/release-policy.json"
 REQUIRED = REPO / "tools/release/release-required.json"
 ADJUDICATION = REPO / "tools/release/adjudication.json"
-PLAN = REPO / "docs/bugbash/sep-21/tickets/plan.json"
+PLAN = REPO / "docs/evidence/sep21/ticket-map.json"
 ORDINARY_REQUIRED = REPO / "tools/gates/required.json"
 METRICS = ("lines", "regions", "functions", "instantiations", "branches", "mcdc")
 COVERAGE_COMMAND = (
@@ -67,7 +67,7 @@ if str(REPO) not in sys.path:
 from tools.bench import iai_gate  # noqa: E402
 from tools.qualification import receipt as ordinary  # noqa: E402
 from tools.qualification.evidence import runtime_action  # noqa: E402
-from tools.release import finding_proof  # noqa: E402
+from tools.release import finding_proof, ticket_map  # noqa: E402
 from tools.release.semver import command, policy_problems, sha256, workspace_version  # noqa: E402
 
 
@@ -297,51 +297,37 @@ def metric_report(raw: object, reasons: list[str]) -> dict:
 
 
 def closure_report(root: Path, plan: object, reasons: list[str]) -> list[dict]:
-    if not isinstance(plan, dict) or not isinstance(plan.get("tickets"), list):
-        reasons.append("ticket plan missing")
+    try:
+        tickets = ticket_map.ticket_rows(plan)
+    except ValueError as error:
+        reasons.append(str(error))
         return []
-    all_findings: list[str] = []
     closure = []
-    for ticket in plan["tickets"]:
-        if not isinstance(ticket, dict):
-            reasons.append("ticket plan has malformed ticket")
-            continue
-        ticket_id, name, findings = ticket.get("id"), ticket.get("file"), ticket.get("findings")
-        if (
-            not isinstance(ticket_id, str)
-            or not isinstance(name, str)
-            or not isinstance(findings, list)
-            or not all(isinstance(finding, str) for finding in findings)
-        ):
-            reasons.append("ticket plan has malformed identity/findings")
-            continue
-        all_findings.extend(findings)
-        path = f"docs/bugbash/sep-21/tickets/{name}"
+    for ticket in tickets:
+        ticket_id, path = ticket["id"], ticket["file"]
         file_id = identity(root, path)
-        text = (root / path).read_text(encoding="utf-8") if file_id else ""
-        match = re.search(r"^- 상태: ([A-Z_]+)$", text, re.MULTILINE)
-        status = match.group(1) if match else "MISSING"
-        evidence = any(
-            heading in text
-            for heading in ("## Closure evidence", "## Phase B evidence", "## Producer evidence")
-        )
-        if ticket_id != "SEP21-R01" and status not in ("LOCALLY_VERIFIED", "HOSTED_QUALIFIED"):
-            reasons.append(f"upstream ticket {ticket_id} is {status}, not verified")
+        try:
+            if file_id is None:
+                raise ValueError("ADR artifact missing or unsafe; identity unavailable")
+            historical_status, evidence = ticket_map.adr_evidence(root, ticket)
+            status = ticket["closure_status"]
+        except (OSError, UnicodeError, ValueError) as error:
+            reasons.append(f"ticket {ticket_id} ADR evidence invalid: {error}")
+            historical_status, status, evidence = "MISSING", "MISSING", False
+        # Lifecycle metadata does not qualify or block current release proof.
+        # The ordinary exact-source receipt and finding proof remain required.
         if ticket_id != "SEP21-R01" and not evidence:
             reasons.append(f"upstream ticket {ticket_id} has no closure/producer evidence section")
         closure.append(
             {
                 "ticket": ticket_id,
-                "findings": findings,
+                "findings": ticket["findings"],
                 "status": status,
+                "historical_status": historical_status,
                 "ticket_artifact": file_id,
                 "evidence_section": evidence,
             }
         )
-    if sorted(all_findings) != [f"TM21-{number:03d}" for number in range(1, 24)]:
-        reasons.append("ticket plan does not map exactly all 23 findings once")
-    if len(closure) != 12:
-        reasons.append("ticket plan does not contain exactly 12 tickets")
     return closure
 
 
@@ -389,7 +375,7 @@ def finding_proof_problems(
         reasons.append("finding proof source changed during execution")
     for field, path in (
         ("spec", "tools/release/finding-proof-spec.json"),
-        ("plan", "docs/bugbash/sep-21/tickets/plan.json"),
+        ("plan", "docs/evidence/sep21/ticket-map.json"),
     ):
         if manifest.get(field) != identity(root, path):
             reasons.append(f"finding proof {field} digest differs from tracked input")
@@ -957,7 +943,7 @@ def collect(
         "required": "tools/release/release-required.json",
         "adjudication_template": "tools/release/adjudication.json",
         "finding_spec": "tools/release/finding-proof-spec.json",
-        "plan": "docs/bugbash/sep-21/tickets/plan.json",
+        "plan": "docs/evidence/sep21/ticket-map.json",
     }
     policy = read_json(POLICY)
     value: dict = {

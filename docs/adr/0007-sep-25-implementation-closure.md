@@ -58,7 +58,7 @@ static evidence inventories, not duplicate implementation tickets.
 Older macOS 16/16 and focused consumer receipts are valid only for their exact
 source and proof type. The implementation record, static 104-row mapping, and
 owner-local runs do not qualify a later HEAD. W4 branch-rule adoption is
-complete at the 2026-10-03 observation. The [current plan](../plans/2026-10-03-current-source-remediation.md)
+complete at the 2026-10-03 observation. The [current plan](../remaining-work.md)
 owns new clean-source CI, D1–D9 consumer review, conditional H28 performance,
 and explicitly requested nightly/release producers. Mutation,
 modelcheck, TSan, fuzz, coverage, IAI, and release are not completed by this ADR.

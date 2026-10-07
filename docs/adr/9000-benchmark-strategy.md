@@ -4,7 +4,7 @@
 - 최초 날짜: 2026-06-04
 - 재정리: 2026-09-26
 - 결정자: Song Min
-- 현재 실행 계획: [2026-10-03 current-source plan](../plans/2026-10-03-current-source-remediation.md)
+- 현재 실행 계획: [2026-10-03 current-source plan](../remaining-work.md)
 - 주장 사전등록: [claim-contract.json](../../tools/bench/scenarios/claim-contract.json)
 
 이 ADR은 측정 방법의 경계를 정한다. 현재 소스에는 업계 SOTA 성능 결과나 자격화된
@@ -258,7 +258,7 @@ remain inputs to acquire; code presence is not a performance result.
   not prove long-term memory stability or qualified performance.
 
 Current defects, file owners, DoD and proof boundaries are retained in the
-[current plan](../plans/2026-10-03-current-source-remediation.md).
+[current plan](../remaining-work.md).
 No whole-engine completion or SOTA performance qualification follows from this audit.
 
 ## 2026-10-03 measured-run lag audit and repair

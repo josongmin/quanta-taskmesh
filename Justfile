@@ -61,6 +61,7 @@ semgrep:
 
 test-architecture:
     uv run python tools/arch/check_crate_boundaries.py
+    uv run python docs/evidence/sep21/validate_ticket_map.py
     uv run python docs/evidence/sep25/validate_ticket_map.py
     uv run python docs/evidence/sep25/validate_scenario_evidence.py
 

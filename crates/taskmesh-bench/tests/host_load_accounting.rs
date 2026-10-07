@@ -613,8 +613,9 @@ fn raw_record_dispositions_reject_conflicting_activity() {
         );
     };
     let quiet = row(0, CallerDisposition::NotSubmitted);
-    CallerCounts::from_records(&[quiet.clone()]).unwrap();
-    let changes: [(&str, fn(&mut RawHostRecord)); 3] = [
+    CallerCounts::from_records(std::slice::from_ref(&quiet)).unwrap();
+    type RecordChange = fn(&mut RawHostRecord);
+    let changes: [(&str, RecordChange); 3] = [
         ("start", |r: &mut RawHostRecord| r.body_started_ns = Some(0)),
         ("response", |r: &mut RawHostRecord| {
             r.caller_response_ns = Some(1)
@@ -636,7 +637,7 @@ fn raw_record_dispositions_reject_conflicting_activity() {
             },
         },
     );
-    CallerCounts::from_records(&[responded.clone()]).unwrap();
+    CallerCounts::from_records(std::slice::from_ref(&responded)).unwrap();
     let mut missing_response = responded.clone();
     missing_response.caller_response_ns = None;
     reject(
@@ -652,7 +653,7 @@ fn raw_record_dispositions_reject_conflicting_activity() {
         "row 0: invalid responded timestamps",
     );
     let dropped = row(0, CallerDisposition::CallerDropped);
-    CallerCounts::from_records(&[dropped.clone()]).unwrap();
+    CallerCounts::from_records(std::slice::from_ref(&dropped)).unwrap();
     let mut missing_drop = dropped;
     missing_drop.caller_drop_ns = None;
     reject(
@@ -661,7 +662,7 @@ fn raw_record_dispositions_reject_conflicting_activity() {
         "row 0: invalid drop timestamps",
     );
     let waiting = row(0, CallerDisposition::Waiting);
-    CallerCounts::from_records(&[waiting.clone()]).unwrap();
+    CallerCounts::from_records(std::slice::from_ref(&waiting)).unwrap();
     let mut waiting_with_response = waiting.clone();
     waiting_with_response.caller_response_ns = Some(1);
     reject(

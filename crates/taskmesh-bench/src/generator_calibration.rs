@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 use taskmesh::Runtime;
 
 use crate::host_load::{
-    pace_offer, remaining_injection_window, since, warmup_runtime, HostHarnessFault, HostRunStatus,
-    ProducerDecision, ResolvedHostTopology,
+    pace_offer, remaining_injection_window, since, warmup_runtime,
+    warmup_snapshot_capacity_settled, HostHarnessFault, HostRunStatus, ProducerDecision,
+    ResolvedHostTopology,
 };
 use crate::host_scenarios::HostScenario;
 
@@ -227,7 +228,7 @@ async fn run_generator_control_inner(
     let topology = ResolvedHostTopology::from_runtime(&runtime);
     warmup_runtime(scenario, &runtime).await?;
     let baseline = runtime.snapshot();
-    if !crate::host_load::warmup_snapshot_capacity_settled(&baseline) {
+    if !warmup_snapshot_capacity_settled(&baseline) {
         return Err("generator warmup did not settle".into());
     }
     let offers = scenario.offers.clone();
@@ -370,15 +371,9 @@ async fn run_generator_control_inner(
         .await
         .is_ok();
     let final_snapshot = runtime.snapshot();
-    let conservation_ok = final_snapshot.conservation_violation().is_none()
-        && final_snapshot
-            .classes
-            .values()
-            .all(|class| class.inflight == 0 && class.queued == 0)
-        && final_snapshot
-            .capabilities
-            .values()
-            .all(|usage| usage.in_use == 0);
+    // Use the same independently exercised capacity predicate at both edges.
+    // Null generator jobs cannot produce a live Runtime snapshot themselves.
+    let conservation_ok = warmup_snapshot_capacity_settled(&final_snapshot);
     if !drain_ok {
         issues.push("generator runtime did not drain");
     }

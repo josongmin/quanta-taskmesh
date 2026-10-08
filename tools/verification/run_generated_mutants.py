@@ -35,6 +35,8 @@ from campaign import (  # noqa: E402
 REPO = Path(__file__).resolve().parents[2]
 CATEGORIES = ("caught", "missed", "unviable", "timeout")
 DEFAULT_MUTANT_TIMEOUT_SECONDS = 120
+DEFAULT_GENERATED_CHILD_JOBS = 4
+MAX_GENERATED_CHILD_JOBS = 32
 SUMMARY_CATEGORY = {
     "CaughtMutant": "caught",
     "MissedMutant": "missed",
@@ -348,9 +350,49 @@ def tool_identity(source: Path) -> list[dict[str, str]]:
     ]
 
 
-def execution_environment(parent: dict[str, str]) -> dict[str, str]:
-    """Preserve non-semantic state without collapsing per-job build dirs."""
-    return sanitized_campaign_environment(parent)
+def generated_child_jobs(value: str, key: str) -> int:
+    """Accept only explicit, bounded decimal worker counts."""
+    if not re.fullmatch(r"[1-9][0-9]*", value) or len(value) > 2:
+        raise ValueError(f"generated campaign requires positive decimal {key}")
+    jobs = int(value)
+    if jobs > MAX_GENERATED_CHILD_JOBS:
+        raise ValueError(f"generated campaign {key} exceeds {MAX_GENERATED_CHILD_JOBS}")
+    return jobs
+
+
+def execution_environment(parent: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    """Pin build and nextest policy while preserving unrelated process state."""
+    inherited = sanitized_campaign_environment(parent)
+    ambient_nextest = sorted(
+        key for key in inherited if key == "NEXTEST" or key.startswith("NEXTEST_")
+    )
+    if ambient_nextest:
+        raise ValueError(
+            "generated campaign refuses unrecorded nextest environment: "
+            + ", ".join(ambient_nextest)
+        )
+    build_raw = parent.get(
+        "TASKMESH_BUILD_JOBS", parent.get("CARGO_BUILD_JOBS", str(DEFAULT_GENERATED_CHILD_JOBS))
+    )
+    build_jobs = generated_child_jobs(build_raw, "TASKMESH_BUILD_JOBS")
+    if "CARGO_BUILD_JOBS" in parent and generated_child_jobs(
+        parent["CARGO_BUILD_JOBS"], "CARGO_BUILD_JOBS"
+    ) != build_jobs:
+        raise ValueError("generated campaign CARGO_BUILD_JOBS disagrees with TASKMESH_BUILD_JOBS")
+    test_jobs = generated_child_jobs(
+        parent.get("TASKMESH_TEST_JOBS", str(DEFAULT_GENERATED_CHILD_JOBS)),
+        "TASKMESH_TEST_JOBS",
+    )
+    recorded = {
+        "CARGO_BUILD_JOBS": str(build_jobs),
+        "TASKMESH_BUILD_JOBS": str(build_jobs),
+        "TASKMESH_TEST_JOBS": str(test_jobs),
+        "NEXTEST_PROFILE": "default",
+        "NEXTEST_TEST_THREADS": str(test_jobs),
+        "NEXTEST_RETRIES": "0",
+    }
+    inherited.update(recorded)
+    return inherited, recorded
 
 
 def terminal_failure_written(raw_parent: Path) -> bool:
@@ -432,8 +474,7 @@ def main(argv: list[str] | None = None) -> int:
         # cargo-mutants creates one source/build directory per parallel job.
         # An inherited absolute CARGO_TARGET_DIR would collapse those isolated
         # builds back onto one shared Cargo lock and target tree, so remove it.
-        execution_env = execution_environment(dict(os.environ))
-        recorded_env: dict[str, str] = {}
+        execution_env, recorded_env = execution_environment(dict(os.environ))
         discovery_argv = unfiltered_list_command(args)
         discovery, result = execute_campaign_after_discovery(
             discovery_argv,
@@ -590,6 +631,7 @@ def main(argv: list[str] | None = None) -> int:
             config_paths=[
                 REPO / "tools/verification/mutation-gate.json",
                 REPO / ".cargo/mutants.toml",
+                REPO / ".config/nextest.toml",
             ],
             artifact_paths=[
                 *[(path, "raw") for path in raw_paths],

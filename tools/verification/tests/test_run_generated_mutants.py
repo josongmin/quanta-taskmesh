@@ -218,17 +218,28 @@ def test_failed_discovery_receipt_retains_raw_and_actual_reason(
     }
     discovery_fields.update(failure)
     discovery = SimpleNamespace(**discovery_fields)
+    effective_env, recorded_env = gm.execution_environment(
+        {"PATH": "/bin", "TASKMESH_TEST_JOBS": "2"}
+    )
+    observed: dict[str, object] = {}
+
+    def execute_after_discovery(*_args, **kwargs):
+        observed["child_env"] = kwargs["environment"]
+        return discovery, None
+
+    def envelope(**kwargs):
+        observed["envelope_env"] = kwargs["environment"]
+        observed["configs"] = [
+            path.relative_to(gm.REPO).as_posix() for path in kwargs["config_paths"]
+        ]
+        return {"result": {"status": kwargs["status"], "exit_code": kwargs["exit_code"]}}
+
     monkeypatch.setattr(gm, "prepare_output_dir", lambda _repo, _path: output_dir)
     monkeypatch.setattr(gm, "create_isolated_campaign", lambda _repo: campaign)
-    monkeypatch.setattr(
-        gm, "execute_campaign_after_discovery", lambda *_args, **_kwargs: (discovery, None)
-    )
+    monkeypatch.setattr(gm, "execution_environment", lambda _parent: (effective_env, recorded_env))
+    monkeypatch.setattr(gm, "execute_campaign_after_discovery", execute_after_discovery)
     monkeypatch.setattr(gm, "tool_identity", lambda _source: [])
-    monkeypatch.setattr(
-        gm,
-        "evidence_envelope",
-        lambda **kwargs: {"result": {"status": kwargs["status"], "exit_code": kwargs["exit_code"]}},
-    )
+    monkeypatch.setattr(gm, "evidence_envelope", envelope)
 
     assert gm.main(["--output-dir", str(output_dir)]) == 1
     receipt = json.loads((output_dir / "receipt.generated-mutations.json").read_text())
@@ -242,6 +253,13 @@ def test_failed_discovery_receipt_retains_raw_and_actual_reason(
     assert (output_dir / "raw/unfiltered-mutants.stderr.log").read_text() == discovery.stderr
     assert envelope["result"]["status"] == envelope_status
     assert envelope["result"]["exit_code"] == envelope_exit_code
+    assert observed["child_env"] == effective_env
+    assert observed["envelope_env"] == receipt["command"]["environment"] == recorded_env
+    assert observed["configs"] == [
+        "tools/verification/mutation-gate.json",
+        ".cargo/mutants.toml",
+        ".config/nextest.toml",
+    ]
     assert cleaned == [True]
 
 
@@ -516,7 +534,11 @@ def test_generated_exclusions_are_narrow_and_have_alternate_oracles() -> None:
     assert manifest["generated"]["config_paths"] == [
         "tools/verification/mutation-gate.json",
         ".cargo/mutants.toml",
+        ".config/nextest.toml",
     ]
+    inventory = json.loads((REPO / "tools/gates/inventory.json").read_text())
+    generated = next(gate for gate in inventory["gates"] if gate["id"] == "mutants-generated")
+    assert generated["producer"]["required_configs"] == manifest["generated"]["config_paths"]
 
 
 def test_unfiltered_listing_and_exclusion_accounting_are_exact(tmp_path: Path) -> None:
@@ -552,8 +574,57 @@ def test_exclusion_accounting_rejects_unapproved_or_stale_scope(tmp_path: Path) 
 
 def test_parallel_jobs_never_inherit_one_absolute_cargo_target() -> None:
     parent = {"PATH": "/bin", "CARGO_TARGET_DIR": "/shared/target"}
-    assert gm.execution_environment(parent) == {"PATH": "/bin"}
+    effective, recorded = gm.execution_environment(parent)
+    assert effective == {"PATH": "/bin", **recorded}
+    assert recorded["CARGO_BUILD_JOBS"] == recorded["NEXTEST_TEST_THREADS"] == "4"
     assert parent["CARGO_TARGET_DIR"] == "/shared/target", "do not mutate the caller environment"
+
+
+def test_generated_child_policy_reaches_cargo_and_nextest_and_is_recorded() -> None:
+    parent = {
+        "PATH": "/bin",
+        "CARGO_BUILD_JOBS": "2",
+        "TASKMESH_BUILD_JOBS": "2",
+        "TASKMESH_TEST_JOBS": "2",
+    }
+    effective, recorded = gm.execution_environment(parent)
+    assert effective == {"PATH": "/bin", **recorded}
+    assert recorded == {
+        "CARGO_BUILD_JOBS": "2",
+        "TASKMESH_BUILD_JOBS": "2",
+        "TASKMESH_TEST_JOBS": "2",
+        "NEXTEST_PROFILE": "default",
+        "NEXTEST_TEST_THREADS": "2",
+        "NEXTEST_RETRIES": "0",
+    }
+    changed, changed_recorded = gm.execution_environment({**parent, "TASKMESH_TEST_JOBS": "3"})
+    assert changed["NEXTEST_TEST_THREADS"] == "3"
+    assert gm.canonical_digest(recorded) != gm.canonical_digest(changed_recorded)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["NEXTEST_PROFILE", "NEXTEST_TEST_THREADS", "NEXTEST_RETRIES", "NEXTEST_FILTER_EXPR"],
+)
+def test_generated_campaign_rejects_ambient_nextest_semantics(key: str) -> None:
+    with pytest.raises(ValueError, match="refuses unrecorded nextest environment"):
+        gm.execution_environment({"PATH": "/bin", key: "unexpected"})
+
+
+@pytest.mark.parametrize(
+    "parent",
+    [
+        {"TASKMESH_BUILD_JOBS": "0"},
+        {"TASKMESH_TEST_JOBS": "-1"},
+        {"TASKMESH_TEST_JOBS": "33"},
+        {"TASKMESH_BUILD_JOBS": "2", "CARGO_BUILD_JOBS": "3"},
+    ],
+)
+def test_generated_campaign_rejects_invalid_or_conflicting_child_jobs(
+    parent: dict[str, str],
+) -> None:
+    with pytest.raises(ValueError, match="generated campaign"):
+        gm.execution_environment({"PATH": "/bin", **parent})
 
 
 @pytest.mark.parametrize(

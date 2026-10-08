@@ -77,6 +77,15 @@ replace the two complete observations or the thread-count liveness check.
    and hosted execution, so a source-identical check was not reproducible.
    Toolchain upgrades require their own source change and exact-merge-SHA run;
    the consumer MSRV remains a separate Rust 1.81 check.
+9. The generated mutation runner binds cargo-mutants scenario jobs separately
+   from Cargo compiler jobs and nextest test processes. Its approved child
+   environment uses `TASKMESH_BUILD_JOBS` and `TASKMESH_TEST_JOBS` with the
+   existing four-job development default and a positive 32-job maximum, and
+   records the effective build/test job counts, default nextest
+   profile and zero retries; ambient nextest overrides reject. The repository
+   nextest configuration is a required source-bound producer config. A passing
+   baseline alone does not establish the child worker count; retain the actual
+   cargo-nextest argv and complete source-bound campaign receipt.
 
 ## Completed verification changes
 

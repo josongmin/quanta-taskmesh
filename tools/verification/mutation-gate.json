@@ -19,7 +19,8 @@
     "raw_artifact_glob": "raw/mutants.out/**",
     "config_paths": [
       "tools/verification/mutation-gate.json",
-      ".cargo/mutants.toml"
+      ".cargo/mutants.toml",
+      ".config/nextest.toml"
     ],
     "required_categories": ["caught", "missed", "unviable", "timeout", "equivalent"],
     "identity_sets": "planned-equals-categorized-equals-executed",

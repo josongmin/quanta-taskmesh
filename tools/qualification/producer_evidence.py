@@ -265,6 +265,45 @@ def _generated_problems(
     envelope_command = envelope.get("command")
     if not isinstance(envelope_command, dict) or argv != envelope_command.get("argv"):
         problems.append("generated mutation command differs from envelope execution command")
+    recorded = command.get("environment") if isinstance(command, dict) else None
+    expected_keys = {
+        "CARGO_BUILD_JOBS",
+        "TASKMESH_BUILD_JOBS",
+        "TASKMESH_TEST_JOBS",
+        "NEXTEST_PROFILE",
+        "NEXTEST_TEST_THREADS",
+        "NEXTEST_RETRIES",
+    }
+    if not isinstance(recorded, dict) or set(recorded) != expected_keys:
+        problems.append("generated mutation approved child environment is missing or malformed")
+    else:
+        def bounded_jobs(key: str) -> bool:
+            value = recorded[key]
+            return (
+                isinstance(value, str)
+                and re.fullmatch(r"[1-9][0-9]*", value) is not None
+                and len(value) <= 2
+                and int(value) <= 32
+            )
+
+        if (
+            not all(
+                bounded_jobs(key)
+                for key in ("CARGO_BUILD_JOBS", "TASKMESH_BUILD_JOBS", "TASKMESH_TEST_JOBS")
+            )
+            or recorded["CARGO_BUILD_JOBS"] != recorded["TASKMESH_BUILD_JOBS"]
+            or recorded["TASKMESH_TEST_JOBS"] != recorded["NEXTEST_TEST_THREADS"]
+            or recorded["NEXTEST_PROFILE"] != "default"
+            or recorded["NEXTEST_RETRIES"] != "0"
+        ):
+            problems.append("generated mutation approved child environment is inconsistent")
+        if command.get("sha256") != canonical_digest({"argv": argv, "environment": recorded}):
+            problems.append("generated mutation command identity omits approved child environment")
+        if (
+            not isinstance(envelope_command, dict)
+            or envelope_command.get("environment") != recorded
+        ):
+            problems.append("generated mutation child environment differs from envelope")
     outcomes = summary.get("outcomes")
     if not isinstance(outcomes, dict) or set(outcomes) != {
         "caught",

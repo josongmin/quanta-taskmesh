@@ -331,7 +331,8 @@
         "artifact_download_path": "target/sep21/v02/generated",
         "required_configs": [
           "tools/verification/mutation-gate.json",
-          ".cargo/mutants.toml"
+          ".cargo/mutants.toml",
+          ".config/nextest.toml"
         ],
         "summary": "target/sep21/v02/generated/receipt.generated-mutations.json",
         "envelope": "target/sep21/v02/generated/evidence-envelope.json"

@@ -78,6 +78,15 @@ def _producer_records(source: dict, results: list[dict]) -> list[dict]:
             }
             selected = len(mutation_ids)
         elif surface == "generated":
+            generated_environment = {
+                "CARGO_BUILD_JOBS": "2",
+                "TASKMESH_BUILD_JOBS": "2",
+                "TASKMESH_TEST_JOBS": "2",
+                "NEXTEST_PROFILE": "default",
+                "NEXTEST_TEST_THREADS": "2",
+                "NEXTEST_RETRIES": "0",
+            }
+            generated_argv = ["cargo", "mutants", "--workspace"]
             summary = {
                 "schema_version": 2,
                 "kind": "generated-cargo-mutants",
@@ -95,7 +104,13 @@ def _producer_records(source: dict, results: list[dict]) -> list[dict]:
                 },
                 "planned_mutants": ["m1"],
                 "baseline_sha256": "b" * 64,
-                "command": {"argv": ["cargo", "mutants", "--workspace"]},
+                "command": {
+                    "argv": generated_argv,
+                    "environment": generated_environment,
+                    "sha256": receipt.canonical_digest(
+                        {"argv": generated_argv, "environment": generated_environment}
+                    ),
+                },
                 "process": {
                     "exit_code": 0,
                     "signal": None,
@@ -205,7 +220,9 @@ def _producer_records(source: dict, results: list[dict]) -> list[dict]:
             "command": {
                 "argv": summary["command"]["argv"] if surface == "generated" else ["producer"],
                 "cwd": ".",
-                "environment": {},
+                "environment": (
+                    summary["command"]["environment"] if surface == "generated" else {}
+                ),
             },
             "tools": [{"name": "tool", "version": "tool 1.0.0"}],
             "configs": [
@@ -727,6 +744,75 @@ def test_generated_summary_workspace_claim_must_match_executed_command() -> None
     verdict = receipt.evaluate(r, CLEAN)
     assert verdict["status"] == "NOT_QUALIFIED", "workspace summary masked package command"
     assert any("generated mutation command" in reason for reason in verdict["reasons"])
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "reason"),
+    [
+        ("CARGO_BUILD_JOBS", "3", "inconsistent"),
+        ("NEXTEST_TEST_THREADS", "3", "inconsistent"),
+        ("NEXTEST_PROFILE", "alternate", "inconsistent"),
+        ("NEXTEST_RETRIES", "1", "inconsistent"),
+        ("NEXTEST_TEST_THREADS", None, "missing or malformed"),
+    ],
+)
+def test_generated_child_policy_rejects_independent_false_claims(
+    key: str, value: str | None, reason: str
+) -> None:
+    value_receipt = qualified_receipt()
+    record = producer_record(value_receipt, "generated")
+    summary = record["summary"]["payload"]
+    environment = summary["command"]["environment"]
+    if value is None:
+        del environment[key]
+    else:
+        environment[key] = value
+    summary["command"]["sha256"] = receipt.canonical_digest(
+        {"argv": summary["command"]["argv"], "environment": environment}
+    )
+    resign_summary(value_receipt, "generated")
+    verdict = receipt.evaluate(value_receipt, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any(
+        f"generated mutation approved child environment is {reason}" in item
+        for item in verdict["reasons"]
+    )
+
+
+def test_generated_command_identity_must_include_approved_child_environment() -> None:
+    r = qualified_receipt()
+    record = producer_record(r, "generated")
+    summary = record["summary"]["payload"]
+    summary["command"]["sha256"] = "0" * 64
+    resign_summary(r, "generated")
+    verdict = receipt.evaluate(r, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any(
+        "command identity omits approved child environment" in item
+        for item in verdict["reasons"]
+    )
+
+
+def test_generated_child_environment_must_match_signed_envelope() -> None:
+    r = qualified_receipt()
+    record = producer_record(r, "generated")
+    envelope = record["envelope"]["payload"]
+    envelope["command"]["environment"] = {
+        **envelope["command"]["environment"],
+        "NEXTEST_TEST_THREADS": "3",
+    }
+    envelope["command"]["sha256"] = receipt.canonical_digest(
+        {key: envelope["command"][key] for key in ("argv", "cwd", "environment")}
+    )
+    record["envelope"]["payload_sha256"] = receipt.canonical_digest(envelope)
+    gate = next(item for item in r["gates"]["results"] if item["id"] == "mutants-generated")
+    gate["evidence_digest"] = record["envelope"]["payload_sha256"]
+    verdict = receipt.evaluate(r, CLEAN)
+    assert verdict["status"] == "NOT_QUALIFIED"
+    assert any(
+        "generated mutation child environment differs from envelope" in item
+        for item in verdict["reasons"]
+    )
 
 
 @pytest.mark.parametrize("drift", ["missing", "duplicate", "different", "baseline"])
@@ -1737,7 +1823,9 @@ def test_real_v02_artifacts_share_receipt_source_identity_and_reject_byte_drift(
                     if spec["surface"] == "generated"
                     else ["just", spec["gate_id"]]
                 ),
-                environment={},
+                environment=(
+                    summary["command"]["environment"] if spec["surface"] == "generated" else {}
+                ),
                 tools=[
                     {
                         "name": "cargo",

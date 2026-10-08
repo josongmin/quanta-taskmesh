@@ -214,6 +214,16 @@ async fn mixed_caller_events_keep_blocking_worker_custody_in_raw_rows() {
     tokio::time::timeout(Duration::from_secs(5), gate.wait_started())
         .await
         .expect("blocking body starts");
+    // Poll before triggering the drop: an unconditional wait completion would
+    // release the worker without proving that caller drop was recorded.
+    tokio::select! {
+        biased;
+        () = gate.wait_caller_dropped() => {
+            gate.release_worker();
+            panic!("caller drop wait completed before the drop was triggered");
+        }
+        () = std::future::ready(()) => {}
+    }
     gate.trigger_drop();
     tokio::time::timeout(Duration::from_secs(5), gate.wait_caller_dropped())
         .await

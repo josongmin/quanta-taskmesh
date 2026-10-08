@@ -187,6 +187,8 @@ struct NullTaskGate {
     release: tokio::sync::oneshot::Receiver<()>,
     producer_resume: Option<std::sync::mpsc::Receiver<()>>,
     dropped: Option<Arc<tokio::sync::Notify>>,
+    #[cfg(test)]
+    suppress_transfer: bool,
 }
 
 struct DropWitness(Arc<tokio::sync::Notify>);
@@ -256,6 +258,8 @@ async fn run_generator_control_inner(
     let producer = std::thread::spawn(move || {
         let mut jobs = Vec::with_capacity(offers.len());
         let mut gate = gate;
+        #[cfg(test)]
+        let suppress_transfer = gate.as_ref().is_some_and(|gate| gate.suppress_transfer);
         let producer_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             for (id, offer) in offers.into_iter().enumerate() {
                 if fault == Some(HostHarnessFault::ProducerBeforeOffer(id)) {
@@ -323,6 +327,12 @@ async fn run_generator_control_inner(
         // the local Vec here would detach those jobs and lose abort authority.
         // The channel owns abort authority even if its receiver is canceled
         // after a successful send but before the payload is received.
+        #[cfg(test)]
+        if suppress_transfer {
+            // Test-only simulation of an unreported producer task. The held
+            // task remains live after its JoinHandle is dropped.
+            return;
+        }
         drop(producer_tx.send(AbortOnDropJobs(jobs)));
         if let Err(panic) = producer_result {
             std::panic::resume_unwind(panic);
@@ -568,6 +578,7 @@ mod settlement_tests {
                     release: held,
                     producer_resume: Some(producer_resume),
                     dropped: Some(task_dropped),
+                    suppress_transfer: false,
                 }),
             )
             .await
@@ -607,6 +618,89 @@ mod settlement_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn producer_panic_aborts_first_job_at_deadline() {
         producer_panic_keeps_first_job_owned(false).await;
+    }
+
+    async fn unreported_producer_job_has_bounded_diagnostic(settled_before_transfer: bool) {
+        let mut scenario = producer_failure_scenario();
+        scenario.offers.truncate(1);
+        scenario
+            .validate()
+            .expect("single-offer fixture remains valid");
+        let (polled, first_poll) = tokio::sync::oneshot::channel();
+        let (release, held) = tokio::sync::oneshot::channel();
+        let (resume, producer_resume) = std::sync::mpsc::channel();
+        let dropped = Arc::new(tokio::sync::Notify::new());
+        let task_dropped = Arc::clone(&dropped);
+        let mut release = Some(release);
+        let run = tokio::spawn(async move {
+            run_generator_control_inner(
+                &scenario,
+                None,
+                Some(NullTaskGate {
+                    polled,
+                    release: held,
+                    producer_resume: Some(producer_resume),
+                    dropped: Some(task_dropped),
+                    suppress_transfer: true,
+                }),
+            )
+            .await
+        });
+        tokio::time::timeout(HANG, first_poll)
+            .await
+            .expect("unreported null task must start polling")
+            .expect("first-poll observer remains live");
+        if settled_before_transfer {
+            release
+                .take()
+                .expect("release sender exists")
+                .send(())
+                .expect("null task is still held");
+            tokio::time::timeout(HANG, dropped.notified())
+                .await
+                .expect("null task must settle before producer transfer");
+        }
+        resume.send(()).expect("producer remains at transfer gate");
+        let (raw, _) = tokio::time::timeout(HANG, run)
+            .await
+            .expect("unreported producer must finish within bound")
+            .expect("generator task must return")
+            .expect("generator run must return diagnostic raw");
+        if !settled_before_transfer {
+            release
+                .take()
+                .expect("release sender exists")
+                .send(())
+                .expect("orphan task is still held after invalid response");
+            tokio::time::timeout(HANG, dropped.notified())
+                .await
+                .expect("orphan task must settle after release");
+        }
+        drop(release);
+        let reason = if settled_before_transfer {
+            "generator producer failed before reporting jobs"
+        } else {
+            "generator producer failed before reporting jobs; generator orphaned task retained capacity"
+        };
+        assert_eq!(
+            raw.status,
+            HostRunStatus::Invalid {
+                reason: reason.into()
+            }
+        );
+        assert_eq!(raw.submitted, 1);
+        assert_eq!(raw.completed, 0);
+        assert_eq!(raw.outstanding_final, usize::from(!settled_before_transfer));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unreported_producer_settled_guard_has_no_orphan_diagnostic() {
+        unreported_producer_job_has_bounded_diagnostic(true).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unreported_producer_held_guard_reports_orphan_diagnostic() {
+        unreported_producer_job_has_bounded_diagnostic(false).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -674,6 +768,7 @@ mod settlement_tests {
                         release: held,
                         producer_resume: Some(producer_resume),
                         dropped: Some(dropped),
+                        suppress_transfer: false,
                     }),
                 )
                 .await

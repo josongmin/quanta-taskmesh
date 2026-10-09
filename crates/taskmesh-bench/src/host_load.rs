@@ -1335,6 +1335,42 @@ pub(crate) async fn run_host_window(
 }
 
 #[cfg(test)]
+mod cancel_timer_tests {
+    use super::CancelTimer;
+    use std::time::Duration;
+    use tokio::sync::oneshot;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dropping_timer_terminates_its_pending_task() {
+        let (started_tx, started_rx) = oneshot::channel();
+        let (dropped_tx, mut dropped_rx) = oneshot::channel::<()>();
+        let timer = CancelTimer(tokio::spawn(async move {
+            started_tx.send(()).expect("start observer alive");
+            std::future::pending::<()>().await;
+            drop(dropped_tx);
+        }));
+
+        tokio::time::timeout(Duration::from_secs(5), started_rx)
+            .await
+            .expect("timer task started")
+            .expect("start signal delivered");
+        assert_eq!(
+            dropped_rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        );
+
+        drop(timer);
+
+        // The channel closes only when the pending task drops its owned sender.
+        // The timeout bounds a leaked task; elapsed time is not the oracle.
+        assert!(tokio::time::timeout(Duration::from_secs(5), dropped_rx)
+            .await
+            .expect("dropping the timer must terminate its task")
+            .is_err());
+    }
+}
+
+#[cfg(test)]
 mod warmup_settlement_tests {
     use super::{warmup_snapshot_capacity_settled, warmup_snapshot_settled};
     use taskmesh::{CapabilityUsage, ClassSnapshot, Snapshot, TaskClass};

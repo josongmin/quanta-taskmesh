@@ -243,6 +243,64 @@ fn raw_rows_count_every_intended_offer_without_inventing_latency() {
 }
 
 #[test]
+fn caller_cut_counts_use_half_open_event_and_submission_boundaries() {
+    // Literal populations make the cut oracle independent of at_cut's guards.
+    for (event_ns, completed, waiting) in [(9, 1, 0), (10, 0, 1), (11, 0, 1)] {
+        for disposition in [
+            CallerDisposition::Responded {
+                outcome: ResponseOutcome::Cancelled,
+            },
+            CallerDisposition::CallerDropped,
+        ] {
+            let responded = matches!(disposition, CallerDisposition::Responded { .. });
+            let mut record = row(0, disposition);
+            if responded {
+                record.caller_response_ns = Some(event_ns);
+            } else {
+                record.caller_drop_ns = Some(event_ns);
+            }
+            // Worker settlement after the cut does not complete the caller at it.
+            record.body_started_ns = Some(0);
+            record.body_finished_ns = Some(20);
+            let expected = CallerCounts {
+                intended: 1,
+                submitted: 1,
+                responded: if responded { completed } else { 0 },
+                caller_dropped: if responded { 0 } else { completed },
+                waiting,
+                ..CallerCounts::default()
+            };
+            assert_eq!(
+                CallerCounts::at_cut(std::slice::from_ref(&record), 10).unwrap(),
+                expected,
+                "event_ns={event_ns}, disposition={:?}",
+                record.disposition
+            );
+        }
+    }
+
+    for submitted_ns in [9, 10, 11] {
+        let mut record = row(0, CallerDisposition::CallerDropped);
+        record.submitted_ns = Some(submitted_ns);
+        record.caller_drop_ns = Some(12);
+        let cut = CallerCounts::at_cut(&[record], 10);
+        if submitted_ns == 9 {
+            assert_eq!(
+                cut.unwrap(),
+                CallerCounts {
+                    intended: 1,
+                    submitted: 1,
+                    waiting: 1,
+                    ..CallerCounts::default()
+                }
+            );
+        } else {
+            assert_eq!(cut.unwrap_err(), "row 0: submitted after injection cut");
+        }
+    }
+}
+
+#[test]
 fn malformed_event_order_and_population_fail_closed() {
     let mut good = row(
         0,

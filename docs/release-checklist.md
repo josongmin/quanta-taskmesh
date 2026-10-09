@@ -15,6 +15,10 @@ fallback. The full `ci.yml`, `bench.yml`, and `release.yml` workflows are
 manual-only in source and disabled in GitHub settings; they do not replace the
 local final-release procedure. `required.json` also owns the fail-fast execution
 order; an explicit receipt `--tier` is a diagnostic subset, not canonical qualification.
+Mutation execution is opt-in per run. Generic release/finalization authorization does
+not select a mutation campaign. Bulk commands reject implicit mutation before any
+gate starts; explicitly selected bulk runs need `--include-mutation`. The 23-gate
+release proof denominator is unchanged: omitting mutation does not qualify a release.
 The bounded CircleCI workflow pins Rust 1.99.0 for deterministic Clippy/rustfmt
 policy. Its Rust 1.81 consumer-MSRV gate is separate; updating the CI compiler
 requires a reviewed workflow change and a new exact-merge-SHA check.
@@ -63,11 +67,11 @@ Run the registered recipes through `just`:
       a missing toolchain or other conditional prerequisite remains `NOT_RUN`.
       Saved `qualified`, `required_not_run`, and `required_not_passed` fields must match the
       re-derived gate results and source stability; edited summary fields invalidate the receipt.
-- [ ] `just verify-macos-nightly` — explicit high-cost proof profile. It runs curated and
+- [ ] `just verify-macos-nightly --include-mutation` — explicitly selected high-cost proof profile. It runs curated and
       generated mutation, modelcheck, TSan, fuzz, coverage, and IAI with a separate
       `macos-nightly-gates.json` receipt.
       Never use this as an ordinary CI or daily check. The name does not schedule it.
-- [ ] `just qualify-local` on local Linux — final release qualification runs both
+- [ ] `just qualify-local --include-mutation` on local Linux — explicitly selected final release qualification runs both
       CI and nightly gates; every release required gate must PASS;
       platform skips and missing tools remain `NOT_QUALIFIED`. Run it in an exclusive
       clean checkout with no concurrent writers: source digests before and after the

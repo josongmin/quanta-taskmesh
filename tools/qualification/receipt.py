@@ -32,7 +32,7 @@ not re-run the gates, so a hand-written receipt that lies about a PASS is only
 caught where it also has to lie coherently about the tree. Gate results are
 therefore *attested by the collector*, and the qualification rule in
 `docs/release-checklist.md` is that the receipt of record is produced by
-`collect --local-qualified` from a clean local checkout where every required
+`collect --local-qualified --include-mutation` from a clean local checkout where every required
 gate passes. Hosted collection remains a disabled compatibility path. A green
 `validate` is a necessary condition, not evidence that omitted gates ran.
 """
@@ -381,9 +381,23 @@ def collect(
     hosted_ci: bool = False,
     consume_producers: bool = False,
     local_qualified: bool = False,
+    include_mutation: bool = False,
 ) -> int:
     if consume_producers and not hosted_ci:
         raise ValueError("imported producer artifacts are accepted only in hosted CI")
+    # Reject implicit campaigns before clearing prior evidence or launching tools.
+    from tools.gates.selection_policy import require_explicit_selection
+
+    inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
+    if not consume_producers and not skip_mutations:
+        require_explicit_selection(
+            (
+                gate["id"] for gate in inventory["gates"]
+                if tiers is None or gate["tier"] in tiers
+            ),
+            json.loads(REQUIRED.read_text(encoding="utf-8")),
+            include_mutation=include_mutation,
+        )
     started = datetime.now(timezone.utc).isoformat()
     source = source_identity()
     attestation = collection_attestation(source, hosted_ci, local_qualified)
@@ -395,7 +409,6 @@ def collect(
     # summary available for collection.
     if not consume_producers:
         clear_registered_outputs(REPO, producer_specs)
-    inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
     deadline_seconds = inventory.get("qualification_budget_seconds")
     if type(deadline_seconds) is not int or deadline_seconds <= 0:
         raise ValueError("inventory qualification_budget_seconds must be a positive integer")
@@ -406,6 +419,8 @@ def collect(
         ["--required"] if tiers is None else [*sum([["--tier", tier] for tier in tiers], [])]
     )
     gate_args += ["--deadline-seconds", str(deadline_seconds)]
+    if include_mutation:
+        gate_args.append("--include-mutation")
     if hosted_ci or local_qualified:
         gate_args.append("--require-clean-source")
     if consume_producers:
@@ -814,6 +829,7 @@ def main(argv: list[str] | None = None) -> int:
         help="diagnostic subset: collect these tiers (repeatable); default: required set",
     )
     c.add_argument("--skip-mutations", action="store_true")
+    c.add_argument("--include-mutation", action="store_true")
     c.add_argument(
         "--hosted-ci",
         action="store_true",
@@ -840,14 +856,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "collect":
         # None is semantically different from an explicit tier subset: the
         # canonical path runs required.json exactly, including its cost order.
-        return collect(
-            args.out,
-            args.tier,
-            args.skip_mutations,
-            args.hosted_ci,
-            args.consume_producers,
-            args.local_qualified,
-        )
+        try:
+            return collect(
+                args.out,
+                args.tier,
+                args.skip_mutations,
+                args.hosted_ci,
+                args.consume_producers,
+                args.local_qualified,
+                args.include_mutation,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
     code, _reasons_already_printed = validate(args.receipt, not args.no_tree_check)
     return code
 

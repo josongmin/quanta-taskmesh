@@ -30,6 +30,7 @@
     "mutants-critical", "modelcheck", "tsan", "fuzz", "coverage-report",
     "bench-iai", "mutants-generated"
   ],
+  "explicit_selection_required": ["mutants-critical", "mutants-generated"],
   "required_producers": {
     "mutation-campaign-curated-v1": "mutants-critical",
     "mutation-campaign-generated-v1": "mutants-generated",

@@ -336,8 +336,8 @@ semver-release:
     python3 tools/release/semver.py --out target/release/semver
 
 # Final release collector runs CI and nightly gates; use only for explicit release qualification.
-qualify-local:
-    uv run python tools/qualification/receipt.py collect --local-qualified --out target/qualification/local-receipt.json
+qualify-local *ARGS:
+    uv run python tools/qualification/receipt.py collect --local-qualified --out target/qualification/local-receipt.json {{ARGS}}
 
 validate-local-qualification:
     uv run python tools/qualification/receipt.py validate target/qualification/local-receipt.json
@@ -356,12 +356,12 @@ ci: gate matrix
     @echo "ci: functional, static, and matrix surface passed"
 
 # Explicit high-cost proof profile. No schedule is configured.
-nightly: mutants-critical modelcheck tsan fuzz coverage-report bench-iai mutants-generated
-    @echo "nightly: high-cost proof surface passed"
+nightly *ARGS:
+    uv run python tools/gates/run.py --profile nightly --require-clean-source {{ARGS}}
 
 # Release gate profile includes CI and nightly; required.json owns the union.
-release: ci nightly
-    @echo "release: ci and nightly required gate surfaces passed"
+release *ARGS:
+    uv run python tools/gates/run.py --profile release --require-clean-source {{ARGS}}
 
 # CI macOS receipt without high-cost nightly campaigns. Release qualification
 # remains `release` or the nightly-inclusive required collector.
@@ -371,8 +371,8 @@ release: ci nightly
 verify-macos-ci:
     CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" uv run python tools/gates/run.py --profile ci --require-clean-source --allow-platform-skips --receipt target/verification/macos-gates.json
 
-verify-macos-nightly:
-    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" uv run python tools/gates/run.py --profile nightly --require-clean-source --allow-platform-skips --receipt target/verification/macos-nightly-gates.json
+verify-macos-nightly *ARGS:
+    CARGO_BUILD_JOBS="${TASKMESH_BUILD_JOBS:-4}" uv run python tools/gates/run.py --profile nightly --require-clean-source --allow-platform-skips --receipt target/verification/macos-nightly-gates.json {{ARGS}}
 
 # Install the tracked fail-closed push admission hook for this clone. The hook
 # accepts a branch update only when the saved local receipt matches the exact

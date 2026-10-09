@@ -8,6 +8,11 @@ name: release (ci + nightly)
 
 on:
   workflow_dispatch:
+    inputs:
+      run_mutation:
+        description: "Explicitly run the full curated and generated mutation campaigns"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -75,6 +80,7 @@ jobs:
       - run: just bench-smoke
 
   mutation-gate:
+    if: ${{ inputs.run_mutation }}
     name: curated mutation campaign
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -94,6 +100,7 @@ jobs:
           path: target/sep21/v02/curated
 
   mutation-generated:
+    if: ${{ inputs.run_mutation }}
     name: generated workspace mutation campaign
     runs-on: ubuntu-latest
     timeout-minutes: 360

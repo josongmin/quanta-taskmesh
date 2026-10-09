@@ -67,6 +67,7 @@ if str(REPO) not in sys.path:
 
 from tools.ci.check_circleci import circleci_contract_problems  # noqa: E402
 from tools.gates.parallel_policy import PARALLEL_GROUP_MEMBERS  # noqa: E402
+from tools.gates.selection_policy import explicit_gate_ids, profile_gate_ids  # noqa: E402
 from tools.gates.target_catalog import (  # noqa: E402
     RECIPE_FRAGMENTS,
     catalog_digest,
@@ -328,6 +329,23 @@ def gate_recipe_dependencies() -> list[str]:
     return recipe_dependencies("gate")
 
 
+def mutation_opt_in_problems(document: dict) -> list[str]:
+    trigger = document.get("on", document.get(True, {}))
+    dispatch = trigger.get("workflow_dispatch") if isinstance(trigger, dict) else None
+    inputs = dispatch.get("inputs", {}) if isinstance(dispatch, dict) else {}
+    option = inputs.get("run_mutation", {})
+    problems = []
+    if not isinstance(option, dict) or (
+        option.get("type") != "boolean" or option.get("default") is not False
+    ):
+        problems.append("hosted mutation input must be boolean and default false")
+    jobs = document.get("jobs", {})
+    for name in ("mutation-gate", "mutation-generated"):
+        if jobs.get(name, {}).get("if") != "${{ inputs.run_mutation }}":
+            problems.append(f"{name}: hosted mutation must require explicit selection")
+    return problems
+
+
 def expand_recipe(recipe: str, text: str | None = None) -> set[str]:
     """Every leaf recipe `just <recipe>` runs, following chained recipes
     (`release: ci nightly` expands both profiles)."""
@@ -341,6 +359,14 @@ def expand_recipe(recipe: str, text: str | None = None) -> set[str]:
             continue
         seen.add(current)
         deps = recipe_dependencies(current, text)
+        body = recipe_body(current, text).strip()
+        dispatcher = (
+            f"uv run python tools/gates/run.py --profile {current} "
+            "--require-clean-source {{ARGS}}"
+        )
+        if current in {"nightly", "release"} and body == dispatcher:
+            leaves.update(profile_gate_ids(load(REQUIRED))[current])
+            continue
         if deps:
             pending.extend(deps)
         else:
@@ -789,6 +815,19 @@ def validate(
             )
 
     required_ids = required.get("required", [])
+    try:
+        explicit = explicit_gate_ids(required)
+        mutation_ids = {
+            gate["id"] for gate in gates
+            if isinstance(gate.get("producer"), dict)
+            and str(gate["producer"].get("registration", "")).startswith(
+                "mutation-campaign-"
+            )
+        }
+        if explicit != mutation_ids:
+            problems.append("explicit_selection_required must cover exactly the mutation gates")
+    except ValueError as exc:
+        problems.append(str(exc))
     nightly_ids = required.get("nightly_required")
     if (
         not isinstance(nightly_ids, list)
@@ -881,6 +920,9 @@ def main() -> int:
         nightly_leaves = expand_recipe("nightly")
         inventory_recipes = {g.get("recipe") for g in inventory.get("gates", []) if g.get("recipe")}
         enforcement = [
+            *mutation_opt_in_problems(
+                yaml.safe_load((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))
+            ),
             *circleci_contract_problems(
                 yaml.safe_load(CIRCLECI_CONFIG.read_text(encoding="utf-8")), required
             ),

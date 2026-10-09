@@ -156,6 +156,8 @@ fn row(id: usize, disposition: CallerDisposition) -> RawHostRecord {
     }
 }
 
+type RecordChange = fn(&mut RawHostRecord);
+
 #[test]
 fn raw_rows_count_every_intended_offer_without_inventing_latency() {
     let mut success = row(
@@ -308,8 +310,11 @@ fn malformed_event_order_and_population_fail_closed() {
             outcome: ResponseOutcome::Success,
         },
     );
-    good.body_started_ns = Some(0);
-    good.body_finished_ns = Some(1);
+    good.intended_ns = 10;
+    good.submitted_ns = Some(15);
+    good.body_started_ns = Some(16);
+    good.body_finished_ns = Some(17);
+    good.caller_response_ns = Some(18);
     CallerCounts::from_records(&[good.clone()]).expect("baseline row is valid");
     let mut duplicate = good.clone();
     duplicate.id = 0;
@@ -321,24 +326,104 @@ fn malformed_event_order_and_population_fail_closed() {
     assert!(CallerCounts::from_records(&[missing])
         .is_err_and(|error| error.contains("missing, duplicated or reordered id")));
 
-    let mut reversed_time = good.clone();
-    reversed_time.submitted_ns = Some(10);
-    reversed_time.body_started_ns = Some(10);
-    reversed_time.body_finished_ns = Some(10);
-    assert!(CallerCounts::from_records(&[reversed_time])
-        .is_err_and(|error| error.contains("response precedes submit")));
-
-    let mut dropped_with_response = good;
+    let mut dropped_with_response = good.clone();
     dropped_with_response.disposition = CallerDisposition::CallerDropped;
-    dropped_with_response.caller_drop_ns = Some(2);
+    dropped_with_response.caller_drop_ns = Some(19);
     assert!(CallerCounts::from_records(&[dropped_with_response])
         .is_err_and(|error| error.contains("invalid drop timestamps")));
 
-    let mut body_before_submit = row(0, CallerDisposition::CallerDropped);
-    body_before_submit.body_started_ns = Some(0);
-    body_before_submit.submitted_ns = Some(1);
-    assert!(CallerCounts::from_records(&[body_before_submit])
-        .is_err_and(|error| error.contains("body start precedes submit")));
+    let changes: [(&str, RecordChange, &str); 11] = [
+        ("empty class", |r| r.class.clear(), "empty class"),
+        (
+            "missing lag",
+            |r| r.scheduled_lag_ns = None,
+            "missing producer lag",
+        ),
+        (
+            "early submit",
+            |r| r.submitted_ns = Some(9),
+            "submit precedes intended arrival",
+        ),
+        (
+            "finish without start",
+            |r| r.body_started_ns = None,
+            "body finished without start",
+        ),
+        (
+            "early finish",
+            |r| r.body_finished_ns = Some(15),
+            "body finish precedes start",
+        ),
+        (
+            "early start",
+            |r| r.body_started_ns = Some(14),
+            "body start precedes submit",
+        ),
+        (
+            "early response",
+            |r| {
+                r.disposition = CallerDisposition::Responded {
+                    outcome: ResponseOutcome::Cancelled,
+                };
+                r.caller_response_ns = Some(14);
+            },
+            "response precedes submit",
+        ),
+        (
+            "early drop",
+            |r| {
+                r.disposition = CallerDisposition::CallerDropped;
+                r.caller_response_ns = None;
+                r.caller_drop_ns = Some(14);
+            },
+            "caller drop precedes submit",
+        ),
+        (
+            "unfinished success",
+            |r| r.body_finished_ns = None,
+            "success without body finish",
+        ),
+        (
+            "success before finish",
+            |r| r.caller_response_ns = Some(16),
+            "success responds before body finish",
+        ),
+        (
+            "started rejection",
+            |r| {
+                r.disposition = CallerDisposition::Responded {
+                    outcome: ResponseOutcome::Rejected {
+                        verdict: AdmissionVerdict::CpuSaturated {
+                            retry_after_ms: None,
+                        },
+                    },
+                };
+            },
+            "rejected work started",
+        ),
+    ];
+    for (case, change, expected) in changes {
+        let mut invalid = good.clone();
+        change(&mut invalid);
+        assert_eq!(
+            CallerCounts::from_records(&[invalid]).unwrap_err(),
+            format!("row 0: {expected}"),
+            "{case}"
+        );
+    }
+
+    // Equal event times are valid; chronology rejects only reversed order.
+    let mut same_tick = good;
+    same_tick.intended_ns = 15;
+    same_tick.body_started_ns = Some(15);
+    same_tick.body_finished_ns = Some(15);
+    same_tick.caller_response_ns = Some(15);
+    CallerCounts::from_records(&[same_tick]).expect("same-tick success is valid");
+    let mut instant_drop = row(0, CallerDisposition::CallerDropped);
+    instant_drop.intended_ns = 10;
+    instant_drop.submitted_ns = Some(15);
+    instant_drop.caller_drop_ns = Some(15);
+    CallerCounts::from_records(&[instant_drop]).expect("same-tick drop is valid");
 }
 
 #[test]
@@ -355,6 +440,34 @@ fn pure_producer_cap_and_lag_have_exact_boundary() {
         producer_decision(10, 12, 1, 1),
         ProducerDecision::NotSubmitted { lag_ns: 2 }
     );
+
+    // Pacing is observed before submission, so lag may be below submit delay.
+    // A nonzero origin distinguishes a delay bound from an absolute timestamp.
+    let mut delayed = row(0, CallerDisposition::CallerDropped);
+    delayed.intended_ns = 10;
+    delayed.submitted_ns = Some(15);
+    delayed.caller_drop_ns = Some(16);
+    for (lag_ns, valid) in [(0, true), (4, true), (5, true), (6, false), (25, false)] {
+        delayed.scheduled_lag_ns = Some(lag_ns);
+        let counts = CallerCounts::from_records(std::slice::from_ref(&delayed));
+        if valid {
+            assert_eq!(
+                counts.unwrap(),
+                CallerCounts {
+                    intended: 1,
+                    submitted: 1,
+                    caller_dropped: 1,
+                    ..CallerCounts::default()
+                },
+                "lag_ns={lag_ns}"
+            );
+        } else {
+            assert_eq!(
+                counts.unwrap_err(),
+                "row 0: producer lag exceeds submit delay"
+            );
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -672,7 +785,6 @@ fn raw_record_dispositions_reject_conflicting_activity() {
     };
     let quiet = row(0, CallerDisposition::NotSubmitted);
     CallerCounts::from_records(std::slice::from_ref(&quiet)).unwrap();
-    type RecordChange = fn(&mut RawHostRecord);
     let changes: [(&str, RecordChange); 3] = [
         ("start", |r: &mut RawHostRecord| r.body_started_ns = Some(0)),
         ("response", |r: &mut RawHostRecord| {

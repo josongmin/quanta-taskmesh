@@ -116,6 +116,12 @@ dirty checkout 전체를 의도적으로 진단해야 할 때만
 상태 때문에 qualification으로 승격되지 않는다. `mutants-generated`는 제품 회귀 테스트가 아니라
 현재 테스트망이 compiler-generated 변경 전체를 잡는지 감사하는 final-candidate proof다. 수천 개
 변이를 격리 실행하므로 일상 수정이나 focused 재검증에서는 실행하지 않는다.
+Mutation은 실행할 때마다 명시적으로 선택한다. 일반적인 "마무리/전체 검증/release"
+요청은 mutation 실행 동의가 아니다. 기본 피드백은 `dev` 또는 `verify-macos-ci`다.
+직접 선택한 `just mutants-critical`, `just mutants-generated`, `mutants-focused`
+명령은 수동 진입점이다. 범용 nightly/release/전체 gate 선택은 사전 검사에서 거부되며,
+사용자가 mutation 범위까지 선택했을 때만 `--include-mutation`을 전달한다
+(예: `just nightly --include-mutation`). 생략된 mutation 증거는 PASS로 대체하지 않는다.
 구현·증명·운영을 함께 재감사할 때는
 [ADR 0006](docs/adr/0006-source-bound-verification-authority.md)의 source·증거 범위와
 [미완료 작업](docs/remaining-work.md)을 기준으로 판정한다.

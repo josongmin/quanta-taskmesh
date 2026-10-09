@@ -17,11 +17,11 @@ that unambiguous verdict is NOT_RUN.
 Usage:
     python3 tools/gates/run.py --tier fast              # e.g. the fast gate
     python3 tools/gates/run.py --profile ci              # bounded CI profile
-    python3 tools/gates/run.py --profile nightly         # explicit high-cost profile
+    python3 tools/gates/run.py --profile nightly --include-mutation  # selected full profile
     python3 tools/gates/run.py --id clippy --id test    # named gates
-    python3 tools/gates/run.py --all --receipt r.json   # everything applicable
-    python3 tools/gates/run.py --required --allow-platform-skips  # clean host scope
-    python3 tools/gates/run.py --required --allow-dirty-source --keep-going  # diagnostic sweep
+    python3 tools/gates/run.py --all --include-mutation --receipt r.json
+    python3 tools/gates/run.py --required --include-mutation --allow-platform-skips
+    python3 tools/gates/run.py --profile release --check-selection-only  # refuses implicit mutation
 """
 
 from __future__ import annotations
@@ -45,6 +45,10 @@ if str(REPO) not in sys.path:
 
 from tools.gates.execution_evidence import REPORTS, report_problems  # noqa: E402
 from tools.gates.parallel_policy import PARALLEL_GATE_LIMIT, PARALLEL_GROUP_MEMBERS  # noqa: E402
+from tools.gates.selection_policy import (  # noqa: E402
+    profile_gate_ids,
+    require_explicit_selection,
+)
 from tools.gates.status_line import (  # noqa: E402
     final_status_line,
     pass_status_line_problems,
@@ -753,6 +757,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--all", action="store_true")
     parser.add_argument(
+        "--include-mutation", action="store_true",
+        help="explicitly opt in to mutation gates selected by a bulk profile",
+    )
+    parser.add_argument(
+        "--check-selection-only", action="store_true",
+        help="validate selection consent without starting any gate",
+    )
+    parser.add_argument(
         "--required",
         action="store_true",
         help="run the release required set, including the high-cost nightly profile",
@@ -809,12 +821,7 @@ def main(argv: list[str] | None = None) -> int:
     inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
     required_document = json.loads(REQUIRED.read_text(encoding="utf-8"))
     required_ids = required_document["required"]
-    nightly_ids = required_document["nightly_required"]
-    profile_ids = {
-        "release": required_ids,
-        "ci": [gate_id for gate_id in required_ids if gate_id not in nightly_ids],
-        "nightly": nightly_ids,
-    }
+    profile_ids = profile_gate_ids(required_document)
     if args.validate_receipt is not None:
         try:
             value = json.loads(args.validate_receipt.read_text(encoding="utf-8"))
@@ -862,7 +869,6 @@ def main(argv: list[str] | None = None) -> int:
     profile = args.profile or "release"
     required = set(profile_ids[profile])
 
-    source = source_identity()
     gates = inventory["gates"]
     by_id = {g["id"]: g for g in gates}
 
@@ -891,6 +897,16 @@ def main(argv: list[str] | None = None) -> int:
     if unknown_skips:
         raise SystemExit(f"unknown gate id(s) in --skip: {unknown_skips}")
     selected = [g for g in selected if g["id"] not in set(args.skip)]
+    try:
+        require_explicit_selection(
+            (gate["id"] for gate in selected), required_document,
+            named=args.id, include_mutation=args.include_mutation,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.check_selection_only:
+        return 0
+    source = source_identity()
     selection_mode = (
         "all" if args.all else "required" if args.required else "profile"
         if args.profile else "tier" if args.tier else "id"

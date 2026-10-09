@@ -31,11 +31,15 @@ Working-source and evidence policy:
 Verification cost policy:
 
 - Do not run mutation campaigns during ordinary audits, owner-local checks, or daily verification.
-- Run `mutants-critical`, `mutants-generated`, or commands that include them (`nightly`,
-  `verify-macos-nightly`, `release`, `qualify-local`,
-  `tools/gates/run.py --required`, `--all`, `--tier nightly`, or `--profile release`)
-  only when the current user request
-  explicitly authorizes mutation testing or final release qualification that includes it.
+- Mutation is opt-in per run. Start a campaign only when the current user request
+  explicitly selects mutation testing and its scope. Broad requests such as
+  "finish", "verify everything", "merge", or "release" do not authorize mutation.
+  Earlier consent does not authorize another campaign or restart.
+- Prefer selected package/file diagnostics when mutation is explicitly requested.
+  Full curated/generated sweeps require an explicit full-campaign request.
+- Bulk `nightly`, `release`, `qualify-local`, and gate-runner selectors reject
+  implicit mutation before starting work. `--include-mutation` is execution consent,
+  not permission to infer the user's intent; pass it only after explicit selection.
 - Use focused owner tests, `dev`, and `verify-macos-ci` for normal feedback. A partial mutation run is
   never qualification evidence.
 

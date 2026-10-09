@@ -2163,17 +2163,32 @@ def test_local_collection_cannot_import_hosted_producer_artifacts(repo: Path) ->
         )
 
 
-def test_collect_cli_defaults_to_the_exact_required_set(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("include_mutation", [False, True])
+def test_collect_cli_defaults_to_the_exact_required_set(
+    tmp_path: Path, monkeypatch, include_mutation: bool,
+) -> None:
     captured: dict[str, object] = {}
 
-    def fake_collect(out, tiers, skip_mutations, hosted_ci, consume_producers, local_qualified):
-        captured.update(out=out, tiers=tiers, local_qualified=local_qualified)
+    def fake_collect(
+        out, tiers, skip_mutations, hosted_ci, consume_producers,
+        local_qualified, include_mutation,
+    ):
+        captured.update(
+            out=out, tiers=tiers, local_qualified=local_qualified,
+            include_mutation=include_mutation,
+        )
         return 0
 
     monkeypatch.setattr(receipt, "collect", fake_collect)
     out = tmp_path / "receipt.json"
-    assert receipt.main(["collect", "--local-qualified", "--out", str(out)]) == 0
-    assert captured == {"out": out, "tiers": None, "local_qualified": True}
+    args = ["collect", "--local-qualified", "--out", str(out)]
+    if include_mutation:
+        args.append("--include-mutation")
+    assert receipt.main(args) == 0
+    assert captured == {
+        "out": out, "tiers": None, "local_qualified": True,
+        "include_mutation": include_mutation,
+    }
 
 
 @pytest.mark.parametrize("mode", ["missing", "stale"])

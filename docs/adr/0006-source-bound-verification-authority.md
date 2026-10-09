@@ -89,6 +89,13 @@ replace the two complete observations or the thread-count liveness check.
 
 ## Completed verification changes
 
+Mutation execution requires a fresh explicit selection of its scope. Generic audit,
+finish, merge or release requests do not select a campaign. The independent
+`required.json` marks both mutation gates as requiring explicit selection.
+Named gate IDs are explicit; bulk selectors need `--include-mutation` and reject
+before gate launch without it. The collector applies the same policy before clearing
+old producer evidence. Required proof membership and partial-run verdicts are unchanged.
+
 - The Sep-22 test-optimization tickets added focused cancellation,
   backpressure, drain, Rayon and benchmark structural oracles plus Python-floor
   and Semgrep enrollment checks. Their owner-local results remain scoped to

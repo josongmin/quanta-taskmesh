@@ -1136,7 +1136,9 @@ def test_runner_profile_selects_only_its_required_gates(
 
     monkeypatch.setattr(module, "run_selected_gates", fake_run)
     receipt_path = tmp_path / f"{profile}.json"
-    assert module.main(["--profile", profile, "--receipt", str(receipt_path)]) == 0
+    assert module.main([
+        "--profile", profile, "--include-mutation", "--receipt", str(receipt_path),
+    ]) == 0
     required = real_inputs()[1]
     expected = (
         required["nightly_required"]
@@ -1176,7 +1178,9 @@ def test_all_selector_cannot_qualify_with_optional_gate_failure(
 
     monkeypatch.setattr(module, "run_selected_gates", fake_run)
     path = tmp_path / "all.json"
-    assert module.main(["--all", "--keep-going", "--receipt", str(path)]) == 1
+    assert module.main([
+        "--all", "--include-mutation", "--keep-going", "--receipt", str(path),
+    ]) == 1
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["qualified"] is False
     assert saved["selection"]["mode"] == "all"
@@ -1202,7 +1206,7 @@ def test_all_selector_cannot_qualify_when_an_optional_result_is_missing(
             for gate in selected if gate["id"] != "semver-release"
         ],
     )
-    assert module.main(["--all", "--keep-going"]) == 1
+    assert module.main(["--all", "--include-mutation", "--keep-going"]) == 1
 
 
 @pytest.mark.parametrize("profile,expected_code", [("ci", 0), ("release", 0), ("nightly", 1)])

@@ -281,7 +281,7 @@
         "clean CI source; runner uses an isolated source snapshot and dedicated target directory"
       ],
       "workflow": "ci.yml",
-      "note": "Curated single-edit fault inventory, not an exhaustive cargo-mutants score. The receipt separates KILLED from CONTROL_GREEN and records cargo/pytest plus source-scope counts.",
+      "note": "Explicit selection only; bulk selectors require --include-mutation. Curated single-edit fault inventory, not an exhaustive cargo-mutants score. The receipt separates KILLED from CONTROL_GREEN and records cargo/pytest plus source-scope counts.",
       "producer": {
         "registration": "mutation-campaign-curated-v1",
         "manifest": "tools/verification/mutation-gate.json",
@@ -319,7 +319,7 @@
       "workflow": "ci.yml",
       "conditional": "The full generated denominator is required. Missing tooling is NOT_RUN; any missed, timeout, equivalent, subset, or incomplete identity set is FAIL. Compile-unviable identities are mandatory reported limitations excluded from the quality denominator.",
       "timeout_seconds": 18000,
-      "note": "Generated cargo-mutants evidence is a distinct denominator and must never be merged with mutants-critical.",
+      "note": "Explicit selection only; bulk selectors require --include-mutation. Generated cargo-mutants evidence is a distinct denominator and must never be merged with mutants-critical.",
       "producer": {
         "registration": "mutation-campaign-generated-v1",
         "manifest": "tools/verification/mutation-gate.json",

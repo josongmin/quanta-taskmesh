@@ -25,7 +25,10 @@ def features(dependency: object) -> set[str]:
 
 def test_tokio_multithread_scheduler_is_not_a_shipped_workspace_default() -> None:
     root_tokio = manifest("Cargo.toml")["workspace"]["dependencies"]["tokio"]
-    assert root_tokio == "1", "workspace defaults must not silently widen every consumer graph"
+    # Security version floors may change; feature opt-ins still belong to crate owners.
+    assert isinstance(root_tokio, str), (
+        "workspace Tokio must stay version-only, without shared feature opt-ins"
+    )
 
     taskmesh = manifest("crates/taskmesh/Cargo.toml")
     normal = features(taskmesh["dependencies"]["tokio"])

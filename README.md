@@ -1,5 +1,15 @@
 # taskmesh
 
+A Rust execution control plane for analysis systems and service runtimes.
+Taskmesh separates admission, fairness, and resource-budget policy from worker
+execution through a four-crate hexagonal architecture with Tokio and optional
+Rayon adapters. Cancellation response, worker termination, and capacity release
+have explicit, separate contracts.
+
+Implementation, source-bound verification, consumer acceptance, and release
+qualification are tracked separately. See the [documentation index](docs/README.md)
+and [remaining work](docs/remaining-work.md) for the current boundaries.
+
 `taskmesh`는 분석 시스템과 서비스 런타임을 위한 governed execution control-plane이다.
 현재 구현·검증·소비자 적용·release 상태와 각 권한 문서의 경로는
 [문서 인덱스](docs/README.md)에 정리한다.

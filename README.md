@@ -2,20 +2,22 @@
 
 # Taskmesh
 
+<p align="center"><a href="#engineering-highlights">Engineering</a> · <a href="#architecture">Architecture</a> · <a href="#quick-start">Get started</a> · <a href="#documentation">Reference</a></p>
+
 A Rust execution control plane for asynchronous I/O, blocking work, CPU tasks, and local-runtime execution. Taskmesh makes class policy, resource admission, executor topology, and worker custody explicit contracts.
 
 The runtime distinguishes **a caller receiving a response**, **a worker stopping**, and **capacity becoming available**. That distinction is central to cancellation, deadlines, and safe shutdown.
 
 ## Engineering highlights
 
-| Mechanism | Engineering purpose |
-| :--- | :--- |
-| **One admission decision** | Class inflight limits, resource budgets, and capability-pool capacity are decided together; competing paths do not gain hidden unbounded queues. |
-| **Explicit substrates** | Task specifications declare execution substrate. A mismatched run path rejects rather than silently selecting a different executor. |
-| **Bounded fairness** | Class policy declares queue depth and fairness discipline; incompatible tier policies are rejected during construction. |
-| **Capacity custody** | Started synchronous work can remain charged after its caller is cancelled or times out, until the worker actually exits. |
-| **Validated topology** | Executor worker counts and physical domains are validated and frozen for dispatch and runtime observation. |
-| **Declared task lineage** | Child/root identity and explicitly declared nested waits support attribution and cycle rejection without inferring undeclared waits. |
+| Mechanism | Engineering purpose | Source |
+| :--- | :--- | :--- |
+| **One admission decision** | Class inflight limits, resource budgets, and capability-pool capacity are decided together; competing paths do not gain hidden unbounded queues. | [Admission](crates/taskmesh-engine/src/features/admission/) |
+| **Explicit substrates** | Task specifications declare execution substrate. A mismatched run path rejects rather than silently selecting a different executor. | [Contract](crates/taskmesh-contract/) |
+| **Bounded fairness** | Class policy declares queue depth and fairness discipline; incompatible tier policies are rejected during construction. | [Engine](crates/taskmesh-engine/) |
+| **Capacity custody** | Started synchronous work can remain charged after its caller is cancelled or times out, until the worker actually exits. | [Runtime](crates/taskmesh/src/runtime.rs) |
+| **Validated topology** | Executor worker counts and physical domains are validated and frozen for dispatch and runtime observation. | [Validated plan](crates/taskmesh/src/execution_plan.rs) |
+| **Declared task lineage** | Child/root identity and explicitly declared nested waits support attribution and cycle rejection without inferring undeclared waits. | [Contract](crates/taskmesh-contract/) |
 
 ## Architecture
 
@@ -30,12 +32,11 @@ flowchart LR
     R["Optional Rayon adapter"] --> E
 ```
 
-## Usage examples
+## Quick start
 
-<details>
-<summary>Configuration, execution, cancellation, and integration examples</summary>
+<a id="quick-example"></a>
 
-### Quick example
+Use the `taskmesh` facade from a Tokio application. See [Development](#development) for the Git dependency and repository commands.
 
 ```rust
 use taskmesh::{Builder, ClassPolicy, ResourceBudget, Runtime, TaskClass, TaskSpec, TopologyConfig};
@@ -74,6 +75,31 @@ async fn main() {
 ```
 
 Consumers depend on the `taskmesh` facade. The current workspace manifest is `0.3.0`; registry publication, compatibility approval, exact-source release qualification, and consumer activation are separate decisions. See the [changelog](CHANGELOG.md) and [release checklist](docs/release-checklist.md) before selecting a revision.
+
+## Cancellation lifecycle
+
+For a cooperative blocking path, ending the caller's wait does not forcibly stop already-started synchronous work. Its capacity remains charged until the worker exits.
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Runtime
+    participant Worker
+    Caller->>Runtime: Submit blocking work
+    Runtime->>Worker: Start with a held permit
+    Caller->>Runtime: Cancel or reach a supported wait deadline
+    Runtime-->>Caller: Return cancellation or timeout
+    Note over Runtime,Worker: Worker may continue, capacity stays charged
+    Worker-->>Runtime: Worker exits
+    Runtime->>Runtime: Settle and release capacity
+```
+
+See the [response and custody contract](docs/adr/0005-sep-25-execution-response-and-custody.md) for policy-dependent cancellation, deadline, and drain behavior.
+
+## Usage examples
+
+<details>
+<summary>Configuration, execution, cancellation, and integration examples</summary>
 
 ### Runtime configuration
 
@@ -368,3 +394,5 @@ A single `run_*` call executes only the first declared stage. Later stages, bran
 Cancellation of a waiting caller does not forcibly terminate already-started synchronous work. Deadline support is policy-dependent; unsupported deadlines reject. `checkpoint_policy` is metadata for host hook points, not an engine-enforced checkpoint implementation.
 
 Source-local tests, benchmark completion, clean-source qualification, consumer adoption, and deployment are separate results. The commands above do not assert that those scopes have passed on the current revision.
+
+<p align="center"><sub><a href="https://github.com/josongmin">Project map</a> · <a href="#engineering-highlights">Back to overview</a></sub></p>

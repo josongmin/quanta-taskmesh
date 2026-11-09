@@ -1,27 +1,41 @@
-# Quanta Taskmesh
+<p align="center"><img src="readme-banner.svg" alt="Taskmesh — Governed execution with bounded admission and explicit worker custody." width="100%"></p>
 
-A Rust execution control plane for analysis systems and service runtimes. Taskmesh separates **admission, fairness, and resource policy** from **worker execution**, with explicit contracts for cancellation, deadlines, capacity, and accounting.
+# Taskmesh
 
-[External interface](docs/taskmesh-external-interface.md) · [Library specification](docs/taskmesh-library-spec.md) · [Architecture decisions](docs/adr/README.md) · [Remaining work](docs/remaining-work.md)
+A Rust execution control plane for asynchronous I/O, blocking work, CPU tasks, and local-runtime execution. Taskmesh makes class policy, resource admission, executor topology, and worker custody explicit contracts.
+
+The runtime distinguishes **a caller receiving a response**, **a worker stopping**, and **capacity becoming available**. That distinction is central to cancellation, deadlines, and safe shutdown.
+
+## Engineering highlights
+
+| Mechanism | Engineering purpose |
+| :--- | :--- |
+| **One admission decision** | Class inflight limits, resource budgets, and capability-pool capacity are decided together; competing paths do not gain hidden unbounded queues. |
+| **Explicit substrates** | Task specifications declare execution substrate. A mismatched run path rejects rather than silently selecting a different executor. |
+| **Bounded fairness** | Class policy declares queue depth and fairness discipline; incompatible tier policies are rejected during construction. |
+| **Capacity custody** | Started synchronous work can remain charged after its caller is cancelled or times out, until the worker actually exits. |
+| **Validated topology** | Executor worker counts and physical domains are validated and frozen for dispatch and runtime observation. |
+| **Declared task lineage** | Child/root identity and explicitly declared nested waits support attribution and cycle rejection without inferring undeclared waits. |
 
 ## Architecture
 
-```text
-public facade / Tokio host → governance engine → contracts and ports
-             ↓
-optional shared Rayon CPU adapter
+```mermaid
+flowchart LR
+    C["Caller: TaskSpec + SubmitOptions"] --> H["Tokio host facade"]
+    H --> G["Governance engine"]
+    G --> A["Admission: class + budget + capability"]
+    A --> E["I/O / blocking / CPU / local executor"]
+    E --> O["Outcome and worker custody"]
+    O --> G
+    R["Optional Rayon adapter"] --> E
 ```
 
-| Crate | Ownership |
-| --- | --- |
-| `taskmesh-contract` | Public domain/wire contracts and ports: runtime, CPU executor, clock, and permit wakeup |
-| `taskmesh-engine` | Admission, fairness, memory, composite-task, and inventory state machines |
-| `taskmesh` | Public facade and Tokio host; execution, cancellation, deadlines, and custody |
-| `taskmesh-rayon` | Optional shared CPU-executor adapter |
+## Usage examples
 
-Dependencies point inward. Tokio and Rayon do not depend on one another; the engine does not depend on Tokio. Product-specific task taxonomies belong to consumer adapters. Open capability pools rather than separate pools for each engine.
+<details>
+<summary>Configuration, execution, cancellation, and integration examples</summary>
 
-## Quick example
+### Quick example
 
 ```rust
 use taskmesh::{Builder, ClassPolicy, ResourceBudget, Runtime, TaskClass, TaskSpec, TopologyConfig};
@@ -61,7 +75,7 @@ async fn main() {
 
 Consumers depend on the `taskmesh` facade. The current workspace manifest is `0.3.0`; registry publication, compatibility approval, exact-source release qualification, and consumer activation are separate decisions. See the [changelog](CHANGELOG.md) and [release checklist](docs/release-checklist.md) before selecting a revision.
 
-## Runtime configuration
+### Runtime configuration
 
 Topology controls worker capabilities and resource capacity. Class policy controls semantic admission behavior, queueing, fairness, budgets, and supported cancellation/deadline behavior.
 
@@ -107,7 +121,7 @@ let runtime = Builder::new()
     .expect("policy must validate");
 ```
 
-## Execute work through the matching path
+### Execute work through the matching path
 
 ```rust
 use taskmesh::{Runtime, TaskClass, TaskSpec};
@@ -149,7 +163,7 @@ let child = TaskSpec::cpu(TaskClass::new("retrieval"))
     .operation("rank:shard:3");
 ```
 
-## Handle rejection and task errors separately
+### Handle rejection and task errors separately
 
 ```rust
 use taskmesh::{AdmissionVerdict, GovernorError, RunError};
@@ -187,7 +201,7 @@ match runtime.run_blocking(spec, job).await {
 
 Admission failure, a ticket ending before claim, and an application-task error are different results. Preserve typed reasons and use the specified retry delay rather than converting a refusal into success.
 
-## Observe the inventory
+### Observe the inventory
 
 ```rust
 let snap = runtime.snapshot();
@@ -208,7 +222,7 @@ for s in &snap.substrates {
 
 Inventory records bind semantic classes to executor capabilities and resource accounting. Conservation checks and gauges describe different parts of the state; a caller receiving a response does not prove that a worker ended or released capacity.
 
-## Cancellation, timeouts, and drain
+### Cancellation, timeouts, and drain
 
 ```rust
 use std::time::Duration;
@@ -263,7 +277,7 @@ match runtime.drain(Duration::from_secs(30)).await {
 
 A timed-out drain can leave charged work in a draining runtime. A later drain continues waiting for the outstanding work; it does not fabricate an empty inventory.
 
-## Advanced integration
+### Advanced integration
 
 Use `taskmesh::ext` only when a consumer needs governor-level accounting, provenance, or adapter composition beyond the normal runtime facade.
 
@@ -299,7 +313,7 @@ let runtime = taskmesh::Builder::new()
     .build()?;
 ```
 
-## Enforcement boundaries
+### Enforcement boundaries
 
 - **Policy and governance:** semantic class policy is distinct from worker topology and substrate capacity.
 - **Bounded competition:** queueing and non-queueing paths have explicit admission behavior; no unbounded alternate queue is implied.
@@ -308,35 +322,49 @@ let runtime = taskmesh::Builder::new()
 - **Deterministic composition:** parallel stages require explicit reduction; product-local classification is supplied by the consumer.
 - **Compatibility:** API, wire, and behavioral changes need their own review, not only a compiler-compatible diff.
 
-## Development and verification
+</details>
+
+## Development
+
+Add the facade from this repository; it is not assumed to be published on crates.io:
+
+```toml
+[dependencies]
+taskmesh = { git = "https://github.com/josongmin/quanta-taskmesh.git" }
+```
+
+The public builder and a complete usage example are in [the facade](crates/taskmesh/src/lib.rs). Use `run_io`, `run_blocking`, `run_cpu`, or `run_local` for the declared substrate.
 
 ```sh
+just --list
 just dev
 just verify-macos-ci
 ```
 
-The normal edit loop and bounded CI feedback are separate from nightly/release qualification. Select checks through [Justfile](Justfile), [gate inventory](tools/gates/inventory.json), and the source-bound evidence contract.
+Recipes and external-tool requirements are owned by [Justfile](Justfile). Mutation campaigns are explicit opt-in work, not part of a routine README or local verification pass.
 
-| Evidence layer | What it establishes |
-| --- | --- |
-| Architecture/static checks | Dependency, policy, and source constraints |
-| Owner and differential tests | Governor transitions, invariants, and contract behavior |
-| Loom/Shuttle | Bounded model schedules and replay |
-| ThreadSanitizer/fuzzing | Specific race or input-exploration scopes when explicitly run |
-| Documentation fixtures | Public Rust examples type-check against the facade |
-| Consumer/MSRV checks | Selected facade features compile under their pinned consumer/toolchain |
-| Benchmarks | The measured workload and environment only |
+## Source map
 
-Mutation campaigns are opt-in per run. Ordinary development, a broad verification request, or this README does not authorize them. Required checks that were skipped, cancelled, blocked, or never run retain those outcomes; they are not passes.
+| Area | Owner |
+| :--- | :--- |
+| Public builder, driving runtime, cancellation adapter | [taskmesh](crates/taskmesh/) |
+| Product-neutral vocabulary and ports | [taskmesh-contract](crates/taskmesh-contract/) |
+| Admission, fairness, and governance state | [taskmesh-engine](crates/taskmesh-engine/) |
+| CPU executor integration | [taskmesh-rayon](crates/taskmesh-rayon/) |
+| Benchmarks and policy inventory | [Benchmark crate](crates/taskmesh-bench/) · [Gate tools](tools/gates/) |
 
-Exact-source receipts must bind the tested revision/tree and applicable scope. Local focused checks do not establish hosted Linux qualification, whole-product consumer acceptance, deployment, or publication. [Remaining work](docs/remaining-work.md) owns final-source proof, human compatibility/release decisions, host performance, and consumer acceptance.
+## Documentation
 
-## Documentation map
-
-- [Documentation index](docs/README.md)
-- [Architecture and crate boundaries](docs/adr/0001-hexagonal-feature-sliced-architecture.md)
-- [Wire and ingress identity](docs/adr/0004-sep-25-ingress-plan-identity-and-wire.md)
-- [Response and worker custody](docs/adr/0005-sep-25-execution-response-and-custody.md)
-- [Source-bound verification authority](docs/adr/0006-source-bound-verification-authority.md)
-- [Benchmark strategy](docs/adr/9000-benchmark-strategy.md)
+- [Library specification](docs/taskmesh-library-spec.md)
+- [External interface and run-path semantics](docs/taskmesh-external-interface.md)
+- [Accepted architecture decisions](docs/adr/README.md)
+- [Remaining work](docs/remaining-work.md)
 - [Source-bound evidence inventory](docs/evidence/sep25/README.md)
+
+## Scope and verification
+
+A single `run_*` call executes only the first declared stage. Later stages, branch execution, and reduction remain caller/adapter responsibilities. Declaring a reduce policy validates its shape; it does not make the host a workflow executor.
+
+Cancellation of a waiting caller does not forcibly terminate already-started synchronous work. Deadline support is policy-dependent; unsupported deadlines reject. `checkpoint_policy` is metadata for host hook points, not an engine-enforced checkpoint implementation.
+
+Source-local tests, benchmark completion, clean-source qualification, consumer adoption, and deployment are separate results. The commands above do not assert that those scopes have passed on the current revision.
